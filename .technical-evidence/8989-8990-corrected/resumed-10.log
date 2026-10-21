@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask check-generated`
+check-generated: pass (target/ripr/reports/generated.md)

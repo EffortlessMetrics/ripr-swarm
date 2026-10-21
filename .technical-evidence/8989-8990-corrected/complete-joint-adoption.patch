@@ -1,0 +1,3049 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index afd4d08ed..a76807b95 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -16977,3 +16977,60 @@ outputs = [
+ metrics = [
+   "unit_test_pass_rate",
+ ]
++
++[[behavior]]
++id = "RIPR-SPEC-0287"
++name = "Agent stub names the repair journey it feeds"
++spec = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
++tests = [
++  "crates/ripr/tests/agent_stub_at_disclosure.rs::divergent_write_refuses_with_json_and_preserves_source_and_warm_cache",
++  "crates/ripr/tests/agent_stub_at_disclosure.rs::agreeing_repair_placement_still_writes_through_cli",
++  "crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface",
++  "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
++  "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",
++  "crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped",
++  "crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface",
++  "crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence",
++]
++fixtures = []
++code = [
++  "crates/ripr/src/app/test_stub.rs",
++  "crates/ripr/src/cli/commands/agent_stub.rs",
++]
++outputs = [
++  "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md",
++  "docs/OUTPUT_SCHEMA.md",
++  "docs/EXIT_CODES.md",
++  "docs/AGENT_WORKFLOWS.md",
++]
++metrics = [
++  "unit_test_pass_rate",
++]
++
++[[behavior]]
++id = "RIPR-SPEC-0288"
++name = "Agent stub rewrite clarity contract"
++spec = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
++tests = [
++  "crates/ripr/src/analysis/test_stub/tests.rs::recomputed_stub_for_the_same_seam_is_flagged_already_present",
++  "crates/ripr/src/analysis/test_stub/tests.rs::same_named_but_different_test_still_suffixes",
++  "crates/ripr/src/cli/commands/agent_stub.rs::tests::second_write_for_the_same_seam_reports_already_written",
++  "crates/ripr/src/cli/commands/agent_stub.rs::tests::strongly_gripped_stub_names_the_real_reason",
++  "crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording",
++  "crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate",
++  "crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification",
++  "crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning",
++]
++fixtures = []
++code = [
++  "crates/ripr/src/analysis/test_stub.rs",
++  "crates/ripr/src/cli/commands/agent_stub.rs",
++]
++outputs = [
++  "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md",
++  "docs/OUTPUT_SCHEMA.md",
++  "docs/AGENT_WORKFLOWS.md",
++]
++metrics = [
++  "unit_test_pass_rate",
++]
+diff --git a/changelog.d/8727-agent-stub-next-repair.md b/changelog.d/8727-agent-stub-next-repair.md
+new file mode 100644
+index 000000000..f3e39fb72
+--- /dev/null
++++ b/changelog.d/8727-agent-stub-next-repair.md
+@@ -0,0 +1,2 @@
++<!-- section: Added -->
++- `ripr agent stub` now names the repair journey the stub feeds (#8727). The `rust_test_stub` document (schema `0.3`, additive on `0.2`) may carry a `next_repair` block with the `ripr agent repair --seam-id <id> --phase before` start command and the repair packet's admitted `allowed_edit_surface`; when the stub's placement differs from that surface, `placement_divergence` names both files at generation time instead of failing later at the repair before phase's dirty-premise gate. Human output prints `Next repair:` after the Write/Run it lines plus the divergence warning. The block appears only when the seam's classified entry establishes the repair route (the pilot's fail-closed eligibility flip) and is omitted entirely — no invented route — when it cannot, notably for `--at --kind` file-parse selections. Divergent `--write --json` returns a versioned `placement_divergence` refused envelope on stderr with exit 2, preserving source/test bytes and metadata; cold analysis may populate its normal cache. See RIPR-SPEC-0287.
+diff --git a/changelog.d/8891-agent-stub-rewrite-clarity.md b/changelog.d/8891-agent-stub-rewrite-clarity.md
+new file mode 100644
+index 000000000..084b4f7bb
+--- /dev/null
++++ b/changelog.d/8891-agent-stub-rewrite-clarity.md
+@@ -0,0 +1,12 @@
++<!-- section: Fixed -->
++- `ripr agent stub --write` run twice for the same seam now reports
++  `Stub already written at <file>` (with the run command; JSON gains
++  additive `already_present`, `written` stays `false`) instead of
++  suffixing a `_2` duplicate — only a byte-identical recompute counts as
++  already written, while a genuinely different test sharing the generated
++  name still suffixes (#8891).
++- The `strongly_gripped` disclosure on the `ripr agent stub` path names
++  the real reason — existing tests already discriminate the seam, so a
++  stub would add nothing — instead of reusing the packet/brief "configured
++  off" wording; nothing was configured off. A class a user severity
++  actually disables keeps the "configured off" wording (#8891).
+diff --git a/crates/ripr/src/analysis/syntax/mod.rs b/crates/ripr/src/analysis/syntax/mod.rs
+index 2fb63e84b..f88cf4eeb 100644
+--- a/crates/ripr/src/analysis/syntax/mod.rs
++++ b/crates/ripr/src/analysis/syntax/mod.rs
+@@ -41,5 +41,5 @@ pub(crate) use ra::production_owner_module_path;
+ pub(crate) use ra::rust_include_directives;
+ pub(crate) use ra::{
+     GovernedCfgTestModule, ModuleItemScopes, fn_name_binding_count, governed_cfg_test_modules,
+-    inline_unit_module_layout, module_item_scopes,
++    has_test_attribute, inline_unit_module_layout, module_item_scopes,
+ };
+diff --git a/crates/ripr/src/analysis/syntax/ra.rs b/crates/ripr/src/analysis/syntax/ra.rs
+index cb3a5f36c..f6934f81a 100644
+--- a/crates/ripr/src/analysis/syntax/ra.rs
++++ b/crates/ripr/src/analysis/syntax/ra.rs
+@@ -1088,7 +1088,10 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
+     }
+ }
+ 
+-fn has_test_attribute(function: &ast::Fn) -> bool {
++/// Whether a function carries a test-framework attribute (`#[test]`,
++/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
++/// commented-out or string-embedded lookalikes never count.
++pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
+     function.attrs().any(|attr| {
+         let compact = attr
+             .syntax()
+diff --git a/crates/ripr/src/analysis/test_stub.rs b/crates/ripr/src/analysis/test_stub.rs
+index 3973cf4f7..dca94b6eb 100644
+--- a/crates/ripr/src/analysis/test_stub.rs
++++ b/crates/ripr/src/analysis/test_stub.rs
+@@ -27,10 +27,13 @@ use super::syntax::fn_signature::{
+     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, field_init_is_returned,
+     identifier_offsets, owner_signature_at, single_comparison,
+ };
+-use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules, parse_clean_source_file};
++use super::syntax::{
++    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute, parse_clean_source_file,
++};
+ use super::test_grip_evidence::TestKind;
+ use ra_ap_syntax::AstNode;
+ use ra_ap_syntax::ast::{self, HasName, HasVisibility};
++use std::ops::Range;
+ use std::path::{Path, PathBuf};
+ 
+ /// Where the stub text goes.
+@@ -84,12 +87,35 @@ impl TestStubPlacement {
+     }
+ }
+ 
++/// The test-name uniqueness scope a stub is checked and written against: the
++/// text it parses from (the whole owner file, or the whole existing
++/// integration file) plus the byte range of the scope inside that text (the
++/// chosen inline module's body, the whole file, or an empty range at the end
++/// of the file for a new inline module). Carrying the parse unit and the
++/// range together lets the presence and name-collision checks stay
++/// parser-backed instead of searching raw text (#8990 review).
++#[derive(Clone, Debug)]
++struct StubScope<'a> {
++    parse_unit: &'a str,
++    range: Range<usize>,
++}
++
++impl StubScope<'_> {
++    fn text(&self) -> &str {
++        self.parse_unit.get(self.range.clone()).unwrap_or_default()
++    }
++}
++
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub(crate) struct RustTestStub {
+     pub(crate) placement: TestStubPlacement,
+     pub(crate) test_name: String,
+     /// Exact text to insert at the placement offset, or the whole new file.
+     pub(crate) text: String,
++    /// The uniqueness scope already holds the identical test function: a
++    /// second run for the same seam recomputed byte-identical text (#8891).
++    /// The CLI reports "already written" instead of writing a duplicate.
++    pub(crate) already_present: bool,
+     /// Each `todo!()` the developer still fills, in source order.
+     pub(crate) fill_ins: Vec<String>,
+     /// Inputs ripr wrote from the seam's own comparison, as `name = value`.
+@@ -289,7 +315,7 @@ fn rust_test_stub_for_target(
+         Some(IntegrationTarget::Existing { crate_name, .. }) => Some(crate_name.as_str()),
+         None => None,
+     };
+-    let (placement, indent, existing_source) = match (&integration, integration_crate) {
++    let (placement, indent, scope) = match (&integration, integration_crate) {
+         (Some(IntegrationTarget::New(proposal)), Some(_))
+             if matches!(signature.container, OwnerContainer::Free) =>
+         {
+@@ -298,7 +324,12 @@ fn rust_test_stub_for_target(
+                     file: proposal.file.clone(),
+                 },
+                 String::new(),
+-                None,
++                // A new integration file is empty; the owner file is only the
++                // parse unit the (empty) scope range points into.
++                StubScope {
++                    parse_unit: source,
++                    range: source.len()..source.len(),
++                },
+             )
+         }
+         // A crate-root `pub fn` is the only free owner an integration test
+@@ -318,7 +349,11 @@ fn rust_test_stub_for_target(
+             (
+                 TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
+                 String::new(),
+-                Some(target_source.as_str()),
++                // The whole integration file is the uniqueness scope.
++                StubScope {
++                    parse_unit: target_source.as_str(),
++                    range: 0..target_source.len(),
++                },
+             )
+         }
+         _ => inline_placement(seam.file(), source, &signature, seam.byte_offset())?,
+@@ -339,14 +374,54 @@ fn rust_test_stub_for_target(
+         snake_case(&signature.name),
+         name_suffix(seam.kind())
+     );
+-    let test_name = unique_test_name(&base_name, existing_source.unwrap_or(source));
+     let path_scope = if integration_placement {
+         PathScope::Integration(integration_crate.unwrap_or("crate"))
+     } else {
+         PathScope::ChildModule
+     };
+     let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
+-    let test_fn = render_test_fn(seam, &signature, &test_name, &body, &indent);
++    // #8891: a second run for the same seam recomputes byte-identical text.
++    // When the name collision is that earlier stub, the CLI reports "already
++    // written" instead of suffixing a `_2` duplicate; a different test that
++    // happens to share the name still suffixes as before.
++    let unique_name = unique_test_name(&base_name, &scope);
++    // #8990 review X1: ripr's own earlier write can sit under a suffixed name
++    // (`_2`) when another test owns the base. Every candidate name up to the
++    // first free one is searched for the identical rendering; the first
++    // candidate whose on-disk `#[test]` fn is byte-identical reports
++    // `already_present` under the matched name. A different body under a
++    // candidate name does not match, so that case still suffixes.
++    let mut matched: Option<(String, String)> = None;
++    let mut candidate_number = 1usize;
++    loop {
++        let candidate = if candidate_number == 1 {
++            base_name.clone()
++        } else {
++            format!("{base_name}_{candidate_number}")
++        };
++        if candidate == unique_name {
++            break;
++        }
++        let rendered = render_test_fn(seam, &signature, &candidate, &body, &indent);
++        if scope_contains_test_fn(&scope, &rendered, &candidate) {
++            matched = Some((candidate, rendered));
++            break;
++        }
++        candidate_number += 1;
++    }
++    let (test_name, test_fn, already_present) = match matched {
++        Some((name, rendered)) => (name, rendered, true),
++        None if unique_name == base_name => (
++            base_name.clone(),
++            render_test_fn(seam, &signature, &base_name, &body, &indent),
++            false,
++        ),
++        None => (
++            unique_name.clone(),
++            render_test_fn(seam, &signature, &unique_name, &body, &indent),
++            false,
++        ),
++    };
+ 
+     let text = match &placement {
+         TestStubPlacement::ExistingInlineModule { .. } => format!("\n{test_fn}"),
+@@ -361,11 +436,58 @@ fn rust_test_stub_for_target(
+         placement,
+         test_name,
+         text,
++        already_present,
+         fill_ins: body.fill_ins,
+         derived_inputs: body.derived_inputs,
+     })
+ }
+ 
++/// Whether the uniqueness scope already holds an actual `#[test]` function
++/// identical to `rendered` — same `name`, same rendered text, modulo line
++/// endings and indentation. Parser-backed (#8990 review X2): a copy of the
++/// stub inside a block comment or a raw string is not a test Cargo runs, so
++/// comment and string text never counts; only parsed `#[test]` fn items in
++/// the scope compare. `false` when the parse unit does not parse cleanly, so
++/// an unparseable scope never claims a write it cannot verify.
++fn scope_contains_test_fn(scope: &StubScope<'_>, rendered: &str, name: &str) -> bool {
++    let Some(parse) = parse_clean_source_file(scope.parse_unit) else {
++        return false;
++    };
++    parse
++        .tree()
++        .syntax()
++        .descendants()
++        .filter_map(ast::Fn::cast)
++        .any(|function| {
++            if !has_test_attribute(&function) || function.name().is_none_or(|n| n.text() != name) {
++                return false;
++            }
++            let range = function.syntax().text_range();
++            let start = usize::from(range.start());
++            let end = usize::from(range.end());
++            // The whole fn item — attributes, signature, and body — sits inside
++            // the uniqueness scope.
++            start >= scope.range.start
++                && end <= scope.range.end
++                && normalize_test_fn_text(&function.syntax().text().to_string())
++                    == normalize_test_fn_text(rendered)
++        })
++}
++
++/// Comparison text for a rendered or parsed test fn: line endings, per-line
++/// indentation, blank lines, and pure comment lines normalized away, so the
++/// check depends neither on the file's CRLF/LF choice nor on whether the
++/// parser attaches leading comments to the fn item. The executable text —
++/// attributes, signature, and body — is what identifies ripr's stub.
++fn normalize_test_fn_text(text: &str) -> String {
++    text.replace("\r\n", "\n")
++        .lines()
++        .map(str::trim)
++        .filter(|line| !line.is_empty() && !line.starts_with("//"))
++        .collect::<Vec<_>>()
++        .join("\n")
++}
++
+ /// Whether the innermost `fn` at `offset` is declared with plain `pub` (not
+ /// `pub(crate)` or another restriction), so a `use <crate>::*` can see it.
+ fn owner_is_plain_pub(source: &str, offset: usize) -> bool {
+@@ -432,7 +554,7 @@ fn inline_placement<'a>(
+     source: &'a str,
+     signature: &OwnerSignature,
+     owner_offset: usize,
+-) -> Result<(TestStubPlacement, String, Option<&'a str>), TestStubRefusal> {
++) -> Result<(TestStubPlacement, String, StubScope<'a>), TestStubRefusal> {
+     let modules = governed_cfg_test_modules(source).ok_or(TestStubRefusal::SourceUnparsed)?;
+     let siblings = modules
+         .iter()
+@@ -470,9 +592,18 @@ fn inline_placement<'a>(
+                 .close_brace_start
+                 .ok_or(TestStubRefusal::AmbiguousTestModule)?;
+             let module_indent = line_indent(source, module.item_start);
+-            let module_body = module
+-                .body_start
+-                .and_then(|start| source.get(start..offset));
++            // The uniqueness scope is the module body; the parse unit is the
++            // whole file, so presence and name checks see real fn items only.
++            let scope = match module.body_start {
++                Some(start) => StubScope {
++                    parse_unit: source,
++                    range: start..offset,
++                },
++                None => StubScope {
++                    parse_unit: source,
++                    range: 0..source.len(),
++                },
++            };
+             Ok((
+                 TestStubPlacement::ExistingInlineModule {
+                     file: file.to_path_buf(),
+@@ -480,7 +611,7 @@ fn inline_placement<'a>(
+                     offset,
+                 },
+                 format!("{module_indent}    "),
+-                module_body,
++                scope,
+             ))
+         }
+         None if signature.parent_modules.is_empty() => Ok((
+@@ -489,7 +620,10 @@ fn inline_placement<'a>(
+                 offset: source.len(),
+             },
+             "    ".to_string(),
+-            Some(""),
++            StubScope {
++                parse_unit: source,
++                range: source.len()..source.len(),
++            },
+         )),
+         None => Err(TestStubRefusal::OwnerInNestedModule),
+     }
+@@ -1452,17 +1586,13 @@ fn name_suffix(kind: SeamKind) -> &'static str {
+     }
+ }
+ 
+-fn unique_test_name(base: &str, scope_source: &str) -> String {
+-    let taken = |name: &str| {
+-        scope_source
+-            .match_indices(&format!("fn {name}"))
+-            .any(|(index, matched)| {
+-                scope_source[index + matched.len()..]
+-                    .chars()
+-                    .next()
+-                    .is_some_and(|c| c == '(' || c == '<' || c.is_whitespace())
+-            })
+-    };
++/// The first free spelling of `base` in the uniqueness scope: `base`, then
++/// `base_2`, `base_3`, ... Parser-backed (#8990 review X2): a `fn` spelled
++/// inside a block comment or a string literal is not a test and does not
++/// occupy the name. Scopes that do not parse cleanly keep the previous
++/// lexical search, which errs toward suffixing rather than shadowing.
++fn unique_test_name(base: &str, scope: &StubScope<'_>) -> String {
++    let taken = |name: &str| scope_contains_fn_named(scope, name);
+     if !taken(base) {
+         return base.to_string();
+     }
+@@ -1472,6 +1602,33 @@ fn unique_test_name(base: &str, scope_source: &str) -> String {
+         .unwrap_or_else(|| base.to_string())
+ }
+ 
++/// Whether an actual `fn` item named `name` sits in the uniqueness scope.
++/// Falls back to the raw-text search when the scope does not parse cleanly.
++fn scope_contains_fn_named(scope: &StubScope<'_>, name: &str) -> bool {
++    if let Some(parse) = parse_clean_source_file(scope.parse_unit) {
++        return parse
++            .tree()
++            .syntax()
++            .descendants()
++            .filter_map(ast::Fn::cast)
++            .any(|function| {
++                let range = function.syntax().text_range();
++                function.name().is_some_and(|n| n.text() == name)
++                    && usize::from(range.start()) >= scope.range.start
++                    && usize::from(range.end()) <= scope.range.end
++            });
++    }
++    let scope_source = scope.text();
++    scope_source
++        .match_indices(&format!("fn {name}"))
++        .any(|(index, matched)| {
++            scope_source[index + matched.len()..]
++                .chars()
++                .next()
++                .is_some_and(|c| c == '(' || c == '<' || c.is_whitespace())
++        })
++}
++
+ fn snake_case(name: &str) -> String {
+     let mut out = String::new();
+     for (index, c) in name.chars().enumerate() {
+diff --git a/crates/ripr/src/analysis/test_stub/tests.rs b/crates/ripr/src/analysis/test_stub/tests.rs
+index 8576f8fb7..bfc635350 100644
+--- a/crates/ripr/src/analysis/test_stub/tests.rs
++++ b/crates/ripr/src/analysis/test_stub/tests.rs
+@@ -87,6 +87,158 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
+     Ok(())
+ }
+ 
++/// #8891: a second run for the same seam recomputes byte-identical text. The
++/// name collision is ripr's own earlier write, so the stub is flagged
++/// already present instead of suffixing a `_2` duplicate.
++#[test]
++fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), String> {
++    let seam = seam_at(
++        "src/lib.rs",
++        PRICE,
++        "amount >= threshold",
++        SeamKind::PredicateBoundary,
++        boundary("amount == threshold"),
++    )?;
++    let first = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
++    assert!(!first.already_present);
++    assert_eq!(first.test_name, "price_boundary_discriminator");
++    // Simulate the first `--write`: the insertion is the stub text at the
++    // placement offset.
++    let close = PRICE.rfind('}').ok_or("module close brace")?;
++    let (head, tail) = PRICE.split_at(close);
++    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
++    let seam = seam_at(
++        "src/lib.rs",
++        &rewritten,
++        "amount >= threshold",
++        SeamKind::PredicateBoundary,
++        boundary("amount == threshold"),
++    )?;
++    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
++    assert!(
++        second.already_present,
++        "the byte-identical recompute must be detected as already present"
++    );
++    assert_eq!(
++        second.test_name, "price_boundary_discriminator",
++        "no `_2` suffix for ripr's own earlier write"
++    );
++    Ok(())
++}
++
++/// A different test that happens to share the base name is not ripr's stub:
++/// the `--write` semantics are unchanged and the name still suffixes.
++/// Recomputing after insertion must find ripr's own `_2` function instead of
++/// proposing `_3`. The command-level no-write contract is exercised through
++/// the binary in `agent_stub_at_disclosure.rs`.
++#[test]
++fn same_named_but_different_test_still_suffixes() -> Result<(), String> {
++    let with_other_test = "pub fn price(amount: u32, threshold: u32) -> u32 {
++    if amount >= threshold { amount - 10 } else { amount }
++}
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn price_boundary_discriminator() {
++        assert_eq!(price(100, 100), 90);
++    }
++}
++";
++    let seam = seam_at(
++        "src/lib.rs",
++        with_other_test,
++        "amount >= threshold",
++        SeamKind::PredicateBoundary,
++        boundary("amount == threshold"),
++    )?;
++    let stub = rust_test_stub(&seam, None, with_other_test).map_err(|r| r.reason().to_string())?;
++    assert_eq!(stub.test_name, "price_boundary_discriminator_2");
++    assert!(
++        !stub.already_present,
++        "a genuinely different test with the same name is not an already-written stub"
++    );
++
++    // Simulate the first `--write`: the `_2` stub text lands inside the
++    // inline module, after the user's same-named test.
++    let close = with_other_test.rfind('}').ok_or("module close brace")?;
++    let (head, tail) = with_other_test.split_at(close);
++    let rewritten = format!("{head}{}{tail}", stub.text.trim_start_matches('\n'));
++    let seam = seam_at(
++        "src/lib.rs",
++        &rewritten,
++        "amount >= threshold",
++        SeamKind::PredicateBoundary,
++        boundary("amount == threshold"),
++    )?;
++    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
++    assert!(
++        second.already_present,
++        "the second run must find ripr's own `_2` write under the suffixed name, not suffix a `_3`"
++    );
++    assert_eq!(
++        second.test_name, "price_boundary_discriminator_2",
++        "the already-written report names the test on disk"
++    );
++    // The resolver retains the full rendered function even when present;
++    // the CLI's write guard, rather than an empty insertion, makes it a no-op.
++    assert_eq!(second.text, stub.text);
++    assert_eq!(
++        rewritten
++            .matches("fn price_boundary_discriminator_2(")
++            .count(),
++        1
++    );
++    assert!(!rewritten.contains("fn price_boundary_discriminator_3("));
++    Ok(())
++}
++
++/// #8990 review X2: a copy of the rendered stub inside a block comment or a
++/// raw string is not a test Cargo discovers. The name-collision check and the
++/// already-written detection parse the module, so the commented stub neither
++/// occupies the base name nor flags the stub present: `--write` inserts the
++/// real test under the base name.
++#[test]
++fn commented_stub_does_not_count_as_written_or_named() -> Result<(), String> {
++    let seam = seam_at(
++        "src/lib.rs",
++        PRICE,
++        "amount >= threshold",
++        SeamKind::PredicateBoundary,
++        boundary("amount == threshold"),
++    )?;
++    let rendered = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
++    let anchor = "    #[test]\n    fn price_works() {";
++    for embedded in [
++        // Block comment holding the exact proposed function.
++        format!("    /*\n{}    */", rendered.text.trim_start_matches('\n')),
++        // Raw string holding the exact proposed function.
++        format!(
++            "    const COMMENTED: &str = r##\"\n{}\"##;",
++            rendered.text.trim_start_matches('\n')
++        ),
++    ] {
++        let source = PRICE.replacen(anchor, &format!("{embedded}\n{anchor}"), 1);
++        let seam = seam_at(
++            "src/lib.rs",
++            &source,
++            "amount >= threshold",
++            SeamKind::PredicateBoundary,
++            boundary("amount == threshold"),
++        )?;
++        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
++        assert_eq!(
++            stub.test_name, "price_boundary_discriminator",
++            "a commented-out stub does not occupy the base name: {embedded}"
++        );
++        assert!(
++            !stub.already_present,
++            "a commented-out stub is not an already-written test: {embedded}"
++        );
++    }
++    Ok(())
++}
++
+ #[test]
+ fn method_owner_uses_receiver_syntax_not_a_free_call() -> Result<(), String> {
+     // #5357: a method owner was suggested as `as_whole_units(...)`.
+diff --git a/crates/ripr/src/app/test_stub.rs b/crates/ripr/src/app/test_stub.rs
+index 14f251b95..820df4f72 100644
+--- a/crates/ripr/src/app/test_stub.rs
++++ b/crates/ripr/src/app/test_stub.rs
+@@ -10,8 +10,10 @@
+ //! stub for that location, so the printed command and its answer cannot
+ //! disagree.
+ 
++use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
+ use crate::analysis;
+ use crate::analysis::owner_fn_line_span;
++use crate::analysis::repair_route::repair_packet_eligibility;
+ use crate::analysis::seams::SeamGripClass;
+ use crate::analysis::seams::SeamKind;
+ use crate::analysis::test_stub::{
+@@ -20,8 +22,12 @@ use crate::analysis::test_stub::{
+ };
+ use crate::analysis::{ClassifiedSeam, RepoSeam};
+ use crate::app::CheckOutput;
++use crate::app::agent_brief::AgentBriefPolicy;
+ use crate::config::RiprConfig;
+ use crate::domain::{ExposureClass, Finding};
++use crate::output::agent_seam_packets::{
++    recommended_test_for, recommended_test_is_repair_edit_target,
++};
+ use std::path::{Path, PathBuf};
+ 
+ /// Which gap the caller means.
+@@ -92,6 +98,45 @@ pub(crate) struct TestStubResolution {
+     /// nearest gap in the same function was stubbed instead (#6298), so the
+     /// substitution is stated rather than left to the generated comment.
+     pub(crate) at_note: Option<String>,
++    /// The repair journey this stub feeds (#8727): the documented
++    /// `ripr agent repair` start for the same seam plus the repair packet's
++    /// admitted edit surface, projected from the classified entry that
++    /// produced the stub. `None` when the route cannot be established
++    /// honestly — a file-parse (`--at --kind`) resolution carries no
++    /// classified entry, or the fail-closed repair-route flip does not hold —
++    /// so no route is invented.
++    pub(crate) next_repair: Option<StubNextRepair>,
++}
++
++/// The repair journey one generated stub feeds (#8727). Both placements are
++/// independent derivations over the same classified seam: the stub's
++/// placement comes from the stub producer's owner-shape rules, the admitted
++/// surface from the repair packet's recommended-test authority. Comparing
++/// them at generation time turns the before phase's later dirty-premise
++/// refusal into a stated, named choice.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct StubNextRepair {
++    /// The documented start of the repair transaction for the same seam.
++    pub(crate) start_command: String,
++    /// The file the repair packet admits as its edit surface; the stub's
++    /// test must land here for the repair's before phase to accept the edit.
++    pub(crate) allowed_edit_surface: String,
++    /// Set when the stub's chosen placement file differs from the packet's
++    /// admitted surface: writing the stub where the stub says would make the
++    /// repair's before phase refuse the edit at the dirty-premise gate.
++    pub(crate) placement_divergence: Option<StubPlacementDivergence>,
++}
++
++/// Two independently derived placements that disagree at stub generation
++/// time, both named so the user can place the test where the repair admits
++/// it instead of discovering the refusal after the write.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct StubPlacementDivergence {
++    /// Where the stub is placed: an inline test module of a production file,
++    /// or an integration test file.
++    pub(crate) stub_file: String,
++    /// The only file the repair packet's edit cage admits.
++    pub(crate) packet_file: String,
+ }
+ 
+ #[derive(Debug)]
+@@ -120,7 +165,7 @@ pub(crate) fn resolve_test_stub(
+                 .find(|entry| entry.seam.id().as_str() == id)
+                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
+             let source = read_owner_source(root, &entry.seam)?;
+-            Ok(resolution_for(root, entry, source))
++            Ok(resolution_for(root, config, entry, source))
+         }
+         TestStubSelector::At { file, line, kind } => {
+             let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
+@@ -178,7 +223,7 @@ fn resolve_at_location(
+                 analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
+                     .map_err(TestStubError::Operational)?;
+             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
+-            resolve_at(root, candidates, file, line, kind)
++            resolve_at(root, config, candidates, file, line, kind)
+         }
+         (Some(relative), None) => {
+             let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+@@ -190,6 +235,7 @@ fn resolve_at_location(
+             .map_err(TestStubError::Operational)?;
+             resolve_at(
+                 root,
++                config,
+                 classified_candidates(&scoped.classified),
+                 file,
+                 line,
+@@ -199,7 +245,14 @@ fn resolve_at_location(
+         (None, _) => {
+             let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+                 .map_err(TestStubError::Operational)?;
+-            resolve_at(root, classified_candidates(&classified), file, line, kind)
++            resolve_at(
++                root,
++                config,
++                classified_candidates(&classified),
++                file,
++                line,
++                kind,
++            )
+         }
+     }
+ }
+@@ -220,7 +273,7 @@ impl<'a> AtCandidate<'a> {
+         }
+     }
+ 
+-    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
++    fn resolution(self, root: &Path, config: &RiprConfig, source: String) -> TestStubResolution {
+         match self {
+             Self::Shape(seam) => {
+                 let outcome = rust_test_stub(seam, None, &source);
+@@ -231,9 +284,13 @@ impl<'a> AtCandidate<'a> {
+                     outcome,
+                     grip_class: None,
+                     at_note: None,
++                    // A file-parse selection carries no classified entry, so
++                    // the repair packet's surface cannot be established; no
++                    // route is invented (#8727).
++                    next_repair: None,
+                 }
+             }
+-            Self::Classified(entry) => resolution_for(root, entry, source),
++            Self::Classified(entry) => resolution_for(root, config, entry, source),
+         }
+     }
+ }
+@@ -655,6 +712,7 @@ fn finding_text_is_on_disk(root: &Path, file: &str, line: usize, expression: &st
+ /// first candidate's refusal names why.
+ fn resolve_at(
+     root: &Path,
++    config: &RiprConfig,
+     candidates: Vec<AtCandidate<'_>>,
+     file: &str,
+     line: usize,
+@@ -759,7 +817,7 @@ fn resolve_at(
+     let mut first_refusal = None;
+     for candidate in candidates {
+         let seam_line = candidate.seam().display_line();
+-        let mut resolution = candidate.resolution(root, source.clone());
++        let mut resolution = candidate.resolution(root, config, source.clone());
+         // A finding line is the changed line, which need not hold a gap of
+         // its own; when the stub is for a different line, say so (#6298).
+         if seam_line != line {
+@@ -815,8 +873,17 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
+     })
+ }
+ 
+-fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
++fn resolution_for(
++    root: &Path,
++    config: &RiprConfig,
++    entry: &ClassifiedSeam,
++    source: String,
++) -> TestStubResolution {
+     let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
++    let next_repair = outcome
++        .as_ref()
++        .ok()
++        .and_then(|stub| next_repair_for(root, config, entry, stub));
+     TestStubResolution {
+         seam_id: entry.seam.id().as_str().to_string(),
+         owner: entry.seam.owner().to_string(),
+@@ -824,9 +891,64 @@ fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestSt
+         outcome,
+         grip_class: Some(entry.class),
+         at_note: None,
++        next_repair,
+     }
+ }
+ 
++/// The repair journey projection for one produced stub (#8727), or `None`
++/// when the repair route cannot be established honestly. The fail-closed
++/// flip is the same one the pilot's offered repair start uses
++/// (`repair_packet_eligibility` plus `recommended_test_is_repair_edit_target`):
++/// when it does not hold, the before phase would only refuse, so no start
++/// command is offered. The packet renderer also refuses policy-omitted seams
++/// (`AgentBriefPolicy::omission_reason_for_class`, applied in
++/// `render_agent_packet_for_seam_with_report` before any packet is produced),
++/// so a seam whose class is configured off gets no start command either —
++/// the offered journey must not be one the packet would refuse. The surface
++/// names the same `recommended_test_for` derivation the packet render writes
++/// into `allowed_edit_surface` (or the edit cage's `recommended_test.file`
++/// fallback), so it is the file the before-phase cage actually admits.
++fn next_repair_for(
++    root: &Path,
++    config: &RiprConfig,
++    entry: &ClassifiedSeam,
++    stub: &RustTestStub,
++) -> Option<StubNextRepair> {
++    if AgentBriefPolicy::from_config(config)
++        .omission_reason_for_class(entry.class)
++        .is_some()
++    {
++        return None;
++    }
++    if !repair_packet_eligibility(entry).eligible()
++        || !recommended_test_is_repair_edit_target(entry)
++    {
++        return None;
++    }
++    let surface = recommended_test_for(entry).file;
++    // Compare as paths, not strings: the placement is a checkout-relative
++    // path whose separators follow the host, the surface a stable `/`-joined
++    // derivation, and both may sit under any worktree root.
++    let placement_divergence =
++        (!stub.placement.file().ends_with(&surface)).then(|| StubPlacementDivergence {
++            stub_file: display_path(stub.placement.file()),
++            packet_file: surface.clone(),
++        });
++    Some(StubNextRepair {
++        start_command: format!(
++            "ripr agent repair --root {} --seam-id {} --phase before",
++            // Render the root with `root_path_display` before binding it, as
++            // the CLI recovery paths do: `display_path` would rewrite a
++            // literal backslash in a Unix checkout into a separator and the
++            // pasted command would target another directory (#4287).
++            shell_arg(&bound_root(&root_path_display(root))),
++            shell_arg(entry.seam.id().as_str()),
++        ),
++        allowed_edit_surface: surface,
++        placement_divergence,
++    })
++}
++
+ /// Inventory class for a seam selected from a file parse (`--at --kind`).
+ /// Classification is not used to pick the seam (#5471); this lookup is
+ /// disclosure only. A failed or empty inventory leaves `None`.
+@@ -936,6 +1058,50 @@ pub(crate) fn write_test_stub(
+     Ok(relative.to_path_buf())
+ }
+ 
++/// The revalidated disposition of a stub that resolved as `already_present`
++/// when `--write` would otherwise skip the file edit (#8990 review X3).
++#[derive(Debug)]
++pub(crate) enum AlreadyPresentRevalidation {
++    /// Current bytes still hold the identical stub: the write stays a no-op.
++    Current,
++    /// The placement no longer holds the stub: this fresh resolution's stub
++    /// is not `already_present`, so the caller writes it through the normal
++    /// guarded path instead of reporting success from bytes the resolver
++    /// read before a concurrent edit.
++    Rewrite(Box<TestStubResolution>),
++}
++
++/// Re-resolve a seam whose stub resolved as `already_present`, immediately
++/// before the CLI skips the write on that strength (#8990 review X3). The
++/// first resolution read the placement file before this moment; a concurrent
++/// editor can add or remove the stub in between, and the idempotent report
++/// must never claim "already written" from bytes that were not re-read. A
++/// seam that no longer resolves is a changed workspace, not a vanished
++/// claim: the caller refuses with the rerun message, the same shape
++/// `write_test_stub` uses for an owner file that changed after resolution.
++pub(crate) fn revalidate_already_present_stub(
++    root: &Path,
++    config: &RiprConfig,
++    selector: &TestStubSelector,
++) -> Result<AlreadyPresentRevalidation, String> {
++    let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
++        TestStubError::Operational(message)
++        | TestStubError::NotFound(message)
++        | TestStubError::Ambiguous(message) => {
++            format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
++        }
++    })?;
++    match &fresh.outcome {
++        Ok(stub) if stub.already_present => Ok(AlreadyPresentRevalidation::Current),
++        Ok(_) => Ok(AlreadyPresentRevalidation::Rewrite(Box::new(fresh))),
++        Err(refusal) => Err(format!(
++            "the workspace changed after the stub was computed ({}: {}); rerun `ripr agent stub`",
++            refusal.as_str(),
++            refusal.reason()
++        )),
++    }
++}
++
+ /// The stub is produced with `\n` line breaks. Splice it into a file that
+ /// is predominantly CRLF with CRLF breaks so the write does not leave mixed
+ /// line endings behind.
+@@ -1379,8 +1545,10 @@ mod tests {
+             ungripped("crates/a/src/lib.rs", 2),
+             ungripped("crates/b/src/lib.rs", 2),
+         ];
++        let config = RiprConfig::default();
+         let result = resolve_at(
+             Path::new("/nonexistent"),
++            &config,
+             classified_candidates(&classified),
+             "src/lib.rs",
+             2,
+@@ -1396,6 +1564,7 @@ mod tests {
+         // One full path is unambiguous and reaches the source read.
+         let one = resolve_at(
+             Path::new("/nonexistent"),
++            &config,
+             classified_candidates(&classified),
+             "crates/a/src/lib.rs",
+             2,
+@@ -1434,6 +1603,7 @@ mod tests {
+             placement,
+             test_name: "owner_boundary".to_string(),
+             text: String::new(),
++            already_present: false,
+             fill_ins: Vec::new(),
+             derived_inputs: Vec::new(),
+         };
+@@ -1490,6 +1660,7 @@ mod tests {
+             },
+             test_name: "t".to_string(),
+             text: String::new(),
++            already_present: false,
+             fill_ins: Vec::new(),
+             derived_inputs: Vec::new(),
+         };
+@@ -1940,9 +2111,257 @@ impl Size {
+             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
+         let outcome_ok = resolution.outcome.is_ok();
+         let grip = resolution.grip_class;
++        // #8727: a file-parse (`--at --kind`) selection carries no classified
++        // entry, so the repair packet's surface cannot be established and no
++        // route is invented.
++        let next_repair = resolution.next_repair.is_none();
+         let _ = std::fs::remove_dir_all(&root);
+         assert!(outcome_ok, "an open gap still yields a stub: {grip:?}");
++        assert!(next_repair, "--at --kind must not invent a repair route");
+         assert_ne!(grip, Some(SeamGripClass::StronglyGripped));
+         Ok(())
+     }
++
++    /// One classified gap whose repair route holds: an exact missing
++    /// boundary discriminator and a producer-owned integration test
++    /// proposal. `line` is display-only; `offset` must point at the seam
++    /// expression inside `source`.
++    fn repair_ready_entry(line: usize, offset: usize, owner: &str) -> ClassifiedSeam {
++        use crate::analysis::new_test_target::{
++            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
++        };
++        use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator};
++        use crate::domain::MissingDiscriminatorFact;
++        let mut entry = classified_at("src/lib.rs", line, SeamGripClass::WeaklyGripped);
++        entry.seam = RepoSeam::new(
++            "src/lib.rs",
++            owner,
++            SeamKind::PredicateBoundary,
++            offset,
++            line,
++            "x >= 100",
++            RequiredDiscriminator::BoundaryValue {
++                description: "x >= 100".to_string(),
++            },
++            ExpectedSink::ReturnValue,
++        );
++        entry.evidence.seam_id = entry.seam.id().clone();
++        entry
++            .evidence
++            .missing_discriminators
++            .push(MissingDiscriminatorFact {
++                value: "x >= 100".to_string(),
++                reason: "observed values do not include the boundary case".to_string(),
++                flow_sink: None,
++            });
++        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
++            proposal: Some(NewTestTargetProposal {
++                kind: NewTestKind::Integration,
++                file: PathBuf::from("tests/clamp_tests.rs"),
++                owner: owner.to_string(),
++                provenance: NewTestProposalProvenance::ProducerOwned,
++            }),
++            region: None,
++            blocker: None,
++            owner_inline_region: None,
++        });
++        entry
++    }
++
++    const FREE_FN_SOURCE: &str =
++        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
++    const IMPL_METHOD_SOURCE: &str = "pub struct Clamp;\nimpl Clamp {\n    pub fn clamp_to(&self, x: i32) -> i32 {\n        if x >= 100 { 100 } else { x }\n    }\n}\n";
++
++    fn seam_offset(source: &str) -> Result<usize, String> {
++        source
++            .find("x >= 100")
++            .ok_or_else(|| "fixture source lost its seam expression".to_string())
++    }
++
++    /// #8727: a repair-ready stub names the repair journey it feeds — the
++    /// documented `ripr agent repair` start and the packet's admitted edit
++    /// surface. A free crate-root owner takes the producer-admitted
++    /// integration file, so the two independent derivations agree and no
++    /// divergence is carried.
++    #[test]
++    fn next_repair_names_the_start_and_the_agreeing_surface() -> Result<(), String> {
++        let root = scratch_stub_crate("next-repair-agree", FREE_FN_SOURCE)?;
++        let entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
++        let seam_id = entry.seam.id().as_str().to_string();
++        let resolution = resolution_for(
++            &root,
++            &RiprConfig::default(),
++            &entry,
++            FREE_FN_SOURCE.to_string(),
++        );
++        // #8727 review: filename agreement is the projection's own rule, but
++        // the before phase's edit cage is the authority that must admit the
++        // written test; an agreeing placement must pass the target predicate
++        // the repair start itself uses.
++        let stub = resolution
++            .outcome
++            .as_ref()
++            .map_err(|refusal| format!("fixture seam must stub: {refusal:?}"))?;
++        assert!(
++            recommended_test_is_repair_edit_target(&entry),
++            "an agreeing surface must be one the repair route admits"
++        );
++        let next = resolution
++            .next_repair
++            .ok_or("a repair-ready stub must name its repair journey")?;
++        assert_eq!(
++            next.start_command,
++            format!(
++                "ripr agent repair --root {} --seam-id {} --phase before",
++                shell_arg(&bound_root(&root_path_display(&root))),
++                shell_arg(&seam_id),
++            ),
++            "the start command must name the same seam and root"
++        );
++        assert_eq!(next.allowed_edit_surface, "tests/clamp_tests.rs");
++        assert_eq!(
++            next.placement_divergence, None,
++            "a free owner lands the stub in the packet's own surface"
++        );
++        assert!(
++            stub.placement
++                .file()
++                .ends_with(next.allowed_edit_surface.as_str()),
++            "the admitted surface must cover the stub's placement file: {:?}",
++            stub.placement.file()
++        );
++        let _ = std::fs::remove_dir_all(&root);
++        Ok(())
++    }
++
++    /// #8727: the divergence the two derivations actually permit. The
++    /// producer's target selection proposes an integration file, but an
++    /// `impl`-method owner is not one an integration test can name, so the
++    /// stub falls back to an inline module of the production file while the
++    /// repair packet admits only the integration file. Generation time must
++    /// name both files — the before phase's dirty-premise gate would
++    /// otherwise refuse the written stub without ever mentioning it.
++    #[test]
++    fn next_repair_warns_when_the_stub_lands_outside_the_packet_surface() -> Result<(), String> {
++        let root = scratch_stub_crate("next-repair-diverge", IMPL_METHOD_SOURCE)?;
++        let entry = repair_ready_entry(4, seam_offset(IMPL_METHOD_SOURCE)?, "Clamp::clamp_to");
++        let resolution = resolution_for(
++            &root,
++            &RiprConfig::default(),
++            &entry,
++            IMPL_METHOD_SOURCE.to_string(),
++        );
++        let stub = resolution
++            .outcome
++            .as_ref()
++            .map_err(|refusal| format!("fixture seam must stub: {refusal:?}"))?;
++        assert!(
++            matches!(stub.placement, TestStubPlacement::NewInlineModule { .. }),
++            "an impl-method owner keeps the stub inline: {:?}",
++            stub.placement
++        );
++        let next = resolution
++            .next_repair
++            .ok_or("a repair-ready stub must name its repair journey")?;
++        assert_eq!(next.allowed_edit_surface, "tests/clamp_tests.rs");
++        let divergence = next
++            .placement_divergence
++            .ok_or("diverging placements must be named at generation time")?;
++        assert_eq!(divergence.stub_file, "src/lib.rs");
++        assert_eq!(divergence.packet_file, "tests/clamp_tests.rs");
++        let _ = std::fs::remove_dir_all(&root);
++        Ok(())
++    }
++
++    /// #8727 fail-closed honesty: the stub producer does not wait on the
++    /// repair-packet flip, but the repair journey must. With no safe test
++    /// target the route is not eligible, so no start command is offered —
++    /// offering one would send the user into a refusal.
++    #[test]
++    fn next_repair_stays_silent_when_the_repair_route_is_not_eligible() -> Result<(), String> {
++        let root = scratch_stub_crate("next-repair-ineligible", FREE_FN_SOURCE)?;
++        let mut entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
++        entry.evidence.new_test_target = None;
++        let resolution = resolution_for(
++            &root,
++            &RiprConfig::default(),
++            &entry,
++            FREE_FN_SOURCE.to_string(),
++        );
++        let outcome_ok = resolution.outcome.is_ok();
++        let next_repair = resolution.next_repair;
++        let _ = std::fs::remove_dir_all(&root);
++        assert!(outcome_ok, "the stub itself does not wait on the flip");
++        assert_eq!(
++            next_repair, None,
++            "no eligible repair route, no invented start command"
++        );
++        Ok(())
++    }
++
++    /// #8727 review: a seam whose class is configured off still yields a
++    /// ready stub (the producer does not gate on agent policy), but the
++    /// packet renderer refuses policy-omitted seams before producing any
++    /// packet, so the projected start command would only meet that refusal.
++    /// The same `AgentBriefPolicy::omission_reason_for_class` gate the packet
++    /// renderer applies must suppress the block.
++    #[test]
++    fn next_repair_stays_silent_when_the_class_is_configured_off() -> Result<(), String> {
++        let root = scratch_stub_crate("next-repair-configured-off", FREE_FN_SOURCE)?;
++        let entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
++        let config =
++            crate::config::tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
++        let resolution = resolution_for(&root, &config, &entry, FREE_FN_SOURCE.to_string());
++        let outcome_ok = resolution.outcome.is_ok();
++        let next_repair = resolution.next_repair;
++        let _ = std::fs::remove_dir_all(&root);
++        assert!(outcome_ok, "the stub itself does not wait on agent policy");
++        assert_eq!(
++            next_repair, None,
++            "a policy-omitted seam must not be offered a repair start"
++        );
++        Ok(())
++    }
++
++    /// #8727 review: the start command renders the selected root exactly as
++    /// the filesystem spells it. On Unix a `\` is an ordinary filename
++    /// character; rewriting it into a separator before binding would make
++    /// the pasted command target another directory (#4287). The unit form is
++    /// a plain string path — no checkout with such a name is created.
++    #[test]
++    fn next_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
++        let root = Path::new("/tmp/team\\repo");
++        let entry = repair_ready_entry(2, 0, "clamp_to");
++        let stub = RustTestStub {
++            placement: TestStubPlacement::NewIntegrationFile {
++                file: PathBuf::from("tests/clamp_tests.rs"),
++            },
++            test_name: "clamp_to_boundary".to_string(),
++            text: String::new(),
++            already_present: false,
++            fill_ins: Vec::new(),
++            derived_inputs: Vec::new(),
++        };
++        let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
++            .ok_or("a repair-ready stub must name its repair journey")?;
++        if cfg!(unix) {
++            assert!(
++                next.start_command.contains("team\\repo"),
++                "a literal backslash in a Unix root must survive: {}",
++                next.start_command
++            );
++        } else {
++            assert!(
++                !next.start_command.contains("team\\repo"),
++                "Windows treats `\\` as a separator: {}",
++                next.start_command
++            );
++            assert!(
++                next.start_command.contains("team/repo"),
++                "the root must render with stable separators: {}",
++                next.start_command
++            );
++        }
++        Ok(())
++    }
+ }
+diff --git a/crates/ripr/src/cli/commands/agent_stub.rs b/crates/ripr/src/cli/commands/agent_stub.rs
+index 36c7e3eb0..4a72ae369 100644
+--- a/crates/ripr/src/cli/commands/agent_stub.rs
++++ b/crates/ripr/src/cli/commands/agent_stub.rs
+@@ -10,8 +10,10 @@ use crate::analysis::seams::SeamGripClass;
+ use crate::analysis::test_stub::TestStubPlacement;
+ use crate::app::agent_brief::AgentBriefPolicy;
+ use crate::app::test_stub::{
+-    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+-    package_manifest_for, resolve_test_stub, run_command, write_test_stub,
++    AlreadyPresentRevalidation, StubNextRepair, StubPlacementDivergence, TargetLookup,
++    TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
++    package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
++    write_test_stub,
+ };
+ use crate::cli::CommandError;
+ use crate::cli::agent::AgentStubOptions;
+@@ -20,7 +22,7 @@ use crate::config::{RiprConfig, load_for_root};
+ use crate::output::gap_vocabulary::exposure_counterpart;
+ 
+ /// Schema version of the `rust_test_stub` JSON document.
+-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
++const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
+ 
+ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
+     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
+@@ -31,7 +33,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+     }
+     ensure_command_root(&options.root, "agent stub")?;
+     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
+-    let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
++    let mut resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
+         Ok(resolution) => resolution,
+         Err(error) => {
+             let (refusal_kind, message) = match error {
+@@ -60,6 +62,26 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+             )));
+         }
+     };
++    // #8990 review X3: `already_present` was read from the placement file
++    // before this moment; a concurrent edit can add or remove the stub in
++    // between. Re-resolve from current bytes before the write gate trusts
++    // the skip: a stub that vanished falls through to the normal guarded
++    // write, and a workspace that no longer resolves the seam refuses with
++    // the rerun message instead of reporting success from stale bytes.
++    if options.write
++        && resolution
++            .outcome
++            .as_ref()
++            .is_ok_and(|stub| stub.already_present)
++    {
++        match revalidate_already_present_stub(&options.root, &config, &options.selector) {
++            Ok(AlreadyPresentRevalidation::Current) => {}
++            Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
++                resolution = *fresh;
++            }
++            Err(message) => return Err(CommandError::Failure(message)),
++        }
++    }
+     let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
+     if let Some(note) = &resolution.at_note {
+         disclosure.warnings.insert(0, note.clone());
+@@ -90,7 +112,38 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+             )));
+         }
+     };
+-    let written = if options.write {
++    // #8727: a divergent placement and `--write` cannot combine honestly.
++    // Writing the stub would dirty a file outside the repair packet's
++    // admitted edit surface, and the before phase's dirty-premise gate would
++    // refuse the very start command named below. Committing the stub does
++    // not repair the journey either: the packet's edit cage admits only its
++    // own surface, so the written test would still sit where the repair
++    // cannot use it. Refuse before the write, naming both files and the
++    // supported route (EXIT_CODES.md: a refused `--write` stays exit 2).
++    if options.write
++        && let Some(message) = resolution
++            .next_repair
++            .as_ref()
++            .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
++    {
++        if options.json {
++            let document = serde_json::json!({
++                "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
++                "kind": "rust_test_stub",
++                "seam_id": resolution.seam_id,
++                "owner": resolution.owner,
++                "state": "refused",
++                "refusal": {"kind": "placement_divergence", "reason": message},
++                "grip_class": disclosure.grip_class,
++                "classification": disclosure.classification,
++                "warnings": disclosure.warnings,
++            });
++            write_stderr_refusal_json(render(&document)?);
++        }
++        return Err(CommandError::Failure(message));
++    }
++    // #8891: retain the already-present skip after the divergence guard.
++    let written = if options.write && !stub.already_present {
+         Some(write_test_stub(&options.root, &resolution, stub).map_err(CommandError::Failure)?)
+     } else {
+         None
+@@ -124,7 +177,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+     });
+ 
+     if options.json {
+-        let document = serde_json::json!({
++        let mut document = serde_json::json!({
+             "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
+             "kind": "rust_test_stub",
+             "seam_id": resolution.seam_id,
+@@ -141,11 +194,18 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+             "fill_ins": stub.fill_ins,
+             "derived_inputs": stub.derived_inputs,
+             "written": written.is_some(),
++            "already_present": stub.already_present,
+             "run_command": run,
+             "grip_class": disclosure.grip_class,
+             "classification": disclosure.classification,
+             "warnings": disclosure.warnings,
+         });
++        // #8727: the repair journey this stub feeds. The block is present
++        // only when the classified seam also establishes the repair route;
++        // otherwise the key stays absent rather than inventing a route.
++        if let Some(next_repair) = &resolution.next_repair {
++            document["next_repair"] = next_repair_json(next_repair);
++        }
+         println!("{}", render(&document)?);
+         return Ok(());
+     }
+@@ -167,7 +227,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+     for warning in &disclosure.warnings {
+         println!("{warning}");
+     }
+-    if written.is_some() {
++    if stub.already_present {
++        println!("Stub already written at {place}.");
++    } else if written.is_some() {
+         println!("Wrote test stub `{}` to {place}.", stub.test_name);
+     } else {
+         println!("Test stub `{}` for {place}:", stub.test_name);
+@@ -184,7 +246,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+     for fill_in in &stub.fill_ins {
+         println!("Fill in: {fill_in}");
+     }
+-    if written.is_none() {
++    if written.is_none() && !stub.already_present {
+         println!("Write it: {}", write_command(&options));
+     }
+     println!(
+@@ -196,6 +258,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
+             &file
+         )
+     );
++    // #8727: the stub feeds a repair journey; name its start, and when the
++    // stub's placement and the repair packet's admitted surface disagree,
++    // name both files here instead of letting the before phase refuse the
++    // edit later at the dirty-premise gate.
++    if let Some(next_repair) = &resolution.next_repair {
++        println!("Next repair: {}", next_repair.start_command);
++        if let Some(divergence) = &next_repair.placement_divergence {
++            println!("{}", divergence_warning_line(divergence));
++        }
++    }
+     Ok(())
+ }
+ 
+@@ -220,6 +292,50 @@ fn run_line(
+     }
+ }
+ 
++/// The `next_repair` block of the ready `rust_test_stub` document (#8727).
++/// `placement_divergence` is inserted only when the placements disagree:
++/// absence, not a JSON null — consumers branch on field presence, and an
++/// agreeing stub must not read as divergent.
++fn next_repair_json(next_repair: &StubNextRepair) -> serde_json::Value {
++    let mut block = serde_json::json!({
++        "start_command": next_repair.start_command,
++        "allowed_edit_surface": next_repair.allowed_edit_surface,
++    });
++    if let Some(divergence) = &next_repair.placement_divergence {
++        block["placement_divergence"] = serde_json::json!({
++            "stub_file": divergence.stub_file,
++            "packet_file": divergence.packet_file,
++        });
++    }
++    block
++}
++
++/// The plain-language divergence warning: both files named, and the
++/// consequence stated, so the user can place the test where the repair
++/// admits it before writing anything.
++fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
++    format!(
++        "Warning: this stub lands in {}, but the repair packet admits only {} as its edit surface. Write the test in {} instead, then run the repair; writing the stub to {} makes the repair's before phase refuse the edit.",
++        divergence.stub_file, divergence.packet_file, divergence.packet_file, divergence.stub_file,
++    )
++}
++
++/// Why a `--write` is refused when the stub's placement diverges from the
++/// packet's admitted edit surface (#8727 review): the write would dirty a
++/// file the repair's before phase refuses, so the command stops before
++/// changing source or test files and names the supported route. `None` when the
++/// placement agrees (or no repair route was projected), where the write is
++/// safe to apply.
++fn divergent_write_refusal(seam_id: &str, next_repair: &StubNextRepair) -> Option<String> {
++    let divergence = next_repair.placement_divergence.as_ref()?;
++    Some(format!(
++        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No source or test file was written.",
++        stub_file = divergence.stub_file,
++        packet_file = divergence.packet_file,
++        start_command = next_repair.start_command,
++    ))
++}
++
+ #[cfg(test)]
+ mod run_line_tests {
+     use super::run_line;
+@@ -320,8 +436,7 @@ fn stub_grip_disclosure(
+     config: &RiprConfig,
+ ) -> StubGripDisclosure {
+     let warnings = grip_class
+-        .and_then(|class| AgentBriefPolicy::from_config(config).omission_reason_for_class(class))
+-        .map(|reason| format!("seam {seam_id} {reason}"))
++        .and_then(|class| stub_grip_omission_reason(seam_id, class, config))
+         .into_iter()
+         .collect();
+     let grip_class = grip_class.map(|class| class.as_str());
+@@ -332,6 +447,28 @@ fn stub_grip_disclosure(
+     }
+ }
+ 
++/// The stub path's omission wording names the real reason. For
++/// `strongly_gripped` the default `Off` seam severity is the agent-brief
++/// rendering policy, not something the user configured, so the packet/brief
++/// "configured off" wording is false here (#8891): the seam is exposed
++/// because its tests already discriminate it, which is also why a second
++/// `--write` has nothing to add. A class a user severity actually disables
++/// keeps the packet wording.
++fn stub_grip_omission_reason(
++    seam_id: &str,
++    class: SeamGripClass,
++    config: &RiprConfig,
++) -> Option<String> {
++    if class == SeamGripClass::StronglyGripped {
++        return Some(format!(
++            "seam {seam_id} is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
++        ));
++    }
++    AgentBriefPolicy::from_config(config)
++        .omission_reason_for_class(class)
++        .map(|reason| format!("seam {seam_id} {reason}"))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -370,7 +507,7 @@ mod tests {
+         .map_err(|error| format!("envelope render refused: {error:?}"))?;
+         let document: serde_json::Value = serde_json::from_str(&rendered)
+             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
+-        assert_eq!(document["schema_version"], "0.2");
++        assert_eq!(document["schema_version"], "0.3");
+         assert_eq!(document["kind"], "rust_test_stub");
+         assert_eq!(document["seam_id"], "no-such-seam");
+         assert_eq!(document["state"], "refused");
+@@ -383,6 +520,112 @@ mod tests {
+         Ok(())
+     }
+ 
++    /// The ready document's `next_repair` block (#8727): the repair start
++    /// command, the packet's admitted edit surface, and — when the two
++    /// independent placements disagree — both files named.
++    #[test]
++    fn next_repair_block_carries_the_start_command_and_surface() -> Result<(), String> {
++        let agreement = StubNextRepair {
++            start_command: "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
++                .to_string(),
++            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
++            placement_divergence: None,
++        };
++        let value = next_repair_json(&agreement);
++        assert_eq!(
++            value["start_command"],
++            "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
++        );
++        assert_eq!(value["allowed_edit_surface"], "tests/clamp_tests.rs");
++        assert!(
++            value.get("placement_divergence").is_none(),
++            "agreeing placements must omit the divergence key entirely: {value}"
++        );
++
++        let divergent = StubNextRepair {
++            placement_divergence: Some(StubPlacementDivergence {
++                stub_file: "src/clamp.rs".to_string(),
++                packet_file: "tests/clamp_tests.rs".to_string(),
++            }),
++            ..agreement
++        };
++        let value = next_repair_json(&divergent);
++        assert_eq!(value["placement_divergence"]["stub_file"], "src/clamp.rs");
++        assert_eq!(
++            value["placement_divergence"]["packet_file"],
++            "tests/clamp_tests.rs"
++        );
++        Ok(())
++    }
++
++    /// The divergence warning names both files and states the consequence:
++    /// writing the stub where the stub says refuses the repair's before
++    /// phase, so the user can place the test in the admitted surface first.
++    #[test]
++    fn divergence_warning_names_both_files_and_the_consequence() {
++        let divergence = StubPlacementDivergence {
++            stub_file: "src/clamp.rs".to_string(),
++            packet_file: "tests/clamp_tests.rs".to_string(),
++        };
++        let line = divergence_warning_line(&divergence);
++        assert!(line.contains("src/clamp.rs"), "{line}");
++        assert!(line.contains("tests/clamp_tests.rs"), "{line}");
++        assert!(
++            line.contains("before phase refuse"),
++            "the warning must state the refusal consequence: {line}"
++        );
++    }
++
++    /// #8727 review: `--write` with divergent placements is refused before
++    /// any file changes — the write would dirty a file outside the packet's
++    /// admitted surface and the advertised start command would meet the
++    /// before phase's dirty-premise refusal. The message names both files,
++    /// the consequence, and the supported route; an agreeing placement (or
++    /// no projected route) refuses nothing.
++    #[test]
++    fn divergent_write_refuses_before_writing_with_actionable_guidance() -> Result<(), String> {
++        let agreeing = StubNextRepair {
++            start_command: "ripr agent repair --root . --seam-id abc --phase before".to_string(),
++            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
++            placement_divergence: None,
++        };
++        if divergent_write_refusal("abc", &agreeing).is_some() {
++            return Err("an agreeing placement must not refuse the write".to_string());
++        }
++
++        let divergent = StubNextRepair {
++            placement_divergence: Some(StubPlacementDivergence {
++                stub_file: "src/clamp.rs".to_string(),
++                packet_file: "tests/clamp_tests.rs".to_string(),
++            }),
++            ..agreeing
++        };
++        let message = divergent_write_refusal("abc", &divergent)
++            .ok_or_else(|| "a divergent placement must refuse the write".to_string())?;
++        if !message.contains("src/clamp.rs") {
++            return Err(format!("refusal must name the stub file: {message}"));
++        }
++        if !message.contains("tests/clamp_tests.rs") {
++            return Err(format!("refusal must name the packet surface: {message}"));
++        }
++        if !message.contains("before phase would refuse") {
++            return Err(format!(
++                "refusal must state the dirty-premise consequence: {message}"
++            ));
++        }
++        if !message.contains("No source or test file was written") {
++            return Err(format!(
++                "refusal must state no source or test was written: {message}"
++            ));
++        }
++        if !message.contains("ripr agent repair --root . --seam-id abc --phase before") {
++            return Err(format!(
++                "refusal must name the supported repair start: {message}"
++            ));
++        }
++        Ok(())
++    }
++
+     /// A location selector never resolved to a seam id, so the envelope
+     /// keeps the field set but leaves `seam_id` null rather than inventing
+     /// an identity.
+@@ -410,8 +653,13 @@ mod tests {
+         Ok(())
+     }
+ 
++    /// #8891: on the stub path a strongly_gripped seam is exposed because its
++    /// tests already discriminate it. The default `Off` severity for the
++    /// class is the agent-brief rendering policy, not user configuration, so
++    /// the disclosure names the real reason instead of reusing the
++    /// packet/brief "configured off" wording.
+     #[test]
+-    fn strongly_gripped_stub_reuses_the_packet_omission_reason() {
++    fn strongly_gripped_stub_names_the_real_reason() {
+         let disclosure = stub_grip_disclosure(
+             "clamp-seam",
+             Some(SeamGripClass::StronglyGripped),
+@@ -422,10 +670,39 @@ mod tests {
+         assert_eq!(
+             disclosure.warnings,
+             vec![
+-                "seam clamp-seam is configured off for strongly_gripped seams and is not included in agent results"
++                "seam clamp-seam is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
++                    .to_string()
++            ]
++        );
++        for warning in &disclosure.warnings {
++            assert!(
++                !warning.contains("configured off"),
++                "nothing was configured off: {warning}"
++            );
++        }
++    }
++
++    /// A class a user severity actually disables keeps the packet
++    /// "configured off" wording on the stub path: there the config is the
++    /// real reason.
++    #[test]
++    fn config_disabled_class_stub_keeps_the_configured_off_wording() -> Result<(), String> {
++        let config = crate::config::tests_only_parse(
++            r#"
++[severity.seams]
++weakly_gripped = "off"
++"#,
++        )?;
++        let disclosure =
++            stub_grip_disclosure("clamp-seam", Some(SeamGripClass::WeaklyGripped), &config);
++        assert_eq!(
++            disclosure.warnings,
++            vec![
++                "seam clamp-seam is configured off for weakly_gripped seams and is not included in agent results"
+                     .to_string()
+             ]
+         );
++        Ok(())
+     }
+ 
+     #[test]
+@@ -484,6 +761,154 @@ mod tests {
+         })
+     }
+ 
++    fn stub_write_at(root: &std::path::Path, at: &str, kind: &str) -> Result<(), CommandError> {
++        let selector = TestStubSelector::parse_at(at)
++            .and_then(|selector| selector.with_kind(kind))
++            .map_err(CommandError::Failure)?;
++        run_agent_stub(AgentStubOptions {
++            root: root.to_path_buf(),
++            root_explicit: true,
++            selector,
++            write: true,
++            json: false,
++        })
++    }
++
++    /// #8891: the second `--write` for the same seam recomputes the identical
++    /// test function. The command must leave the file alone (no `_2`
++    /// duplicate appended) and the resolution must flag the stub as already
++    /// present so the CLI reports "already written".
++    #[test]
++    fn second_write_for_the_same_seam_reports_already_written() -> Result<(), String> {
++        const OPEN_GAP: &str =
++            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
++        let root = scratch_crate("rewrite-clarity", OPEN_GAP)?;
++        stub_write_at(&root, "src/lib.rs:2", "predicate")
++            .map_err(|error| format!("first write must succeed: {error:?}"))?;
++        let written =
++            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
++        if written
++            .matches("fn clamp_to_boundary_discriminator(")
++            .count()
++            != 1
++        {
++            let _ = std::fs::remove_dir_all(&root);
++            return Err(format!(
++                "first write must add exactly one base-named stub:\n{written}"
++            ));
++        }
++
++        // The recomputed stub for the same seam is byte-identical to the one
++        // on disk, so the name collision is ripr's own earlier write, not a
++        // genuinely different test: it must be flagged already present.
++        let selector = TestStubSelector::parse_at("src/lib.rs:2")
++            .and_then(|selector| selector.with_kind("predicate"))
++            .map_err(|error| error.to_string())?;
++        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
++            .map_err(|error| format!("{error:?}"))?;
++        let already_present = resolution
++            .outcome
++            .as_ref()
++            .map_err(|refusal| format!("the second lookup must stay ready: {refusal:?}"))?
++            .already_present;
++
++        // The CLI's second `--write` must stay a ready exit 0 and leave the
++        // single base-named stub in place instead of suffixing a `_2`.
++        let second = stub_write_at(&root, "src/lib.rs:2", "predicate");
++        let rewritten =
++            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
++        let _ = std::fs::remove_dir_all(&root);
++        second.map_err(|error| format!("second write must stay ready: {error:?}"))?;
++        assert!(
++            already_present,
++            "the byte-identical recompute must be detected as already present"
++        );
++        if rewritten
++            .matches("fn clamp_to_boundary_discriminator(")
++            .count()
++            != 1
++            || rewritten.contains("_2(")
++        {
++            return Err(format!(
++                "second write must not append a `_2` duplicate:\n{rewritten}"
++            ));
++        }
++        Ok(())
++    }
++
++    /// #8990 review X3: `already_present` is read before the CLI reports the
++    /// idempotent write. When the placement file changes after resolution so
++    /// the stub is gone, the revalidation hands back a fresh not-present
++    /// stub and the write proceeds; when nothing changed, the write stays a
++    /// no-op.
++    #[test]
++    fn already_present_write_revalidates_the_placement_file() -> Result<(), String> {
++        const OPEN_GAP: &str =
++            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
++        let root = scratch_crate("rewrite-stale", OPEN_GAP)?;
++        stub_write_at(&root, "src/lib.rs:2", "predicate")
++            .map_err(|error| format!("first write must succeed: {error:?}"))?;
++        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
++        // Resolve while the stub is on disk: already_present.
++        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
++            .map_err(|error| format!("{error:?}"))?;
++        let present = resolution
++            .outcome
++            .as_ref()
++            .map_err(|refusal| format!("the stub on disk must resolve as ready: {refusal:?}"))?;
++        if !present.already_present {
++            let _ = std::fs::remove_dir_all(&root);
++            return Err("fixture: the stub on disk must resolve as already present".to_string());
++        }
++        // Unchanged bytes: the skip survives the re-read.
++        match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
++            Ok(AlreadyPresentRevalidation::Current) => {}
++            other => {
++                let _ = std::fs::remove_dir_all(&root);
++                return Err(format!(
++                    "an unchanged placement file must revalidate as current: {other:?}"
++                ));
++            }
++        }
++        // A concurrent edit removes the stub after resolution: the
++        // revalidation must not report success from the stale read; it
++        // returns a fresh resolution whose stub writes through the guarded
++        // path.
++        std::fs::write(root.join("src/lib.rs"), OPEN_GAP).map_err(|error| error.to_string())?;
++        let outcome = revalidate_already_present_stub(&root, &RiprConfig::default(), &selector);
++        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.inspect_err(|_| {
++            let _ = std::fs::remove_dir_all(&root);
++        })?
++        else {
++            let _ = std::fs::remove_dir_all(&root);
++            return Err("a removed stub must not revalidate as current".to_string());
++        };
++        let stub = fresh.outcome.as_ref().map_err(|refusal| {
++            let _ = std::fs::remove_dir_all(&root);
++            format!("the fresh resolution must stay ready: {refusal:?}")
++        })?;
++        if stub.already_present {
++            let _ = std::fs::remove_dir_all(&root);
++            return Err("the fresh stub after removal must not flag already_present".to_string());
++        }
++        write_test_stub(&root, &fresh, stub).inspect_err(|_| {
++            let _ = std::fs::remove_dir_all(&root);
++        })?;
++        let rewritten =
++            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
++        let _ = std::fs::remove_dir_all(&root);
++        if rewritten
++            .matches("fn clamp_to_boundary_discriminator(")
++            .count()
++            != 1
++        {
++            return Err(format!(
++                "the rewritten stub must be back in the file:\n{rewritten}"
++            ));
++        }
++        Ok(())
++    }
++
+     /// Same fixture as `at_kind_stub_discloses_a_strongly_gripped_inventory_class`
+     /// in `app/test_stub.rs`: the comparison on line 2 is already pinned. Line 3
+     /// is the function's closing brace, so `--at` substitutes. The #8364 test
+diff --git a/crates/ripr/src/cli/help/agent.rs b/crates/ripr/src/cli/help/agent.rs
+index af111b004..5605c04a1 100644
+--- a/crates/ripr/src/cli/help/agent.rs
++++ b/crates/ripr/src/cli/help/agent.rs
+@@ -154,14 +154,23 @@ Options:
+   --write          Apply the stub: insert it into the owner file's inline
+                    `#[cfg(test)]` module (or a new one), or create the
+                    proposed `tests/` file. Refuses when the file changed
+-                   since the stub was computed or the new file exists.
++                   since the stub was computed or the new file exists. A
++                   second --write for the same seam reports the stub already
++                   written instead of suffixing a `_2` duplicate.
+   --json           Emit one `rust_test_stub` JSON document (schema_version
+-                   `0.2`) with the placement, test name, exact text, the
++                   `0.3`) with the placement, test name, exact text, the
+                    `todo!()` fill-ins, derived inputs, run command, and
+                    inventory `grip_class` plus check `classification`
+                    when known. A strongly_gripped seam stays `state:
+-                   ready` (exit 0) and discloses the packet/repair
+-                   omission reason in `warnings` and human output.
++                   ready` (exit 0) and discloses the real reason in
++                   `warnings` and human output: its tests already
++                   discriminate it.
++                   When the seam's repair route is established, the ready
++                   document also carries `next_repair`: the
++                   `ripr agent repair --seam-id <id>` start command, the
++                   repair packet's admitted edit surface, and — when the
++                   stub's placement differs from that surface — a
++                   `placement_divergence` naming both files.
+ 
+ The stub calls the changed function with its real receiver and parameters,
+ fills a boundary input when the changed comparison names one, and stops at a
+@@ -170,11 +179,12 @@ fails until that value is written; ripr never invents the expected value.
+ `--at --kind` still selects from that one file's seams without using
+ classification to pick the seam; after selection it looks up the inventory
+ grip so the stub can disclose it. A strongly_gripped seam is still a
+-scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
+-("configured off for strongly_gripped seams and is not included in agent
+-results"). Side-effect and call-presence gaps, async, unsafe, and generic
+-owners are refused with a named reason (exit `3`); stdout stays empty on a
+-refusal.
++scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
++exposed because existing tests already discriminate it, so the disclosure
++says a stub would add nothing (only a class a user severity actually
++disables is described as "configured off"). Side-effect and call-presence
++gaps, async, unsafe, and generic owners are refused with a named reason
++(exit `3`); stdout stays empty on a refusal.
+ "#;
+ 
+ pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
+diff --git a/crates/ripr/tests/agent_stub_at_disclosure.rs b/crates/ripr/tests/agent_stub_at_disclosure.rs
+index b5189fb51..6ffec345c 100644
+--- a/crates/ripr/tests/agent_stub_at_disclosure.rs
++++ b/crates/ripr/tests/agent_stub_at_disclosure.rs
+@@ -35,11 +35,27 @@ impl Drop for Scratch {
+ }
+ 
+ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
++    stub_options(root, at, Some(kind), json, false)
++}
++
++fn stub_options(
++    root: &Path,
++    at: &str,
++    kind: Option<&str>,
++    json: bool,
++    write: bool,
++) -> Result<Output, String> {
+     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+     command
+         .args(["agent", "stub", "--root"])
+         .arg(root)
+-        .args(["--at", at, "--kind", kind]);
++        .args(["--at", at]);
++    if let Some(kind) = kind {
++        command.args(["--kind", kind]);
++    }
++    if write {
++        command.arg("--write");
++    }
+     if json {
+         command.arg("--json");
+     }
+@@ -48,6 +64,20 @@ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String>
+         .map_err(|error| format!("spawn ripr agent stub: {error}"))
+ }
+ 
++fn stub_write(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
++    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
++    command
++        .args(["agent", "stub", "--root"])
++        .arg(root)
++        .args(["--at", at, "--kind", kind, "--write"]);
++    if json {
++        command.arg("--json");
++    }
++    command
++        .output()
++        .map_err(|error| format!("spawn ripr agent stub --write: {error}"))
++}
++
+ fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
+     let prose_at = stderr
+         .find("ripr: agent stub: ")
+@@ -74,6 +104,191 @@ const GRIPPED_PREDICATE: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 1
+ const ASYNC_PREDICATE: &str =
+     "pub async fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+ 
++const DIVERGENT_METHOD: &str = "pub struct Clamp;\nimpl Clamp {\n    pub fn clamp_to(&self, x: i32) -> i32 {\n        if x >= 100 { 100 } else { x }\n    }\n}\n";
++
++fn repair_fixture(label: &str, source: &str, observer: &str) -> Result<Scratch, String> {
++    let scratch = Scratch::create(label, source)?;
++    std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
++    std::fs::write(scratch.0.join("tests/clamp_tests.rs"), observer)
++        .map_err(|error| error.to_string())?;
++    std::fs::write(scratch.0.join("sentinel"), "untracked user data\n")
++        .map_err(|error| error.to_string())?;
++    Ok(scratch)
++}
++
++#[derive(Debug, PartialEq, Eq)]
++struct FileSnapshot {
++    bytes: Vec<u8>,
++    modified: std::time::SystemTime,
++    permissions: std::fs::Permissions,
++    #[cfg(unix)]
++    identity: (u64, u64, i64, i64),
++}
++
++/// Source no-touch excludes only the normal analysis cache. Warm snapshots
++/// include that cache too; directory access times are not a write oracle.
++fn file_snapshot(
++    root: &Path,
++    include_cache: bool,
++) -> Result<std::collections::BTreeMap<PathBuf, FileSnapshot>, String> {
++    let mut pending = vec![root.to_path_buf()];
++    let mut files = std::collections::BTreeMap::new();
++    while let Some(directory) = pending.pop() {
++        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
++            let path = entry.map_err(|error| error.to_string())?.path();
++            let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
++            if !include_cache && relative == Path::new("target/ripr/cache") {
++                continue;
++            }
++            let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
++            if metadata.is_dir() {
++                pending.push(path);
++                continue;
++            }
++            #[cfg(unix)]
++            let identity = {
++                use std::os::unix::fs::MetadataExt;
++                (
++                    metadata.dev(),
++                    metadata.ino(),
++                    metadata.ctime(),
++                    metadata.ctime_nsec(),
++                )
++            };
++            files.insert(
++                relative.to_path_buf(),
++                FileSnapshot {
++                    bytes: std::fs::read(&path).map_err(|error| error.to_string())?,
++                    modified: metadata.modified().map_err(|error| error.to_string())?,
++                    permissions: metadata.permissions(),
++                    #[cfg(unix)]
++                    identity,
++                },
++            );
++        }
++    }
++    Ok(files)
++}
++
++/// Real inventory selects an inline impl-method stub while the packet admits
++/// its existing integration observer. No synthetic placement is injected.
++#[test]
++fn divergent_write_refuses_with_json_and_preserves_source_and_warm_cache() -> Result<(), String> {
++    let observer = "use divergent_write::Clamp;\n#[test]\nfn below_boundary() { assert_eq!(Clamp.clamp_to(80), 80); }\n";
++    let dry = repair_fixture("divergent_write", DIVERGENT_METHOD, observer)?;
++    let output = stub_options(&dry.0, "src/lib.rs:4", None, true, false)?;
++    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
++        .map_err(|error| format!("dry projection: {error}: {output:?}"))?;
++    if !output.status.success()
++        || document["state"] != "ready"
++        || document["next_repair"]["placement_divergence"]["stub_file"] != "src/lib.rs"
++        || document["next_repair"]["placement_divergence"]["packet_file"] != "tests/clamp_tests.rs"
++    {
++        return Err(format!(
++            "fixture must establish the real divergent route: {document}"
++        ));
++    }
++    for json in [true, false] {
++        // Each mode starts cold independently of the dry projection above.
++        let scratch = repair_fixture("divergent_write", DIVERGENT_METHOD, observer)?;
++        let before = file_snapshot(&scratch.0, false)?;
++        if before.len() != 4 || scratch.0.join("target").exists() {
++            return Err(format!(
++                "fixture must start cold with four user files: {before:?}"
++            ));
++        }
++        let mut warm = None;
++        for _ in 0..2 {
++            let output = stub_options(&scratch.0, "src/lib.rs:4", None, json, true)?;
++            if file_snapshot(&scratch.0, false)? != before {
++                return Err("refused write changed user paths, bytes or metadata".to_owned());
++            }
++            if output.status.code() != Some(2) || !output.stdout.is_empty() {
++                return Err(format!(
++                    "write refusal must exit 2 with empty stdout: {output:?}"
++                ));
++            }
++            let stderr = String::from_utf8_lossy(&output.stderr);
++            let prose = if json {
++                let (envelope, prose) = split_refusal_envelope(&stderr)?;
++                if envelope["schema_version"] != "0.3"
++                    || envelope["kind"] != "rust_test_stub"
++                    || envelope["state"] != "refused"
++                    || envelope["refusal"]["kind"] != "placement_divergence"
++                    || envelope["seam_id"] != document["seam_id"]
++                    || envelope["owner"] != document["owner"]
++                    || envelope["grip_class"] != document["grip_class"]
++                    || envelope["classification"] != document["classification"]
++                    || envelope["warnings"] != document["warnings"]
++                    || envelope["refusal"]["reason"].as_str()
++                        != Some(prose.trim().trim_start_matches("ripr: "))
++                    || envelope.get("written").is_some()
++                    || envelope.get("next_repair").is_some()
++                {
++                    return Err(format!(
++                        "versioned refusal must retain resolved identity: {envelope}"
++                    ));
++                }
++                prose.to_owned()
++            } else {
++                stderr.to_string()
++            };
++            if !prose.contains("src/lib.rs")
++                || !prose.contains("tests/clamp_tests.rs")
++                || !prose.contains("Rerun without --write")
++                || !prose.contains("No source or test file was written")
++            {
++                return Err(format!(
++                    "refusal must name both files and recovery: {prose}"
++                ));
++            }
++            let after = file_snapshot(&scratch.0, true)?;
++            if let Some(warm) = &warm
++                && &after != warm
++            {
++                return Err(
++                    "warm refusal changed file bytes or metadata, including cache".to_owned(),
++                );
++            }
++            warm = Some(after);
++        }
++    }
++    Ok(())
++}
++
++/// An agreeing placement still writes through the real CLI: the refusal
++/// regression cannot pass by disabling all writes or all repair projections.
++#[test]
++fn agreeing_repair_placement_still_writes_through_cli() -> Result<(), String> {
++    let scratch = repair_fixture(
++        "agreeing_write",
++        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n",
++        "use agreeing_write::clamp_to;\n#[test]\nfn below_boundary() { assert_eq!(clamp_to(80), 80); }\n",
++    )?;
++    let before =
++        std::fs::read(scratch.0.join("tests/clamp_tests.rs")).map_err(|error| error.to_string())?;
++    let output = stub_options(&scratch.0, "src/lib.rs:2", None, true, true)?;
++    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
++        .map_err(|error| format!("agreeing write JSON: {error}: {output:?}"))?;
++    let after =
++        std::fs::read(scratch.0.join("tests/clamp_tests.rs")).map_err(|error| error.to_string())?;
++    if !output.status.success()
++        || !output.stderr.is_empty()
++        || document["state"] != "ready"
++        || document["written"] != true
++        || document["next_repair"]["allowed_edit_surface"] != "tests/clamp_tests.rs"
++        || document["next_repair"]
++            .get("placement_divergence")
++            .is_some()
++        || before == after
++    {
++        return Err(format!(
++            "agreeing placement must really write: {output:?}: {document}"
++        ));
++    }
++    Ok(())
++}
++
+ /// Dropping `disclosure.warnings.insert(0, note)` would put the grip-class
+ /// omission first (or leave the note out). The #8364 test never sees this
+ /// vector.
+@@ -114,8 +329,13 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
+     let grip = warnings[1]
+         .as_str()
+         .ok_or_else(|| format!("warnings[1] must be the grip omission: {warnings:?}"))?;
+-    if !grip.contains("strongly_gripped") || !grip.contains("configured off") {
+-        return Err(format!("grip-class warning must follow the note: {grip}"));
++    if !grip.contains("strongly_gripped")
++        || !grip.contains("existing tests already discriminate it")
++        || grip.contains("configured off")
++    {
++        return Err(format!(
++            "grip-class warning must name the real reason, not 'configured off': {grip}"
++        ));
+     }
+ 
+     let human = stub(&scratch.0, "src/lib.rs:3", "predicate", false)?;
+@@ -175,3 +395,189 @@ fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<()
+     }
+     Ok(())
+ }
++
++/// An open-gap seam owns the stub ripr writes; the stub's own seam is then
++/// strongly gripped. #8891: the second `--write` must report the existing
++/// stub ("already written", with the run command) instead of suffixing a
++/// `_2` duplicate, and its disclosure must name the real reason (the seam is
++/// exposed) rather than claiming it is "configured off".
++#[test]
++fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), String> {
++    const OPEN_GAP: &str =
++        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
++    let scratch = Scratch::create("rewrite-clarity", OPEN_GAP)?;
++    let root = &scratch.0;
++
++    let first = stub_write(root, "src/lib.rs:2", "predicate", false)?;
++    if !first.status.success() {
++        return Err(format!(
++            "first --write must succeed: {}",
++            String::from_utf8_lossy(&first.stderr)
++        ));
++    }
++
++    let second = stub_write(root, "src/lib.rs:2", "predicate", false)?;
++    let stdout = String::from_utf8_lossy(&second.stdout).to_string();
++    let stderr = String::from_utf8_lossy(&second.stderr).to_string();
++    if !second.status.success() {
++        return Err(format!("second --write must stay exit 0: {stderr}"));
++    }
++    if !stdout.contains("Stub already written at") {
++        return Err(format!(
++            "second --write must report the existing stub: {stdout}"
++        ));
++    }
++    if stdout.contains("Wrote test stub") || stdout.contains("_2") {
++        return Err(format!(
++            "second --write must not write or name a `_2` duplicate: {stdout}"
++        ));
++    }
++    if !stdout.contains("Run it:") {
++        return Err(format!(
++            "the already-written report must still carry the run command: {stdout}"
++        ));
++    }
++    if stdout.contains("configured off") {
++        return Err(format!(
++            "nothing was configured off; the disclosure must name the real reason: {stdout}"
++        ));
++    }
++    if !stdout.contains("strongly_gripped") {
++        return Err(format!(
++            "the disclosure must still name the grip class: {stdout}"
++        ));
++    }
++
++    let written = std::fs::read_to_string(root.join("src/lib.rs"))
++        .map_err(|error| format!("read back the written file: {error}"))?;
++    let occurrences = written
++        .matches("fn clamp_to_boundary_discriminator(")
++        .count();
++    if occurrences != 1 || written.contains("_2(") {
++        return Err(format!(
++            "the file must hold exactly one base-named stub, no `_2` duplicate:\n{written}"
++        ));
++    }
++
++    // The JSON document reports the same state for machine consumers.
++    let json = stub_write(root, "src/lib.rs:2", "predicate", true)?;
++    let document: serde_json::Value = serde_json::from_slice(&json.stdout)
++        .map_err(|error| format!("ready stub JSON did not parse: {error}"))?;
++    if document["state"] != "ready"
++        || document["already_present"] != true
++        || document["written"] != false
++    {
++        return Err(format!(
++            "the second write document must be ready, already present, not rewritten: {document}"
++        ));
++    }
++    let warnings = document["warnings"]
++        .as_array()
++        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
++    let warning = warnings
++        .first()
++        .and_then(serde_json::Value::as_str)
++        .ok_or_else(|| format!("the disclosure warning must be present: {document}"))?;
++    if !warning.contains("strongly_gripped")
++        || !warning.contains("existing tests already discriminate it")
++        || warning.contains("configured off")
++    {
++        return Err(format!(
++            "the disclosure must name the real reason, not 'configured off': {warning}"
++        ));
++    }
++    Ok(())
++}
++
++/// The first write must change the source; repeated writes must leave every
++/// byte alone, including when a different test owns the base name. Comparing
++/// metadata also catches an unnecessary rewrite of identical bytes. Analysis
++/// may populate target caches; this contract covers the source file.
++#[test]
++fn repeated_writes_preserve_source_bytes_and_metadata_with_name_collisions() -> Result<(), String> {
++    const OPEN_GAP: &str =
++        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
++    const COLLISION: &str = "\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn clamp_to_boundary_discriminator() {\n        assert_eq!(super::clamp_to(80), 80);\n    }\n}\n";
++    for collision in [false, true] {
++        for crlf in [false, true] {
++            let mut source = OPEN_GAP.to_string();
++            if collision {
++                source.push_str(COLLISION);
++            }
++            if crlf {
++                source = source.replace('\n', "\r\n");
++            }
++            let scratch = Scratch::create("rewrite-collision", &source)?;
++            let path = scratch.0.join("src/lib.rs");
++            let expected_name = if collision {
++                "clamp_to_boundary_discriminator_2"
++            } else {
++                "clamp_to_boundary_discriminator"
++            };
++            let first = stub_write(&scratch.0, "src/lib.rs:2", "predicate", true)?;
++            assert!(first.status.success(), "first write: {first:?}");
++            let document: serde_json::Value = serde_json::from_slice(&first.stdout)
++                .map_err(|error| format!("first write JSON: {error}: {first:?}"))?;
++            assert_eq!(document["state"], "ready");
++            assert_eq!(document["test_name"], expected_name);
++            assert_eq!(document["already_present"], false);
++            assert_eq!(document["written"], true);
++            let written = std::fs::read(&path).map_err(|error| error.to_string())?;
++            assert_ne!(
++                written,
++                source.as_bytes(),
++                "first write must reach the file"
++            );
++            let text = std::str::from_utf8(&written).map_err(|error| error.to_string())?;
++            assert_eq!(text.matches(&format!("fn {expected_name}(")).count(), 1);
++            assert!(!text.contains("fn clamp_to_boundary_discriminator_3("));
++            if crlf {
++                assert!(!text.replace("\r\n", "").contains('\n'));
++            }
++            let before = std::fs::metadata(&path).map_err(|error| error.to_string())?;
++            for json in [false, true] {
++                let repeat = stub_write(&scratch.0, "src/lib.rs:2", "predicate", json)?;
++                assert!(repeat.status.success(), "repeat write: {repeat:?}");
++                if json {
++                    let document: serde_json::Value = serde_json::from_slice(&repeat.stdout)
++                        .map_err(|error| format!("repeat JSON: {error}: {repeat:?}"))?;
++                    assert_eq!(document["state"], "ready");
++                    assert_eq!(document["test_name"], expected_name);
++                    assert_eq!(document["already_present"], true);
++                    assert_eq!(document["written"], false);
++                } else {
++                    let stdout = String::from_utf8_lossy(&repeat.stdout);
++                    assert!(stdout.contains("Stub already written at"), "{stdout}");
++                    assert!(stdout.contains("Run it:"), "{stdout}");
++                    assert!(stdout.contains(expected_name), "{stdout}");
++                    assert!(!stdout.contains("Wrote test stub"), "{stdout}");
++                }
++                assert_eq!(
++                    std::fs::read(&path).map_err(|error| error.to_string())?,
++                    written
++                );
++                let after = std::fs::metadata(&path).map_err(|error| error.to_string())?;
++                assert_eq!(after.len(), before.len());
++                assert_eq!(
++                    after.modified().map_err(|error| error.to_string())?,
++                    before.modified().map_err(|error| error.to_string())?
++                );
++                assert_eq!(after.permissions(), before.permissions());
++                #[cfg(unix)]
++                {
++                    use std::os::unix::fs::MetadataExt;
++                    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
++                    assert_eq!(
++                        (after.mtime(), after.mtime_nsec()),
++                        (before.mtime(), before.mtime_nsec())
++                    );
++                    assert_eq!(
++                        (after.ctime(), after.ctime_nsec()),
++                        (before.ctime(), before.ctime_nsec())
++                    );
++                }
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/crates/ripr/tests/agent_stub_compiles.rs b/crates/ripr/tests/agent_stub_compiles.rs
+index a3f848808..513b59027 100644
+--- a/crates/ripr/tests/agent_stub_compiles.rs
++++ b/crates/ripr/tests/agent_stub_compiles.rs
+@@ -336,7 +336,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
+             Expect::Refused(kind) => {
+                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
+                 let (envelope, _) = split_refusal_envelope(&stderr)?;
+-                assert_eq!(envelope["schema_version"], "0.2");
++                assert_eq!(envelope["schema_version"], "0.3");
+                 assert_eq!(envelope["state"], "refused");
+                 assert!(output.stdout.is_empty());
+                 assert!(
+@@ -354,7 +354,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
+                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
+                 let ready: serde_json::Value =
+                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+-                assert_eq!(ready["schema_version"], "0.2");
++                assert_eq!(ready["schema_version"], "0.3");
+                 let document: serde_json::Value = serde_json::from_str(&stdout)
+                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
+                 assert_eq!(document["written"], true, "{needle}");
+@@ -902,7 +902,7 @@ fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), Str
+ }
+ 
+ fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
+-    assert_eq!(envelope["schema_version"], "0.2");
++    assert_eq!(envelope["schema_version"], "0.3");
+     assert_eq!(envelope["kind"], "rust_test_stub");
+     assert_eq!(envelope["state"], "refused");
+     assert_eq!(envelope["refusal"]["kind"], kind);
+@@ -981,7 +981,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
+         assert!(output.stdout.is_empty());
+         let stderr = String::from_utf8_lossy(&output.stderr);
+         let (envelope, prose) = split_refusal_envelope(&stderr)?;
+-        assert_eq!(envelope["schema_version"], "0.2");
++        assert_eq!(envelope["schema_version"], "0.3");
+         assert_eq!(envelope["state"], "refused");
+         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+         for field in ["owner", "grip_class", "classification"] {
+@@ -1078,7 +1078,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
+             );
+             let ready: serde_json::Value =
+                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
+-            assert_eq!(ready["schema_version"], "0.2");
++            assert_eq!(ready["schema_version"], "0.3");
+             assert_eq!(ready["state"], "ready");
+             assert_eq!(
+                 ready["owner"],
+@@ -1141,7 +1141,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
+         );
+         let ready: serde_json::Value =
+             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+-        assert_eq!(ready["schema_version"], "0.2");
++        assert_eq!(ready["schema_version"], "0.3");
+         assert_eq!(ready["state"], "ready");
+         assert_eq!(ready["seam_id"], id);
+         assert_eq!(ready["written"], false);
+@@ -1168,7 +1168,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
+     );
+     let ready: serde_json::Value =
+         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
+-    assert_eq!(ready["schema_version"], "0.2");
++    assert_eq!(ready["schema_version"], "0.3");
+     assert_eq!(ready["state"], "ready");
+     assert_eq!(ready["owner"], "src/lib.rs::fallible");
+     scratch.cleanup()
+@@ -1241,7 +1241,9 @@ const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x
+ 
+ /// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
+ /// seam inventory classifies `strongly_gripped`, and both JSON and human
+-/// output disclose that class with the packet/repair omission reason.
++/// output disclose that class. #8891: the disclosure names the real reason
++/// (the seam is exposed; nothing was configured off), not the packet/brief
++/// "configured off" wording.
+ #[test]
+ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
+     let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
+@@ -1276,11 +1278,14 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
+         .as_str()
+         .ok_or_else(|| format!("warning must be a string: {document}"))?;
+     assert!(
+-        warning.contains(
+-            "is configured off for strongly_gripped seams and is not included in agent results"
+-        ),
++        warning.contains("is strongly_gripped")
++            && warning.contains("existing tests already discriminate it"),
+         "{warning}"
+     );
++    assert!(
++        !warning.contains("configured off"),
++        "nothing was configured off for an exposed seam: {warning}"
++    );
+ 
+     let mut human = ripr_command();
+     human.args(["agent", "stub", "--root"]).arg(root).args([
+@@ -1303,11 +1308,14 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
+     );
+     let stdout = String::from_utf8_lossy(&human.stdout);
+     assert!(
+-        stdout.contains(
+-            "is configured off for strongly_gripped seams and is not included in agent results"
+-        ),
++        stdout.contains("is strongly_gripped")
++            && stdout.contains("existing tests already discriminate it"),
+         "{stdout}"
+     );
++    assert!(
++        !stdout.contains("configured off"),
++        "nothing was configured off for an exposed seam: {stdout}"
++    );
+     assert!(
+         stdout.contains("Test stub"),
+         "scaffold text remains after the disclosure: {stdout}"
+diff --git a/crates/ripr/tests/cli_smoke/closed_stderr.rs b/crates/ripr/tests/cli_smoke/closed_stderr.rs
+index b4741718a..3d2200bbc 100644
+--- a/crates/ripr/tests/cli_smoke/closed_stderr.rs
++++ b/crates/ripr/tests/cli_smoke/closed_stderr.rs
+@@ -218,7 +218,7 @@ fn unknown_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResult
+             "missing-stderr-seam",
+             "--json",
+         ],
+-        "0.2",
++        "0.3",
+         "rust_test_stub",
+         "/refusal/kind",
+         "seam_not_found",
+@@ -247,7 +247,7 @@ fn resolved_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResul
+             "--write",
+             "--json",
+         ],
+-        "0.2",
++        "0.3",
+         "rust_test_stub",
+         "/refusal/kind",
+         "owner_async",
+@@ -279,7 +279,7 @@ fn ready_stub_json_keeps_exit_zero_with_closed_stderr() -> TestResult {
+             closed,
+         )?;
+         let document: Value = serde_json::from_slice(&output.stdout)?;
+-        assert_eq!(document["schema_version"], "0.2");
++        assert_eq!(document["schema_version"], "0.3");
+         assert_eq!(document["kind"], "rust_test_stub");
+         assert_eq!(document["state"], "ready");
+         assert_eq!(document["written"], false);
+diff --git a/docs/AGENT_WORKFLOWS.md b/docs/AGENT_WORKFLOWS.md
+index 9e0dd801c..b8f571d66 100644
+--- a/docs/AGENT_WORKFLOWS.md
++++ b/docs/AGENT_WORKFLOWS.md
+@@ -295,9 +295,13 @@ with their seam IDs. With `--at` and `--kind` the stub
+ is read from that one file's seams without using classification to pick the
+ seam, and placed inline. After selection the command looks up the inventory
+ grip so JSON and human output can disclose it: a strongly_gripped seam stays
+-`state: ready` (exit 0) and reuses the packet/repair omission reason
+-("configured off for strongly_gripped seams and is not included in agent
+-results"). A bare `--at` (no `--kind`) classifies that one file and tries only
++`state: ready` (exit 0) and the disclosure names the real reason — the seam is
++exposed because its tests already discriminate it, so a stub would add
++nothing; only a class a user severity actually disables is described as
++"configured off" (#8891). Running `--write` again for the same seam reports
++the stub already written at the file (with the run command) instead of
++suffixing a `_2` duplicate; a different test that happens to share the name
++still suffixes. A bare `--at` (no `--kind`) classifies that one file and tries only
+ its reported gaps, so it never stubs a seam the tests already pin. It prints a compiling `#[test]` placed in the
+ owner file's inline `#[cfg(test)]` module, a new inline module, or the
+ proposed `tests/` file, calling the changed function with its real receiver
+@@ -316,7 +320,15 @@ Its `run_command` runs only that test through the owning package's
+ `--manifest-path` and, for an integration file, the effective cargo target
+ name (an explicit `[[test]]` name wins over the file stem). It is `null` when
+ no Cargo package owns the file or that target name cannot be established
+-(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). A
++(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). When
++the seam's repair route is established, the stub also names the journey it
++feeds: human output prints `Next repair: ripr agent repair --root <root>
++--seam-id <id> --phase before` after the Write/Run lines, and the
++`rust_test_stub` document carries the same start command, the repair packet's
++admitted `allowed_edit_surface`, and — when the stub's placement differs from
++that surface — a `placement_divergence` naming both files (schema `0.3`,
++#8727). No route is invented when the packet cannot be established, notably
++for `--at --kind` file-parse selections. A
+ `--at` path that matches files with gaps in several crates is refused; pass
+ the full path or the seam ID.
+ 
+diff --git a/docs/EXIT_CODES.md b/docs/EXIT_CODES.md
+index 247a6e037..e6d0a6440 100644
+--- a/docs/EXIT_CODES.md
++++ b/docs/EXIT_CODES.md
+@@ -166,7 +166,7 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+   refusal: among those gated by plain `cfg(test)`, the stub goes into the
+   one that already names the owner, else the nearest one after it, else the
+   nearest one before it. The named reason is on stderr, with
+-  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
++  a `rust_test_stub` schema `0.3` `state: refused` envelope under `--json`; stdout stays
+   empty. A failed read, analysis, or `--write` stays exit `2`.
+ - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
+   refusal of the default handoff — the seam id names no seam
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index e59d4ec46..7de21be8b 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -131,7 +131,7 @@ map is:
+ | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
+ | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
+ | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
+-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
++| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
+ 
+ The MCP tool envelopes carry the schema-versioned document as
+ `structuredContent` in every successful response; a result whose complete
+@@ -295,7 +295,7 @@ no witness-producing finding still renders its card with the `unavailable`
+ instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
+ already and is not a refusal.
+ 
+-## Agent stub (`rust_test_stub`, schema `0.2`)
++## Agent stub (`rust_test_stub`, schema `0.3`)
+ 
+ `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
+ the producer yields a stub (`state: ready`, exit 0). A producer refusal
+@@ -312,6 +312,30 @@ paths or seam IDs to choose; the unresolved identity and disclosure fields
+ stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
+ empty stdout, and the human decision prose after the stderr JSON.
+ 
++Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
++`next_repair` block naming the repair journey the stub feeds — the
++`ripr agent repair --seam-id <id> --phase before` start command and the repair
++packet's `allowed_edit_surface` file the stub's test must land in. When the
++stub's chosen placement differs from the packet's admitted surface (the stub
++producer routes by owner shape; the packet by its recommended-test authority),
++`placement_divergence` names both files so the divergence is stated at
++generation time instead of refusing later at the repair before phase's
++dirty-premise gate. The block is present only when the classified seam
++establishes the repair route (the same fail-closed flip the pilot's offered
++repair start uses); otherwise the key stays absent rather than inventing a
++route — notably for `--at --kind` file-parse selections, which carry no
++classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
++
++A divergent `--write --json` refuses with exit 2 and empty stdout. Its stderr
++schema `0.3` envelope uses `state: refused` and
++`refusal.kind: placement_divergence`, followed by human prose naming both
++files and the supported repair route. It retains the resolved `seam_id`,
++`owner`, `grip_class`, `classification`, and `warnings`, and uses the existing
++refused field set (no ready-only `next_repair` or `written` fields). The
++`refusal.reason` is the human message without the `ripr: ` prefix. Source and
++test bytes and metadata are preserved; cold analysis may create normal
++`target/ripr/cache/` entries.
++
+ Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
+ The field set is unchanged; the new refusal-kind spelling requires the new
+ version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+@@ -327,13 +351,24 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
+   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
+   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
+   else `null`. No per-surface translation fork.
+-- `warnings` — when the class is omitted from agent packet/repair results,
+-  one string reusing that omission reason, for example
+-  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
+-  Empty when the class is included in agent results or the grip is unknown.
++- `warnings` — one string naming why the class carries omission prose. A
++  `strongly_gripped` seam is exposed because its tests already discriminate
++  it, so the warning says exactly that (`seam <id> is strongly_gripped:
++  existing tests already discriminate it, so a stub would add nothing`); the
++  default `Off` severity for the class is the agent-brief rendering policy,
++  not user configuration, so the packet/brief "configured off" wording is not
++  reused here (#8891). A class a user severity actually disables keeps the
++  packet wording, for example `seam <id> is configured off for
++  weakly_gripped seams and is not included in agent results`. Empty when the
++  class is included in agent results or the grip is unknown.
+   Human output prints the same strings. Serving a strongly_gripped seam as
+   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
+   not a refusal.
++- `already_present` — `true` when the placement already holds the identical
++  test function ripr would write (a second run for the same seam recomputes
++  byte-identical text). A repeated `--write` then reports the stub as already
++  written instead of appending a `_2`-suffixed duplicate; `written` stays
++  `false` for that run (#8891).
+ 
+ Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
+ `derived_inputs`, `written`, `run_command`, and the refusal `refusal`
+diff --git a/docs/specs/README.md b/docs/specs/README.md
+index 30004316b..ad88aa89c 100644
+--- a/docs/specs/README.md
++++ b/docs/specs/README.md
+@@ -300,4 +300,6 @@ explicitly corrected, rejected, superseded, or deprecated.
+ | [RIPR-SPEC-0282](RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md) | proposed | Repair attempt after-refusal history and retry budget (#8726): every after-phase refusal is counted and kept in a capped history, an attempt that recorded 5 refusals stops its after phase with a typed exit-3 refusal that is not recorded as another refusal, and status and `ripr repair` stop offering or resuming the spent attempt |
+ | [RIPR-SPEC-0283](RIPR-SPEC-0283-mcp-adapter-clarity-contracts.md) | proposed | MCP adapter clarity contracts (#8734, #8735, #8736, #8737): the `ripr://gap/{canonical_id}` and `ripr://repair-card/{canonical_id}` routes percent-decode the captured id segment once when the raw capture misses (raw capture first, so legacy raw URIs and literal-`%` ids keep working) and fail closed with the typed `id_ambiguous` code when both the raw spelling and its decoded form name two distinct items, naming the plain-JSON-string tool route as recovery; `ripr_list_repair_attempts` declares `maximum: 256` on `limit`, rejects over-cap requests as invalid params at the dispatch edge, and echoes the effective served limit in `page.limit` and the bound continuation; the `ripr://workspace/status` resource carries the same restart recovery sentence as the status tool as a second text content entry on an unavailable root; and the `ripr_get_gap` / `ripr_get_repair_card` descriptions cross-reference each other with an explicit prefer-when rule |
+ | [RIPR-SPEC-0284](RIPR-SPEC-0284-agent-context-packet-clarity.md) | proposed | Agent context packet clarity contract (#8743, #8744, #8746): the `ripr context` packet contract is 1.1 and states the exposure verdict outright — `classification`, `severity` (resolved through the caller severity config), and `confidence`, wire-identical to the `ripr check --json` finding fields — so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the `unknown sink` row with its meaning (ripr could not classify where the changed value ends up; propagation confidence is limited) while JSON evidence strings stay raw, and the verdict-change recipe is qualified as provisional when that unclassified sink is the only propagation evidence; a related-test row whose assertion text was not retained reads `assertion not recorded` instead of the producer phrase `no oracle row`, and the bare fallback is suppressed when another row of the same test already printed its assertion — behavior ownership stays with RIPR-SPEC-0268 / RIPR-SPEC-0122 (flow-sink row) and RIPR-SPEC-0224 (examined-test evidence) |
++| [RIPR-SPEC-0287](RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md) | proposed | Agent stub names the repair journey it feeds (#8727): the `rust_test_stub` document (schema `0.3`, additive on `0.2`) may carry a `next_repair` block naming the `ripr agent repair --seam-id <id> --phase before` start command and the repair packet's admitted `allowed_edit_surface`, with a `placement_divergence` naming both files when the stub's owner-shape-driven placement differs from the packet's recommended-test surface, so the divergence is stated at generation time instead of refusing later at the before phase's dirty-premise gate; human output prints the `Next repair:` line after Write/Run it and the divergence warning naming both files; the block is present only when the same classified seam establishes the repair route (the pilot's fail-closed eligibility flip) and is omitted entirely for `--at --kind` file-parse selections, so no route is ever invented |
++| [RIPR-SPEC-0288](RIPR-SPEC-0288-agent-stub-rewrite-clarity.md) | proposed | Agent stub rewrite clarity contract (#8891): a second `ripr agent stub --write` for the same seam reports the stub already written at the file (with the run command; additive JSON `already_present`, `written` stays false) instead of suffixing a `_2` duplicate — only a byte-identical recompute is treated as already written, while a genuinely different test that shares the generated name still suffixes — and the `strongly_gripped` disclosure on the stub path names the real reason (existing tests already discriminate it, so a stub would add nothing) instead of reusing the packet/brief "configured off" wording, which stays only for classes a user severity actually disables |
+ | [RIPR-SPEC-0285](RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md) | proposed | Python framework scan is bounded, deterministic, and string-aware (#8706, #8707): per scanned directory only sorted regular `.py` test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; evidence is matched only against code lines — scanning stops at an unquoted `#`, skips single-line string contents, and only the matching delimiter closes a triple-quoted string — so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real `import pytest` / `import unittest` |
+diff --git a/docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md b/docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md
+new file mode 100644
+index 000000000..afd0c381d
+--- /dev/null
++++ b/docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md
+@@ -0,0 +1,229 @@
++# RIPR-SPEC-0287: Agent stub names the repair journey it feeds
++
++Status: proposed
++
++Owner: agent-loop
++
++Created: 2026-10-20
++
++Linked proposal:
++
++- None yet
++
++Linked ADRs:
++
++- None yet
++
++Linked plan:
++
++- None yet
++
++Linked issues:
++
++- #8727 (`ripr agent stub` never names the repair journey it feeds)
++
++Linked PRs:
++
++- None yet
++
++Support-tier impact:
++
++- None. The `rust_test_stub` document gains one optional block and the
++  human output gains two lines; no command accepts or executes anything
++  new, and the repair before phase is unchanged.
++- Claim boundaries remain governed by
++  [support tiers](../status/SUPPORT_TIERS.md).
++
++Policy impact:
++
++- The `rust_test_stub` schema version is `0.3` (`0.2` → `0.3`,
++  additive); `docs/OUTPUT_SCHEMA.md`, `docs/EXIT_CODES.md`,
++  `docs/AGENT_WORKFLOWS.md`, and the `ripr agent stub --help` text carry
++  the same literal.
++- No new exposure class, oracle kind, severity, or stage-state value.
++  The eligibility flip reuses the existing repair-route authorities
++  (`repair_packet_eligibility` plus `recommended_test_is_repair_edit_target`);
++  nothing is re-derived or re-interpreted.
++
++## Problem
++
++`ripr agent stub` produces a ready-to-write test for a seam, but its
++output never mentions the repair journey that test feeds. To continue
++from stub to repair the user must re-derive the entire identity: no
++`ripr agent repair --seam-id <id>` start command, no pointer to the
++repair packet, no note that the packet's `allowed_edit_surface` is
++derived independently of the stub's placement. Worse, nothing checks
++that the two independent derivations agree. The stub's placement is
++owner-shape-driven (a free crate-root owner can be named from an
++integration test; anything else — an `impl` method, a private or nested
++function — keeps the stub inline in the production file), while the
++repair packet admits the surface its recommended-test authority names.
++When the producer's target selection proposes an integration file for a
++seam whose owner is not integration-reachable, the stub lands in the
++production file and the repair packet admits only the integration file.
++The user writes the stub, then the repair before phase refuses at the
++dirty-premise gate (tracked production content outside the allowed test
++surface) with a message that never mentions the stub.
++
++## Behavior
++
++### `next_repair` on the ready document (#8727)
++
++The `rust_test_stub` schema moves to `0.3`, additive on `0.2`: the ready
++document may carry a `next_repair` block, and refused envelopes keep the
++`0.2` field set. The block states, for the same seam:
++
++- `start_command`: the documented repair transaction start,
++  `ripr agent repair --root <root> --seam-id <id> --phase before`, with
++  the root and seam id shell-quoted exactly as the pilot's offered repair
++  start quotes them.
++- `allowed_edit_surface`: the repair packet's admitted edit surface —
++  the same `recommended_test_for` derivation the packet render writes
++  into `allowed_edit_surface` and the before-phase edit cage falls back
++  to from `recommended_test.file`. The stub's test must land in this file
++  for the repair's before phase to accept the edit.
++- `placement_divergence`: `{"stub_file": <file>, "packet_file": <file>}`,
++  present only when the stub's chosen placement file differs from the
++  packet's admitted surface. The divergence is stated at generation time,
++  naming both files, instead of failing later at the before phase's
++  dirty-premise gate.
++
++The block is present only when the classified seam that produced the stub
++also establishes the repair route: the same fail-closed flip the pilot's
++offered repair start uses (`repair_packet_eligibility(entry).eligible()`
++plus `recommended_test_is_repair_edit_target(entry)`). When the flip does
++not hold, or the resolution carries no classified entry at all (a
++`--at --kind` file-parse selection), the `next_repair` key stays absent
++rather than inventing a route. The projection is computed from the
++classified entry the resolver already loaded; no second inventory pass is
++made and no packet file is read.
++
++### Human output (#8727)
++
++After the existing `Write it:` / `Run it:` lines, the human output prints
++`Next repair: <start_command>`. When the placements diverge, a warning
++line follows, naming both files and stating the consequence: writing the
++stub where the stub says makes the repair's before phase refuse the edit;
++the test belongs in the packet's admitted surface.
++
++With `--write`, that divergence refuses the write instead of warning after
++it: the command names both files and the supported route — write the test
++in the packet's admitted surface, then run the repair — without changing
++source or test file bytes or metadata. Analysis can populate the normal
++`target/ripr/cache/` cache on a cold run. With `--json`, stdout stays empty
++and stderr carries a schema `0.3`, `state: refused` envelope with
++`refusal.kind: placement_divergence`, followed by the human prose. The
++envelope retains the resolved seam identity and disclosure fields, with the
++same field set as other resolved refusals. This refused write keeps exit 2.
++The written stub would leave a file dirty outside the admitted surface, and the repair's before phase would refuse the advertised start
++command at the dirty-premise gate; a warning printed after the write
++cannot prevent that. Committing the stub does not repair the journey
++either, because the packet's edit cage admits only its own surface, so the
++refusal is the honest resolution.
++
++## Required Evidence
++
++- A repair-ready stub whose placement agrees with the packet surface
++  carries `next_repair` with the repair start command and the admitted
++  surface, and no divergence.
++- A seam whose producer target selection proposes an integration file
++  while the owner is not integration-reachable (for example an `impl`
++  method) produces a stub in the production file's inline module and a
++  `next_repair` whose `placement_divergence` names the production file
++  and the integration file — at stub generation time.
++- When the repair route cannot be established (no eligible packet route,
++  or a `--at --kind` file-parse selection with no classified entry), the
++  ready document omits `next_repair` and the human output prints no
++  repair line; no route is invented.
++- `agent stub --write` on a seam whose placement diverges from the packet
++  surface refuses before writing, names both files and the supported
++  route, and preserves user-file bytes and metadata. Cold analysis-cache
++  creation is permitted; a warm refusal preserves cache files too.
++- The schema version is `0.3` on every ready and refused
++  `rust_test_stub` document, and the docs/help literals agree.
++
++## Test Mapping
++
++- `crates/ripr/tests/agent_stub_at_disclosure.rs::divergent_write_refuses_with_json_and_preserves_source_and_warm_cache`
++- `crates/ripr/tests/agent_stub_at_disclosure.rs::agreeing_repair_placement_still_writes_through_cli`
++
++- `crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface`
++- `crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface`
++- `crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible`
++- `crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_class_is_configured_off`
++  (a policy-omitted seam gets no start command, in both human output and JSON)
++- `crates/ripr/src/app/test_stub.rs::tests::next_repair_start_preserves_a_literal_backslash_unix_root`
++  (the quoted root renders exactly as the filesystem spells it)
++- `crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped`
++  (extended: a `--at --kind` resolution carries no invented route)
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface`
++  (extended: an agreeing placement omits `placement_divergence` entirely)
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence`
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergent_write_refuses_before_writing_with_actionable_guidance`
++
++## Acceptance Examples
++
++Ready document, schema `0.3`, for a seam whose producer target selection
++proposes `tests/clamp_tests.rs` while the stub lands inline in
++`src/clamp.rs`:
++
++```json
++{
++  "schema_version": "0.3",
++  "kind": "rust_test_stub",
++  "state": "ready",
++  "next_repair": {
++    "start_command": "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before",
++    "allowed_edit_surface": "tests/clamp_tests.rs",
++    "placement_divergence": {
++      "stub_file": "src/clamp.rs",
++      "packet_file": "tests/clamp_tests.rs"
++    }
++  }
++}
++```
++
++Human output tail for the same seam:
++
++```text
++Write it: ripr agent stub --root . --seam-id 8f7fa8644fd12280 --write
++Run it: cargo test --manifest-path Cargo.toml --lib clamp_to_...
++Next repair: ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before
++Warning: this stub lands in src/clamp.rs, but the repair packet admits only tests/clamp_tests.rs as its edit surface. Write the test in tests/clamp_tests.rs instead, then run the repair; writing the stub to src/clamp.rs makes the repair's before phase refuse the edit.
++```
++
++A `--at --kind` file-parse ready document carries schema `0.3` with no
++`next_repair` key, and its human output stops after the `Run it:` line.
++
++## Non-Goals
++
++- No new exposure class, severity, oracle vocabulary, or stage state; the
++  block reports the seam's existing repair-route facts.
++- The stub does not re-derive or weaken the repair packet's readiness
++  gates: the block is omitted entirely when `repair_packet_eligibility`
++  or the repair-edit-target flip does not hold.
++- No repair execution authority moves into the stub path; the block only
++  names the documented start command and the admitted edit surface.
++
++## Implementation Mapping
++
++- `crates/ripr/src/app/test_stub.rs` owns `StubNextRepair` and
++  `StubPlacementDivergence`; `next_repair_for` projects the block from the
++  same classified entry that produced the stub, reusing
++  `analysis::repair_route::repair_packet_eligibility`,
++  `recommended_test_is_repair_edit_target`, and
++  `output::agent_seam_packets::recommended_test_for` (the same derivation
++  the packet writes into `allowed_edit_surface`), so the offered surface
++  is the file the before-phase cage actually admits.
++- `crates/ripr/src/cli/commands/agent_stub.rs` renders the conditional
++  `next_repair` JSON block in the ready `rust_test_stub` document (schema
++  `0.3`, additive) and the `Next repair:` / divergence warning lines on
++  the human surface; `RUST_TEST_STUB_SCHEMA_VERSION` feeds both paths.
++- `crates/ripr/src/cli/help/agent.rs` documents the block and the
++  omission rule beside the existing strongly_gripped guidance;
++  `docs/OUTPUT_SCHEMA.md` and `docs/AGENT_WORKFLOWS.md` carry the
++  wire shape and journey wording.
++
++## Metrics
++
++- `unit_test_pass_rate` on the registered tests.
+diff --git a/docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md b/docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md
+new file mode 100644
+index 000000000..f4f8f15b0
+--- /dev/null
++++ b/docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md
+@@ -0,0 +1,196 @@
++# RIPR-SPEC-0288: Agent stub rewrite clarity contract
++
++Status: proposed
++
++Owner: product / cli
++
++Created: 2026-10-20
++
++Linked proposal:
++
++- None yet
++
++Linked ADRs:
++
++- None yet
++
++Linked plan:
++
++- None yet
++
++Linked issues:
++
++- #8891 (split from #8766: a second `ripr agent stub --write` for the same
++  seam must report the existing stub and must not misdescribe it)
++
++Linked PRs:
++
++- None yet
++
++Support-tier impact:
++
++- None. The `rust_test_stub` document (schema `0.2`) gains one additive
++  `already_present` boolean; no command accepts or executes anything new.
++- Claim boundaries remain governed by
++  [support tiers](../status/SUPPORT_TIERS.md).
++
++Policy impact:
++
++- No new exposure class, oracle kind, severity, or stage-state value. The
++  new JSON field is additive on schema `0.2`; `written` keeps its meaning
++  (this run appended the stub).
++- Behavior ownership stays with the stub surfaces: stub production and
++  placement remain RIPR-SPEC-0003-family / #5471 territory, and the
++  agent-brief omission vocabulary remains the brief's own contract. This
++  spec records the stub-path rewrite-truth contract those surfaces must
++  honor.
++
++## Problem
++
++`ripr agent stub --write` run twice for the same seam taught the wrong
++lesson twice:
++
++1. The second run wrote a duplicate test with a `_2` suffix. The stub
++   producer's name-collision loop (`unique_test_name`) exists so a
++   genuinely different test that happens to share the generated name is
++   not shadowed; but a second run for the same seam recomputes
++   byte-identical text, so the collision is ripr's own earlier write and
++   the honest answer is "the stub is already there", not a second file
++   edit.
++2. After the first write, the stub's own seam classifies
++   `strongly_gripped` (it is exposed: the test ripr wrote already grips
++   it). The disclosure reused the agent packet/brief omission wording
++   verbatim — "is configured off for strongly_gripped seams and is not
++   included in agent results". That is false on the stub path: nothing
++   was configured off. The default `Off` seam severity for
++   `strongly_gripped` is the agent-brief rendering policy (exposed seams
++   are not brief repair targets), not a user configuration, and the seam
++   is omitted because its tests already discriminate it — the opposite of
++   disabled.
++
++## Behavior
++
++### Already-written detection (#8891 item 1)
++
++When the stub's uniqueness scope (the placement file's current text) already
++contains the exact test function ripr would write — same rendered body, same
++base test name, modulo line endings — the stub is flagged `already_present`:
++
++- `RustTestStub.already_present` is `true`; `test_name` stays the base name
++  and `text` is the identical function.
++- A repeated `--write` does not touch the file. Human output says
++  `Stub already written at <file>:<line> ...` and still prints the run
++  command; the JSON document stays `state: "ready"`, sets
++  `"already_present": true`, and keeps `"written": false` (nothing was
++  appended this run).
++- A name collision with genuinely different content (a user's own test that
++   shares the generated name) is unchanged: the name still suffixes
++  (`_2`, …) and the write proceeds. Only the byte-identical recompute is
++  treated as already written.
++- The detection is content comparison, not bookkeeping: it does not matter
++  which command or run inserted the text.
++
++### Truthful strongly_gripped disclosure (#8891 item 2)
++
++On the stub path, the grip-class disclosure names the real reason:
++
++- `strongly_gripped` warns `seam <id> is strongly_gripped: existing tests
++  already discriminate it, so a stub would add nothing`. The word
++  "configured off" must not appear: the default `Off` severity for the
++  class is policy, and the classification counterpart (`exposed`) is the
++  state, not a suppression.
++- A class a user severity actually disables keeps the packet/brief wording
++  (`seam <id> is configured off for <class> seams and is not included in
++  agent results`): there the config is the real reason.
++- The disclosure remains a warning, not a refusal: a `strongly_gripped`
++  seam stays `state: "ready"` / exit 0 (RIPR-SPEC-0003-family scaffold
++  semantics, #7290).
++
++## Required Evidence
++
++- A second `--write` for the same seam leaves the file with exactly one
++  base-named test function, reports "already written" with the run command
++  on the human surface, and emits `state: "ready"`,
++  `already_present: true`, `written: false` under `--json`.
++- A same-named test with different content still receives the `_2` suffix
++  and a normal write.
++- The `strongly_gripped` disclosure on the stub path names the grip and the
++  real reason, never "configured off"; a config-disabled class (for
++  example `weakly_gripped = "off"` in `ripr.toml`) still reads "configured
++  off".
++
++## Test Mapping
++
++- `crates/ripr/src/analysis/test_stub/tests.rs::recomputed_stub_for_the_same_seam_is_flagged_already_present`
++- `crates/ripr/src/analysis/test_stub/tests.rs::same_named_but_different_test_still_suffixes`
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::second_write_for_the_same_seam_reports_already_written`
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::strongly_gripped_stub_names_the_real_reason`
++- `crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording`
++- `crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate`
++- `crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification`
++- `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`
++  (ordering pin; the grip warning wording it pins is the new reasoned
++  form)
++
++## Acceptance Examples
++
++Second `--write` for the same seam, human output (excerpt):
++
++```text
++seam <id> is strongly_gripped: existing tests already discriminate it, so a stub would add nothing
++Stub already written at src/lib.rs:14 (existing inline module).
++Run it: cargo test --manifest-path Cargo.toml clamp_to_boundary_discriminator
++```
++
++Same run under `--json` (excerpt):
++
++```json
++{
++  "schema_version": "0.2",
++  "kind": "rust_test_stub",
++  "state": "ready",
++  "written": false,
++  "already_present": true,
++  "warnings": [
++    "seam <id> is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
++  ]
++}
++```
++
++A user test named `price_boundary_discriminator` with different body
++content still yields `test_name: "price_boundary_discriminator_2"` and a
++normal write.
++
++With `weakly_gripped = "off"` in `ripr.toml`, a weakly gripped seam's stub
++disclosure still reads `seam <id> is configured off for weakly_gripped
++seams and is not included in agent results`.
++
++## Non-Goals
++
++- No change to the agent packet/brief omission vocabulary on the brief and
++  packet surfaces themselves; those keep their own wording contract.
++- No change to stub placement, selection, or refusal kinds.
++- The `OutsideInlineTestRegion ... unparseable` attempt-terminal recovery
++  text (a parse error in the agent's new test) lives in the edit-cage
++  attempt authority, not the stub path; its missing fix-the-syntax hint is
++  recorded in #8891 but intentionally not changed here.
++
++## Implementation Mapping
++
++- `crates/ripr/src/analysis/test_stub.rs` owns `RustTestStub` (new
++  `already_present` field) and the detection: `rust_test_stub_for_target`
++  renders the base-named function and `scope_contains_test_fn` compares it
++  against the uniqueness scope modulo line endings before the
++  `unique_test_name` suffix is honored.
++- `crates/ripr/src/cli/commands/agent_stub.rs` owns the write gate (skip
++  `write_test_stub` when `already_present`), the human "already written"
++  line, the additive JSON `already_present` field, and
++  `stub_grip_omission_reason`, which names the real reason for
++  `strongly_gripped` and defers to the packet/brief wording only for
++  classes a user severity actually disables.
++- `crates/ripr/src/cli/help/agent.rs`, `docs/AGENT_WORKFLOWS.md`, and
++  `docs/OUTPUT_SCHEMA.md` carry the user-visible contract text.
++
++## Metrics
++
++- `unit_test_pass_rate` on the registered tests.
+diff --git a/policy/doc-artifacts.toml b/policy/doc-artifacts.toml
+index 2d7c74de7..cb8737430 100644
+--- a/policy/doc-artifacts.toml
++++ b/policy/doc-artifacts.toml
+@@ -1707,6 +1707,22 @@ status = "proposed"
+ owner = "product-output"
+ standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."
+ 
++[[artifact]]
++id = "RIPR-SPEC-0287"
++kind = "spec"
++path = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
++status = "proposed"
++owner = "agent-loop"
++standalone_reason = "States the agent stub repair-journey pointer (#8727): the rust_test_stub document (schema 0.3, additive on 0.2) may carry a next_repair block naming the ripr agent repair --seam-id start command and the repair packet's admitted allowed_edit_surface, with a placement_divergence naming both files when the stub's owner-shape-driven placement differs from the packet's recommended-test surface, so the divergence is stated at generation time instead of refusing later at the before phase's dirty-premise gate; the block uses the same fail-closed eligibility flip as the pilot's offered repair start and is omitted entirely when the route cannot be established, so no route is invented."
++
++[[artifact]]
++id = "RIPR-SPEC-0288"
++kind = "spec"
++path = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
++status = "proposed"
++owner = "product-cli"
++standalone_reason = "Issue #8891 records the agent stub rewrite clarity contract: a second ripr agent stub --write for the same seam reports the stub already written at the file (with the run command; additive JSON already_present, written stays false) instead of suffixing a _2 duplicate, where only a byte-identical recompute counts as already written and a genuinely different test sharing the generated name still suffixes; and the strongly_gripped disclosure on the stub path names the real reason (existing tests already discriminate it, so a stub would add nothing) instead of reusing the packet/brief 'configured off' wording, which stays only for classes a user severity actually disables."
++
+ [[artifact]]
+ id = "RIPR-SPEC-0285"
+ kind = "spec"
+diff --git a/policy/process_allowlist.txt b/policy/process_allowlist.txt
+index c8b6d8aa8..7dd89a6e9 100644
+--- a/policy/process_allowlist.txt
++++ b/policy/process_allowlist.txt
+@@ -40,6 +40,7 @@ crates/ripr/src/output/first_pr.rs|Command::new|7|first-pr/selected-root-proof|T
+ crates/ripr/src/output/first_pr/preflight.rs|Command::new|1|first-pr/preflight-fifo-proof|#6690: test-only mkfifo fixture proves preflight classifies a FIFO named ripr.toml as unreadable without opening it; bounded_input::read_to_string would wait for a writer. Test module only; no production spawn.
+ crates/ripr/src/process_owner.rs|Command::new|7|process-owner-3803|#3803: the shared owned-subprocess authority is the ONE place that constructs spawn commands; every bounded subprocess path (git probes, Perl exporter probe, cargo metadata probe, xtask timed runners) routes through OwnedProcess so the Job Object containment owns the tree. Test module spawns the PowerShell early-exit containment fixture (primary plus marked descendant) and sleep/echo probes only.
+ crates/ripr/tests/agent_command_journey.rs|Command::new|4|agent-command-journey|#4307: isolated integration tests run the worktree-built binary and literal printed commands through a confirmed Bash; fixture Git uses the shared bounded helper; no network or user-repository mutation.
++crates/ripr/tests/agent_stub_at_disclosure.rs|Command::new|2|agent-stub-disclosure-proof|#8891: two integration tests spawn the worktree-built ripr binary (`ripr agent stub --write` twice against the same seam) to prove a byte-identical second write reports the existing stub instead of a `_2` duplicate and that the strongly_gripped disclosure names the real exposure reason; #8444/#8727 also cover nearest-gap warning order, refused JSON envelopes, divergent-write source/metadata preservation, and an agreeing-write control; isolated temp fixtures only, no shell, network, or user-repository mutation.
+ crates/ripr/tests/agentic_bench_agent.rs|Command::new|6|agentic-benchmarks|B1 agent-funnel benchmark: integration harness spawns the worktree-built ripr binary (repair/status/version probes), replays product-emitted commands through a confirmed Bash, and reads one git rev-parse HEAD receipt probe; isolated temp fixture only, no network or user-repository mutation.
+ crates/ripr/tests/agentic_bench_cage.rs|Command::new|1|agentic-benchmarks|B6 edit-cage benchmark: integration harness spawns the worktree-built ripr binary to drive `agent repair --phase before/after`, `check` seam discovery, and `agent receipt` reread against an isolated temp fixture; no shell, network, or user-repository mutation.
+ crates/ripr/tests/typescript_tsconfig_alias_default.rs|Command::new|1|typescript-preview|#8346: integration test runs the worktree-built ripr binary against an isolated temp TypeScript fixture to prove the tsconfig alias default through config loading; no shell, network, or user-repository mutation.
+@@ -144,7 +145,6 @@ crates/ripr/tests/doctor_json_schema.rs|Command::new|1|doctor-schema-contract|#5
+ crates/ripr/tests/doctor_json_schema.rs|use std::process::Command|1|doctor-schema-contract|#5214: the import for that single spawn site, kept beside the allowlisted row above.
+ crates/ripr/tests/hostile_repos.rs|Command::new|3|cli-tests|Hostile-repository journeys run the built ripr binary, one `bash -c` that replays a printed drill-in command, and one `git rev-parse` probe (to skip the not-a-repository case when the host temp directory sits inside a work tree) against fixture repositories built in temp dirs; fixture git goes through the shared common::fixture_git helper. No network or user-repository mutation; the file:// clone targets a local fixture.
+ crates/ripr/tests/agent_stub_compiles.rs|Command::new|6|agent-stub-compile-oracle|#5355 / #5453: test-only compile oracle runs the worktree-built ripr binary to write each stub into an exclusively owned scratch crate. Inline stubs compile with rustc (120-second deadline) and run the resulting test binary (30-second deadline). Integration-file stubs run the stub document's `cargo test --test <stem>` command (120-second deadline, isolated CARGO_TARGET_DIR, CARGO_NET_OFFLINE). All children go through OwnedProcess with file-backed, byte-capped streams. No shell, network, or user-repository mutation. #5471: git (30-second deadline) initializes and commits inside that scratch crate so a committed-history check with uncommitted edits can be driven.
+-crates/ripr/tests/agent_stub_at_disclosure.rs|Command::new|1|agent-stub-at-disclosure|#8444 item 3: integration tests run the worktree-built ripr binary against an isolated scratch crate to pin CLI warning order for nearest-gap substitution and the refused-substitution JSON envelope; no shell, network, or user-repository mutation.
+ crates/ripr/src/cli/commands/ci_packet.rs|Command::new|1|cli/ci-packet|#4696: `ripr reports ci-packet` runs each step of the generated CI workflow as a child of the running ripr binary (`current_exe`), from the workspace root, with stdin closed and stdout to the job log or the step's artifact file, through the shared OwnedProcess owner; no shell, no network, no token in the child environment beyond what the workflow step itself holds.
+ xtask/src/reports/bench_agent_surfaces.rs|Command::new|3|bench/agent-surfaces|#5257 / RIPR-SPEC-0221: the one production spawn site is the shared JSON-RPC stdio session (MCP `ripr mcp --stdio`, LSP `ripr lsp --stdio`) under `ripr::process_owner::OwnedProcess` containment (kill-on-drop tree ownership, per-op timeouts); the two other sites are test-only probe children that spawn a real exit(1) process so the nonzero-exit validity-gate witness is a genuine ExitStatus (ExitStatus::default() reports success on Windows). All bulk child work routes through the crate::run helpers.
+ crates/ripr/tests/pilot_missing_changed_files.rs|Command::new|1|pilot-changed-coverage-proof|#6976: bounded integration-only built CLI adapter under OwnedProcess; ten-second deadline, fixture-file stream observation and 256-KiB read caps, exclusively owned synthetic sparse Git roots and caches. Shared fixture Git retains its existing bounded owner. No shell, network, or user-repository mutation.

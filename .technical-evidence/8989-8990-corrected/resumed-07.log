@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running `target/debug/xtask check-covered-by`
+check-covered-by: pass (target/ripr/reports/covered-by.md)

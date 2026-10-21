@@ -1,0 +1,16 @@
+   Compiling ripr v0.11.0 (/workspace/adopt-8989/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running tests/agent_stub_at_disclosure.rs (/workspace/ripr-swarm/target/debug/deps/agent_stub_at_disclosure-1e114cc64ca17b8c)
+
+running 1 test
+Error: "the refusal envelope did not parse: EOF while parsing a value at line 1 column 0: ripr: agent stub: the stub for seam 12ae19645ad06557 lands in src/lib.rs, but the repair packet admits only tests/clamp_tests.rs as its edit surface; --write would leave src/lib.rs dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in tests/clamp_tests.rs instead, then start the repair: ripr agent repair --root /workspace/adopt-8989/target/ripr-agent-stub-at-disclosure-divergent_write-3300-1 --seam-id 12ae19645ad06557 --phase before. No file was written.\n"
+test divergent_write_refuses_with_json_and_preserves_source_and_warm_cache ... FAILED
+
+failures:
+
+failures:
+    divergent_write_refuses_with_json_and_preserves_source_and_warm_cache
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p ripr --test agent_stub_at_disclosure`

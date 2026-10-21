@@ -1,0 +1,12 @@
+diff --git a/crates/ripr/src/app/test_stub.rs b/crates/ripr/src/app/test_stub.rs
+index 7e9a296f7..820df4f72 100644
+--- a/crates/ripr/src/app/test_stub.rs
++++ b/crates/ripr/src/app/test_stub.rs
+@@ -2338,6 +2338,7 @@ impl Size {
+             },
+             test_name: "clamp_to_boundary".to_string(),
+             text: String::new(),
++            already_present: false,
+             fill_ins: Vec::new(),
+             derived_inputs: Vec::new(),
+         };

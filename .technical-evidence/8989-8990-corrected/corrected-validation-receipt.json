@@ -1,0 +1,332 @@
+{
+  "purpose": "Corrected isolated joint adoption and local qualification evidence only; no canonical ownership, Ready, hosted qualification, merge or release claim.",
+  "observed_utc": "2026-10-21T01:39:50.913193+00:00",
+  "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+  "tree": "9bf63a3b29a194b6cb941c6a72d50d3b5f45a800",
+  "parent": "267beac2e65162936e64bbd5040d296ca41c1bb7",
+  "parent_tree": "e2176263299f724d59bb4ee8b2b07eb5fd1bc1b1",
+  "integration_basis": "00c92f9c79900c1a97d0222a5cbc6be6f5b258ff",
+  "delta": "One added already_present:false field in the synthetic RustTestStub initializer; no assertion or production change.",
+  "original_failure": "Retained unchanged in validation-receipt.json/check-fast.log: E0063 before CLI-help parity executed.",
+  "fresh_validation": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "cli::help::tests::every_parsed_flag_agrees_with_its_help_documentation",
+        "--",
+        "--exact",
+        "--format",
+        "pretty",
+        "--color",
+        "never"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:25:15.874474+00:00",
+      "finished_utc": "2026-10-21T01:28:41.308027+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-01.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "app::test_stub::tests::next_repair_start_preserves_a_literal_backslash_unix_root",
+        "--",
+        "--exact",
+        "--format",
+        "pretty",
+        "--color",
+        "never"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:28:41.310398+00:00",
+      "finished_utc": "2026-10-21T01:28:41.615448+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-02.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-no-panic-family"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:28:41.615875+00:00",
+      "finished_utc": "2026-10-21T01:29:13.444193+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-03.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-allow-attributes"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:29:13.446130+00:00",
+      "finished_utc": "2026-10-21T01:29:13.851928+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-04.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-file-policy"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:29:13.852231+00:00",
+      "finished_utc": "2026-10-21T01:34:24.896648+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-05.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:34:24.901185+00:00",
+      "finished_utc": "2026-10-21T01:38:25.836975+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-06.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-covered-by"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:25.841138+00:00",
+      "finished_utc": "2026-10-21T01:38:28.399967+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-07.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-process-policy"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:28.400436+00:00",
+      "finished_utc": "2026-10-21T01:38:29.366342+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-08.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-network-policy"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:29.367825+00:00",
+      "finished_utc": "2026-10-21T01:38:31.914787+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-09.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-generated"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:31.915330+00:00",
+      "finished_utc": "2026-10-21T01:38:32.087618+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-10.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-generated-clean"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:32.087960+00:00",
+      "finished_utc": "2026-10-21T01:38:32.390022+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-11.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "xtask",
+        "check-lint-policy"
+      ],
+      "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+      "started_utc": "2026-10-21T01:38:32.390378+00:00",
+      "finished_utc": "2026-10-21T01:38:32.538463+00:00",
+      "exit_code": 0,
+      "log": "/workspace/verification-8989-8990/resumed-12.log"
+    }
+  ],
+  "additional_fresh_checks": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "git apply --reverse --check complete-joint-adoption.patch",
+      "exit_code": 0
+    },
+    {
+      "command": "Temporary-index application of complete-joint-adoption.patch to integration_basis; git write-tree",
+      "exit_code": 0,
+      "tree": "9bf63a3b29a194b6cb941c6a72d50d3b5f45a800"
+    }
+  ],
+  "reused_validation": {
+    "joint_cli": "Six prior passes; production, test stimulus/oracles and contract unchanged by initializer correction.",
+    "negative_controls": [
+      "Original missing-JSON refusal rejected by real CLI test",
+      "Late write guard rejected for changed user bytes/metadata"
+    ],
+    "original_check_fast_passed_stages": [
+      "check-static-language",
+      "check-command-catalog",
+      "check-support-tiers"
+    ],
+    "formatting": "Refreshed after correction.",
+    "ci_policy_scope": "Original policy receipt is W adoption head feca3f42887b287b99b05f81c14ba9b9a8c2d295, not a joint-head aggregate pass."
+  },
+  "check_fast_status": "Original aggregate retained as failed. All applicable unfinished stages completed through supported leaf commands; no fabricated aggregate rerun/pass. Selector independently fixed at21paths and stable; workflow/fixtures not selected.",
+  "selected_path_count": 21,
+  "independent_review": "initializer-independent-review.md; no actionable correction findings, overall REVIEW_INCOMPLETE for canonical/hosted qualification.",
+  "remaining": "Canonical Lane W/X adoption agreement, remaining substantive #8990 disposition, accepted published-head review/proof and actual applicable hosted required checks.",
+  "source_unchanged_after_review": true,
+  "environment": {
+    "PATH_prefix": "/workspace/.cargo/bin",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/verify-joint-267beac2/target",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "artifacts": {
+    "check-fast-selector.md": {
+      "bytes": 211,
+      "sha256": "f02d14f05177c402ebc437303a39eb1f2cc83c42cc855d3bbc50edd7a7ee8826"
+    },
+    "check-fast.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "check-fast.log": {
+      "bytes": 10379,
+      "sha256": "67a6a903557c2d6e0b15818cee3d2350beb61130122d5490cabe0c0155ed5bc2"
+    },
+    "check-fast.md": {
+      "bytes": 1444,
+      "sha256": "f66c8c930dba405a677f4bc1bdd733f80d341a32c6d7750f1cdfdf89ee496680"
+    },
+    "complete-joint-adoption.patch": {
+      "bytes": 155090,
+      "sha256": "3dc0e388c240e3b35300197f53cdc43f23e77c62ea637aa2947bb15e7abb2e4c"
+    },
+    "corrected-joint.bundle": {
+      "bytes": 97480,
+      "sha256": "9831d3760b0a6309ad3d2f5281e3937d3a5c6d0c672dc18ea4a1d2d524e34d3b"
+    },
+    "initializer-correction.patch": {
+      "bytes": 459,
+      "sha256": "6dc7941dbe43591f32e73a3f2c20e9d07d486237dae6a1b041ee55750473f6da"
+    },
+    "initializer-independent-review.md": {
+      "bytes": 7081,
+      "sha256": "5998637133d773b20524d2b9118921eb369ed2c7ad158c7e2bcacd8003eb25d9"
+    },
+    "repaired-format.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "repaired-selected-paths.txt": {
+      "bytes": 775,
+      "sha256": "2924144ff5f73ecbfaf7242af06f94c35d8e165eaffe8c76aa61357e1abe3b7e"
+    },
+    "resumed-01.log": {
+      "bytes": 422,
+      "sha256": "babf64ffcc514713b989e69404d35b0b870a04863a283940d50738c4a83772f4"
+    },
+    "resumed-02.log": {
+      "bytes": 358,
+      "sha256": "c83c2d3d840c5bb5d05712b2fa7cc241dbec92e9055736f977e93c4dc9a7ad7f"
+    },
+    "resumed-03.log": {
+      "bytes": 38171,
+      "sha256": "3ccb7df9dda9b59a90f204f24c6da1e89ecc5ec89627aa38bf96d7be5152e934"
+    },
+    "resumed-04.log": {
+      "bytes": 200,
+      "sha256": "5abfba6daa05d343a7ce655cd7061edd190c3b12de76754f8a21139f89e5f091"
+    },
+    "resumed-05.log": {
+      "bytes": 185,
+      "sha256": "4cd482014ce0e002c588928cc279293817800b975b6eddc211dde4b3173b9bf5"
+    },
+    "resumed-06.log": {
+      "bytes": 7767,
+      "sha256": "4fd34160ef6e8cb575f637f48dd6f404c6decfc1f36638dbe541f22ec4d502ef"
+    },
+    "resumed-07.log": {
+      "bytes": 182,
+      "sha256": "9e547b52f0375e61967a6dad5fbac0f6234fdc412fc69f19815de4b87bc2e0e2"
+    },
+    "resumed-08.log": {
+      "bytes": 194,
+      "sha256": "8e73ff15ef07a67ed59a607b689fb829e4f31275736ecd18b9ac13e866ab71e2"
+    },
+    "resumed-09.log": {
+      "bytes": 194,
+      "sha256": "73c1fea3dca81720abdd4ab40f2b3551132018b98e36fe53b1ffffc3964da936"
+    },
+    "resumed-10.log": {
+      "bytes": 179,
+      "sha256": "9be88bc605916492f6eae05710c0007bbcb4324fe40dd41a8da5c108157e953d"
+    },
+    "resumed-11.log": {
+      "bytes": 197,
+      "sha256": "564cbf08d92947013b1d97fbb40abf426b21bd807463d61773ccc2221847c1b2"
+    },
+    "resumed-12.log": {
+      "bytes": 185,
+      "sha256": "77655d52d2bc21294de2ccc71d8232fed5e9f9dbd1447226da4550ab615c32c9"
+    },
+    "resumed-stages.json": {
+      "bytes": 4557,
+      "sha256": "473c5b43a2cad9218f2cf4b04e375e5fbdb60768c0066324950667663fa151b2"
+    },
+    "selected-paths.txt": {
+      "bytes": 775,
+      "sha256": "2924144ff5f73ecbfaf7242af06f94c35d8e165eaffe8c76aa61357e1abe3b7e"
+    },
+    "support-tiers.md": {
+      "bytes": 309,
+      "sha256": "cd012752d2abb7a04d6e2559d96de1a8b6ede67a11328826cff0636fb731f3f5"
+    },
+    "validation-receipt.json": {
+      "bytes": 2157,
+      "sha256": "3990423be75efc2bd58b741f110261b26db7f3c07a6324d8bd56dd5b3d0c4421"
+    }
+  }
+}

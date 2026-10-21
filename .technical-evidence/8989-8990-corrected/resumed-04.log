@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/xtask check-allow-attributes`
+check-allow-attributes: pass (target/ripr/reports/allow-attributes.md)

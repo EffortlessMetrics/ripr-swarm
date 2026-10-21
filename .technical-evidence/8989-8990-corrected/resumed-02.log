@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running unittests src/lib.rs (target/debug/deps/ripr-336be1466fa24bd9)
+
+running 1 test
+test app::test_stub::tests::next_repair_start_preserves_a_literal_backslash_unix_root ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11977 filtered out; finished in 0.00s
+

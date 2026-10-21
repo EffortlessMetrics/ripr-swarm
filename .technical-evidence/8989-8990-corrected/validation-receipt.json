@@ -1,0 +1,62 @@
+{
+  "observed_utc": "2026-10-21T01:23:15.568353+00:00",
+  "subject": "267beac2e65162936e64bbd5040d296ca41c1bb7",
+  "tree": "e2176263299f724d59bb4ee8b2b07eb5fd1bc1b1",
+  "pinned_local_origin_main": "00c92f9c79900c1a97d0222a5cbc6be6f5b258ff",
+  "merge_base": "00c92f9c79900c1a97d0222a5cbc6be6f5b258ff",
+  "selected_path_count": 21,
+  "command": "cargo xtask check-fast",
+  "exit_code": 1,
+  "toolchain": "rustc 1.95.0 (59807616e 2026-04-14); cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "environment": {
+    "PATH_prefix": "/workspace/.cargo/bin",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/verify-joint-267beac2/target",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "source_unchanged": true,
+  "failure": {
+    "kind": "integration_lib_test_compile",
+    "code": "E0063",
+    "path": "crates/ripr/src/app/test_stub.rs:2335",
+    "detail": "RustTestStub initializer lacks already_present; selected CLI help test did not execute"
+  },
+  "passed_gates": [
+    "fmt --check",
+    "check-static-language",
+    "check-command-catalog",
+    "check-support-tiers"
+  ],
+  "limitations": [
+    "Remaining check-fast gates did not execute",
+    "Not hosted qualification or canonical adoption",
+    "Prior six CLI tests and two negative controls reused; no repeat"
+  ],
+  "artifacts": {
+    "check-fast-selector.md": {
+      "bytes": 211,
+      "sha256": "f02d14f05177c402ebc437303a39eb1f2cc83c42cc855d3bbc50edd7a7ee8826"
+    },
+    "check-fast.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "check-fast.log": {
+      "bytes": 10379,
+      "sha256": "67a6a903557c2d6e0b15818cee3d2350beb61130122d5490cabe0c0155ed5bc2"
+    },
+    "check-fast.md": {
+      "bytes": 1444,
+      "sha256": "f66c8c930dba405a677f4bc1bdd733f80d341a32c6d7750f1cdfdf89ee496680"
+    },
+    "selected-paths.txt": {
+      "bytes": 775,
+      "sha256": "2924144ff5f73ecbfaf7242af06f94c35d8e165eaffe8c76aa61357e1abe3b7e"
+    },
+    "support-tiers.md": {
+      "bytes": 309,
+      "sha256": "cd012752d2abb7a04d6e2559d96de1a8b6ede67a11328826cff0636fb731f3f5"
+    }
+  }
+}

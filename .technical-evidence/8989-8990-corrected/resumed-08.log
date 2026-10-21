@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask check-process-policy`
+check-process-policy: pass (target/ripr/reports/process-policy.md)

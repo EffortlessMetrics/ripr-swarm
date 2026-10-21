@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running `target/debug/xtask check-lint-policy`
+check-lint-policy: pass (target/ripr/reports/lint-policy.md)

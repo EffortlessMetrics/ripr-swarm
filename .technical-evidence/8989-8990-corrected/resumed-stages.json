@@ -1,0 +1,170 @@
+[
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "cli::help::tests::every_parsed_flag_agrees_with_its_help_documentation",
+      "--",
+      "--exact",
+      "--format",
+      "pretty",
+      "--color",
+      "never"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:25:15.874474+00:00",
+    "finished_utc": "2026-10-21T01:28:41.308027+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-01.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "app::test_stub::tests::next_repair_start_preserves_a_literal_backslash_unix_root",
+      "--",
+      "--exact",
+      "--format",
+      "pretty",
+      "--color",
+      "never"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:28:41.310398+00:00",
+    "finished_utc": "2026-10-21T01:28:41.615448+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-02.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-no-panic-family"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:28:41.615875+00:00",
+    "finished_utc": "2026-10-21T01:29:13.444193+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-03.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-allow-attributes"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:29:13.446130+00:00",
+    "finished_utc": "2026-10-21T01:29:13.851928+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-04.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-file-policy"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:29:13.852231+00:00",
+    "finished_utc": "2026-10-21T01:34:24.896648+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-05.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:34:24.901185+00:00",
+    "finished_utc": "2026-10-21T01:38:25.836975+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-06.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-covered-by"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:25.841138+00:00",
+    "finished_utc": "2026-10-21T01:38:28.399967+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-07.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-process-policy"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:28.400436+00:00",
+    "finished_utc": "2026-10-21T01:38:29.366342+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-08.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-network-policy"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:29.367825+00:00",
+    "finished_utc": "2026-10-21T01:38:31.914787+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-09.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-generated"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:31.915330+00:00",
+    "finished_utc": "2026-10-21T01:38:32.087618+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-10.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-generated-clean"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:32.087960+00:00",
+    "finished_utc": "2026-10-21T01:38:32.390022+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-11.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "xtask",
+      "check-lint-policy"
+    ],
+    "head": "7126d5b7ed2e124ae0e5e3b6dfb3a281bf173d10",
+    "started_utc": "2026-10-21T01:38:32.390378+00:00",
+    "finished_utc": "2026-10-21T01:38:32.538463+00:00",
+    "exit_code": 0,
+    "log": "/workspace/verification-8989-8990/resumed-12.log"
+  }
+]

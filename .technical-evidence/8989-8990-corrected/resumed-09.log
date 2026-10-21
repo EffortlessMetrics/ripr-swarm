@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/xtask check-network-policy`
+check-network-policy: pass (target/ripr/reports/network-policy.md)

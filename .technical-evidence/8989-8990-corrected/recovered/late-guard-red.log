@@ -1,0 +1,16 @@
+   Compiling ripr v0.11.0 (/workspace/control-8989/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 43s
+     Running tests/agent_stub_at_disclosure.rs (/workspace/ripr-swarm/target/debug/deps/agent_stub_at_disclosure-1e114cc64ca17b8c)
+
+running 1 test
+Error: "refused write changed user paths, bytes or metadata"
+test divergent_write_refuses_with_json_and_preserves_source_and_warm_cache ... FAILED
+
+failures:
+
+failures:
+    divergent_write_refuses_with_json_and_preserves_source_and_warm_cache
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p ripr --test agent_stub_at_disclosure`
