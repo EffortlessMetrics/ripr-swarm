@@ -19,11 +19,15 @@
 //! - a target segment that is any identifier token of the owner's source
 //!   file (its body, imports, callees, class path) or a name of the owner's
 //!   module (file stem, re-exporting package) keeps the limit;
-//! - without the owner's source the limit is kept.
+//! - without the owner's source the limit is kept;
+//! - a test method keeps the limit, because a class-level `@patch` is not
+//!   retained on the test and could patch what the owner uses;
+//! - an owner that imports anything outside a short list of self-contained
+//!   standard-library modules, or calls `super()`, keeps the limit: its
+//!   callee may live in another file that uses the patched name.
 //!
-//! Residual, documented rather than hidden: a target the owner reaches only
-//! through another file's code (a callee in a different module that itself
-//! uses the patched name) is not visible to a name check. The narrowing is a
+//! Residual, documented rather than hidden: a self-contained standard-library
+//! import is trusted not to reach a patched name. The narrowing is a
 //! cost-bounded static judgment, not a proof that no substitution reaches
 //! the owner.
 
@@ -42,6 +46,25 @@ const OPAQUE_FORMS: [&str; 5] = [
     "monkeypatch.delattr(",
 ];
 
+/// Standard-library modules whose functions never call back into arbitrary
+/// patched names; importing only these leaves the owner self-contained.
+const SELF_CONTAINED_IMPORTS: [&str; 14] = [
+    "__future__",
+    "abc",
+    "collections",
+    "dataclasses",
+    "decimal",
+    "enum",
+    "fractions",
+    "functools",
+    "itertools",
+    "json",
+    "math",
+    "re",
+    "typing",
+    "typing_extensions",
+];
+
 /// Whether every mock site of `test` provably targets a name the owner does
 /// not use. False whenever any site is ambiguous or the owner source is
 /// missing.
@@ -53,6 +76,15 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
     let Some(owner_source) = owner_source else {
         return false;
     };
+    if test.qualified_name != test.name
+        || owner_source.contains("super(")
+        || owner
+            .imports
+            .iter()
+            .any(|import| !is_self_contained(import))
+    {
+        return false;
+    }
     // `body_text` starts at `def`; the decorators are separate source text.
     let combined: String = test
         .decorator_texts
@@ -97,6 +129,16 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
     targets
         .iter()
         .all(|target| target.split('.').all(|segment| !used.contains(segment)))
+}
+
+fn is_self_contained(import: &super::PythonImport) -> bool {
+    let module = if import.source_module.is_empty() {
+        import.imported.as_str()
+    } else {
+        import.source_module.as_str()
+    };
+    let root = module.split('.').next().unwrap_or_default();
+    SELF_CONTAINED_IMPORTS.contains(&root)
 }
 
 fn is_patch_decorator_name(name: &str) -> bool {

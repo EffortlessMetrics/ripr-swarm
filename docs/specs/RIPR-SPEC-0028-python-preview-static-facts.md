@@ -418,7 +418,17 @@ values defined in RIPR-SPEC-0026:
   names qualified as `functools.*`, are not this limit when they bind from
   `functools`)
 - `mocked_module` (e.g., `@patch(...)`, `patch.object(...)` (#4565) or `monkeypatch.setattr(...)`
-  observed at the related-test call site)
+  observed at the related-test call site). The limit is dropped only when
+  every mock site of a related test function is a plain `patch(`,
+  `mock.patch(`, `mocker.patch(` or `monkeypatch.setattr(` call whose first
+  argument (or `target=`) is a single-line, unprefixed, non-concatenated
+  dotted string literal, no segment of which is an identifier of the owner's
+  source file, its callees, imports, re-exporting modules or module stem
+  (#9098). The limit stays for `patch.object`, `patch.multiple`,
+  `patch.dict`, `monkeypatch.setitem`/`delattr`, computed or object targets,
+  a test method (a class-level `@patch` is not retained), an owner that
+  imports anything beyond a short list of self-contained standard-library
+  modules or calls `super()`, and a missing owner source
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not
   inspect)

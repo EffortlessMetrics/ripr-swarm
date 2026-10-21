@@ -14,10 +14,13 @@ const OWNER_SOURCE: &str = "import json\nfrom .store import load\n\ndef total(it
 /// the owner's file uses.
 const END_TO_END_OWNER_SOURCE: &str = "import json\n\ndef total(items):\n    return len(items)\n";
 
+/// An owner that imports nothing, so no callee can live in another file.
+const PURE_OWNER_SOURCE: &str = "def total(items):\n    return len(items)\n";
+
 const HEAD: &str = "from unittest.mock import patch\nfrom src.service import total\n\n";
 
-fn owner() -> Result<super::PythonOwner, String> {
-    extract_owners(Path::new("src/service.py"), OWNER_SOURCE)
+fn owner_from(source: &str) -> Result<super::PythonOwner, String> {
+    extract_owners(Path::new("src/service.py"), source)
         .into_iter()
         .find(|owner| owner.name == "total")
         .ok_or_else(|| "owner `total` was not extracted".to_string())
@@ -39,7 +42,7 @@ fn disjoint(test_source: &str, owner_source: Option<&str>) -> Result<bool, Strin
     );
     Ok(mock_sites_are_disjoint_from_owner(
         &test,
-        &owner()?,
+        &owner_from(owner_source.unwrap_or(OWNER_SOURCE))?,
         owner_source,
     ))
 }
@@ -49,7 +52,7 @@ fn given_decorator_patching_an_unrelated_stdlib_name_then_it_is_disjoint() -> Re
     let source = format!(
         "{HEAD}@patch(\"os.getcwd\")\ndef test_total(mock_cwd):\n    assert total([1]) == \"[1]\"\n"
     );
-    assert!(disjoint(&source, Some(OWNER_SOURCE))?);
+    assert!(disjoint(&source, Some(PURE_OWNER_SOURCE))?);
     Ok(())
 }
 
@@ -59,11 +62,13 @@ fn given_body_patch_and_monkeypatch_string_targets_then_all_must_be_disjoint() -
     let both = format!(
         "{HEAD}def test_total(monkeypatch):\n    monkeypatch.setattr(\"os.getcwd\", lambda: \"/\")\n    with patch(target=\"time.time\"):\n        assert total([1]) == \"[1]\"\n"
     );
-    assert!(disjoint(&both, Some(OWNER_SOURCE))?);
+    assert!(disjoint(&both, Some(PURE_OWNER_SOURCE))?);
     let one_hits_owner = format!(
         "{HEAD}def test_total(monkeypatch):\n    monkeypatch.setattr(\"os.getcwd\", lambda: \"/\")\n    with patch(\"pkg.store.load\"):\n        assert total([1]) == \"[1]\"\n"
     );
     assert!(!disjoint(&one_hits_owner, Some(OWNER_SOURCE))?);
+    // The same disjoint pair stays limited when the owner reaches another file.
+    assert!(!disjoint(&both, Some(OWNER_SOURCE))?);
     Ok(())
 }
 
@@ -190,5 +195,21 @@ fn given_related_test_with_disjoint_patch_then_mocked_module_limit_is_dropped() 
         limit_kind(&related, Some(END_TO_END_OWNER_SOURCE))?,
         Some(StaticLimitKind::MockedModule)
     );
+    Ok(())
+}
+
+#[test]
+fn given_owner_reaching_another_file_or_a_test_method_then_limit_stays() -> Result<(), String> {
+    let disjoint_patch =
+        format!("{HEAD}@patch(\"os.getcwd\")\ndef test_total(m):\n    assert total([1]) == 1\n");
+    let helper_owner = "from .helpers import run\n\ndef total(items):\n    return run(items)\n";
+    assert!(!disjoint(&disjoint_patch, Some(helper_owner))?);
+    let super_owner = "class Base:\n    pass\n\nclass Child(Base):\n    def total(self):\n        return super().total()\n";
+    assert!(!disjoint(&disjoint_patch, Some(super_owner))?);
+    // A class-level `@patch` is not retained on the method, so methods keep the limit.
+    let method = format!(
+        "{HEAD}@patch(\"time.time\")\nclass TestTotal:\n    @patch(\"os.getcwd\")\n    def test_total(self, m, t):\n        assert total([1]) == 1\n"
+    );
+    assert!(!disjoint(&method, Some(PURE_OWNER_SOURCE))?);
     Ok(())
 }
