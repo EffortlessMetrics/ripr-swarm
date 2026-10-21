@@ -2321,7 +2321,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/doc-roles.md",
             false,
-            false,
+            true,
             "Checks documentation role policy.",
         ),
         command_entry(

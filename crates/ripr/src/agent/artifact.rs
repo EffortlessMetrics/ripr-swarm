@@ -834,9 +834,10 @@ fn canonical_root(root: &Path) -> Result<PathBuf, String> {
 /// with stable separators. No consumer depends on the prefixed form — `agent
 /// verify` re-canonicalizes the declared root, and the repo-seams artifact
 /// check compares against this same renderer — so identity moves with the
-/// renderer instead of breaking. Other verbatim forms (`\\?\UNC\..`,
-/// `\\?\Volume{..}`) render exactly as given, like every other
-/// `human_path` consumer.
+/// renderer instead of breaking. Verbatim forms without a plain spelling
+/// (`\\?\Volume{..}`, unknown device prefixes) render exactly as given, per
+/// the shared `human_path` owner (#8754); the UNC form folds to
+/// `\\server\share` there like the drive-letter form.
 pub(crate) fn display_root(root: &Path) -> String {
     display_root_for_host(root, cfg!(windows))
 }

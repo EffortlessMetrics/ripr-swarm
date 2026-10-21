@@ -93,6 +93,14 @@ kind and strength; diagnostic text inside the assertion cannot override it.
 The separator follows a complete path, line and test identity, so a path that
 contains ` uses ` does not hide an otherwise valid oracle projection.
 
+A related-test row whose expected strength is `none` has no kind to project, so
+it matches only an expected kind of `unknown` and the absent-oracle phrase
+`uses no oracle`, followed by the end of the line, `;`, `:` or `,`. A row whose
+expected strength is `unknown` matches only the `not graded against this probe`
+phrase. The legacy `none unknown oracle` spelling and `no oracles` prose do not
+match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
+#8747).
+
 ## Behavior
 
 ### The invariant
@@ -466,6 +474,7 @@ gate-specific artifacts.
 | rust_macro_wrapped_assertion_named_limitation | rust | rust_macro_wrapped_assertion_limitation | custom_assertion_macro_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_assertion_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-assertion-oracle` + `must_not_claim_no_tests_found`) |
 | rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_atomic_ordering_swap_strong_object_oracle_not_exposed | rust | atomic_ordering_swap_strong_object_oracle | atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle (also `expected_class=static_unknown`, `expected_finding_count=1`, `must_not_report_clean`, and `must_not_promote`) |
 | rust_shared_error_variant_proximity_other_owner | rust | rust_adversarial_shared_error_variant_proximity | shared_error_variant_same_file_pin_on_other_owner_not_confirmed (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | perl_preview_card_advisory_no_repair_packet | perl | reports/perl-preview-advisory-no-packet.json | perl_preview_card_advisory_only (also `expected_class=weakly_exposed`, production-shaped `perl_preview_card.v1`, `must_not_report_clean`, `must_disclose_scope`, no `verify_command`/`receipt_command` delegation fields, no promotion, and no repair packet) |
 | scope_committed_diff_changed_rust_file | rust | boundary_gap | committed_diff_changed_file_scope_count (also `must_not_report_clean` + `must_disclose_scope` + `expected_changed_rust_files: 1` + no verify/receipt commands + no repair packet + `expected_class: weakly_exposed`) |
@@ -584,6 +593,7 @@ or tampered fingerprint at ingestion.
 | dynamic require/eval dispatch | `perl_dynamic_require_eval_dispatch` | `static_unknown` + `must_emit_limitation: metaprogramming` |
 | token substring collision | `perl_token_substring` | `weakly_exposed` (sink alignment requires exact equality) |
 | fixture/harness test reaches but does not discriminate | `perl_fixture_setup_no_discrimination` | `reachable_unrevealed` (fixture-setup relations are advisory-only) |
+| `isnt` rejects one value (producer grades it `strong_exact`) | `perl_isnt_is_not_exact` | `reachable_unrevealed` (RIPR-SPEC-0235 rule 17; oracle read as smoke) |
 
 Rust family coverage for same-method-other-impl identity (#4760):
 

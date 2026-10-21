@@ -13,7 +13,7 @@ pub(super) const TOOL_NAME: &str = "ripr_list_repair_attempts";
 pub(super) const SCHEMA_VERSION: &str = "ripr-mcp-repair-attempt-list-v1";
 pub(super) const CODE_STALE_INVENTORY: &str = "stale_inventory";
 pub(super) const RECOVERY_TOO_LARGE: &str = "inspect durable attempts with `ripr agent status`; repeating or narrowing this same row cannot make it fit";
-const MAX_PAGE_ITEMS: usize = 256;
+pub(super) const MAX_PAGE_ITEMS: usize = 256;
 
 pub(super) fn tool_descriptor() -> Value {
     json!({
@@ -25,7 +25,7 @@ pub(super) fn tool_descriptor() -> Value {
             "properties": {
                 "inventory_id": {"type": "string", "description": "Optional prior inventory identity; mismatch fails with stale_inventory."},
                 "offset": {"type": "integer", "minimum": 0},
-                "limit": {"type": "integer", "minimum": 1}
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_ITEMS}
             },
             "additionalProperties": false
         },
@@ -80,7 +80,7 @@ pub(super) fn tool_descriptor() -> Value {
                             "type": "object",
                             "properties": {
                                 "offset": {"type": "integer", "minimum": 0},
-                                "limit": {"type": ["integer", "null"], "minimum": 1},
+                                "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": MAX_PAGE_ITEMS},
                                 "returned": {"type": "integer", "minimum": 0},
                                 "has_more": {"type": "boolean"},
                                 "next_offset": {"type": ["integer", "null"], "minimum": 0}
@@ -172,6 +172,10 @@ pub(super) fn list_document(
     let count = available
         .min(limit.unwrap_or(MAX_PAGE_ITEMS))
         .min(MAX_PAGE_ITEMS);
+    // The typed page and its bound continuation echo the effective limit —
+    // the clamped value actually served — never a larger requested one, so
+    // `returned` always reconciles against `page.limit` (#8735).
+    let effective_limit = limit.map(|requested| requested.min(MAX_PAGE_ITEMS));
     let document = |count: usize| {
         let returned = count;
         let has_more = offset.saturating_add(returned) < total;
@@ -182,7 +186,7 @@ pub(super) fn list_document(
         });
         if let Some(next_offset) = next_offset {
             let mut arguments = json!({"inventory_id": inventory_id, "offset": next_offset});
-            if let Some(limit) = limit {
+            if let Some(limit) = effective_limit {
                 arguments["limit"] = json!(limit);
             }
             continuation["next_page"] = json!({"tool": TOOL_NAME, "arguments": arguments});
@@ -195,7 +199,7 @@ pub(super) fn list_document(
             "total": total, "valid": valid, "invalid": total - valid,
             "omitted": total - returned,
             "items": rows.iter().skip(offset).take(count).collect::<Vec<_>>(),
-            "page": {"offset": offset, "limit": limit, "returned": returned, "has_more": has_more, "next_offset": next_offset},
+            "page": {"offset": offset, "limit": effective_limit, "returned": returned, "has_more": has_more, "next_offset": next_offset},
             "continuation": continuation,
             "claim_boundary": "Read-only durable CLI attempt discovery. Validation and receipt currentness use shared authorities; this listing prepares nothing and executes nothing.",
             "limitations": [

@@ -174,7 +174,13 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
 pub(in crate::cli) fn drive_before_phase(
     options: agent::AgentRepairOptions,
 ) -> Result<String, CommandError> {
-    let (attempt_id, stdout_document) = drive_before_phase_deferring_stdout(options)?;
+    // The advanced spelling keeps its failure semantics for the held-target
+    // refusal; only the task-first façade maps it to a decision (#9033).
+    let (attempt_id, stdout_document) =
+        drive_before_phase_inner(options).map_err(|error| match error {
+            BeforePhaseError::Refused(message) => CommandError::Failure(message),
+            BeforePhaseError::Other(error) => error,
+        })?;
     // The advanced spelling prints its success document immediately; only
     // the façade holds stdout across its follow-on card render (#7032).
     print!("{stdout_document}");
@@ -188,8 +194,31 @@ pub(in crate::cli) fn drive_before_phase(
 /// `EXIT_TYPED_REFUSAL_EMPTY_STDOUT` honest when the card refuses after
 /// the attempt already exists (#7032).
 pub(in crate::cli) fn drive_before_phase_deferring_stdout(
-    mut options: agent::AgentRepairOptions,
+    options: agent::AgentRepairOptions,
 ) -> Result<(String, String), CommandError> {
+    drive_before_phase_inner(options).map_err(|error| match error {
+        // A deliberate typed refusal: the façade exits with the decision code.
+        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Other(error) => error,
+    })
+}
+
+/// Why a before phase did not start: a deliberate start refusal that wrote
+/// nothing (#9033), or any other command error.
+pub(in crate::cli) enum BeforePhaseError {
+    Refused(String),
+    Other(CommandError),
+}
+
+impl<E: Into<CommandError>> From<E> for BeforePhaseError {
+    fn from(error: E) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+fn drive_before_phase_inner(
+    mut options: agent::AgentRepairOptions,
+) -> Result<(String, String), BeforePhaseError> {
     // #8166 residual: a cross-namespace `--seam-id` (a `probe:` finding ID,
     // a canonical `gap:` ID, or a `file:line` location) that names exactly
     // one seam proceeds under that seam's ID, so the attempt identity, the
@@ -256,9 +285,12 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
         return Ok(None);
     }
     match agent::parse_agent_args(&args[2..])? {
-        agent::AgentCommand::Repair(options)
+        agent::AgentCommand::Repair(mut options)
             if options.phase == agent::AgentRepairPhase::Before =>
         {
+            // #8872: this route bypasses the `agent` dispatch, so it resolves
+            // the implicit workspace root here; `--root .` opts out.
+            commands::resolve_agent_repair_root(&mut options)?;
             Ok(Some(options))
         }
         _ => Ok(None),

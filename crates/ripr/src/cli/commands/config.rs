@@ -157,6 +157,37 @@ path = ".ripr/suppressions\u0000.toml"
     }
 
     #[test]
+    fn validate_rejects_unusable_perl_executable_paths() -> Result<(), String> {
+        let root = temp_dir("perl-executable");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            for (value, expected) in [
+                ("''", "perl.executable must not be empty"),
+                (
+                    r#""tools/\u0000exporter""#,
+                    "perl.executable must not contain NUL characters",
+                ),
+            ] {
+                fs::write(
+                    root.join(CONFIG_FILE_NAME),
+                    format!("[perl]\nexecutable = {value}\n"),
+                )
+                .map_err(|error| error.to_string())?;
+                let error = validate_config(&root)
+                    .err()
+                    .ok_or_else(|| format!("unusable Perl executable {value} validated"))?;
+                if !error.contains("ripr.toml") || !error.contains(expected) || error.contains('\0')
+                {
+                    return Err(format!("unexpected executable validation error: {error:?}"));
+                }
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
+    }
+
+    #[test]
     fn validate_returns_the_loader_error_for_invalid_toml() -> Result<(), String> {
         let root = temp_dir("invalid");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;

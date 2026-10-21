@@ -70,31 +70,7 @@ impl DiagnosticWitness {
             return None;
         }
 
-        // The analyzer's suggested repair test, when it is one of the
-        // related tests, is the fix site: `check`, `explain` and the repair
-        // card already name it, so every surface points at the same test.
-        // Tests listed only as examined misses (#5344) supplied no oracle and
-        // are never a fix site: a fix site claims "this test runs the change
-        // and has this oracle".
-        let best_test = if finding.language == Some(LanguageId::Python)
-            && finding.evidence.iter().any(|entry| {
-                [
-                    "suggested_test_file:",
-                    "suggested_test_name:",
-                    "suggested_test_line:",
-                ]
-                .iter()
-                .any(|prefix| entry.starts_with(prefix))
-            }) {
-            // A declared repair target cannot borrow another test's oracle
-            // when its complete identity is missing or ambiguous.
-            python_suggested_related_test(finding)
-        } else if finding.language == Some(LanguageId::Perl) {
-            perl_suggested_related_test(finding)
-        } else {
-            suggested_related_test(finding)
-                .or_else(|| best_related_test(finding.oracle_related_tests()))
-        };
+        let best_test = Self::selected_related_test(finding);
         // `observed_values` is finding-wide and does not identify the
         // selected related test.  Do not guess an assertion location by
         // matching text; the test's own line remains the only producer-owned
@@ -170,6 +146,37 @@ impl DiagnosticWitness {
             },
             limitations,
         })
+    }
+
+    /// Keep typed oracle metadata bound to the same test as the public witness.
+    /// Renderers must not reconstruct this selection from its string DTO fields.
+    pub(crate) fn selected_related_test(finding: &Finding) -> Option<&RelatedTest> {
+        // The analyzer's suggested repair test, when it is one of the
+        // related tests, is the fix site: `check`, `explain` and the repair
+        // card already name it, so every surface points at the same test.
+        // Tests listed only as examined misses (#5344) supplied no oracle and
+        // are never a fix site: a fix site claims "this test runs the change
+        // and has this oracle".
+        if finding.language == Some(LanguageId::Python)
+            && finding.evidence.iter().any(|entry| {
+                [
+                    "suggested_test_file:",
+                    "suggested_test_name:",
+                    "suggested_test_line:",
+                ]
+                .iter()
+                .any(|prefix| entry.starts_with(prefix))
+            })
+        {
+            // A declared repair target cannot borrow another test's oracle
+            // when its complete identity is missing or ambiguous.
+            python_suggested_related_test(finding)
+        } else if finding.language == Some(LanguageId::Perl) {
+            perl_suggested_related_test(finding)
+        } else {
+            suggested_related_test(finding)
+                .or_else(|| best_related_test(finding.oracle_related_tests()))
+        }
     }
 }
 
@@ -329,6 +336,7 @@ mod tests {
             flow_sink: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
+            file: None,
             line: 12,
             text: "assert!(result.is_err())".to_string(),
             value: "result.is_err()".to_string(),

@@ -45,7 +45,7 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
-  - related test tests/discount.test.ts:12 applyDiscount at threshold discounts uses unknown unknown oracle
+  - related test tests/discount.test.ts:12 applyDiscount at threshold discounts uses no oracle
 
 Weakness
   - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion

@@ -160,6 +160,18 @@ report's `root` field and analysis-outcome presentation key retain display
 formatting. Unix literal filename backslashes remain distinct from Windows
 separators (#6313).
 
+### Repair phase value recovery (#5059)
+
+`ripr agent repair --phase` accepts only `before`, `after`, and `verify`.
+An unknown value uses the shared CLI value-suggestion rules: `befor`, `aftr`,
+and `verfy` suggest their corresponding phase; empty and distant values,
+including the sibling command name `packet`, list the phases without a suggestion. Suggestions never accept
+or execute the rejected spelling. Invalid occurrences, including one followed
+by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
+before configuration loading or repair/store writes. A missing value retains
+its missing-value refusal. Canonical phase meanings and the existing `--help`
+short circuit remain unchanged.
+
 ## JSON Shape
 
 The status report uses schema version `0.1`:
@@ -635,6 +647,7 @@ it does not execute the command or grant edit authority.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 

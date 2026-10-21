@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_ranking_noise_control/input --diff <cwd>/fixtures/python_ranking_noise_control/diff.patch --mode fast probe:src_c_discount.py:python_preview:91995184
   ripr context --root <cwd>/fixtures/python_ranking_noise_control/input --diff <cwd>/fixtures/python_ranking_noise_control/diff.patch --mode fast --at probe:src_c_discount.py:python_preview:91995184
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_c_discount.py:python_preview:91995184 --root <cwd>/fixtures/python_ranking_noise_control/input` for the full gate's answer
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).

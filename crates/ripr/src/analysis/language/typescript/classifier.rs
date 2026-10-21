@@ -1035,7 +1035,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             // Handled before the match: flags are masked, then code resumes.
             Mode::RegexFlags => out.push(c),
             Mode::LineComment => {
-                if c == '\n' {
+                // ECMAScript line comments end at all four LineTerminators.
+                if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
                     mode = Mode::Code;
                     out.push(c);
                 } else {
@@ -3257,6 +3258,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
+        None if !probe_shape.specific => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it."
+        ),
         None => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed branch."
         ),
@@ -3335,6 +3339,31 @@ pub(crate) fn owner_namespace_receivers(
         })
         .map(|import| import.local.clone())
         .collect();
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { owner }` object holds the owner is the receiver of
+    // `local.owner(...)`, exactly as a namespace import is.
+    if owner.default_object_member {
+        receivers.extend(
+            test.imports_in_file
+                .iter()
+                .filter(|import| {
+                    !import.namespace
+                        && import.imported.as_deref() == Some("default")
+                        && test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && import_source_matches_owner(
+                            import,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                })
+                .map(|import| import.local.clone()),
+        );
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -5180,6 +5209,8 @@ pub(crate) fn classify_change_with_alias_state(
         &mut verdict,
         &mut static_limit,
         &TsPostLadderContext {
+            all_tests,
+            line,
             probe_shape: &probe_shape,
             line_text,
             old_line_text,
@@ -5322,8 +5353,10 @@ pub(crate) fn classify_change_with_alias_state(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {
         // RIPR-SPEC-0027: strong oracle exists but no assertion reaches the
-        // changed predicate boundary.
+        // changed predicate boundary. An unrecognised line shape has no
+        // predicate to witness, so it must not claim one (#8672).
         match missing_discriminators.first() {
+            _ if !probe_shape.specific => "TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown.".to_string(),
             Some(discriminator) => format!(
                 "TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `{}`.",
                 discriminator.value
@@ -5562,6 +5595,10 @@ struct TsLadderVerdict {
 
 /// What the post-ladder rules read besides the verdict.
 struct TsPostLadderContext<'a> {
+    /// Every parsed test, so a file-level reader can blank its test bodies.
+    all_tests: &'a [TypeScriptTest],
+    /// The changed line's number in the owner's file.
+    line: usize,
     probe_shape: &'a TypeScriptProbeShape,
     line_text: &'a str,
     old_line_text: Option<&'a str>,
@@ -5585,6 +5622,9 @@ struct TsPostLadderContext<'a> {
 ///   only sets or drops one literal field after spreading a parameter reads
 ///   `weakly_exposed` when observed owner calls exist and none passes an
 ///   input shown to lack the field or hold another value there.
+/// - #8569: an `exposed` result whose changed line sits under an `if` arm
+///   that every related test call provably leaves untaken reads
+///   `weakly_exposed`, because the line never runs under the tests.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -5631,6 +5671,18 @@ fn ts_apply_post_ladder_rules(
             verdict.missing = vec![callee.missing_summary(&context.owner.name)];
             return;
         }
+    }
+    // #8569: a changed line under an `if` arm no related test call enters.
+    if !matches!(context.probe_shape.family, ProbeFamily::Predicate)
+        && let Some(guard) = ts_unentered_guard(context)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+            context.owner.name, guard.condition, guard.observed
+        )];
+        return;
     }
     // A value seam only: an error message, a mock payload or a state write
     // is observed by matchers the fold cannot read, and demoting it would
@@ -5692,6 +5744,162 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// The guard no related test call enters, and what the tests pass instead.
+struct TsUnenteredGuard {
+    condition: String,
+    observed: String,
+}
+
+/// #8569: `Some` when the changed line sits under `if` / `else` arms and
+/// every owner call of every related test passes literal inputs that
+/// provably leave one needed condition unmet. Any unreadable piece (a
+/// related test that does not call the owner directly, a shadowed or
+/// non-call owner reference, a recursive owner, a rebound or defaulted
+/// parameter, a non-literal argument) returns `None`, keeping the verdict.
+fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGuard> {
+    use super::guard_entry_guard::{
+        CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults, parameter_shapes,
+    };
+    let owner = context.owner;
+    let source = owner.source_text.as_deref()?;
+    if context.candidates.is_empty() {
+        return None;
+    }
+    let conditions =
+        enclosing_conditions(source, owner.start_line, context.line, context.line_text)?;
+    // A destructured options parameter leaves `owner.params` empty (arity is
+    // unknown); read the signature itself for it.
+    let (params, defaults, options) = if owner.params.is_empty() {
+        let shapes = parameter_shapes(source)?;
+        (shapes.names, shapes.defaults, shapes.options)
+    } else {
+        let defaults = parameter_defaults(source, &owner.params)?;
+        (owner.params.clone(), defaults, Vec::new())
+    };
+    // A recursive or re-exported owner can be re-entered with another input.
+    if let Some(root) = context.workspace_root
+        && !owner_module_names_owner_once(owner, root)
+    {
+        return None;
+    }
+    let mut observed: Vec<String> = Vec::new();
+    for candidate in context.candidates {
+        if !matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+        ) {
+            return None;
+        }
+        let test = candidate.test;
+        let names =
+            ts_owner_call_names(candidate, owner, context.alias_map, context.workspace_root);
+        let receivers = unshadowed_owner_namespace_receivers(
+            test,
+            owner,
+            context.alias_map,
+            context.workspace_root,
+        );
+        // The whole registration, not the first arrow block in it: text
+        // outside any one callback (arguments to `test.each`, statements
+        // before a nested arrow) can call the owner too.
+        let callback = test.body_text.as_str();
+        let masked_body = ts_mask_literals_and_comments(callback);
+        // Calls outside the test bodies (a hook, a file-level binding) and
+        // imports that are not the owner or a test framework could enter the
+        // arm with inputs this reader never sees.
+        let root = context.workspace_root?;
+        for import in &test.imports_in_file {
+            if import.namespace {
+                if !receivers.contains(&import.local) && !is_test_framework_source(&import.source) {
+                    return None;
+                }
+            } else if import.imported.as_deref() == Some(owner.name.as_str())
+                || import.local == owner.name
+            {
+                if !import_source_matches_owner(
+                    import,
+                    &test.file,
+                    owner,
+                    context.alias_map,
+                    context.workspace_root,
+                ) {
+                    return None;
+                }
+            } else if !is_test_framework_source(&import.source) {
+                return None;
+            }
+        }
+        let file_names: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(receivers.iter().map(String::as_str))
+            .collect();
+        if !test_file_names_owner_only_in_test_bodies(test, context.all_tests, &file_names, root) {
+            return None;
+        }
+        // A file-local helper (`check = (c) => price(3, c)`) could enter the
+        // arm with an input the test text does not show: only the owner and
+        // the test framework's own calls are readable.
+        let allowed: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(["expect", "assert", "test", "it", "describe"])
+            .collect();
+        if !super::guard_entry_guard::calls_only_allowed(callback, &allowed, &receivers) {
+            return None;
+        }
+        let mut calls = 0usize;
+        for name in names {
+            if local_identifier_declared_in_test_body(&test.body_text, name)
+                || !every_owner_reference_is_a_call(&masked_body, name, &receivers)
+            {
+                return None;
+            }
+            for arguments in owner_call_arguments(callback, name, &receivers) {
+                calls += 1;
+                let inputs = CallInputs {
+                    owner_source: source,
+                    params: &params,
+                    defaults: &defaults,
+                    options: &options,
+                    arguments: &arguments,
+                };
+                if !call_excludes_arm(&inputs, &conditions) {
+                    return None;
+                }
+                observed.push(if arguments.is_empty() {
+                    "no arguments".to_string()
+                } else {
+                    format!("({})", arguments.join(", "))
+                });
+            }
+        }
+        if calls == 0 {
+            return None;
+        }
+    }
+    observed.sort();
+    observed.dedup();
+    Some(TsUnenteredGuard {
+        condition: conditions
+            .iter()
+            .map(|condition| condition.display())
+            .collect::<Vec<_>>()
+            .join(" && "),
+        observed: format!(
+            "observed `{}` calls: {}",
+            owner.name,
+            observed
+                .iter()
+                .map(|call| format!("`{call}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    })
 }
 
 /// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread

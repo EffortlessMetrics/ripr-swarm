@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast probe:src_lib.rs:match_arm:bb59fbfe
   ripr context --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast --at probe:src_lib.rs:match_arm:bb59fbfe
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:bb59fbfe --root <cwd>/fixtures/match_arm_blind/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_blind/input --at src/lib.rs:4 --kind match_arm
 

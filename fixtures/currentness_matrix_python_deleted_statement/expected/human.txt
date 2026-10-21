@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/currentness_matrix_python_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_python_deleted_statement/diff.patch --mode fast probe:src_cart.py:python_preview:30b8d627
   ripr context --root <cwd>/fixtures/currentness_matrix_python_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_python_deleted_statement/diff.patch --mode fast --at probe:src_cart.py:python_preview:30b8d627
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_cart.py:python_preview:30b8d627 --root <cwd>/fixtures/currentness_matrix_python_deleted_statement/input` for the full gate's answer
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (Python preview: 2).

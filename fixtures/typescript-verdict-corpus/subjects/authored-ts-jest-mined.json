@@ -138,6 +138,14 @@
       "sha256": "42c652625aaf272d68dd28dfc2d73cfdbe9f79ee61315c10e31647dc1694f969"
     },
     {
+      "path": "src/sumNoopDescribe.ts",
+      "sha256": "fef7f1a1c5d3a0048c6d5632895b992e07bbfaca4c0554ec2ec6f8bbc115e725"
+    },
+    {
+      "path": "src/sumNoopTest.ts",
+      "sha256": "3e1211814a507b6fbc5b02e292b39bdf3a7db19e3a367f96b4f1bab0aaecae03"
+    },
+    {
       "path": "src/utils.ts",
       "sha256": "db4b7cdee49ac97674e2fcefdc15f589a81d901b5b074fe6473f15a6ce50dbc4"
     },
@@ -260,6 +268,14 @@
     {
       "path": "test/sum.test.ts",
       "sha256": "01a3700577d04d6daf0baa2936fc0c47281c5711a5817fd815ac6229428e7a12"
+    },
+    {
+      "path": "test/sumNoopDescribe.test.ts",
+      "sha256": "c1de1b8f27c74c8dfa1d5799eae0d54857fa88362b13ca760adf6c29508dc88d"
+    },
+    {
+      "path": "test/sumNoopTest.test.ts",
+      "sha256": "0c3ed9b1ef7caf784c86381be6121dd2757f650a10fa4402e33ccfbedc3598cd"
     },
     {
       "path": "test/utils.test.ts",

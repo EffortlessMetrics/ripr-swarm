@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
 mod model;
+#[cfg(test)]
+mod perl_executable_tests;
 mod python;
 mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
@@ -32,7 +34,7 @@ pub use model::{
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
-pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
+pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in};
 
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
@@ -47,9 +49,54 @@ pub(crate) use python::{
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
-    declared_typescript_handwritten_under, is_declared_handwritten_typescript_path,
-    is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
-    is_typescript_dir_pruned_from_discovery,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
+    declared_typescript_handwritten_under, detect_typescript_project,
+    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
+    is_detectable_generated_typescript_path, is_detectable_typescript_source_name,
+    is_typescript_dir_pruned_from_discovery, is_typescript_excluded_dir_everywhere,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
+};
+
+/// Without `lang-typescript` no-config detection never selects the adapter,
+/// so these inert forms keep the shared call sites unconditional.
+#[cfg(not(feature = "lang-typescript"))]
+mod typescript_absent {
+    use std::path::Path;
+
+    pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[];
+    pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
+
+    pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
+        false
+    }
+
+    pub(crate) fn is_typescript_excluded_dir_everywhere(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn typescript_project_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn typescript_source_dir_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn is_detectable_typescript_source_name(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn source_dir_contains_detectable_typescript(_root: &Path, _marker: &str) -> bool {
+        false
+    }
+}
+#[cfg(not(feature = "lang-typescript"))]
+pub(crate) use typescript_absent::{
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
+    is_detectable_typescript_source_name, is_typescript_excluded_dir_everywhere,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
@@ -246,8 +293,31 @@ fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
     crate::output::path::human_path_text(&path.to_string_lossy(), windows)
 }
 
+/// What a reader can do about a `ripr.toml` that failed to load (#9033). The
+/// error alone names the problem but not the way out; these trailing lines stay
+/// after the first line, which JSON refusals and `doctor` evidence keep. Removal
+/// is worded for discovery: another `ripr.toml` in a parent directory takes over
+/// before the built-in defaults do.
+macro_rules! config_removal_advice {
+    () => {
+        "removing it makes ripr use the next ripr.toml it finds in a parent directory, or the built-in defaults if there is none."
+    };
+}
+const CONFIG_LOAD_PARSE_HINT: &str = concat!(
+    "Fix the error above in ripr.toml and rerun; ",
+    config_removal_advice!()
+);
+const CONFIG_LOAD_READ_HINT: &str = concat!(
+    "Make that ripr.toml readable and rerun; ",
+    config_removal_advice!()
+);
+
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
-    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+    format!(
+        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
+        config_load_error_path_for_host(path, windows),
+        err.trim_end()
+    )
 }
 
 fn config_load_read_error_for_host(
@@ -256,7 +326,7 @@ fn config_load_read_error_for_host(
     windows: bool,
 ) -> String {
     format!(
-        "read {} failed: {err}",
+        "read {} failed: {err}\n{CONFIG_LOAD_READ_HINT}",
         config_load_error_path_for_host(path, windows)
     )
 }
@@ -327,6 +397,14 @@ fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
         if !config.languages.enabled.contains(&LanguageId::Python) {
             config.languages.enabled.push(LanguageId::Python);
         }
+    }
+    // Unlike Python, a binary built without `lang-typescript` stays silent:
+    // `detect_typescript_project` is inert there, and a root `tsconfig.json`
+    // alone is common in Rust repositories with a web frontend.
+    if detect_typescript_project(root)
+        && !config.languages.enabled.contains(&LanguageId::TypeScript)
+    {
+        config.languages.enabled.push(LanguageId::TypeScript);
     }
     Ok(config)
 }
@@ -601,7 +679,12 @@ pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<Stri
         return lines;
     }
     for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        if is_toml_source_excerpt_line(line) {
+        // doctor prints its own `Fix:` line, so the loader's recovery line
+        // would only repeat it (#9033).
+        if is_toml_source_excerpt_line(line)
+            || line == CONFIG_LOAD_PARSE_HINT
+            || line == CONFIG_LOAD_READ_HINT
+        {
             continue;
         }
         if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {
@@ -800,6 +883,16 @@ impl RiprConfig {
                 }
                 None => None,
             };
+            if let Some(executable) = &perl.executable {
+                if executable.contains('\0') {
+                    return Err("perl.executable must not contain NUL characters"
+                        .to_string()
+                        .into());
+                }
+                if executable.is_empty() {
+                    return Err("perl.executable must not be empty; remove the key to use the default exporter".to_string().into());
+                }
+            }
             config.perl = PerlConfig {
                 producer,
                 executable: perl.executable.map(PathBuf::from),

@@ -133,6 +133,9 @@ pub(crate) fn extract_assertions_in(
         }
     }
     out.extend(guarded.oracles);
+    // RIPR-SPEC-0231 rule 8 (#7638): a statement that never runs is no
+    // oracle; the parser path applies the same reach reading.
+    super::reach::retain_reached_oracles(&mut out, body, start_line);
     out.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     out
 }

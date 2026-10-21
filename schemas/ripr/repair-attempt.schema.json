@@ -58,6 +58,17 @@
       ]
     },
     "last_after_refusal": { "$ref": "#/$defs/after_refusal" },
+    "after_refusal_count": {
+      "description": "Total after-phase refusals recorded for this attempt (monotonic, not capped). Absent when zero; excluded from the before commitment. At 5 the after phase stops and requires a new attempt.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "after_refusal_history": {
+      "description": "The most recent after-phase refusals, oldest first, capped at 8 (the oldest drop first; after_refusal_count keeps the true total). Unlike last_after_refusal it is append-only. Absent when empty; excluded from the before commitment.",
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/after_refusal" }
+    },
     "terminal_artifacts": {
       "description": "After-phase static-result artifacts retained under this attempt (`agent_receipt` and the `agent_verify` document it was built from). Absent or empty on legacy manifests. Compatibility projections under target/ripr/reports and target/ripr/workflow are not the sole surviving copy.",
       "type": "array",
