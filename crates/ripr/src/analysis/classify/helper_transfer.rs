@@ -298,13 +298,39 @@ fn tests_call_matching(
 /// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
 /// would hide every #7080 entry.
 fn source_imports_foreign_entry(index: &RustIndex, source: &str, name: &str) -> bool {
-    let renamed_import = super::reveal::flattened_use_paths(source)
-        .iter()
-        .any(|import| {
-            import.alias.as_deref() == Some(name) && import.path.rsplit("::").next() != Some(name)
-        });
-    renamed_import
-        || super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+    // Pure in the source, the name and the package names, and asked once per
+    // (probe, helper chain, test), each time re-parsing the whole test file;
+    // two files that were fast alone took 37 s together (#9086). A run scope
+    // computes each answer once.
+    let query = format!(
+        "{name}\0{}",
+        index
+            .package_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\0")
+    );
+    crate::analysis::syntax::run_memo::memoize_with(
+        crate::analysis::syntax::run_memo::Product::ForeignEntryImport,
+        0,
+        &query,
+        source,
+        || {
+            let renamed_import = super::reveal::flattened_use_paths(source)
+                .iter()
+                .any(|import| {
+                    import.alias.as_deref() == Some(name)
+                        && import.path.rsplit("::").next() != Some(name)
+                });
+            renamed_import
+                || super::reveal::file_imports_foreign_callee_name(
+                    source,
+                    name,
+                    &index.package_names,
+                )
+        },
+    )
 }
 
 struct LocalBindingSubject<'a> {

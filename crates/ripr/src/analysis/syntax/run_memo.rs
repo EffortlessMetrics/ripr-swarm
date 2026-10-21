@@ -27,6 +27,7 @@ pub(crate) enum Product {
     ExternalDocs,
     LocalTestMacros,
     FunctionOracles,
+    ForeignEntryImport,
 }
 
 type Key = (Product, [u8; 32]);
@@ -63,9 +64,11 @@ impl Drop for RunMemoScope {
     }
 }
 
-fn key(product: Product, discriminator: usize, source: &str) -> Key {
+fn key(product: Product, discriminator: usize, extra: &str, source: &str) -> Key {
     let mut hasher = Sha256::new();
     hasher.update(discriminator.to_le_bytes());
+    hasher.update(extra.len().to_le_bytes());
+    hasher.update(extra.as_bytes());
     hasher.update(source.as_bytes());
     (product, hasher.finalize().into())
 }
@@ -79,10 +82,22 @@ pub(crate) fn memoize<T: Clone + 'static>(
     source: &str,
     compute: impl FnOnce() -> T,
 ) -> T {
+    memoize_with(product, discriminator, "", source, compute)
+}
+
+/// [`memoize`] for a product that also depends on `extra` (a name or other
+/// query beside the source text): the entry is keyed by both.
+pub(crate) fn memoize_with<T: Clone + 'static>(
+    product: Product,
+    discriminator: usize,
+    extra: &str,
+    source: &str,
+    compute: impl FnOnce() -> T,
+) -> T {
     if MEMO.with(|memo| memo.borrow().depth == 0) {
         return compute();
     }
-    let key = key(product, discriminator, source);
+    let key = key(product, discriminator, extra, source);
     let cached = MEMO.with(|memo| memo.borrow().entries.get(&key).cloned());
     if let Some(value) = cached.as_ref().and_then(|value| value.downcast_ref::<T>()) {
         return value.clone();
@@ -163,5 +178,25 @@ mod tests {
         let first: u8 = memoize(Product::ExternalDocs, 0, "abc", || 1u8);
         let second: u16 = memoize(Product::ExternalDocs, 0, "abc", || 2u16);
         assert_eq!((first, second), (1, 2));
+    }
+
+    #[test]
+    fn the_query_beside_the_source_is_part_of_the_key() {
+        let calls = Cell::new(0);
+        let _scope = enter();
+        let ask = |extra: &str| {
+            super::memoize_with(Product::ForeignEntryImport, 0, extra, "src", || {
+                calls.set(calls.get() + 1);
+                extra.len()
+            })
+        };
+        assert_eq!((ask("a"), ask("a"), ask("bcd")), (1, 1, 3));
+        assert_eq!(calls.get(), 2, "same query reuses, another query computes");
+        // An empty query is the plain form's entry.
+        assert_eq!(counted(&calls, Product::ForeignEntryImport, 0, "src"), 3);
+        assert_eq!(
+            super::memoize_with(Product::ForeignEntryImport, 0, "", "src", || 99usize),
+            3
+        );
     }
 }
