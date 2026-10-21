@@ -53,7 +53,7 @@
     "packet": "packets/perl-0235-ex23-missing-test-runner.json",
     "sha256": "3e8c620fca4c0abd5767599a0a6d6c8d7b3b80c9e1a70aaa0074b8d725971477",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then append to dynamic_boundaries: {\"boundary_id\": \"boundary:runner:t/ledger.t\", \"confidence\": \"high\", \"file_id\": \"file:t/ledger.t\", \"kind\": \"missing_test_runner\", \"owner_id\": null, \"provenance_refs\": [], \"range\": {\"end_column\": 0, \"end_line\": 0, \"start_column\": 0, \"start_line\": 0}}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then append to dynamic_boundaries: {\"boundary_id\": \"boundary:runner:t/ledger.t\", \"confidence\": \"high\", \"file_id\": \"file:t/ledger.t\", \"kind\": \"missing_test_runner\", \"owner_id\": null, \"provenance_refs\": [], \"range\": {\"end_column\": 0, \"end_line\": 0, \"start_column\": 0, \"start_line\": 0}}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#23"
