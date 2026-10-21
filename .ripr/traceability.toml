@@ -16434,6 +16434,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_always_exiting_try_keeps_earlier_and_finalizer_credit",
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_dead_conditional_after_always_exiting_try_yields_no_credit_gap",
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_dead_assertion_after_try_finally_return_does_not_expose",
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_inside_unreachable_catch_is_withheld",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_keep_imported_and_global_controls",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_reject_local_noop_callbacks",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_preserve_unrelated_valid_evidence",
@@ -16523,6 +16524,7 @@ fixtures = [
   "fixtures/typescript_finally_completion",
   "fixtures/ts_dead_assertion_after_return",
   "fixtures/ts_dead_assertion_after_try_finally",
+  "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",
