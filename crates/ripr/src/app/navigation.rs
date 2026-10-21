@@ -102,8 +102,10 @@ impl RepairRouteRefusal {
                 gate()
             ),
             Self::SeamLimit => {
-                "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; rerun with a wider seam budget"
-                    .to_string()
+                format!(
+                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET
+                )
             }
             Self::NoBindingSeam => format!(
                 "no repair start offered: no seam in the finding's file binds this finding; {}",
@@ -278,7 +280,13 @@ pub(crate) fn finding_navigation_with_worktree(
     let args = navigation_args(input, artifact_path, mode_explicit, worktree);
     // `ripr check` has no `--from`: the listing always re-runs the original
     // scope, even when the drill-in commands replay a written artifact.
-    let list_args = navigation_args(input, None, mode_explicit, worktree);
+    let mut list_args = navigation_args(input, None, mode_explicit, worktree);
+    // Unlike explain/context, check defaults to the worktree when it is dirty.
+    // Pin the committed listing so recovery cannot silently change its subject.
+    // Supplied patches and explicit worktree input already bind their source.
+    if !worktree && input.diff_file.is_none() && input.git_candidate.is_none() {
+        list_args.push_str(" --committed");
+    }
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
         context_prefix: format!("ripr context {args}"),
