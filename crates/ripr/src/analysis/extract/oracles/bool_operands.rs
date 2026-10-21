@@ -616,10 +616,14 @@ fn wrapper_contents(text: &str) -> Option<&str> {
 fn peel_references_and_groups(text: &str) -> &str {
     let mut text = text.trim();
     loop {
-        if let Some(rest) = text.strip_prefix("&mut ") {
-            text = rest.trim_start();
-        } else if let Some(rest) = text.strip_prefix('&') {
-            text = rest.trim_start();
+        if let Some(rest) = text.strip_prefix('&') {
+            // `mut` is a keyword only when no name character follows it
+            // (`&mut(..)`, `&mut\nx`, but not `&mutable`).
+            let rest = rest.trim_start();
+            let after_mut = rest
+                .strip_prefix("mut")
+                .filter(|after| !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'));
+            text = after_mut.unwrap_or(rest).trim_start();
         } else if let Some(inner) = grouped_value(text) {
             text = inner.trim();
         } else {
@@ -632,12 +636,16 @@ fn peel_references_and_groups(text: &str) -> &str {
 /// top-level comma (not a tuple).
 fn grouped_value(text: &str) -> Option<&str> {
     let contents = whole_group_contents(text)?;
+    // A trailing comma makes a one-element tuple, even before a comment
+    // (`(x == 1, /* note */)`).
     let single = split_top_level_commas(contents)
         .iter()
         .filter(|element| !element.trim().is_empty())
         .nth(1)
         .is_none()
-        && !contents.trim_end().ends_with(',');
+        && !mask_comments_and_strings(contents)
+            .trim_end()
+            .ends_with(',');
     single.then_some(contents)
 }
 
