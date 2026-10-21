@@ -175,6 +175,29 @@ Unchanged: bare `no_static_path`, no `static_limit_kind`, no witness.
 | `static_limitation` | additive object with `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`, and `non_claim` when all four evidence detail lines are present | omitted |
 | `related_tests` | unchanged (witness NOT added) | unchanged |
 
+### Local function aliases (#8999)
+
+A test that calls a function only through a simple local alias, such as
+`let from_isoywd = NaiveDate::from_isoywd_opt; from_isoywd(..)`, gains one
+call fact for the aliased function, spelled as the aliased path call
+(`NaiveDate::from_isoywd_opt(..)`) from the alias call's own bytes. It is
+reach evidence only: it never strengthens an oracle, and argument and
+free-function readers see the call exactly as if the path had been written.
+The alias is accepted only when all of these hold, and otherwise adds nothing:
+
+- one immutable, untyped `let NAME = a::b::snake_case_fn;` with a qualifier
+  (a bare single-segment name may be a local closure or fn-pointer
+  parameter);
+- the binding is not inside a macro token tree (`stringify!(let ..)`);
+- every other mention of `NAME` in the body is a direct `NAME(..)` call after
+  the binding (no second `let`, `mut`, parameter, pattern or loop binding,
+  nested `fn`, macro or field mention, or passing the alias along);
+- the call's parentheses close on the same line.
+
+Block scope is not modeled, so any same-named mention disables the alias for
+the whole body; at most 64 aliases are considered per body. The path is
+matched by its last segment name only and is never resolved to a definition.
+
 ## Non-Goals
 
 - Adding the witness to `related_tests` — explicit fail-closed boundary.
@@ -257,6 +280,14 @@ requirements in this spec remain unchanged.
 - `crates/ripr/src/analysis/extract/calls.rs::tests::attribute_arguments_are_not_calls_but_code_after_them_is`,
   `parameter_attributes_that_run_their_arguments_stay_calls`, `an_unclosed_attribute_keeps_the_plain_call_reading`
   — attribute arguments are not call facts, except argument-running parameter attributes
+- `crates/ripr/src/analysis/extract/calls.rs::tests::local_function_alias_call_also_reads_as_call_to_the_aliased_function`,
+  `alias_fact_text_is_the_aliased_path_call_not_the_whole_line`, `single_segment_alias_is_not_resolved`,
+  `alias_bound_inside_a_macro_token_tree_is_not_resolved`, `ambiguous_or_non_function_aliases_are_not_resolved`
+  — local function alias calls (#8999): positive, path-spelled fact text, and fail-closed negatives
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call`
+  — the alias fact drives the real related-test relation for a free-function owner
+- `crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_target_text`
+  — alias calls read their own arguments, not a quoted target-looking substring
 - `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call`
   — the grip summary does not say the test calls a derive entry
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured`

@@ -5719,6 +5719,39 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
     }
 
+    /// #8999: a call through a local alias reads the alias call's own
+    /// arguments, never a target-looking quoted substring on the same line.
+    #[test]
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_target_text() {
+        let owner = function("pub fn target(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::target;\nassert_eq!(f(7), \"target(100)\");";
+        let test = TestSummary {
+            name: "alias_call".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(&test, Some(&owner));
+        let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
+
+        assert!(
+            values.iter().any(|value| value.ends_with("7")),
+            "{values:?}"
+        );
+        assert!(
+            !values.iter().any(|value| value.contains("100")),
+            "{values:?}"
+        );
+    }
+
     #[test]
     fn value_facts_for_test_filters_non_owner_calls_and_reads_enum_call_arguments() {
         let owner = function(
