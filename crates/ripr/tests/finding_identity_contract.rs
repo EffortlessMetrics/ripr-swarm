@@ -341,6 +341,101 @@ fn concat_policy(id: &str) -> String {
     )
 }
 
+fn raw_macro_comparison_source(expression: &str, ty: &str) -> String {
+    format!(
+        "macro_rules! keep {{ ($value:literal #) => {{ $value }}; }}\n\
+         pub fn equal(x: {ty}) -> bool {{\n    {expression}\n}}\n"
+    )
+}
+
+#[test]
+fn raw_string_termination_keeps_material_values_distinct() -> Result<(), String> {
+    for (prefix, ty, previous) in [
+        ("r", "&str", "\"previous\""),
+        ("br", "&[u8]", "b\"previous\""),
+        ("cr", "&core::ffi::CStr", "c\"previous\""),
+    ] {
+        for count in [0, 1, 3] {
+            let hashes = "#".repeat(count);
+            let one = format!("x == keep!({prefix}{hashes}\"a b\"{hashes}#)");
+            let two = format!("x == keep!({prefix}{hashes}\"a  b\"{hashes}#)");
+            let formatted = format!("x  ==\tkeep!({prefix}{hashes}\"a  b\"{hashes}#)");
+            let before = raw_macro_comparison_source(&format!("x == {previous}"), ty);
+            let first = raw_macro_comparison_source(&one, ty);
+            let fixture = Fixture::new(&[("src/lib.rs", &first)])?;
+            let mut ids = Vec::new();
+            for expression in [&one, &two, &formatted] {
+                let source = raw_macro_comparison_source(expression, ty);
+                fixture.write("src/lib.rs", &source)?;
+                let output = fixture.check(&[("src/lib.rs", &before, &source)])?;
+                let id = current_predicate_id(&output, expression);
+                let repo = ripr::app::check_workspace_repo(CheckInput {
+                    root: fixture.root.clone(),
+                    mode: Mode::Draft,
+                    format: OutputFormat::Json,
+                    ..CheckInput::default()
+                })?;
+                assert_eq!(
+                    current_predicate_id(&repo, expression),
+                    format!("repo-{id}")
+                );
+                ids.push(id);
+            }
+            assert_ne!(ids[0], ids[1], "literal value changed: {one} -> {two}");
+            assert_eq!(ids[1], ids[2], "only exterior formatting changed");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_string_termination_rejects_the_other_literal_selector() -> Result<(), String> {
+    for (prefix, ty, previous) in [
+        ("r", "&str", "\"previous\""),
+        ("br", "&[u8]", "b\"previous\""),
+        ("cr", "&core::ffi::CStr", "c\"previous\""),
+    ] {
+        for count in [0, 1, 3] {
+            let hashes = "#".repeat(count);
+            let one = format!("x == keep!({prefix}{hashes}\"a b\"{hashes}#)");
+            let two = format!("x == keep!({prefix}{hashes}\"a  b\"{hashes}#)");
+            let before = raw_macro_comparison_source(&format!("x == {previous}"), ty);
+            let first = raw_macro_comparison_source(&one, ty);
+            let fixture = Fixture::new(&[("src/lib.rs", &first)])?;
+            let original = fixture.check(&[("src/lib.rs", &before, &first)])?;
+            let old_id = current_predicate_id(&original, &one);
+            fixture.write("suppressions.toml", &concat_policy(&old_id))?;
+            let reviewed = fixture.check(&[("src/lib.rs", &before, &first)])?;
+            let outcome = reviewed
+                .suppression
+                .ok_or("reviewed policy outcome missing")?;
+            assert_eq!(outcome.suppressed.len(), 1);
+            assert!(outcome.warnings.is_empty());
+
+            let second = raw_macro_comparison_source(&two, ty);
+            fixture.write("src/lib.rs", &second)?;
+            let changed = fixture.check(&[("src/lib.rs", &before, &second)])?;
+            let new_id = current_predicate_id(&changed, &two);
+            let outcome = changed.suppression.ok_or("policy outcome missing")?;
+            assert!(
+                outcome.suppressed.is_empty(),
+                "the reviewed one-space selector must not suppress {two}"
+            );
+            assert!(!outcome.warnings.is_empty());
+
+            fixture.write("suppressions.toml", &concat_policy(&new_id))?;
+            let current = fixture.check(&[("src/lib.rs", &before, &second)])?;
+            let outcome = current
+                .suppression
+                .ok_or("current policy outcome missing")?;
+            assert_eq!(outcome.suppressed.len(), 1);
+            assert_eq!(outcome.suppressed[0].finding_id, new_id);
+            assert!(outcome.warnings.is_empty());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn line_comment_terminators_distinguish_active_macro_tokens() -> Result<(), String> {
     let before = comparison_source("x == \"previous\"");

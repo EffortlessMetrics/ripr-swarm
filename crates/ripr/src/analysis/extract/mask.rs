@@ -376,13 +376,13 @@ fn scan(text: &str) -> Scanned {
                     while let Some(&b'#') = bytes.get(index + 1 + closing) {
                         closing += 1;
                     }
-                    if closing == raw_hashes {
-                        // Consume the closing quote and its hashes
-                        // (closing + 1 bytes).
+                    if closing >= raw_hashes {
+                        // Only the opening delimiter's hash count belongs
+                        // to this literal; surplus hashes remain code.
                         string_spans.push((string_open, index, true));
                         string_quotes += 1;
-                        out.extend(std::iter::repeat_n(b' ', closing + 1));
-                        index += closing + 1;
+                        out.extend(std::iter::repeat_n(b' ', raw_hashes + 1));
+                        index += raw_hashes + 1;
                         state = MaskState::Code;
                         continue;
                     }
@@ -561,6 +561,51 @@ mod tests {
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("live(4);"), "{masked}");
         assert_eq!(masked.lines().count(), text.lines().count());
+    }
+
+    #[test]
+    fn raw_string_termination_keeps_surplus_hashes_as_code() {
+        for prefix in ["r", "br", "cr"] {
+            for count in [0, 1, 3] {
+                for surplus in [1, 2] {
+                    let hashes = "#".repeat(count);
+                    let extra = "#".repeat(surplus);
+                    let text = format!("{prefix}{hashes}\"a  b\"{hashes}{extra} + live()");
+                    let open = text.find('"').unwrap();
+                    let close = text.rfind('"').unwrap();
+                    assert_eq!(
+                        rust_identity_spans(&text).literal_ranges,
+                        vec![(open, close)],
+                        "raw literal must end before surplus tokens: {text:?}"
+                    );
+                    assert!(
+                        mask_comments_and_strings(&text).ends_with(&format!("{extra} + live()")),
+                        "surplus hashes and following code must remain visible: {text:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raw_string_termination_requires_the_opening_hash_count() {
+        for prefix in ["r", "br", "cr"] {
+            for count in [1, 3] {
+                let hashes = "#".repeat(count);
+                let short = "#".repeat(count - 1);
+                let text = format!("{prefix}{hashes}\"a \"{short} b\"{hashes}# + live()");
+                assert_eq!(
+                    rust_identity_spans(&text).literal_ranges,
+                    vec![(text.find('"').unwrap(), text.rfind('"').unwrap())],
+                    "a shorter delimiter belongs to the raw contents: {text:?}"
+                );
+                assert!(mask_comments_and_strings(&text).ends_with("# + live()"));
+
+                let unclosed = format!("{prefix}{hashes}\"a \"{short} + hidden()");
+                assert!(rust_identity_spans(&unclosed).literal_ranges.is_empty());
+                assert!(!mask_comments_and_strings(&unclosed).contains("hidden"));
+            }
+        }
     }
 
     #[test]
