@@ -37,7 +37,9 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No baseline, threshold, schema or runner change. The metric definition in
+- No threshold, schema or runner change. Baselines recorded before the
+  `step-occurrences-v1` grain marker counted breached metric rows; they
+  are explicitly not compared for this metric (see Rule 4). The metric definition in
   `benchmarks/dx_scoreboard/scoreboards.toml` already declares
   `unit = "steps"`; this spec aligns ingestion with that declared grain.
 
@@ -63,12 +65,14 @@ breaching both budgets yields value 1 for that occurrence.
 ### Rule 2: occurrence identity at ingestion
 
 Exported `first_run_row.v1` rows carry no occurrence id; they are keyed by
-case, step and metric. Ingestion groups budgeted rows by step occurrence:
-the earliest occurrence of the same case and step that has not yet seen
-that metric, mirroring the existing `secs`/`exit` pairing. Every budgeted
-row marks its metric as seen, breaching or not, so a later occurrence's
-breach cannot merge into an earlier occurrence that breached only the
-other budget. Repeated occurrences with the same step name remain
+case, step and metric. Ingestion groups budgeted rows by step occurrence
+ordinal for the case and step: exported rows are occurrence-sequential
+(`secs`, `exit`, `stdout_lines` per occurrence), so the nth `secs` row
+starts occurrence n and a `stdout_lines` row belongs to the latest
+occurrence started for that step (its own ordinal when it precedes any
+`secs` row). A missing `stdout_lines` row therefore cannot shift the next
+occurrence's output onto an earlier occurrence that breached only its
+time budget. Repeated occurrences with the same step name remain
 separately countable.
 
 ### Rule 3: evidence lineage is retained
@@ -77,7 +81,19 @@ Both evidence entries (for example the time and stdout entries for one
 occurrence) remain in the metric's evidence list, attached to the single
 counted occurrence. Counting changes; evidence does not.
 
-### Rule 4: neighbouring behavior is unchanged
+### Rule 4: baselines compare only at the same grain
+
+The metric's evidence names its grain (`step-occurrences-v1:`), so the
+marker survives ingest into a baseline report's sample detail.
+`compare_with_baseline` does not compare `first_run.over_budget_steps`
+against a baseline whose samples do not all name that grain; it reports
+the metric as not compared instead. A pre-change baseline counted
+breached metric rows and retains no raw rows to recount from, so
+comparing across grains could hide an added over-budget step (one former
+dual breach and two current single breaches both read 2). A baseline
+recorded at the step-occurrence grain still compares normally.
+
+### Rule 5: neighbouring behavior is unchanged
 
 `workflow_lines` breaches stay on `first_run.over_budget_workflows`.
 Null or missing budgets cannot breach, missing metric rows create no
@@ -93,13 +109,18 @@ phantom occurrence, and existing incomplete or out-of-order row handling
   time also ingest as 2.
 - A step breaching only one budget counts 1; null budgets and missing
   metric rows add no count.
+- A first occurrence breaching only time with no `stdout_lines` row and
+  a second breaching only output ingest as 2, not 1.
+- A baseline whose samples do not name `step-occurrences-v1` is not
+  compared for this metric; a baseline that names it still compares and
+  regresses on a rise.
 - The exported-rows ingestion agrees with the renderer grain pinned by
   `dual_metric_breach_counts_once_per_step` in
   `xtask/src/public_proof.rs`.
 
 ## Non-Goals
 
-- Changing the renderer, the row exporter, budgets, thresholds, baselines
+- Changing the renderer, the row exporter, budgets, thresholds
   or runner behavior.
 - Changing `first_run.over_budget_workflows` or any other metric's grain.
 - Adding an occurrence id to the `first_run_row.v1` wire shape.
@@ -119,7 +140,11 @@ phantom occurrence, and existing incomplete or out-of-order row handling
   (example 1 and workflow separation),
   `first_run_rows_count_repeated_step_occurrences_separately` (example 2),
   `first_run_rows_single_budget_and_missing_rows_have_no_phantom_count`
-  (example 3).
+  (example 3),
+  `first_run_rows_missing_first_stdout_row_does_not_merge_occurrences`
+  (missing-row occurrence identity),
+  `first_run_over_budget_baseline_from_breached_row_grain_is_not_compared`
+  (baseline grain).
 - `xtask/src/public_proof.rs`: `dual_metric_breach_counts_once_per_step`
   pins the renderer grain the ingestion now agrees with.
 

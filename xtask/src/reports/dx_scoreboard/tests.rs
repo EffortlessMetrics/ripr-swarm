@@ -1308,7 +1308,7 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
     assert_eq!(
         get("first_run.over_budget_steps")[0]["evidence"],
-        json!("a/check secs 12 > 10")
+        json!("step-occurrences-v1: a/check secs 12 > 10")
     );
     assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
     assert_eq!(
@@ -1368,7 +1368,7 @@ fn first_run_rows_count_a_dual_budget_breach_once_per_step_occurrence() {
     // Both evidence entries stay attached to the single counted occurrence.
     assert_eq!(
         get("first_run.over_budget_steps")[0]["evidence"],
-        json!("a/check secs 12 > 10, a/check stdout_lines 61 > 60")
+        json!("step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60")
     );
     // Workflow size stays on its own metric.
     assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
@@ -1404,7 +1404,7 @@ fn first_run_rows_count_repeated_step_occurrences_separately() {
     assert_eq!(
         steps_row["evidence"],
         json!(
-            "a/check secs 12 > 10, a/check stdout_lines 61 > 60, a/check secs 13 > 10, a/check stdout_lines 62 > 60"
+            "step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60, a/check secs 13 > 10, a/check stdout_lines 62 > 60"
         )
     );
     // First occurrence breaches only stdout, second only secs: the
@@ -1455,7 +1455,143 @@ fn first_run_rows_single_budget_and_missing_rows_have_no_phantom_count() {
         .cloned()
         .unwrap_or_default();
     assert_eq!(steps_row["value"], json!(1));
-    assert_eq!(steps_row["evidence"], json!("a/check secs 12 > 10"));
+    assert_eq!(
+        steps_row["evidence"],
+        json!("step-occurrences-v1: a/check secs 12 > 10")
+    );
+}
+
+#[test]
+fn first_run_rows_missing_first_stdout_row_does_not_merge_occurrences() {
+    let row = |metric: &str, value: &str, budget: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"{metric}","value":{value},"budget":{budget},"better":"lower"}}"#
+        )
+    };
+    // First occurrence breaches only secs and has no stdout_lines row;
+    // second breaches only stdout. The second occurrence's stdout row
+    // belongs to the occurrence started by the second secs row, not to
+    // the earliest occurrence that has not seen stdout yet: 2, not 1.
+    let text = [
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("secs", "5.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+    ]
+    .join("\n");
+    let converted =
+        first_run_rows_to_input(&parse_ingest_text(&text).unwrap_or_default()).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+    assert_eq!(
+        steps_row["evidence"],
+        json!("step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60")
+    );
+}
+
+#[test]
+fn first_run_over_budget_baseline_from_breached_row_grain_is_not_compared() -> Result<(), String> {
+    let config = parse_config(
+        r#"
+schema_version = "ripr-dx-scoreboards-v1"
+
+[[corpus]]
+id = "serde"
+url = "https://github.com/serde-rs/serde"
+sha = "dd18663450ec3ee38e35e3a4ee141932614e662c"
+
+[[metric]]
+id = "first_run.over_budget_steps"
+board = "first_run"
+title = "First-run steps over budget"
+unit = "steps"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+"#,
+    )?;
+    let boards = vec!["first_run".to_string()];
+    let with_detail = |value: f64, detail: &str| Sample {
+        metric: "first_run.over_budget_steps".to_string(),
+        repo: None,
+        outcome: SampleOutcome::Value(value),
+        detail: detail.to_string(),
+    };
+    // Pre-change baseline: one dual breach counted as 2 breached rows.
+    // Current: two single-breach occurrences also count 2. Comparing
+    // across grains would hide the added over-budget step.
+    let old_baseline = build_report(
+        &config,
+        &boards,
+        &[with_detail(
+            2.0,
+            "ingested from first-run: a/check secs 12 > 10, a/check stdout_lines 61 > 60",
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let current = vec![with_detail(
+        2.0,
+        "ingested from first-run: step-occurrences-v1: a/check secs 12 > 10, a/pilot stdout_lines 61 > 60",
+    )];
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&old_baseline),
+        true,
+    );
+    let row = metric(&report, "first_run.over_budget_steps")?;
+    assert_eq!(row["baseline"]["comparable"].as_bool(), Some(false));
+    let reason = row["baseline"]["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("step-occurrences-v1"), "{reason}");
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert!(
+        report["gate"]["uncompared"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item["metric"] == "first_run.over_budget_steps")),
+        "{}",
+        report["gate"]
+    );
+    // A baseline recorded at the step-occurrence grain still compares,
+    // and a rise past its zero margin still regresses.
+    let new_baseline = build_report(
+        &config,
+        &boards,
+        &[with_detail(
+            1.0,
+            "ingested from first-run: step-occurrences-v1: a/check secs 12 > 10",
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&new_baseline),
+        true,
+    );
+    let row = metric(&report, "first_run.over_budget_steps")?;
+    assert_eq!(row["baseline"]["comparable"].as_bool(), Some(true));
+    assert_eq!(row["baseline"]["regressed"].as_bool(), Some(true));
+    Ok(())
 }
 
 #[test]
