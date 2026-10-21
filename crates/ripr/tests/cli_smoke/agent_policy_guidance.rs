@@ -248,7 +248,7 @@ fn genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy()
     let (root, _) = omitted_seam("policy omitted unknown control")?;
     let root_arg = root.display().to_string();
     let unknown = "0000000000000000";
-    for (command, code) in [("card", 3), ("packet", 3), ("repair", 3)] {
+    for (command, code) in [("card", 3), ("packet", 3), ("repair", 2)] {
         let mut args = vec![
             "agent",
             command,

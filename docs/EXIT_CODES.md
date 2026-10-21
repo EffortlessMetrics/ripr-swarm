@@ -35,8 +35,8 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
   stderr names the cause. An unknown `--seam-id` is one typed refusal with
-  one exit, `3`, on `agent card`, `agent stub`, `agent packet` and
-  `agent repair --phase before`: with `--json` the document is on stdout
+  one exit, `3`, on `agent card`, `agent stub` and `agent packet` (`agent
+  repair --phase before` still exits `2` for it): with `--json` the document is on stdout
   and the prose on stderr).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.

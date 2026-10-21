@@ -94,8 +94,7 @@ typed envelope on stdout (prose on stderr):
   `agent verify-execute` and lets a script parse stdout on every `--json`
   refusal (the earlier stderr placement is superseded). Without `--json`
   stdout stays empty and stderr carries the prose rendering only. An unknown
-  seam id exits `3` on `agent card`, `agent stub`, `agent packet` and
-  `agent repair --phase before`.
+  seam id exits `3` on `agent card`, `agent stub` and `agent packet`.
 - Operational could-not-complete failures (an unreadable config, a failed
   git head or dirty-state probe, a detail-source serialization failure, an
   unreadable attempt inventory) stay exit code `2` with human prose only.
@@ -167,7 +166,7 @@ typed envelope on stdout (prose on stderr):
   card human/JSON remedy parity, packet JSON message/stderr parity, and both
   repair-before renderings preserve their status and output channels. A literal
   unknown seam under the same policy retains pilot/list recovery on all three
-  commands, each exiting `3`. Packet without `--json` retains its argument-validation refusal.
+  commands; card and packet exit `3`, repair exits `2`. Packet without `--json` retains its argument-validation refusal.
 - `crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card`
   extends the cold-agent refusal journey: exit code `3` and the
   parseable `agent_card_refusal` envelope on stdout under `--json`.

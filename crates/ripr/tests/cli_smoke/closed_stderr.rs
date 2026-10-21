@@ -156,8 +156,24 @@ fn assert_refusal_survives_sink_loss(
     let prose = String::from_utf8_lossy(&normal.stderr);
     assert!(prose.starts_with("ripr: agent "), "{args:?}: {prose}");
 
+    // Channel pin: the prose is stderr-only and stdout is exactly one JSON
+    // document (`from_slice` above rejects trailing text).
+    assert!(
+        !String::from_utf8_lossy(&normal.stdout).contains("ripr: agent "),
+        "{args:?}: prose leaked into stdout: {normal:?}"
+    );
+
     let closed = run(root, args, true)?;
+    assert!(!closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    let closed_envelope: Value = serde_json::from_slice(&closed.stdout)
+        .map_err(|error| format!("closed-stderr stdout is not one JSON document: {error}"))?;
+    assert_eq!(closed_envelope["kind"], kind, "{args:?}");
+    assert_eq!(closed_envelope, envelope, "{args:?}: JSON changed");
     assert_eq!(closed.stdout, normal.stdout, "{args:?}: JSON changed");
+    assert!(
+        !String::from_utf8_lossy(&closed.stdout).contains("ripr: agent "),
+        "{args:?}: prose leaked into stdout: {closed:?}"
+    );
     assert_eq!(closed.status.code(), Some(3), "{args:?}: {closed:?}");
 
     // The JSON path must retain the existing human-only refusal behavior.

@@ -558,9 +558,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
                 )
             };
-            // An unknown seam is a typed refusal (exit 3), like `agent
-            // card`, `agent stub` and `agent packet` for the same cause.
-            Err(crate::cli::CommandError::Decision(message))
+            Err(crate::cli::CommandError::Failure(message))
         }
         Err(error) => Err(crate::cli::CommandError::Failure(error)),
     }
