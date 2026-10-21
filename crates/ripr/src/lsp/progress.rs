@@ -761,6 +761,127 @@ mod tests {
         })
     }
 
+    /// Real create/send suspension points, rather than manually inserting
+    /// an unstarted record, expose late success and begin/end races.
+    struct HeldProgressSink {
+        recorder: Arc<RecordingSink>,
+        hold_begin: bool,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    impl ProgressSink for HeldProgressSink {
+        fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async move {
+                self.recorder.create(token).await?;
+                if !self.hold_begin {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                Ok(())
+            })
+        }
+
+        fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                if self.hold_begin && matches!(value, ProgressNotificationValue::Begin { .. }) {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.recorder.notify(token, value).await;
+            })
+        }
+    }
+
+    #[test]
+    fn late_create_success_never_revives_terminated_tokens() -> Result<(), String> {
+        runtime()?.block_on(async {
+            for terminal in ["end", "end_queued", "end_all"] {
+                let (tracker, recorder) = tracker_with_recorder();
+                let sink = Arc::new(HeldProgressSink {
+                    recorder: Arc::clone(&recorder),
+                    hold_begin: false,
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                tracker.install_test_sink(sink.clone());
+                let announcing = Arc::clone(&tracker);
+                let announce = tokio::spawn(async move {
+                    announcing
+                        .begin(&test_request(7), AnalysisProgressPhase::Queued)
+                        .await;
+                });
+                sink.entered.notified().await;
+                match terminal {
+                    "end" => tracker.end(7, AnalysisProgressEnd::Cancelled).await,
+                    "end_queued" => tracker.end_queued(AnalysisProgressEnd::Superseded).await,
+                    _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                }
+                sink.release.notify_one();
+                announce
+                    .await
+                    .map_err(|error| format!("announce task failed: {error}"))?;
+                if recorder.events()
+                    != [ProgressEvent::Create {
+                        token: progress_token(7),
+                    }]
+                {
+                    return Err(format!(
+                        "{terminal}: late create revived terminated token: {:?}",
+                        recorder.events()
+                    ));
+                }
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn termination_during_begin_send_ends_the_started_token_exactly_once() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: true,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcing = Arc::clone(&tracker);
+            let announce = tokio::spawn(async move {
+                announcing
+                    .begin(&test_request(8), AnalysisProgressPhase::Analyzing)
+                    .await;
+            });
+            sink.entered.notified().await;
+            let ending = Arc::clone(&tracker);
+            let end = tokio::spawn(async move {
+                ending.end_all(AnalysisProgressEnd::Cancelled).await;
+                ending.end(8, AnalysisProgressEnd::Cancelled).await;
+            });
+            // Poll the competing termination while begin is still held.
+            tokio::task::yield_now().await;
+            sink.release.notify_one();
+            announce
+                .await
+                .map_err(|error| format!("announce task failed: {error}"))?;
+            end.await
+                .map_err(|error| format!("end task failed: {error}"))?;
+            let events = recorder.events();
+            if !matches!(events.as_slice(), [
+                ProgressEvent::Create { token: create },
+                ProgressEvent::Begin { token: begin, .. },
+                ProgressEvent::End { token: end, .. },
+            ] if create == &progress_token(8) && begin == create && end == create)
+            {
+                return Err(format!(
+                    "begin/end must stay ordered and end exactly once: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn capability_absent_client_sees_no_progress_traffic() -> Result<(), String> {
         runtime()?.block_on(async {
