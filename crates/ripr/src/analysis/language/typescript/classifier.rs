@@ -5760,16 +5760,24 @@ struct TsUnenteredGuard {
 /// parameter, a non-literal argument) returns `None`, keeping the verdict.
 fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGuard> {
     use super::guard_entry_guard::{
-        CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults,
+        CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults, parameter_shapes,
     };
     let owner = context.owner;
     let source = owner.source_text.as_deref()?;
-    if owner.params.is_empty() || context.candidates.is_empty() {
+    if context.candidates.is_empty() {
         return None;
     }
     let conditions =
         enclosing_conditions(source, owner.start_line, context.line, context.line_text)?;
-    let defaults = parameter_defaults(source, &owner.params)?;
+    // A destructured options parameter leaves `owner.params` empty (arity is
+    // unknown); read the signature itself for it.
+    let (params, defaults, options) = if owner.params.is_empty() {
+        let shapes = parameter_shapes(source)?;
+        (shapes.names, shapes.defaults, shapes.options)
+    } else {
+        let defaults = parameter_defaults(source, &owner.params)?;
+        (owner.params.clone(), defaults, Vec::new())
+    };
     // A recursive or re-exported owner can be re-entered with another input.
     if let Some(root) = context.workspace_root
         && !owner_module_names_owner_once(owner, root)
@@ -5855,8 +5863,9 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 calls += 1;
                 let inputs = CallInputs {
                     owner_source: source,
-                    params: &owner.params,
+                    params: &params,
                     defaults: &defaults,
+                    options: &options,
                     arguments: &arguments,
                 };
                 if !call_excludes_arm(&inputs, &conditions) {

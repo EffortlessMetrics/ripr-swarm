@@ -122,6 +122,7 @@ static_limit_kind|python_transitive_reach_unresolved|Typed static limitation val
 static_limit_kind|rust_assertion_context_unresolved|Typed static limitation value.
 static_limit_kind|rust_log_capture_unresolved|Typed static limitation value.
 static_limit_kind|rust_panic_outcome_unresolved|Typed static limitation value.
+static_limit_kind|rust_debug_assertion_profile_unresolved|Typed static limitation value.
 static_limit_kind|rust_call_fact_budget|Typed static limitation value.
 static_limit_kind|rust_framework_oracle_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.

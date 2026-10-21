@@ -1,0 +1,554 @@
+//! Public-API controls for `debug_assert_eq!` (#8051, RIPR-SPEC-0240).
+//!
+//! A test that calls the owner and pins its whole result with
+//! `debug_assert_eq!` discriminates under the default `cargo test` profile and
+//! never under `--release`, so a return-value finding reads `static_unknown`
+//! with `rust_debug_assertion_profile_unresolved`: neither a missing assertion
+//! nor credit. A standard `assert_eq!` keeps its credit. Other `debug_` checks,
+//! an assertion that does not pin the owner, an ignored test, and other probe
+//! families keep the gap, and a `debug_` check never earns `exposed`.
+
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// `src/lib.rs` with `one` on lines 1-3 and a test with `attrs` and `body`.
+fn source(attrs: &str, body: &str) -> String {
+    format!(
+        "pub fn one() -> u32 {{
+    2 - 1
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    {attrs}
+    fn one_is_one() {{
+        {body}
+    }}
+}}
+"
+    )
+}
+
+/// The returned expression on line 2 changed.
+const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn one() -> u32 {
+-    1
++    2 - 1
+ }
+";
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    fn create(lib: &str, diff: &str) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-debug-assertion-limit-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"debug-assertion\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )
+        .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), lib)
+            .map_err(|error| format!("write source failed: {error}"))?;
+        std::fs::write(root.join("diff.patch"), diff)
+            .map_err(|error| format!("write diff failed: {error}"))?;
+        Ok(Self { root })
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn check(repo: &TempRepo) -> Result<ripr::CheckOutput, String> {
+    check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })
+}
+
+/// The `return_value` finding on line 2, which must be the only one.
+fn return_finding(attrs: &str, body: &str) -> Result<Finding, String> {
+    let repo = TempRepo::create(&source(attrs, body), DIFF)?;
+    let output = check(&repo)?;
+    let mut on_line = output.findings.iter().filter(|finding| {
+        finding.probe.location.line == 2 && finding.probe.family == ripr::ProbeFamily::ReturnValue
+    });
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding.clone()),
+        other => Err(format!(
+            "premise: exactly one return_value finding on line 2, got {other:?} in {:?}",
+            output.findings
+        )),
+    }
+}
+
+#[test]
+fn a_debug_assert_eq_owner_pin_reads_as_a_profile_limit() -> Result<(), String> {
+    for body in [
+        "debug_assert_eq!(one(), 1);",
+        "debug_assert_eq!(1, one());",
+        "debug_assert_eq!(one(), 1, \"one, as ever\");",
+        "debug_assert_eq!(one(), 1, \"x(y\");",
+        // A binding that only reads the owner does not rebind it.
+        "let v = one(); debug_assert_eq!(one(), 1); assert!(v > 0);",
+    ] {
+        let finding = return_finding("", body)?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
+        assert_eq!(
+            finding.static_limit_kind.map(|kind| kind.as_str()),
+            Some("rust_debug_assertion_profile_unresolved"),
+            "{body}"
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("`one_is_one`") && step.contains("assert_eq!")),
+            "{body}: {:?}",
+            finding.recommended_next_step
+        );
+    }
+    Ok(())
+}
+
+/// Bodies whose `debug_assert_eq!` spelling must read exactly as the owner
+/// pin reads the `assert_eq!` twin: a profile limit where the twin is
+/// credited, the twin's own gap otherwise.
+const TWIN_BODIES: &[(&str, &str)] = &[
+    ("", "ASSERT!(one(), 1);"),
+    ("", "ASSERT!(1, one());"),
+    ("", "let v = one(); ASSERT!(2 + 2, 4); assert!(v > 0);"),
+    ("", "ASSERT!(one() + 1, 2);"),
+    ("", "ASSERT!(one(), one());"),
+    ("", "one(); other::ASSERT!(one(), 1);"),
+    ("", "one(); (|| ASSERT!(one(), 1));"),
+    ("", "one(); if false { ASSERT!(one(), 1); }"),
+    ("", "one(); fn helper() { ASSERT!(one(), 1); }"),
+    ("", "if false { return; } ASSERT!(one(), 1);"),
+    (
+        "",
+        "let Some(_v) = Some(1) else { return; }; ASSERT!(one(), 1);",
+    ),
+    ("", "return; ASSERT!(one(), 1);"),
+    ("", "let v = one(); ASSERT!(one(), v);"),
+    ("", "ASSERT![one(), 1];"),
+    ("", "ASSERT!(format!(\"{}\", one()), \"1\");"),
+    ("", "ASSERT!(vec![one()][0], 1);"),
+    ("#[should_panic]", "ASSERT!(one(), 2);"),
+    ("#[ignore]", "ASSERT!(one(), 1);"),
+];
+
+#[test]
+fn a_debug_assert_eq_reads_as_its_assert_eq_twin_or_a_profile_limit() -> Result<(), String> {
+    let mut credited_twins = 0;
+    for (attrs, template) in TWIN_BODIES {
+        let standard = return_finding(attrs, &template.replace("ASSERT", "assert_eq"))?;
+        let debug = return_finding(attrs, &template.replace("ASSERT", "debug_assert_eq"))?;
+        assert_ne!(debug.class, ExposureClass::Exposed, "{attrs} {template}");
+        if standard.class == ExposureClass::Exposed {
+            credited_twins += 1;
+            assert_eq!(
+                debug.class,
+                ExposureClass::StaticUnknown,
+                "{attrs} {template}"
+            );
+            assert_eq!(
+                debug.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{attrs} {template}"
+            );
+        } else {
+            // The `debug_` forms are not oracle facts, so a weak twin's
+            // credit does not carry over; the debug spelling keeps a gap.
+            assert!(
+                matches!(
+                    debug.class,
+                    ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+                ),
+                "{attrs} {template}: {debug:?}"
+            );
+            assert_ne!(
+                debug.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{attrs} {template}"
+            );
+        }
+    }
+    // The credited branch must not be vacuous: the plain, reversed, format
+    // and vec shapes are all credited twins.
+    assert!(credited_twins >= 4, "credited twins: {credited_twins}");
+    Ok(())
+}
+
+#[test]
+fn other_debug_checks_keep_their_gap() -> Result<(), String> {
+    for body in [
+        // Passes for every value other than the one named.
+        "debug_assert_ne!(one(), 2);",
+        // Not an equality pin of the result.
+        "debug_assert!(one() == 1);",
+        "debug_assert!(one() > 0);",
+    ] {
+        let finding = return_finding("", body)?;
+        assert!(
+            matches!(
+                finding.class,
+                ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+            ),
+            "{body}: {finding:?}"
+        );
+        assert_eq!(finding.static_limit_kind, None, "{body}");
+    }
+    Ok(())
+}
+
+/// Predicate, match-arm and field-construction changes each checked only by
+/// `debug_assert_eq!`: lines 2, 7 and 16 of [`FAMILIES_SOURCE`].
+const FAMILIES_SOURCE: &str = "pub fn is_big(x: u32) -> bool {
+    x > 10
+}
+
+pub fn label(v: Option<u32>) -> u32 {
+    match v {
+        Some(v) => v + 2,
+        None => 0,
+    }
+}
+
+pub struct C {
+    pub retries: u32,
+}
+
+pub fn build() -> C {
+    C { retries: 4 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ten_is_not_big() {
+        debug_assert_eq!(is_big(10), false);
+    }
+
+    #[test]
+    fn some_one_labels_three() {
+        debug_assert_eq!(label(Some(1)), 3);
+    }
+
+    #[test]
+    fn build_retries_four_times() {
+        debug_assert_eq!(build().retries, 4);
+    }
+}
+";
+
+const FAMILIES_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn is_big(x: u32) -> bool {
+-    x >= 10
++    x > 10
+ }
+@@ -6,3 +6,3 @@ pub fn label(v: Option<u32>) -> u32 {
+     match v {
+-        Some(v) => v + 1,
++        Some(v) => v + 2,
+         None => 0,
+@@ -15,3 +15,3 @@ pub struct C {
+ pub fn build() -> C {
+-    C { retries: 3 }
++    C { retries: 4 }
+ }
+";
+
+#[test]
+fn a_debug_check_never_earns_exposed_in_any_family() -> Result<(), String> {
+    let repo = TempRepo::create(FAMILIES_SOURCE, FAMILIES_DIFF)?;
+    let output = check(&repo)?;
+    let mut families = Vec::new();
+    for finding in &output.findings {
+        families.push(finding.probe.family.clone());
+        assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+        // The owner pin reads a bool owner's whole predicate as its return
+        // value; the arm and field changes are not pinned by these checks.
+        if matches!(
+            finding.probe.family,
+            ripr::ProbeFamily::MatchArm | ripr::ProbeFamily::FieldConstruction
+        ) {
+            assert_ne!(
+                finding.static_limit_kind.map(|kind| kind.as_str()),
+                Some("rust_debug_assertion_profile_unresolved"),
+                "{finding:?}"
+            );
+        }
+    }
+    // Premise: the changed predicate, arm and field each produced a finding.
+    for family in [
+        ripr::ProbeFamily::Predicate,
+        ripr::ProbeFamily::MatchArm,
+        ripr::ProbeFamily::FieldConstruction,
+    ] {
+        assert!(
+            families.contains(&family),
+            "{family:?} missing from {families:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `check` on lines 3-8: an early `Err` exit (line 5) beside an `Ok` tail.
+fn check_source(body: &str) -> String {
+    format!(
+        "pub enum E {{ Bad, Worse }}
+
+pub fn check(x: u32) -> Result<u32, E> {{
+    if x > 10 {{
+        return Err(E::Worse);
+    }}
+    Ok(x)
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn checks() {{
+        {body}
+    }}
+}}
+"
+    )
+}
+
+/// The early exit's variant changed on line 5.
+const CHECK_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,3 +4,3 @@ pub fn check(x: u32) -> Result<u32, E> {
+     if x > 10 {
+-        return Err(E::Bad);
++        return Err(E::Worse);
+     }
+";
+
+fn line_five_limits(body: &str) -> Result<Vec<(ExposureClass, Option<&'static str>)>, String> {
+    let repo = TempRepo::create(&check_source(body), CHECK_DIFF)?;
+    let output = check(&repo)?;
+    let on_line: Vec<_> = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 5)
+        .map(|finding| {
+            (
+                finding.class.clone(),
+                finding.static_limit_kind.map(|kind| kind.as_str()),
+            )
+        })
+        .collect();
+    if on_line.is_empty() {
+        return Err(format!(
+            "premise: a finding on line 5, got {:?}",
+            output.findings
+        ));
+    }
+    Ok(on_line)
+}
+
+#[test]
+fn an_error_path_pin_reads_as_a_profile_limit_only_when_it_names_the_variant() -> Result<(), String>
+{
+    let pinned = line_five_limits("debug_assert_eq!(check(11), Err(E::Worse));")?;
+    assert!(
+        pinned.contains(&(
+            ExposureClass::StaticUnknown,
+            Some("rust_debug_assertion_profile_unresolved")
+        )),
+        "{pinned:?}"
+    );
+    // The pinned value is the `Ok` tail: the changed exit never produces it,
+    // and the same `assert_eq!` keeps its gap too.
+    for body in [
+        "debug_assert_eq!(check(1), Ok(1));",
+        "assert_eq!(check(1), Ok(1));",
+    ] {
+        let kept = line_five_limits(body)?;
+        assert!(
+            kept.iter().all(|(class, limit)| {
+                *class != ExposureClass::Exposed
+                    && *limit != Some("rust_debug_assertion_profile_unresolved")
+            }),
+            "{body}: {kept:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `div` panics on 0 at line 3; the guard changed.
+const PANIC_SOURCE: &str = "pub fn div(x: u32) -> u32 {
+    if x < 1 {
+        panic!(\"zero\");
+    }
+    100 / x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn zero_panics() {
+        debug_assert_ne!(div(0), 1);
+    }
+}
+";
+
+const PANIC_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn div(x: u32) -> u32 {
+-    if x == 0 {
++    if x < 1 {
+         panic!(\"zero\");
+";
+
+#[test]
+fn a_should_panic_test_with_a_debug_check_keeps_its_panic_outcome_limit() -> Result<(), String> {
+    let repo = TempRepo::create(PANIC_SOURCE, PANIC_DIFF)?;
+    let output = check(&repo)?;
+    let predicate = output
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.location.line == 2 && finding.probe.family == ripr::ProbeFamily::Predicate
+        })
+        .ok_or_else(|| {
+            format!(
+                "premise: a predicate finding on line 2 in {:?}",
+                output.findings
+            )
+        })?;
+    assert_eq!(
+        predicate.class,
+        ExposureClass::StaticUnknown,
+        "{predicate:?}"
+    );
+    assert_eq!(
+        predicate.static_limit_kind.map(|kind| kind.as_str()),
+        Some("rust_panic_outcome_unresolved")
+    );
+    Ok(())
+}
+
+/// Twin parity for a predicate changed at its boundary (`>=` to `>`): the
+/// `debug_assert_eq!` spelling reads as the profile limit exactly where its
+/// `assert_eq!` twin is credited (the on-boundary input), and keeps the
+/// twin's missing-input gap where the twin keeps it (an off-boundary input).
+#[test]
+fn a_predicate_debug_check_keeps_the_off_boundary_gap_its_twin_keeps() -> Result<(), String> {
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn is_big(x: u32) -> bool {
+-    x >= 10
++    x > 10
+ }
+";
+    let predicate = |macro_name: &str, call: &str| -> Result<Finding, String> {
+        let source = format!(
+            "pub fn is_big(x: u32) -> bool {{
+    x > 10
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn big() {{
+        {macro_name}!({call});
+    }}
+}}
+"
+        );
+        let output = check(&TempRepo::create(&source, diff)?)?;
+        output
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.family == ripr::ProbeFamily::Predicate)
+            .ok_or_else(|| format!("no predicate finding for {macro_name}!({call})"))
+    };
+    let limit = |finding: &Finding| finding.static_limit_kind.map(|kind| kind.as_str());
+
+    // On the boundary the twin is credited, so the debug spelling is the limit.
+    let twin = predicate("assert_eq", "is_big(10), false")?;
+    assert_eq!(twin.class, ExposureClass::Exposed, "{twin:?}");
+    let debug = predicate("debug_assert_eq", "is_big(10), false")?;
+    assert_eq!(debug.class, ExposureClass::StaticUnknown, "{debug:?}");
+    assert_eq!(
+        limit(&debug),
+        Some("rust_debug_assertion_profile_unresolved")
+    );
+
+    // Off the boundary the twin keeps a missing-input gap, and so must the
+    // debug spelling: the profile limit would hide it.
+    let twin = predicate("assert_eq", "is_big(20), true")?;
+    assert_eq!(twin.class, ExposureClass::WeaklyExposed, "{twin:?}");
+    assert!(
+        twin.missing.iter().any(|line| line.contains("x == 10")),
+        "premise: the twin names the missing boundary input: {twin:?}"
+    );
+    let debug = predicate("debug_assert_eq", "is_big(20), true")?;
+    assert_ne!(
+        limit(&debug),
+        Some("rust_debug_assertion_profile_unresolved")
+    );
+    // The `debug_` form is not an oracle fact, so it reads as the unrevealed
+    // gap rather than the twin's weak exposure; both name the missing input.
+    assert!(
+        matches!(
+            debug.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        ),
+        "{debug:?}"
+    );
+    assert!(
+        debug.missing.iter().any(|line| line.contains("x == 10")),
+        "{debug:?}"
+    );
+    Ok(())
+}
