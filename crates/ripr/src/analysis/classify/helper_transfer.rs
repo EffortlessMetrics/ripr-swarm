@@ -320,8 +320,9 @@ fn tests_call_matching(
 fn source_imports_foreign_entry(index: &RustIndex, source: &str, name: &str) -> bool {
     // Pure in the source, the name and the package names, and asked once per
     // (probe, helper chain, test), each time re-parsing the whole test file;
-    // two files that were fast alone took 37 s together (#9086). A run scope
-    // computes each answer once.
+    // two files that were fast alone took 37 s together (#9086). Each
+    // classification worker scope (rayon `map_init` in the Rust language
+    // analysis, not one scope per run) computes each answer once.
     let query = format!(
         "{name}\0{}",
         index
@@ -2098,6 +2099,28 @@ mod tests {
             ];
             assert_eq!(scoped, unscoped);
         }
+    }
+
+    // #9086: inside a scope the same (source, name, package names) query scans
+    // the source once; a different name or package set is a new scan.
+    #[test]
+    fn scoped_import_answer_scans_once_per_distinct_query() {
+        let source = "fn parse(x: u8) -> u8 { x }\nfn t() { parse(1); other(2); }\n";
+        let plain = index_with_tests(vec![], vec![]);
+        let mut with_package = index_with_tests(vec![], vec![]);
+        with_package.package_names = ["serde".to_string()].into_iter().collect();
+        let scans = || super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        let first = source_imports_foreign_entry(&plain, source, "parse");
+        assert_eq!(scans(), 1, "the first ask scans the source");
+        let second = source_imports_foreign_entry(&plain, source, "parse");
+        assert_eq!(first, second);
+        assert_eq!(scans(), 1, "the repeated ask is served from the scope");
+        source_imports_foreign_entry(&plain, source, "other");
+        assert_eq!(scans(), 2, "another name is a new scan");
+        source_imports_foreign_entry(&with_package, source, "parse");
+        assert_eq!(scans(), 3, "another package set is a new scan");
     }
 
     // #7080: tests that call the ambiguous name enter the refused chain;

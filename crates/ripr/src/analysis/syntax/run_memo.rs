@@ -6,13 +6,15 @@
 //! local test macro expansion and helper-oracle extraction each re-parse
 //! source text that has not changed within the run. Each product is a pure
 //! function of its source text, so it is stored under a digest of that text
-//! for the lifetime of one analysis call and dropped when the call ends.
+//! for the lifetime of one scope and dropped when the scope ends.
 //!
 //! The memo is thread-local: a caller opts in on its own thread with
-//! [`enter`], and a thread without a scope (parallel workers, tests, other
-//! analyses) computes every product directly, exactly as before. Nothing
-//! outlives the outermost scope, so no product can be served for content
-//! that changed between runs.
+//! [`enter`]. The analysis thread enters one, and each parallel classification
+//! worker enters its own (rayon `map_init` in the Rust language analysis), so
+//! workers memoize independently and never share entries. A thread without a
+//! scope (tests, other analyses) computes every product directly, exactly as
+//! before. Nothing outlives the outermost scope, so no product can be served
+//! for content that changed between runs.
 
 use sha2::{Digest, Sha256};
 use std::any::Any;
