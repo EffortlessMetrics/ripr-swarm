@@ -98,6 +98,9 @@ pub(crate) struct CallIdentityMemos {
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
     constants: std::sync::OnceLock<ConstantTable>,
+    /// #9209: the workspace's non-plain `Drop` impls, read once per index so
+    /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
+    drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -200,6 +203,14 @@ impl CallIdentityMemos {
         build: impl FnOnce() -> ConstantTable,
     ) -> &ConstantTable {
         self.constants.get_or_init(build)
+    }
+
+    /// The memoized workspace `Drop` impl index, built by `build` on first use.
+    pub(super) fn workspace_drop_impls(
+        &self,
+        build: impl FnOnce() -> super::element_field_pin::DropImplIndex,
+    ) -> &super::element_field_pin::DropImplIndex {
+        self.drop_impls.get_or_init(build)
     }
 }
 

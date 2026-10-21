@@ -24,6 +24,8 @@ use ra_ap_syntax::{
     AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
+use rayon::prelude::*;
+use std::collections::BTreeSet;
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
 /// returns, through that element alone. The shared owner-pin authorities
@@ -481,11 +483,56 @@ fn observes_with(
 /// Whether no `Drop` impl for `type_name` in the indexed workspace has a
 /// non-empty body. An unparseable source fails closed: its impls are
 /// invisible to this scan.
+///
+/// The answer is a lookup in the run-scoped [`DropImplIndex`] (#9209): the
+/// corpus is parsed once per index instead of once per probe and returned
+/// record type.
 pub(super) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
     index
-        .files()
-        .iter()
-        .all(|(_, facts)| drop_is_plain_in_source(&facts.source, type_name))
+        .call_identity_memos
+        .workspace_drop_impls(|| DropImplIndex::build(index))
+        .is_plain(type_name)
+}
+
+/// The workspace's non-plain `Drop` impls, read once per index (#9209).
+#[derive(Debug, Default)]
+pub(in crate::analysis) struct DropImplIndex {
+    /// Some indexed source does not parse cleanly, so its impls are
+    /// invisible and no type can be called plain.
+    any_unparseable: bool,
+    /// Self-type names (last path segment, generics dropped) of a `Drop`
+    /// impl whose `drop` body is not empty.
+    non_plain: BTreeSet<String>,
+}
+
+impl DropImplIndex {
+    fn build(index: &RustIndex) -> Self {
+        let files = index.files();
+        let sources: Vec<std::sync::Arc<str>> = files
+            .iter()
+            .map(|(_, facts)| std::sync::Arc::clone(&facts.source))
+            .collect();
+        // Counted on the calling thread: the scans below run on the rayon
+        // pool, whose threads a test cannot read.
+        #[cfg(test)]
+        DROP_SCAN_COUNT.with(|count| count.set(count.get() + sources.len()));
+        let scans: Vec<Option<BTreeSet<String>>> = sources
+            .par_iter()
+            .map(|source| non_plain_drop_types(source))
+            .collect();
+        let mut built = Self::default();
+        for scan in scans {
+            match scan {
+                Some(types) => built.non_plain.extend(types),
+                None => built.any_unparseable = true,
+            }
+        }
+        built
+    }
+
+    fn is_plain(&self, type_name: &str) -> bool {
+        !self.any_unparseable && !self.non_plain.contains(type_name)
+    }
 }
 
 /// Names this source binds to the `Drop` trait besides `Drop` itself:
@@ -519,14 +566,20 @@ fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
     names
 }
 
-fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
+/// The self-type names of every non-plain `Drop` impl in `source`, or `None`
+/// when the source does not parse cleanly. A source that never spells `Drop`
+/// cannot hold a `Drop` impl or a `Drop` alias, so it is parsed only to
+/// confirm it is readable and its tree is not walked.
+fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let mut types = BTreeSet::new();
+    if !source.contains("Drop") {
+        return Some(types);
+    }
     let aliases = drop_alias_names(&parse.tree());
-    parse.tree().syntax().descendants().all(|node| {
+    for node in parse.tree().syntax().descendants() {
         let Some(imp) = ast::Impl::cast(node) else {
-            return true;
+            continue;
         };
         let is_drop = imp.trait_().is_some_and(|path| {
             squeeze(&path.syntax().text().to_string())
@@ -538,15 +591,13 @@ fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
                         || aliases.iter().any(|alias| alias == last)
                 })
         });
-        let is_type = imp.self_ty().is_some_and(|ty| {
-            let text = squeeze(&ty.syntax().text().to_string());
-            let last = text.rsplit("::").next().unwrap_or(&text);
-            last.split('<').next().unwrap_or(last) == type_name
-        });
-        if !is_drop || !is_type {
-            return true;
+        if !is_drop {
+            continue;
         }
-        imp.assoc_item_list().is_some_and(|list| {
+        let Some(ty) = imp.self_ty() else {
+            continue;
+        };
+        let plain = imp.assoc_item_list().is_some_and(|list| {
             list.assoc_items().all(|item| {
                 let ast::AssocItem::Fn(function) = item else {
                     return true;
@@ -560,8 +611,23 @@ fn drop_is_plain_in_source(source: &str, type_name: &str) -> bool {
                     })
                 })
             })
-        })
-    })
+        });
+        if plain {
+            continue;
+        }
+        let text = squeeze(&ty.syntax().text().to_string());
+        let last = text.rsplit("::").next().unwrap_or(&text);
+        types.insert(last.split('<').next().unwrap_or(last).to_string());
+    }
+    Some(types)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Sources scanned for `Drop` impls by index builds started on this
+    /// thread (#9209 work-unit pin).
+    pub(super) static DROP_SCAN_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -1654,7 +1720,8 @@ mod tests {
 
     #[test]
     fn a_drop_impl_with_a_body_is_not_plain() {
-        let plain = |source: &str| drop_is_plain_in_source(source, "Row");
+        let plain =
+            |source: &str| non_plain_drop_types(source).is_some_and(|types| !types.contains("Row"));
         for (source, expected) in [
             ("pub struct Row { pub total: u32 }", true),
             ("impl Drop for Row { fn drop(&mut self) {} }", true),
@@ -1689,6 +1756,66 @@ mod tests {
         ] {
             assert_eq!(plain(source), expected, "{source}");
         }
+    }
+
+    fn drop_index(sources: &[(&str, &str)]) -> Result<RustIndex, String> {
+        use crate::analysis::facts::OwnedRustIndex;
+        let mut files = std::collections::BTreeMap::new();
+        for (path, text) in sources {
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                std::path::Path::new(path),
+                text,
+            )?;
+            files.insert(PathBuf::from(path), facts);
+        }
+        Ok(RustIndex::from_owned(OwnedRustIndex {
+            files,
+            ..Default::default()
+        }))
+    }
+
+    /// #9209: the corpus is scanned once per index, not once per probe and
+    /// returned record type.
+    #[test]
+    fn drop_plainness_scans_the_corpus_once_per_index() -> Result<(), String> {
+        let index = drop_index(&[
+            ("src/a.rs", "pub struct Row { pub total: u32 }\n"),
+            (
+                "src/b.rs",
+                "pub struct Other;\nimpl Drop for Other { fn drop(&mut self) {} }\n",
+            ),
+            (
+                "src/c.rs",
+                "pub struct Loud;\nimpl Drop for Loud { fn drop(&mut self) { std::process::exit(0); } }\n",
+            ),
+        ])?;
+        DROP_SCAN_COUNT.with(|count| count.set(0));
+        for _ in 0..50 {
+            for (name, expected) in [("Row", true), ("Other", true), ("Loud", false)] {
+                if drop_is_plain(&index, name) != expected {
+                    return Err(format!("{name} should be plain={expected}"));
+                }
+            }
+        }
+        let scans = DROP_SCAN_COUNT.with(|count| count.get());
+        if scans != 3 {
+            return Err(format!("expected one scan per file (3), saw {scans}"));
+        }
+        Ok(())
+    }
+
+    /// #9209: an unparseable source anywhere keeps every type non-plain,
+    /// even when it never spells `Drop`, as before the index existed.
+    #[test]
+    fn an_unparseable_source_keeps_every_type_non_plain() -> Result<(), String> {
+        let index = drop_index(&[
+            ("src/a.rs", "pub struct Row { pub total: u32 }\n"),
+            ("src/b.rs", "pub fn broken( {\n"),
+        ])?;
+        if drop_is_plain(&index, "Row") {
+            return Err("an unreadable source must fail closed".to_string());
+        }
+        Ok(())
     }
 
     /// A multi-byte character before a path root is read whole, not
