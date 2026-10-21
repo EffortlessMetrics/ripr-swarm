@@ -18270,7 +18270,8 @@ JSON shape:
   "provenance": {
     "repo_exposure_head": "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21",
     "mutants_head": null,
-    "verdict": "only_repo_exposure_head"
+    "verdict": "only_repo_exposure_head",
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head 2bd22c0b0718157870e2e78c9a70b9da1c9c1b21, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
   },
   "how_to_read": {
     "static_gap": "a static seam whose grip class is outside the strong set: anything other than strongly_gripped, intentional, or suppressed (for example ungripped or weakly_gripped)",
@@ -18483,6 +18484,10 @@ Field contract:
   member files record more than one distinct head. It lists every distinct
   head and no single mutants subject is named; a disagreement is disclosed
   as a conflict, never misreported as a missing head.
+- `provenance.disclosure` — the full join qualification, identical to stderr
+  and the Markdown Provenance section. It names every known head, including
+  the snapshot head when directory members conflict. Matching heads do not
+  authenticate producers or establish identical dirty working trees.
 - `provenance.verdict` — one of `same_head`, `different_heads`,
   `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`, or
   `conflicting_mutants_heads`, derived from the two optional heads (or from
@@ -18490,6 +18495,12 @@ Field contract:
   the join: it never refuses, rewrites, or re-labels a match. The md
   renderer prints the same facts as a `## Provenance` section between the
   preamble and `## Summary`.
+The spot-check consumer accepts schema 0.2 and 0.3 with unchanged record
+classification; unsupported schemas and inconsistent runtime totals remain
+errors. The canonical 0.3 head fields are `repo_exposure_head` and
+`mutants_head`, with the detailed `verdict`; no duplicate head aliases are
+part of this contract.
+
 - `how_to_read` — the vocabulary the agreement section uses:
   `static_gap`, `runtime_gap_signal`, and `runtime_clean_signal` define the
   terms, and `buckets` carries one interpretation line per agreement

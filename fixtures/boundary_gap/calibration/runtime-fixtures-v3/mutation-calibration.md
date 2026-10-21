@@ -6,7 +6,7 @@ This report joins static seam evidence to supplied cargo-mutants runtime data. R
 
 ## Provenance
 
-Neither artifact carries a repository head SHA, so ensure both artifacts are from the same repository and adjacent commits. The join itself matches by seam_id, span containment, or file/line in every case.
+ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.
 
 ## Summary
 

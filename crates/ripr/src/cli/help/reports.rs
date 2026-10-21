@@ -225,7 +225,7 @@ Limitation: the join matches by seam_id, span containment, or file/line. It
 does not check that the cargo-mutants JSON and the repo-exposure snapshot
 describe the same repository or commit. cargo-mutants outcomes.json does not carry a head SHA.
 When the snapshot carries a head, ripr names that subject on stderr and in
-the report's Provenance section (md) or provenance field (JSON), so an
+the report's Provenance section (md) or provenance.disclosure field (JSON), so an
 artifact saved with --out keeps the same caveat; when either artifact lacks
 a head, ripr says so and asks you to ensure both artifacts are from the
 same repository and adjacent commits. Matching heads still do not mean

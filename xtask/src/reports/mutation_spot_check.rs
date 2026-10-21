@@ -51,7 +51,7 @@ use std::time::Duration;
 const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 /// Calibration schema that carries the span-containment join and explicit
 /// span-overlap and unmatched reasons.
-const CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+const CALIBRATION_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3"];
 const CANONICAL_PRECISE: &str = "canonical_precise";
 const CANONICAL_JOIN_METHODS: &[&str] = &["seam_id", "span_containment"];
 const SUPPORTED_GENRES: &[&str] = &["BinaryOperator", "UnaryOperator"];
@@ -791,9 +791,9 @@ fn classify_records(
         .get("schema_version")
         .and_then(Value::as_str)
         .unwrap_or("missing");
-    if schema != CALIBRATION_SCHEMA_VERSION {
+    if !CALIBRATION_SCHEMA_VERSIONS.contains(&schema) {
         return Err(format!(
-            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema {CALIBRATION_SCHEMA_VERSION}"
+            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema 0.2 or 0.3"
         ));
     }
     let expressions: BTreeMap<&str, &str> = exposure
@@ -1688,6 +1688,14 @@ mod tests {
             "BinaryOperator".to_string(),
         )]);
         let records = classify_records(&calibration, &exposure, &genres)?;
+        let mut v3 = calibration.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({
+            "repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded",
+            "disclosure": "Neither artifact names a head; qualification remains advisory."
+        });
+        let v3_records = classify_records(&v3, &exposure, &genres)?;
+        assert_eq!(v3_records, records);
         assert_eq!(records[0].disposition, "canonical_precise");
         assert_eq!(records[0].operator_token, "absent");
         let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
@@ -1735,6 +1743,24 @@ mod tests {
         assert_eq!(
             classify_records(&partial, &Value::Null, &genres).map(|records| records.len()),
             Ok(1)
+        );
+        let mut v3 = partial.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({"repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded", "disclosure": "No recorded heads."});
+        assert_eq!(
+            classify_records(&v3, &Value::Null, &genres),
+            classify_records(&partial, &Value::Null, &genres)
+        );
+        v3["metrics"]["mutants_total"] = json!(2);
+        assert!(
+            classify_records(&v3, &Value::Null, &genres).is_err_and(
+                |err| err.contains("lists 1 runtime records but reports mutants_total 2")
+            )
+        );
+        v3["schema_version"] = json!("0.4");
+        assert!(
+            classify_records(&v3, &Value::Null, &genres)
+                .is_err_and(|err| err.contains("calibration schema 0.2 or 0.3"))
         );
         partial["metrics"]["mutants_total"] = json!(2);
         assert!(

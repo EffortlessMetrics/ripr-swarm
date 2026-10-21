@@ -48,7 +48,10 @@ The report should:
   cargo-mutants` returns an error instead of rendering
   "All imported runtime mutants matched a static seam." Vacuous all-matched
   wording is reserved for imports that actually contained mutant records;
-- disclose join provenance on stderr the way `ripr outcome` discloses
+- retain the full shared join-provenance disclosure on stderr, in JSON
+  `provenance.disclosure`, and in the Markdown Provenance section, so a saved
+  report keeps both input-head qualifications (see RIPR-SPEC-0286). Like
+  `ripr outcome`, disclose
   snapshot heads: when the repo-exposure snapshot carries a head SHA, name
   the subject the join assumes; when the cargo-mutants JSON names a
   different head, flag the mismatch; when either artifact lacks a head

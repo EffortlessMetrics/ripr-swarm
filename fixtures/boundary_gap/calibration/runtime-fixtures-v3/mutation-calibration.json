@@ -280,6 +280,7 @@
     "`runtime_signal_without_static_gap` includes 1 unmatched gap-signal record also counted in `unmatched_mutants_total`"
   ],
   "provenance": {
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.",
     "mutants_head": null,
     "repo_exposure_head": null,
     "verdict": "no_head_recorded"

@@ -98,6 +98,8 @@ The calibration report schema version is `0.3`. The report carries a
   inputs disagree, so no single mutants subject is named and the
   disagreement is disclosed as a conflict rather than misreported as a
   missing head.
+- `disclosure`: the complete shared join-provenance qualification printed on
+  stderr and in Markdown, including every known head when member heads conflict.
 - `verdict`: one of `same_head`, `different_heads`,
   `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`, or
   `conflicting_mutants_heads`, derived from the two optional heads (or from
@@ -105,17 +107,17 @@ The calibration report schema version is `0.3`. The report carries a
 
 The verdict is evidence about the artifacts, not about the join: a
 `different_heads` verdict never refuses, rewrites, or re-labels a match.
-The existing disclosure-sentence tests for the stderr surface stay the
-owner of the interactive wording; `disclosure_sentence()` mirrors the
-same facts so the md and JSON surfaces cannot drift from it.
+The report constructs the provenance projection once. `disclosure_sentence()`
+formats the full qualification from that value; JSON `provenance.disclosure`,
+the Markdown Provenance section and stderr retain identical text. Matching
+heads do not authenticate producers or establish identical dirty working trees.
 
 ### Provenance on both rendered surfaces
 
 The md renderer gains a `## Provenance` section after the preamble and
-before `## Summary`, rendering the disclosure sentence plus the standing
-note that the join itself matches by seam_id, span containment, or
-file/line in every case. The JSON renderer gains a top-level
-`provenance` object with the same head fields and verdict (plus
+before `## Summary`, rendering the full shared disclosure, including how the join matches by
+seam_id, span containment, or file/line in every case. The JSON renderer gains a top-level
+`provenance` object with the same head fields, verdict and full disclosure (plus
 `mutants_head_conflict` only when directory members disagree). Both are
 rendered for every report, including one built without artifact inputs
 (`no_head_recorded`), so a saved artifact always discloses what it can
@@ -186,7 +188,8 @@ to a headless cargo-mutants JSON:
 "provenance": {
   "repo_exposure_head": "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21",
   "mutants_head": null,
-  "verdict": "only_repo_exposure_head"
+  "verdict": "only_repo_exposure_head",
+  "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head 2bd22c0b0718157870e2e78c9a70b9da1c9c1b21, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
 }
 ```
 
@@ -195,9 +198,7 @@ The md section for an import where neither artifact records a head:
 ```text
 ## Provenance
 
-Neither artifact carries a repository head SHA, so ensure both artifacts
-are from the same repository and adjacent commits. The join itself
-matches by seam_id, span containment, or file/line in every case.
+ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.
 ```
 
 The agreement section now opens with the vocabulary it uses:
@@ -221,8 +222,9 @@ clean signal** is one it caught (`caught`, `timeout`).
   coincidental file:line join still joins, with the same disclosure.
 - The schema bump is additive; no existing key changes meaning and no
   key is removed.
-- The interactive stderr disclosure keeps its existing wording and
-  remains the primary interactive surface.
+- Stderr remains the interactive qualification surface; its full disclosure
+  also survives saved JSON and Markdown. Directory conflicts disclose every
+  known input head, so the wording can name those additional facts.
 
 ## Implementation Mapping
 
@@ -234,8 +236,8 @@ clean signal** is one it caught (`caught`, `timeout`).
   `agreement_how_to_read_json()`, and both renderers' new sections.
 - `crates/ripr/src/output/outcome/mod.rs::snapshot_repository_head` owns
   head extraction; both input artifacts are read through it.
-- `crates/ripr/src/cli/commands.rs` owns the stderr disclosure and its
-  existing tests; `crates/ripr/src/cli/help/reports.rs` documents the
+- `crates/ripr/src/cli/commands.rs` prints the report-owned disclosure and owns its
+  CLI tests; `crates/ripr/src/cli/help/reports.rs` documents the
   Provenance section / provenance field in the calibrate help text.
 - Checked fixtures under `fixtures/boundary_gap/calibration/` regenerate
   from the built binary (`ripr calibrate cargo-mutants --mutants-json

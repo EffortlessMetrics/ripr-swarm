@@ -218,9 +218,10 @@ impl CalibrationProvenance {
             "repo_exposure_head": self.repo_exposure_head,
             "mutants_head": self.mutants_head,
             "verdict": self.verdict(),
+            "disclosure": self.disclosure_sentence(),
         });
-        // The key appears only when the inputs actually disagree, so the
-        // common shapes stay byte-stable for existing saved artifacts.
+        // Keep the conflict list conditional: agreeing or headless inputs
+        // must not appear to have conflicting subjects.
         if !self.mutants_head_conflict.is_empty() {
             value["mutants_head_conflict"] =
                 serde_json::Value::from(self.mutants_head_conflict.clone());
@@ -228,32 +229,32 @@ impl CalibrationProvenance {
         value
     }
 
-    /// One honest sentence per verdict, mirroring the stderr disclosure so
-    /// the interactive and archived surfaces never drift apart.
+    /// Full join qualification shared by stderr and both saved surfaces.
     fn disclosure_sentence(&self) -> String {
         if !self.mutants_head_conflict.is_empty() {
+            let snapshot = self.repo_exposure_head.as_deref().map_or_else(
+                || "the repo-exposure snapshot does not carry a head SHA; ".to_string(),
+                |head| format!("the repo-exposure snapshot reports repository head {head}; "),
+            );
             return format!(
-                "The cargo-mutants inputs report conflicting repository heads ({}), so this import does not establish a single mutants subject; ensure both artifacts are from the same repository and adjacent commits.",
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; {snapshot}the cargo-mutants directory members report conflicting repository heads ({}), so this import does not establish a single mutants subject; ensure both artifacts are from the same repository and adjacent commits.",
                 self.mutants_head_conflict.join(", ")
             );
         }
-        match (&self.repo_exposure_head, &self.mutants_head) {
-            (Some(snapshot), Some(mutants)) if snapshot == mutants => format!(
-                "Both artifacts report repository head {snapshot}, so they are from the same commit (the working tree may still differ between them)."
+        match (self.repo_exposure_head.as_deref(), self.mutants_head.as_deref()) {
+            (Some(snapshot_head), Some(mutants_head)) if snapshot_head == mutants_head => format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
             ),
-            (Some(snapshot), Some(mutants)) => format!(
-                "The artifacts report different repository heads (repo-exposure {snapshot}, cargo-mutants {mutants}), so matched rows may describe a different subject than the static snapshot."
+            (Some(snapshot_head), Some(mutants_head)) => format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
             ),
-            (Some(snapshot), None) => format!(
-                "The repo-exposure snapshot reports repository head {snapshot}; the cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+            (Some(snapshot_head), None) => format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
             ),
-            (None, Some(mutants)) => format!(
-                "The cargo-mutants JSON reports repository head {mutants}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+            (None, Some(mutants_head)) => format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
             ),
-            (None, None) => {
-                "Neither artifact carries a repository head SHA, so ensure both artifacts are from the same repository and adjacent commits."
-                    .to_string()
-            }
+            (None, None) => "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string(),
         }
     }
 }
@@ -339,57 +340,18 @@ fn calibration_provenance(repo_exposure_json: &str, mutants_json: &str) -> Calib
     provenance
 }
 
-/// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
-///
-/// The join itself matches by `seam_id`, span containment, or file/line in
-/// every case; what changes is what can be said about artifact identity.
-/// cargo-mutants `outcomes.json` does not carry a head, so the usual case is
-/// a snapshot that may or may not name one. A directory import combines
-/// `outcomes.json` and `mutants.json` into an array; the array-aware head
-/// reader keeps a head the member files recorded (and names a member
-/// disagreement as a conflict instead of as a missing head). A disclosure
-/// that stays silent lets a foreign `file:line` inherit the static seam's
-/// authority (#7449). Reuses the outcome snapshot head reader so "full SHA"
-/// means the same thing on both surfaces.
+impl MutationCalibrationReport {
+    pub(crate) fn head_provenance_disclosure(&self) -> String {
+        self.provenance.disclosure_sentence()
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn calibrate_head_provenance_disclosure(
     repo_exposure_json: &str,
     mutants_json: &str,
 ) -> String {
-    let snapshot_head = crate::output::outcome::snapshot_repository_head(repo_exposure_json);
-    let mutants_head = crate::output::outcome::snapshot_repository_head_detail(mutants_json);
-    match (snapshot_head, mutants_head) {
-        (_, crate::output::outcome::SnapshotRepositoryHead::Conflicting(heads)) => {
-            format!(
-                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants directory members report conflicting repository heads ({}), so this import does not establish a single mutants subject; ensure both artifacts are from the same repository and adjacent commits.",
-                heads.join(", ")
-            )
-        }
-        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head))
-            if snapshot_head == mutants_head =>
-        {
-            format!(
-                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
-            )
-        }
-        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head)) => {
-            format!(
-                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
-            )
-        }
-        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Absent) => {
-            format!(
-                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
-            )
-        }
-        (None, crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head)) => {
-            format!(
-                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
-            )
-        }
-        (None, crate::output::outcome::SnapshotRepositoryHead::Absent) => {
-            "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string()
-        }
-    }
+    calibration_provenance(repo_exposure_json, mutants_json).disclosure_sentence()
 }
 
 fn require_imported_runtime_mutants(
@@ -478,10 +440,8 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
          ripr reports continue to use audit vocabulary only.\n\n",
     );
     out.push_str("## Provenance\n\n");
-    out.push_str(&report.provenance.disclosure_sentence());
-    out.push_str(
-        " The join itself matches by seam_id, span containment, or file/line in every case.\n\n",
-    );
+    out.push_str(&report.head_provenance_disclosure());
+    out.push_str("\n\n");
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
@@ -2145,9 +2105,8 @@ mod tests {
         );
     }
 
-    /// Disagreeing directory members are a conflict, not a missing head:
-    /// the disclosure must name both heads instead of falling into the
-    /// "does not carry a head SHA" arm.
+    /// Disagreeing directory members must name both heads as a conflict;
+    /// missing snapshot identity remains a separate disclosed limitation.
     #[test]
     fn calibrate_disclosure_names_conflicting_directory_member_heads() {
         let first = "1111111111111111111111111111111111111140";
@@ -2165,8 +2124,9 @@ mod tests {
             "disagreement must be disclosed as a conflict: {line}"
         );
         assert!(
-            !line.contains("does not carry a head SHA"),
-            "a disagreement must not be reported as an absent head: {line}"
+            line.contains("repo-exposure snapshot does not carry a head SHA")
+                && !line.contains("cargo-mutants JSON does not carry a head SHA"),
+            "snapshot absence must not hide the recorded mutant-head conflict: {line}"
         );
     }
 
