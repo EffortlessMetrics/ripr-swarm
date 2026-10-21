@@ -126,7 +126,7 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
-        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
         // adapter classifies deliberate named refusals (rendering the
         // versioned `agent_card_refusal` envelope on stderr under `--json`)
@@ -392,14 +392,16 @@ fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSel
     }
 }
 
-fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
+fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
     let json = options.json;
     // #7331 review: the root check is below argv parsing, so a `--json`
     // packet run with an unusable `--root` refuses through the same
     // envelope instead of exiting 2 with empty stdout.
     if let Err(err) = ensure_command_root(&options.root, "agent packet") {
         let error = CoreError::repository_root_unusable(err);
-        return Err(refuse_agent_packet(&options, error, json));
+        return Err(CommandError::Failure(refuse_agent_packet(
+            &options, error, json,
+        )));
     }
     match render_agent_packet(&options) {
         Ok(rendered) => {
@@ -411,7 +413,20 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
         // before the prose error reaches stderr. This is the exact step
         // `agent brief`'s documented `next.inspect_packet` loop drives, so
         // the machine channel survives the failure.
-        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+        //
+        // An unknown `--seam-id` is a typed refusal, not a could-not-complete
+        // failure: exit 3, like `agent card` and `agent stub` for the same
+        // cause. Every other packet failure stays exit 2.
+        Err(error) => {
+            let unknown_seam = error.check_failure_kind()
+                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            let message = refuse_agent_packet(&options, error, json);
+            if unknown_seam {
+                Err(CommandError::Decision(message))
+            } else {
+                Err(CommandError::Failure(message))
+            }
+        }
     }
 }
 
@@ -543,7 +558,9 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
                 )
             };
-            Err(crate::cli::CommandError::Failure(message))
+            // An unknown seam is a typed refusal (exit 3), like `agent
+            // card`, `agent stub` and `agent packet` for the same cause.
+            Err(crate::cli::CommandError::Decision(message))
         }
         Err(error) => Err(crate::cli::CommandError::Failure(error)),
     }

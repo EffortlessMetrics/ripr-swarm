@@ -126,10 +126,11 @@ generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 Refusal contract (#5007): a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
-stderr carries one versioned `agent_card_refusal` envelope (`schema_version`
+stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
 `0.1`) naming the typed `error.kind`, the asked-for `seam_id`, the verbatim
-human prose, and one typed `remedy_route`; without `--json` stderr carries the
-prose rendering only. Stdout stays empty on every refusal. Operational
+human prose, and one typed `remedy_route`, and stderr carries the prose
+rendering; without `--json` stdout stays empty and stderr carries the prose
+rendering only. Operational
 failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;

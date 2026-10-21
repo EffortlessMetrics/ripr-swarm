@@ -162,11 +162,11 @@ pub(crate) enum CommandExitContract {
 /// What stdout carries when a command exits `3`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RefusalStdout {
-    /// Artifact stream stays empty (`agent verify`, `agent card`, `agent stub`).
+    /// Artifact stream stays empty (`agent verify`).
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -204,8 +204,11 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
-        "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
-            Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
+        "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // Unknown-seam and the other named refusals exit 3; under `--json`
+        // the refusal document is on stdout, prose on stderr.
+        "cmd:agent.card" | "cmd:agent.stub" | "cmd:agent.packet" => {
+            Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
         // with prose on stderr and an empty stdout, like the card family.
@@ -1857,7 +1860,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent packet --root . --seam-id ID --json",
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "--json is required until a human packet surface exists.",
         not_applicable_reason: None,
     },
@@ -1879,7 +1882,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent card --root . --seam-id ID",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
         not_applicable_reason: None,
     },
@@ -1903,7 +1906,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent stub --root . --at src/lib.rs:12",
         next_routes: &["agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
         not_applicable_reason: None,
     },

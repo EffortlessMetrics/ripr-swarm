@@ -3673,9 +3673,22 @@ fn assert_json_refusal_envelope(
     identity: &str,
     repair_route: &str,
 ) -> Result<serde_json::Value, String> {
-    if output.status.code() != Some(2) {
+    assert_json_refusal_envelope_with_exit(output, 2, schema_version, scope, identity, repair_route)
+}
+
+/// Same envelope contract with an explicit process exit: typed named
+/// refusals (an unknown `--seam-id`) exit 3, could-not-complete exits 2.
+fn assert_json_refusal_envelope_with_exit(
+    output: &Output,
+    exit: i32,
+    schema_version: &str,
+    scope: &str,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(exit) {
         return Err(format!(
-            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            "expected exit {exit} for {identity}, got {:?}\nstderr:\n{}",
             output.status.code(),
             String::from_utf8_lossy(&output.stderr)
         ));
@@ -3941,8 +3954,9 @@ fn agent_packet_json_unknown_seam_id_emits_refusal_envelope() -> Result<(), Stri
         "--seam-id",
         "seam:definitely-not-real-9f2a-7331",
     ]);
-    let value = assert_json_refusal_envelope(
+    let value = assert_json_refusal_envelope_with_exit(
         &output,
+        3,
         "0.5",
         "repo",
         "seam_id_unknown",
@@ -5839,9 +5853,9 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
 
     // A cold agent's `probe:...` finding ID is refused with the same seam-ID
     // source hint the packet surface names. #5007: the refusal is typed —
-    // exit code 3, not an operational failure — and under `--json` stderr
-    // carries one parseable `agent_card_refusal` envelope with the prose
-    // rendering after it, while stdout stays empty.
+    // exit code 3, not an operational failure — and under `--json` stdout
+    // carries one parseable `agent_card_refusal` envelope while the prose
+    // rendering stays on stderr.
     let unknown = run_ripr(&[
         "agent",
         "card",
@@ -5875,15 +5889,11 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "a named refusal takes the decision exit code: {typed:?}"
     );
     assert!(
-        typed.stdout.is_empty(),
-        "the card-artifact stdout stays empty on a refusal: {typed:?}"
+        unknown.stdout.is_empty(),
+        "without --json a refusal keeps stdout empty: {unknown:?}"
     );
     let typed_stderr = String::from_utf8_lossy(&typed.stderr);
-    let envelope_end = typed_stderr
-        .find("\n}\n")
-        .ok_or("the refusal envelope did not terminate on stderr")?
-        + 3;
-    let envelope: serde_json::Value = serde_json::from_str(&typed_stderr[..envelope_end])?;
+    let envelope: serde_json::Value = serde_json::from_slice(&typed.stdout)?;
     assert_eq!(envelope["schema_version"], "0.1", "{envelope}");
     assert_eq!(envelope["kind"], "agent_card_refusal", "{envelope}");
     assert_eq!(envelope["error"]["kind"], "seam_not_found", "{envelope}");
@@ -5904,8 +5914,8 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{envelope}"
     );
     assert!(
-        typed_stderr[envelope_end..].contains("is a `ripr check` finding ID, not a seam ID"),
-        "the human prose rendering stays on stderr after the envelope: {typed_stderr}"
+        typed_stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        "the human prose rendering stays on stderr: {typed_stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())

@@ -130,8 +130,8 @@ map is:
 | `ripr help --json` | `schema_version` | `2` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
-| `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -231,14 +231,14 @@ ratifies the numbers. The budget-version constant lives in
 ## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
 
 Every deliberate named refusal of the `ripr agent card` handoff — the default
-agent work handoff — renders one versioned typed envelope on stderr under
-`--json` and maps to exit code `3`, the same contract `agent verify`,
+agent work handoff — renders one versioned typed envelope on stdout under
+`--json` (human prose on stderr) and maps to exit code `3`, the same contract `agent verify`,
 `agent verify-execute`, and `agent repair --phase after` already use
 (RIPR-SPEC-0202, #5007; exit-code semantics in
 [EXIT_CODES](EXIT_CODES.md)). Orchestrators branch on the exit status and the
 typed `error.kind` alone; the human prose is the non-authority rendering and
-stays free to change. Without `--json` stderr carries the same prose it
-always did.
+stays free to change. Without `--json` stdout stays empty and stderr
+carries the same prose it always did.
 
 ```json
 {
@@ -284,9 +284,11 @@ Field contract:
   names, bound to the same root the failing call used. It is a presentation
   of the typed remedy family of the kind, not a new authority.
 
-The card's own stdout contract is unchanged: on a refusal stdout stays empty
-(like `agent verify`, its stdout is the handoff artifact), and on success the
-envelope never appears. Operational could-not-complete failures of
+On a refusal under `--json` stdout carries this envelope (the same stream
+`check`, `agent packet` and `agent verify-execute` use for refusal documents)
+and stderr the prose; on success the envelope never appears. An unknown
+`--seam-id` exits `3` on `agent card`, `agent stub`, `agent packet` and
+`agent repair --phase before`. Operational could-not-complete failures of
 `agent card` (an unreadable config, a failed git probe, a detail-source
 serialization failure) still exit `2` with human prose only. The refusal
 kinds never claim more than they enforce: each names a producer-owned

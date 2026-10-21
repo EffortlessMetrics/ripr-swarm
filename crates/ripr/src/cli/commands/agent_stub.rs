@@ -3,7 +3,7 @@
 //! CLI adapter only. Selection, the guarded write, and the run command live
 //! in `crate::app::test_stub`; the stub itself is produced by
 //! `crate::analysis::test_stub`. A refusal or an unknown selector is a
-//! decision (exit 3) with empty stdout, like `agent card`.
+//! decision (exit 3); under `--json` the refusal document is on stdout, like `agent card`.
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::seams::SeamGripClass;
@@ -15,7 +15,7 @@ use crate::app::test_stub::{
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
-use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
+use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
@@ -46,12 +46,12 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 // agent-stub refusal, explicitly including "the selector
                 // names no reported gap" (#7390). The document keeps the
                 // post-resolution refusal's field set, with `null` where
-                // seam resolution would have supplied a value; stdout stays
-                // empty and the prose still reaches stderr via
+                // seam resolution would have supplied a value; the document
+                // goes to stdout and the prose still reaches stderr via
                 // `CommandError` after the envelope.
                 match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => write_stderr_refusal_json(rendered),
+                    Ok(rendered) => write_stdout_refusal_json(rendered),
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
@@ -80,7 +80,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                     "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
-                write_stderr_refusal_json(render(&document)?);
+                write_stdout_refusal_json(render(&document)?);
             }
             return Err(CommandError::Decision(refusal_message(
                 &resolution.seam_id,

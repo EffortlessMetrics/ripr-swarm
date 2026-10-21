@@ -30,11 +30,14 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `3`: the command completed by reaching a blocking decision or typed
   refusal; read the report or the stdout JSON document for the answer
   (standalone `ripr agent verify` is the exception: its refusal is named on
-  stderr and stdout stays empty; see below. `ripr agent repair` prints its
-  refusal document only with `--json`; without it stdout stays empty and
-  stderr names the cause. `ripr agent card` prints its
-  `agent_card_refusal` envelope on stderr with `--json` and the prose
-  rendering after it; stdout stays empty on every refusal).
+  stderr and stdout stays empty; see below. `ripr agent repair`,
+  `ripr agent card` and `ripr agent stub` print their refusal document
+  (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
+  with `--json`, with the prose on stderr; without it stdout stays empty and
+  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  one exit, `3`, on `agent card`, `agent stub`, `agent packet` and
+  `agent repair --phase before`: with `--json` the document is on stdout
+  and the prose on stderr).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
@@ -48,9 +51,9 @@ Error and panic diagnostics on stderr are best effort. If a stderr reader
 closes after a JSON refusal has been written, the command retains that stdout
 document and its original exit `2` or `3`. A failed panic diagnostic still
 terminates with `2`; reporting it must not cause a recursive panic or abort.
-Once `agent card` or `agent stub` reaches a named refusal, its stderr JSON
-envelope is also best effort: a closed stderr reader keeps stdout empty and
-preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+Once `agent card` or `agent stub` reaches a named refusal, its stdout JSON
+document is written first and the stderr prose is best effort: a closed
+stderr reader keeps the stdout document and preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
 
 ## When you see exit code 2
 
@@ -85,7 +88,8 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
   `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
-  packet `0.5`), and `mode` appears only on commands that accept `--mode`.
+  packet `0.5`; an unknown `agent packet --seam-id` is the one typed
+  refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
@@ -165,9 +169,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
-  nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
-  empty. A failed read, analysis, or `--write` stays exit `2`.
+  nearest one before it. The named reason is on stderr; under `--json` a
+  `rust_test_stub` schema `0.2` `state: refused` envelope is the stdout
+  document, and without it stdout stays empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class
@@ -179,9 +183,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   builder, route gate, or budget refused to mint the card
   (`budget_overflow`: fall back to the canonical packet). With `--json` the
   versioned `agent_card_refusal` envelope (`schema_version` `0.1`) renders
-  on stderr with the typed `error.kind`, `seam_id`, verbatim `message`, and
-  `remedy_route`; stdout stays empty because it is the card-artifact stream.
-  Without `--json` stderr carries the prose rendering only. The kinds are
+  on stdout with the typed `error.kind`, `seam_id`, verbatim `message`, and
+  `remedy_route`, and the prose rendering stays on stderr. Without `--json`
+  stdout stays empty and stderr carries the prose rendering only. The kinds are
   closed and pinned by `cargo xtask check-output-contracts`
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still

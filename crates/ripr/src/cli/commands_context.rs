@@ -2,14 +2,18 @@ use crate::app::CheckInput;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use std::path::Path;
 
-/// A named refusal has already reached its decision. Reporting its optional
-/// stderr JSON must not replace that decision with an I/O panic. Preserve the
-/// renderers' newline conventions and JSON escaping; stdout stays separate.
-pub(super) fn write_stderr_refusal_json(document: String) {
+/// A named refusal has already reached its decision. Reporting its JSON
+/// document must not replace that decision with an I/O panic. Preserve the
+/// renderers' newline conventions and JSON escaping. A typed `--json` refusal
+/// document is the machine answer, so it goes to stdout (the convention of
+/// `check`, `diff`, `agent packet`, `agent verify-execute`) while the human
+/// prose reaches stderr through the returned error. Best effort: a closed
+/// stdout reader keeps the original decision exit.
+pub(super) fn write_stdout_refusal_json(document: String) {
     use std::io::Write as _;
     let document = crate::terminal_text::json_terminal_safe(document);
     let newline = if document.ends_with('\n') { "" } else { "\n" };
-    let _ = write!(std::io::stderr().lock(), "{document}{newline}");
+    let _ = write!(std::io::stdout().lock(), "{document}{newline}");
 }
 
 /// Map a producer outcome after its original report has reached stdout.
