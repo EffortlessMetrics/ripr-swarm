@@ -70,6 +70,9 @@ suite('run outcome guard', () => {
     assert.strictEqual(executedFromStats({ passes: 0, failures: 0 }), 0);
     assert.strictEqual(executedFromStats({ passes: 3, failures: 1 }), 4);
     assert.strictEqual(executedFromStats(undefined), 0);
+    // A failed hook is in mocha's failure count but is not an executed test.
+    assert.strictEqual(executedFromStats({ passes: 0, failures: 1 }, 1), 0);
+    assert.strictEqual(executedFromStats({ passes: 2, failures: 2 }, 1), 3);
     const reason = validateRunOutcome({
       executed: executedFromStats({ passes: 0, failures: 0 }),
       failures: 0,
