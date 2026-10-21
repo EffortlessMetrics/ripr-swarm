@@ -445,7 +445,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -460,6 +460,10 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -502,14 +506,24 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from like
+               `ripr explain`; --diff and --from paths are read as typed from
+               the current directory.
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
