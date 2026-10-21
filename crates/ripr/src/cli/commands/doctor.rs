@@ -2794,7 +2794,35 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         if needs_dir && let Some(reason) = probe_creatable_dir(&probe_dir) {
             return Some(reason);
         }
+        // #6707: sharded publication creates a generation subdirectory
+        // inside an existing per-key directory (`sharded_dir/<key>/g…`),
+        // one level below the directory probed above. A key directory
+        // that blocks subdirectory creation is otherwise unreported, so
+        // probe creation inside every existing key directory too.
+        if *makes_subdirs
+            && probe_dir == *target
+            && let Some(reason) = probe_existing_key_dirs(target)
+        {
+            return Some(reason);
+        }
         probed.push((probe_dir, needs_dir));
+    }
+    None
+}
+
+/// Probes subdirectory creation inside each existing immediate
+/// subdirectory (per-key directory) of a sharded entry directory. The
+/// first failure is the reason; unreadable listings stay silent because
+/// the entry-directory probes above already passed.
+fn probe_existing_key_dirs(sharded_dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(sharded_dir).ok()?;
+    for entry in entries.flatten() {
+        let key_dir = entry.path();
+        if key_dir.is_dir()
+            && let Some(reason) = probe_creatable_dir(&key_dir)
+        {
+            return Some(reason);
+        }
     }
     None
 }
@@ -2804,13 +2832,34 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
 fn probe_creatable_dir(probe_dir: &Path) -> Option<String> {
     let probe = probe_dir.join(probe_name("dir"));
     match std::fs::create_dir(&probe) {
-        Ok(()) => {
-            let _ = std::fs::remove_dir(&probe);
-            None
-        }
+        Ok(()) => remove_probe_dir(&probe),
         Err(error) => Some(format!(
             "cannot create a directory in {}: {error}",
             probe_dir.display()
+        )),
+    }
+}
+
+/// Removes a probe directory; a removal failure is itself reported
+/// (#6707) rather than silently leaving `.ripr-doctor-probe-*` residue.
+fn remove_probe_dir(probe: &Path) -> Option<String> {
+    match std::fs::remove_dir(probe) {
+        Ok(()) => None,
+        Err(error) => Some(format!(
+            "cannot remove probe directory {}: {error}",
+            probe.display()
+        )),
+    }
+}
+
+/// Removes a probe file; a removal failure is itself reported (#6707)
+/// rather than silently leaving `.ripr-doctor-probe-*` residue.
+fn remove_probe_file(probe: &Path) -> Option<String> {
+    match std::fs::remove_file(probe) {
+        Ok(()) => None,
+        Err(error) => Some(format!(
+            "cannot remove probe file {}: {error}",
+            probe.display()
         )),
     }
 }
@@ -2857,19 +2906,34 @@ fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Bytes the file probe writes so a volume with free inodes but no free
+/// blocks fails the probe instead of passing it (#6707). One filesystem
+/// block is enough to force an allocation; real cache entries are larger,
+/// so this still understates a nearly-full volume by design.
+const PROBE_WRITE_BYTES: usize = 4096;
+
 /// Creates and removes one exclusive probe file in `dir`; the error when
-/// that fails.
+/// that fails. The probe writes [`PROBE_WRITE_BYTES`] and syncs them, so
+/// an out-of-blocks volume (ENOSPC) is reported even though a zero-byte
+/// creation would have succeeded on its remaining inodes.
 fn probe_writable(probe_dir: &Path) -> Option<String> {
+    use std::io::Write as _;
     let probe = probe_dir.join(probe_name("file"));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&probe)
     {
-        Ok(file) => {
+        Ok(mut file) => {
+            let written = file
+                .write_all(&[0_u8; PROBE_WRITE_BYTES])
+                .and_then(|()| file.sync_all());
             drop(file);
-            let _ = std::fs::remove_file(&probe);
-            None
+            if let Err(error) = written {
+                let _ = std::fs::remove_file(&probe);
+                return Some(format!("cannot write in {}: {error}", probe_dir.display()));
+            }
+            remove_probe_file(&probe)
         }
         Err(error) => Some(format!("cannot write in {}: {error}", probe_dir.display())),
     }
@@ -4159,6 +4223,226 @@ mod tests {
             None
         );
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// The first sharded entry directory doctor probes for `base`.
+    fn first_sharded_entry_dir(base: &Path) -> Result<PathBuf, String> {
+        analysis::seam_cache::production_entry_dirs(base)
+            .into_iter()
+            .find(|(_, makes_subdirs)| *makes_subdirs)
+            .map(|(dir, _)| dir)
+            .ok_or_else(|| "no sharded entry dir".to_string())
+    }
+
+    /// Denies subdirectory creation in `dir` while (on Windows) leaving
+    /// file creation allowed: Windows ACL `(AD)` deny, Unix mode `0o555`.
+    /// Returns `false` when the host cannot deny creation for this
+    /// process (for example a Unix root run, which bypasses mode bits).
+    fn deny_subdirectory_creation(dir: &Path) -> Result<bool, String> {
+        #[cfg(windows)]
+        {
+            let user = icacls_user()?;
+            let status = std::process::Command::new("icacls")
+                .arg(dir)
+                .arg("/deny")
+                .arg(format!("{user}:(AD)"))
+                .status()
+                .map_err(|error| format!("run icacls deny: {error}"))?;
+            if !status.success() {
+                return Err(format!("icacls deny failed with {status}"));
+            }
+            Ok(true)
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))
+                .map_err(|error| format!("chmod deny dir: {error}"))?;
+            // Root bypasses mode bits; detect that instead of faking a pass.
+            let scratch = dir.join(".ripr-doctor-deny-check");
+            match std::fs::create_dir(&scratch) {
+                Ok(()) => {
+                    let _ = std::fs::remove_dir(&scratch);
+                    Ok(false)
+                }
+                Err(_) => Ok(true),
+            }
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = dir;
+            Ok(false)
+        }
+    }
+
+    fn restore_subdirectory_creation(dir: &Path) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            let user = icacls_user()?;
+            let status = std::process::Command::new("icacls")
+                .arg(dir)
+                .arg("/remove:d")
+                .arg(&user)
+                .status()
+                .map_err(|error| format!("run icacls remove: {error}"))?;
+            if !status.success() {
+                return Err(format!("icacls remove failed with {status}"));
+            }
+            Ok(())
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod restore dir: {error}"))
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = dir;
+            Ok(())
+        }
+    }
+
+    #[cfg(windows)]
+    fn icacls_user() -> Result<String, String> {
+        let user = std::env::var("USERNAME").map_err(|_| "USERNAME unset".to_string())?;
+        match std::env::var("USERDOMAIN") {
+            Ok(domain) if !domain.is_empty() => Ok(format!("{domain}\\{user}")),
+            _ => Ok(user),
+        }
+    }
+
+    #[test]
+    fn probe_creatable_dir_reports_a_directory_that_denies_creation() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-deny-dir");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        if !deny_subdirectory_creation(&root)? {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        // On Windows the ACL denies only subdirectory creation, so the
+        // file probe must still pass: the two probes are separable there.
+        #[cfg(windows)]
+        assert_eq!(probe_writable(&root), None);
+        let reason = probe_creatable_dir(&root);
+        restore_subdirectory_creation(&root)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot create a directory")),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-sharded-deny");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        std::fs::create_dir_all(&sharded).map_err(|error| error.to_string())?;
+        if !deny_subdirectory_creation(&sharded)? {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&sharded)?;
+        let _ = std::fs::remove_dir_all(&root);
+        // Windows separates file creation (allowed) from subdirectory
+        // creation (denied), so the directory probe names the failure.
+        // Unix mode bits deny both and the file probe answers first.
+        #[cfg(windows)]
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot create a directory")),
+            "{reason:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(reason.is_some(), "{reason:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_key_dir_denying_subdirectories() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-key-deny");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        let key_dir = sharded.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        if !deny_subdirectory_creation(&key_dir)? {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&key_dir)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason.as_deref().is_some_and(|text| {
+                text.contains("cannot create a directory") && text.contains("some-cache-key")
+            }),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn probe_removal_failure_is_reported_not_left_silent() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-removal");
+        let probe = root.join(".ripr-doctor-probe-dir-0-0");
+        std::fs::create_dir_all(&probe).map_err(|error| error.to_string())?;
+        std::fs::write(probe.join("occupant"), "x").map_err(|error| error.to_string())?;
+        // A non-empty probe directory cannot be removed with `remove_dir`.
+        let dir_reason = remove_probe_dir(&probe);
+        let file_reason = remove_probe_file(&root.join(".ripr-doctor-probe-file-0-0"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            dir_reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot remove probe directory")),
+            "{dir_reason:?}"
+        );
+        assert!(
+            file_reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot remove probe file")),
+            "{file_reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_screen_skips_the_cache_probe_when_the_root_is_missing() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-screen-missing-root");
+        if root.exists() {
+            return Err(format!("test root unexpectedly exists: {}", root.display()));
+        }
+        let binary = quiet_binary();
+        let config = Ok(RiprConfig::default());
+        let environment = empty_environment();
+        let report = passing_report();
+        let lines = render_doctor_human_screen(DoctorHumanScreen {
+            root: &root,
+            profile: output::doctor::DoctorProfile::Analysis,
+            report: &report,
+            config: &config,
+            environment: &environment,
+            binary: &binary,
+            verbose: false,
+            passed: true,
+        });
+        assert!(
+            !lines.iter().any(|line| line.contains("Cache not writable")),
+            "{lines:?}"
+        );
+        assert!(
+            !root.exists(),
+            "missing root must not be created by probing"
+        );
         Ok(())
     }
 

@@ -127,39 +127,26 @@ fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
 /// resolved cache `base`, each with whether publishing there also creates
 /// subdirectories (sharded generations do). `ripr doctor` probes these for
 /// writability, so they must match each cache's `at` constructor; a test
-/// pins that.
+/// pins that. The subdirectory flags come from each cache's own
+/// `entry_dirs`/`entry_dir` (the impl that publishes there), never from a
+/// second hand-written copy, so a store that starts creating
+/// subdirectories moves doctor's probe with it (#6707).
 pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
-    let classified = |family: ClassifiedCacheFamily, schema_version: &str| {
-        let (layer, sharded_layer) = family.layers();
-        [
-            (base.join(layer.name()).join(schema_version), false),
-            (
-                base.join(sharded_layer.name())
-                    .join(schema_version)
-                    .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
-                true,
-            ),
-        ]
-    };
     let mut dirs = Vec::new();
-    dirs.extend(classified(
-        ClassifiedCacheFamily::SeamFacts,
-        CACHE_SCHEMA_VERSION,
-    ));
-    dirs.extend(classified(
-        ClassifiedCacheFamily::CompactClassifiedSeams,
-        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
-    ));
-    dirs.push((
-        base.join(CacheLayer::CorpusFingerprint.name())
-            .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
-        false,
-    ));
-    dirs.push((
-        base.join(CacheLayer::FileFacts.name())
-            .join(FILE_FACT_CACHE_SCHEMA_VERSION),
-        false,
-    ));
+    dirs.extend(
+        RepoSeamFactCache::at_base(base, ClassifiedCacheFamily::SeamFacts, CACHE_SCHEMA_VERSION)
+            .entry_dirs(),
+    );
+    dirs.extend(
+        RepoSeamFactCache::at_base(
+            base,
+            ClassifiedCacheFamily::CompactClassifiedSeams,
+            COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
+        )
+        .entry_dirs(),
+    );
+    dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
+    dirs.push(RepoFileFactCache::at_base(base).entry_dir());
     dirs
 }
 
@@ -1732,6 +1719,22 @@ impl RepoCorpusFingerprintCache {
         }
     }
 
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            dir: base
+                .join(CacheLayer::CorpusFingerprint.name())
+                .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
+        }
+    }
+
+    /// The entry directory this cache writes into, with whether storing
+    /// there also creates subdirectories. `store` writes entry files
+    /// directly in `dir` and creates no subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
+    }
+
     /// Construct a cache at an explicit directory (tests use this to
     /// avoid touching the real workspace).
     #[cfg(test)]
@@ -1881,6 +1884,27 @@ impl RepoSeamFactCache {
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
             base,
         )
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path, family: ClassifiedCacheFamily, schema_version: &str) -> Self {
+        let (layer, sharded_layer) = family.layers();
+        Self::rooted_at(
+            base.join(layer.name()).join(schema_version),
+            base.join(sharded_layer.name())
+                .join(schema_version)
+                .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+            base.to_path_buf(),
+        )
+    }
+
+    /// The entry directories this cache writes into, each with whether
+    /// publishing there also creates subdirectories. Single entries are
+    /// files written directly in `dir`; sharded publication creates a
+    /// per-key directory and a generation directory under `sharded_dir`
+    /// (see `publish_sharded_generation`), hence `true` only there.
+    pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
+        [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {
@@ -2440,6 +2464,24 @@ impl RepoFileFactCache {
             dir,
             unusable_base_reason: OnceLock::new(),
         }
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            base: base.to_path_buf(),
+            dir: base
+                .join(CacheLayer::FileFacts.name())
+                .join(FILE_FACT_CACHE_SCHEMA_VERSION),
+            unusable_base_reason: OnceLock::new(),
+        }
+    }
+
+    /// The entry directory this cache writes into, with whether storing
+    /// there also creates subdirectories. `store_file_facts` writes entry
+    /// files directly in `dir` and creates no subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
     }
 
     #[cfg(test)]
@@ -9593,15 +9635,14 @@ mod generation_transition_tests {
         let root = Path::new("/ws");
         let full = RepoSeamFactCache::at(root);
         let compact = RepoSeamFactCache::at_compact_classified(root);
-        // Only the sharded caches publish generation subdirectories.
-        let constructed = vec![
-            (full.dir, false),
-            (full.sharded_dir, true),
-            (compact.dir, false),
-            (compact.sharded_dir, true),
-            (RepoCorpusFingerprintCache::at(root).dir, false),
-            (RepoFileFactCache::at(root).dir, false),
-        ];
+        // The subdirectory flags derive from each constructor's own
+        // `entry_dirs`/`entry_dir` (#6707): hand-writing them here would
+        // not notice a store that starts creating subdirectories.
+        let mut constructed = Vec::new();
+        constructed.extend(full.entry_dirs());
+        constructed.extend(compact.entry_dirs());
+        constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
+        constructed.push(RepoFileFactCache::at(root).entry_dir());
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), constructed);
     }
 

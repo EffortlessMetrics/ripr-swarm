@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr doctor`'s cache-writability probe now also probes subdirectory creation inside existing sharded per-key directories, writes and syncs a small payload so an out-of-blocks volume is reported, and surfaces probe-cleanup removal failures instead of silently leaving `.ripr-doctor-probe-*` residue. The probe list (including which caches create subdirectories) is derived from the production cache constructors rather than a hand-written copy (#6707).
