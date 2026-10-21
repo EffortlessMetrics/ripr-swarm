@@ -741,6 +741,16 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
+The reusable required Rust gates prepare both locked owner-return fixtures,
+`owner_return_pin_fallible_literal/input` and
+`owner_return_pin_json_real_literal/input`, before repository policy and tests.
+Their independent lockfiles remain authoritative: a workspace dependency update
+does not prepare the JSON fixture's pinned `serde_json` version. Both fetches
+must succeed in the same Cargo home the offline test probes use. For a workflow
+repair, verify the executed reusable-workflow revision and preparation-step
+result; a checked-out workflow blob in the test context alone does not prove
+which controller executed.
+
 UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
 before invoking the action, matching required Rust CI. Its offline identity
 probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
