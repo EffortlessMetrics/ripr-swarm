@@ -1,0 +1,42 @@
+//! Boundaries compared against a local chosen by a flag parameter.
+
+pub const KB: u64 = 1_000;
+pub const KIB: u64 = 1_024;
+
+pub fn tier_hit(bytes: u64, si: bool) -> &'static str {
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+pub fn tier_trap(bytes: u64, si: bool) -> &'static str {
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+pub fn tier_negated(bytes: u64, binary: bool) -> &'static str {
+    let unit = if !binary { KB } else { KIB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_binary_unit_starts_at_1024() {
+        assert_eq!(tier_hit(1_024, true), "unit");
+        assert_eq!(tier_hit(1_023, true), "byte");
+    }
+
+    #[test]
+    fn each_flag_is_checked_at_the_other_flags_boundary() {
+        assert_eq!(tier_trap(1_000, true), "byte");
+        assert_eq!(tier_trap(1_024, false), "unit");
+    }
+
+    #[test]
+    fn the_decimal_unit_starts_at_1000() {
+        assert_eq!(tier_negated(1_000, false), "unit");
+        assert_eq!(tier_negated(999, false), "byte");
+    }
+}

@@ -1,0 +1,52 @@
+{
+  "case_id": "local-boundary-flag-negated",
+  "subject_id": "authored-local-boundary",
+  "diff": "cases/local-boundary-flag-negated.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The boundary operand is a local selected by a flag parameter, so the comparison is decided only after the flag and the same-file constants are read (#9276).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unit < bytes",
+        "mutated_line": "unit < bytes",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_decimal_unit_starts_at_1000",
+        "equivalence_review": "not equivalent: tier_negated(1_000, false) becomes \"byte\""
+      },
+      {
+        "replacement": "unit > bytes",
+        "mutated_line": "unit > bytes",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_decimal_unit_starts_at_1000",
+        "equivalence_review": "not equivalent: tier_negated(1_000, false) becomes \"byte\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Same local as the flag-hit case with a negated condition, `let unit = if !binary { KB } else { KIB };`. The test pins tier_negated(1_000, false) and tier_negated(999, false), so `unit` is 1_000 at the pinned input. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "393e229",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

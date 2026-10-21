@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A boundary compared against a local chosen by a flag (`let unit = if si { KIB } else { KB };`) now resolves when a related test passes both the flag and the compared value as literals: `exposed` on the boundary input, a weak gap when the inputs sit on the other arm's boundary, and still `infection_unknown` when the compared argument is not a plain integer. Three authored corpus cases pin the three outcomes (#9276).
