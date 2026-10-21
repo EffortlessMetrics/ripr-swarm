@@ -336,7 +336,7 @@ be established, so `ripr repair` refuses every item; widen the budget with
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
 card projection of the shared card producer over the refresh's diff-scoped
-inventory and is out of scope for #9108: it does not start an attempt, and it
+inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
 does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
 readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
 card's `readiness.repair_ready`, when the seam limit may have truncated the

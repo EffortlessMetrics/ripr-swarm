@@ -149,7 +149,7 @@ read-only and without execution authority (ADR 0022):
   before the snapshot identity is computed, so the list summary, the
   `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
   identity carry one decision, and a finding-level refusal remains the first
-  failing gate. MCP never reads readiness from finding facts alone and keeps
+  failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
 - When every gate is established, the tool creates one session repair
