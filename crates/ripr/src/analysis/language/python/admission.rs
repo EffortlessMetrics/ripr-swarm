@@ -38,8 +38,9 @@
 //! star-imports, aliases a hook or the fixture decorator, aliases an external
 //! fixture by assignment, or builds an autouse-fixture factory is tainted.
 //! Not seen: setup installed through `globals()` or other runtime registration,
-//! `@pytest.hookimpl(specname=...)` on a differently named function, and an
-//! autouse fixture imported into the test module itself. A module imported from
+//! `@pytest.hookimpl(specname=...)` on a differently named function, an
+//! autouse fixture imported into the test module itself, and aliases built
+//! through a tuple, `or` expression or call (`fx = getattr(pytest, "fixture")`). A module imported from
 //! the test file's own directory or below is treated as test support; for a
 //! test file at the repository root, a relative import is treated as test
 //! support by alias. A `no_assertion` miss must account for the rest before
