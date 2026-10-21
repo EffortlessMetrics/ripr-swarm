@@ -7,6 +7,7 @@
 
 use crate::analysis;
 use crate::app::Mode;
+use crate::cli::CommandError;
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
@@ -15,7 +16,7 @@ use crate::output;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
+pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     let mut json_output = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root: Option<String> = None;
@@ -32,11 +33,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
                     Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
                     Some(other) => {
-                        return Err(format!(
+                        return Err(CommandError::from(format!(
                             "unknown doctor profile `{other}`; expected `analysis` or `source-build`"
+                        )));
+                    }
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --profile".to_string(),
                         ));
                     }
-                    None => return Err("missing value for --profile".to_string()),
                 };
             }
             "--root" => {
@@ -47,28 +52,28 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
-                        return Err("missing value for --root".to_string());
+                        return Err(CommandError::from("missing value for --root".to_string()));
                     }
                     Some(value) => value,
-                    None => return Err("missing value for --root".to_string()),
+                    None => return Err(CommandError::from("missing value for --root".to_string())),
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
                 // the user to help for a flag they already used.
                 if let Some(existing) = &root {
-                    return Err(format!(
+                    return Err(CommandError::from(format!(
                         "doctor accepts at most one --root; found both {existing:?} and {value:?}. Run `ripr doctor --help`."
-                    ));
+                    )));
                 }
                 root = Some(value.to_string());
             }
             other if other.starts_with('-') => {
-                return Err(unknown_argument("doctor", other));
+                return Err(CommandError::from(unknown_argument("doctor", other)));
             }
             other => {
-                return Err(format!(
+                return Err(CommandError::from(format!(
                     "doctor does not accept positional arguments; got {other:?}; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
-                ));
+                )));
             }
         }
     }
@@ -146,7 +151,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     if passed {
         Ok(())
     } else {
-        Err("doctor found issues".to_string())
+        // #5102: the diagnosis completed and produced its report, so failed
+        // checks are a typed decision (exit 3), not could-not-complete (2).
+        Err(CommandError::Decision("doctor found issues".to_string()))
     }
 }
 
@@ -160,7 +167,7 @@ fn doctor_json(
     detected: &[LanguageId],
     run_started: std::time::Instant,
     language_detection_elapsed: std::time::Duration,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
@@ -192,7 +199,9 @@ fn doctor_json(
     report.attach_canonical_next_action(root);
     report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
     println!("{}", report.render_json()?);
-    output::doctor::doctor_report_result(&report)
+    // #5102: a rendered report with failed checks is a completed typed
+    // answer (exit 3); render failures above stay could-not-complete (2).
+    output::doctor::doctor_report_result(&report).map_err(CommandError::Decision)
 }
 
 /// The run's environment facts, plus the one input the human enablement tip
@@ -5883,7 +5892,9 @@ mod tests {
     fn doctor_requires_root_value() {
         assert_eq!(
             doctor(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -6075,7 +6086,9 @@ mod tests {
     fn doctor_rejects_unknown_arguments() {
         assert_eq!(
             doctor(&args(&["--bogus"])),
-            Err("unknown doctor argument \"--bogus\". Run `ripr doctor --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown doctor argument \"--bogus\". Run `ripr doctor --help`.".to_string()
+            ))
         );
     }
 
@@ -6085,10 +6098,10 @@ mod tests {
     fn doctor_rejects_a_second_root_by_naming_the_condition() {
         assert_eq!(
             doctor(&args(&["--root", "a", "--root", "b"])),
-            Err(
+            Err(CommandError::Failure(
                 "doctor accepts at most one --root; found both \"a\" and \"b\". Run `ripr doctor --help`."
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -6098,10 +6111,10 @@ mod tests {
     fn doctor_rejects_positional_arguments_by_naming_the_condition() {
         assert_eq!(
             doctor(&args(&["some/path"])),
-            Err(
+            Err(CommandError::Failure(
                 "doctor does not accept positional arguments; got \"some/path\"; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -6113,7 +6126,9 @@ mod tests {
         for flag in ["--json", "--profile", "--root", "--help", "-h"] {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
-                Err("missing value for --root".to_string()),
+                Err(CommandError::Failure(
+                    "missing value for --root".to_string()
+                )),
                 "a known flag cannot be the --root value: {flag}"
             );
         }
@@ -6371,18 +6386,18 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
-        if doctor_json(
-            &dir,
-            output::doctor::DoctorProfile::Analysis,
-            &detect_languages(&dir),
-            std::time::Instant::now(),
-            std::time::Duration::ZERO,
-        )
-        .is_ok()
-        {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("invalid JSON doctor report unexpectedly passed".to_string());
-        }
+        // #5102: the JSON report was rendered, so failed checks are a
+        // Decision (3), not could-not-complete (2).
+        assert_eq!(
+            doctor_json(
+                &dir,
+                output::doctor::DoctorProfile::Analysis,
+                &detect_languages(&dir),
+                std::time::Instant::now(),
+                std::time::Duration::ZERO,
+            ),
+            Err(CommandError::Decision("doctor found issues".to_string()))
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -6394,9 +6409,11 @@ mod tests {
             return Err(format!("test root unexpectedly exists: {}", root.display()));
         }
         let root_arg = root.to_string_lossy().into_owned();
-        if doctor(&args(&["--root", &root_arg])).is_ok() {
-            return Err("human doctor unexpectedly passed for missing root".to_string());
-        }
+        // #5102: a completed diagnosis of a missing root is a Decision (3).
+        assert_eq!(
+            doctor(&args(&["--root", &root_arg])),
+            Err(CommandError::Decision("doctor found issues".to_string()))
+        );
         Ok(())
     }
 
@@ -6418,7 +6435,7 @@ mod tests {
 
     #[test]
     fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
-        doctor(&args(&["--json", "--root", "."]))
+        doctor(&args(&["--json", "--root", "."])).map_err(|error| error.message().to_string())
     }
 
     // --- preview_language_enable_suggestions tests ---
