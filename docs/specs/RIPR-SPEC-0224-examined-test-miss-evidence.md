@@ -123,7 +123,7 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | yes (name- or location-only relations) | pending #5495 | no |
+| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | pending #5495 | no |
 | `no_assertion` | yes | no (#6657) | pending #5495 | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
@@ -142,15 +142,6 @@ a capability difference, not a parity failure.
 Python (#5491) writes a miss only on a `weakly_exposed` finding without a
 static limit, one row at a time, in `python/row_miss.rs`:
 
-- `no_call_path`: `same_stem`, `test_name_similarity` and `fixture_name`
-  rows of a callable owner (function, method or classmethod); a module
-  constant or module-level owner is read, not called, so it keeps no such
-  claim. `dunder_protocol` rows reach the owner through an implicit protocol
-  call, so they keep no miss, as do fixture-owner, helper-owner and
-  activation-limited rows. A row whose test body uses the owner name, or an
-  import alias of it, in any non-trivial position (anything but
-  `callable(owner)`, `owner.__name__`-style attributes or a lone unused
-  `ident = owner`) gets no miss: the call may use a shape not modeled.
 - `weak_assertion`: the family-selected assertion is weak or smoke. A medium
   assertion (a mock that may pin the changed call) keeps no miss.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
@@ -162,6 +153,14 @@ static limit, one row at a time, in `python/row_miss.rs`:
 
 Python does not yet write:
 
+- `no_call_path`: pending, blocked on the same cross-file blind spots as
+  `no_assertion` (#6657). A `same_stem`, `test_name_similarity` or
+  `fixture_name` row is related by name or location only, and the absence of
+  a call cannot be established while a callback or alias (`map(owner, ...)`,
+  `f = owner`), a `parametrize` or fixture `params` list, `usefixtures`, a
+  module-level `pytestmark`, a conftest or a plugin may still reach the owner.
+  Those rows keep no miss; `dunder_protocol`, fixture-owner, helper-owner and
+  activation-limited rows never carried the claim.
 - `missing_input`: pending follow-up (#5491). It needs a row-owned
   boundary omission over import-resolved owner calls; until then a strong
   row that observes nothing keeps only `observation_unconfirmed`, which

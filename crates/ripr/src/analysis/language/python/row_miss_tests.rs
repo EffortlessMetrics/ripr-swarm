@@ -82,15 +82,15 @@ fn exposed_finding_keeps_every_row_miss_none_even_beside_a_weak_row() -> Result<
 }
 
 #[test]
-fn heuristic_only_rows_are_no_call_path_in_a_concrete_gap() -> Result<(), String> {
-    // Referenced but never called: related by file stem only.
+fn name_or_location_only_rows_never_get_no_call_path() -> Result<(), String> {
+    // Referenced but never called: related by file stem only. The test body
+    // cannot prove it never reaches the owner (callbacks, aliases, parametrize
+    // and fixture `params`, `usefixtures`, `pytestmark`, conftest, plugins), so
+    // the claim is withheld (#6657-class blind spots).
     let finding = score_case("def test_score_is_importable():\n    assert callable(score)\n")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.related_tests.len(), 1);
-    assert_eq!(
-        finding.related_tests[0].miss,
-        Some(RelatedTestMiss::NoCallPath)
-    );
+    assert_eq!(finding.related_tests[0].miss, None);
     Ok(())
 }
 
@@ -100,10 +100,7 @@ fn mixed_rows_keep_their_own_reasons() -> Result<(), String> {
         "def test_score_is_importable():\n    assert callable(score)\n\ndef test_weak():\n    assert score(1)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_score_is_importable"),
-        Some(RelatedTestMiss::NoCallPath)
-    );
+    assert_eq!(miss_of(&finding, "test_score_is_importable"), None);
     assert_eq!(
         miss_of(&finding, "test_weak"),
         Some(RelatedTestMiss::WeakAssertion)
@@ -177,31 +174,6 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
 }
 
 #[test]
-fn owner_passed_through_a_decorator_is_not_a_no_call_path() -> Result<(), String> {
-    let finding = score_case(
-        "import pytest\n\n@pytest.mark.parametrize('cb', [score])\ndef test_score(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
-    )?;
-    assert!(!finding.related_tests.is_empty());
-    assert!(
-        finding
-            .related_tests
-            .iter()
-            .all(|row| row.miss != Some(RelatedTestMiss::NoCallPath)),
-        "{:?}",
-        misses(&finding)
-    );
-    // Control: an unrelated decorator keeps the claim.
-    let finding = score_case(
-        "import pytest\n\n@pytest.mark.slow\ndef test_score_exists():\n    assert callable(score)\n",
-    )?;
-    assert_eq!(
-        finding.related_tests[0].miss,
-        Some(RelatedTestMiss::NoCallPath)
-    );
-    Ok(())
-}
-
-#[test]
 fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
     // Two strong rows asserting on another function, plus a weak row: each row
     // is aligned on its own from the shared prepared state.
@@ -225,39 +197,19 @@ fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
 }
 
 #[test]
-fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String> {
+fn hidden_call_shapes_never_get_no_call_path() -> Result<(), String> {
     for body in [
         "def test_score_map():\n    assert list(map(score, [0, 1])) == [8, 8]\n",
         "def test_score_alias():\n    f = score\n    assert [f(0)] == [8]\n",
-    ] {
-        let finding = score_case(body)?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-        assert_ne!(
-            finding.related_tests[0].miss,
-            Some(RelatedTestMiss::NoCallPath),
-            "{body}"
-        );
-    }
-    // F1-F4: import alias locals, annotated or chained aliases, dunder
-    // invocations and a call nested in `callable(...)`.
-    for body in [
         "from src.subject import score as s\n\ndef test_alias_map():\n    assert list(map(s, [0, 1])) == [8, 8]\n",
-        "from src.subject import score as s\n\ndef test_alias_assign():\n    f = s\n    assert [f(0)] == [8]\n",
-        "def test_annotated():\n    x: Callable = score\n    assert [x(0)] == [8]\n",
-        "def test_chained():\n    a = b = score\n    assert [a(0)] == [8]\n",
-        "def test_dunder_call():\n    assert score.__call__(0) == 8\n",
-        "def test_wrapped():\n    assert score.__wrapped__(0) == 8\n",
-        "def test_nested():\n    assert callable(score(0))\n",
+        "import pytest\n\n@pytest.mark.parametrize('cb', [score])\ndef test_score(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
+        "import pytest\n\n@pytest.fixture(params=[score])\ndef cb(request):\n    return request.param\n\ndef test_score_param(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
+        "import pytest\n\n@pytest.fixture\ndef setup():\n    return score(0)\n\n@pytest.mark.usefixtures('setup')\ndef test_score_setup():\n    assert callable(score)\n",
+        "import pytest\n\npytestmark = pytest.mark.parametrize('cb', [score])\n\ndef test_score(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
+        "import pytest\n\npytestmark = [pytest.mark.parametrize('cb', [score])]\n\ndef test_score(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
         "def test_nested_call():\n    class Box:\n        __call__ = score\n    assert Box()(0) == 8\n",
-        "def test_nested_init():\n    class Box:\n        __init__ = score\n    Box(0)\n",
-        "def test_nested_enter():\n    class Box:\n        __enter__ = score\n    with Box():\n        pass\n",
-        "def test_nested_getitem():\n    class Box:\n        __getitem__ = score\n    assert Box()[0] == 8\n",
-        "def test_nested_setUp():\n    class Box:\n        setUp = score\n    Box().setUp()\n",
-        "def test_nested_plain():\n    class Box:\n        helper = score\n    assert Box\n",
-        "def test_kw_spaced():\n    assert run(\n        cb = score\n    ) == 8\n",
-        "def test_kw_tight():\n    assert run(\n        cb=score\n    ) == 8\n",
-        "def test_kw_assigned():\n    r = run(\n        cb = score\n    )\n    assert r == 8\n",
-        "def test_kw_sorted():\n    assert sorted([0],\n        key = score\n    )\n",
+        "def test_kw():\n    assert run(\n        cb = score\n    ) == 8\n",
+        "def test_unused_alias():\n    cb = score\n    assert 8 == 8\n",
     ] {
         let finding = score_case(body)?;
         assert!(!finding.related_tests.is_empty(), "{body}");
@@ -270,30 +222,6 @@ fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String>
             misses(&finding)
         );
     }
-    // Positive control: the same alias statement at bracket depth 0.
-    let finding = score_case("def test_depth_zero():\n    cb = score\n    assert 8 == 8\n")?;
-    assert_eq!(
-        finding.related_tests[0].miss,
-        Some(RelatedTestMiss::NoCallPath)
-    );
-    // Positive controls: trivial forms still carry no_call_path.
-    for body in [
-        "from src.subject import score as s\n\ndef test_alias_callable():\n    assert callable(s)\n",
-        "def test_name_only():\n    assert score.__doc__ is None\n",
-    ] {
-        let finding = score_case(body)?;
-        assert_eq!(
-            finding.related_tests[0].miss,
-            Some(RelatedTestMiss::NoCallPath),
-            "{body}"
-        );
-    }
-    // Positive control: an alias that is never used again is still no call.
-    let finding = score_case("def test_score_alias_unused():\n    f = score\n    assert 8 == 8\n")?;
-    assert_eq!(
-        finding.related_tests[0].miss,
-        Some(RelatedTestMiss::NoCallPath)
-    );
     Ok(())
 }
 
@@ -481,7 +409,7 @@ mod direct {
     }
 
     #[test]
-    fn dunder_protocol_row_is_not_a_no_call_path_and_fixture_name_row_is() -> Result<(), String> {
+    fn dunder_protocol_and_fixture_name_rows_get_no_no_call_path() -> Result<(), String> {
         let dunder = case(
             "class Box:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, other):\n        return self.v == other.v\n",
             "from src.subject import Box\n\ndef test_box():\n    assert Box(1) == Box(1)\n",
@@ -506,12 +434,12 @@ mod direct {
         let rows = run(&fixture, &ExposureClass::WeaklyExposed, false);
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
-        assert_eq!(rows[0].1, Some(RelatedTestMiss::NoCallPath));
+        assert_eq!(rows[0].1, None);
         Ok(())
     }
 
     #[test]
-    fn module_constant_owner_row_is_not_a_no_call_path() -> Result<(), String> {
+    fn module_constant_owner_row_gets_no_no_call_path() -> Result<(), String> {
         let constant = case(
             "BASE_DISCOUNT = 8\n",
             "from src.subject import BASE_DISCOUNT\n\ndef test_subject_base_discount():\n    assert BASE_DISCOUNT > 0\n",
@@ -524,20 +452,6 @@ mod direct {
         assert!(
             rows.iter()
                 .all(|(_, miss)| *miss != Some(RelatedTestMiss::NoCallPath)),
-            "{rows:?}"
-        );
-        // Positive control: a callable owner with the same name-only relation.
-        let callable = case(
-            "def subject_base_discount():\n    return 8\n",
-            "from src.subject import subject_base_discount\n\ndef test_subject_base_discount_exists():\n    assert callable(subject_base_discount)\n",
-            2,
-            "    return 7",
-            "    return 8",
-        )?;
-        let rows = run(&callable, &ExposureClass::WeaklyExposed, false);
-        assert!(
-            rows.iter()
-                .any(|(_, miss)| *miss == Some(RelatedTestMiss::NoCallPath)),
             "{rows:?}"
         );
         Ok(())

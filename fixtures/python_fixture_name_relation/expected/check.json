@@ -69,9 +69,7 @@
           "line": 4,
           "oracle_strength": "unknown",
           "oracle_kind": "unknown",
-          "oracle": "",
-          "miss": "no_call_path",
-          "why": "no call to the changed code found"
+          "oracle": ""
         }
       ],
       "stop_reasons": [],
