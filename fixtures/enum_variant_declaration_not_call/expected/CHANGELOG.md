@@ -268,3 +268,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (23)
+
+Reason:
+RIPR-SPEC-0122: the digest names an entry the Weakness list still shows, not a no_static_path restatement (#9033)
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

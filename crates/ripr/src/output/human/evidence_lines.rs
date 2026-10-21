@@ -323,21 +323,27 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
     lines
 }
 
-/// The three generic `missing` entries a `no_static_path` finding always
-/// carries. Its Evidence block already says `reach no`, `observation no` and
-/// `discriminator no` in the same words, so listing them again under Weakness
-/// makes one fact (no test reaches this code) read as four problems (#9033).
-/// The entries stay in the JSON `missing` list; only the human projection
-/// drops them, and a distinct entry such as the missing boundary input stays.
-const NO_STATIC_PATH_RESTATED_MISSING: [&str; 3] = [
-    "No static test path reaches the changed owner",
-    "No relevant oracle was detected",
-    "No strong discriminator was detected",
-];
-
-fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
-    finding.class == crate::domain::ExposureClass::NoStaticPath
-        && NO_STATIC_PATH_RESTATED_MISSING.contains(&missing)
+/// Whether a `missing` entry only restates a stage line the Evidence block
+/// already prints for this finding. A `no_static_path` finding carries three
+/// generic entries ("No static test path reaches the changed owner", "No
+/// relevant oracle was detected", "No strong discriminator was detected"),
+/// and its Evidence block says `reach no`, `observation no` and
+/// `discriminator no` in the same words, so listing them again reads one fact
+/// (no test reaches this code) as several problems (#9033). An entry is
+/// dropped only while its own stage reads `no`; any other stage state keeps
+/// the entry. The entries stay in the JSON `missing` list, and a distinct
+/// entry such as the missing boundary input is never dropped.
+pub(super) fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
+    if finding.class != crate::domain::ExposureClass::NoStaticPath {
+        return false;
+    }
+    let stage = match missing {
+        "No static test path reaches the changed owner" => &finding.ripr.reach,
+        "No relevant oracle was detected" => &finding.ripr.reveal.observe,
+        "No strong discriminator was detected" => &finding.ripr.reveal.discriminate,
+        _ => return false,
+    };
+    stage.state == crate::domain::StageState::No
 }
 
 fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&str]) -> bool {

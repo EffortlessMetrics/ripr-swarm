@@ -36,3 +36,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — glob_import_qualified_other_module (4)
+
+Reason:
+RIPR-SPEC-0122: the digest names an entry the Weakness list still shows, not a no_static_path restatement (#9033)
+
+Command:
+`cargo xtask goldens bless glob_import_qualified_other_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

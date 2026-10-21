@@ -14,7 +14,7 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.35)
   Why no path: no static path from a related test to this change was found
   Changed behavior: x >= 10
-  Missing discriminator: No detected boundary input for the changed predicate
+  Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Next step: Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test
   Evidence: reach unknown · infection unknown · propagation unknown · observation no · discriminator no
     - reach unknown: Property macro expansion and owner execution are unresolved
