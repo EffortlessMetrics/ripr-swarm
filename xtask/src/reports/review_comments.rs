@@ -2151,6 +2151,93 @@ mod tests {
         }
     }
 
+    // #9010: the packet copies the producer `analysis_outcome` verbatim, so a
+    // findings-bounded check document carries `document_complete: false` and
+    // the rendered/total counts into the packet. The published schema must
+    // admit exactly that shape and still refuse a half-disclosed one.
+    #[test]
+    fn packet_schema_admits_the_bounded_document_disclosure() -> Result<(), String> {
+        let repo = temp_repo("ripr-review-comments-bounded-outcome")?;
+        let mut options = options();
+        options.check_output = Some("target/check-output.json".to_string());
+        let outcome = |extra: Value| {
+            let mut projection = json!({
+                "analysis_complete": true,
+                "outcome": {
+                    "schema_version": "0.1",
+                    "kind": "complete_with_findings",
+                    "identity": {
+                        "repository_identity": null,
+                        "root_identity": null,
+                        "config_identity": null,
+                        "base_revision": options.base.clone(),
+                        "input_identity": null,
+                        "snapshot_identity": null,
+                        "git_candidate_subject": null
+                    },
+                    "counts": {
+                        "changed_file_count": 1,
+                        "changed_line_count": 1,
+                        "candidate_line_count": 1,
+                        "probe_count": 1,
+                        "finding_count": 4
+                    },
+                    "limitations": [],
+                    "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+                }
+            });
+            if let (Some(target), Some(extra)) = (projection.as_object_mut(), extra.as_object()) {
+                target.extend(extra.clone());
+            }
+            projection
+        };
+        let packet_with = |analysis_outcome: Value| -> Result<Value, String> {
+            let producer = json!({
+                "schema_version": "0.2",
+                "tool": "ripr",
+                "mode": "draft",
+                "root": repo.display().to_string(),
+                "base": options.base.clone(),
+                "summary": {},
+                "findings": [],
+                "analysis_outcome": analysis_outcome
+            });
+            fs::create_dir_all(repo.join("target"))
+                .map_err(|err| format!("create target: {err}"))?;
+            fs::write(
+                repo.join("target/check-output.json"),
+                serde_json::to_string(&producer).map_err(|err| format!("serialize: {err}"))?,
+            )
+            .map_err(|err| format!("write producer: {err}"))?;
+            let receipt = review_comments_receipt(&repo, &options, "limited_timeout", Some("x"));
+            Ok(error_review_comments_packet(&repo, &options, "x", &receipt))
+        };
+
+        let bounded = packet_with(outcome(json!({
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 4
+        })))?;
+        assert_eq!(bounded["analysis_outcome"]["document_complete"], false);
+        assert_schema_valid(&bounded, "bounded disclosure packet")?;
+        assert_schema_valid(
+            &packet_with(outcome(json!({})))?,
+            "unbounded control packet",
+        )?;
+
+        let wrong = packet_with(outcome(json!({
+            "document_complete": true,
+            "findings_rendered": 1,
+            "findings_total": 4
+        })))?;
+        if schema_violations(&wrong)?.is_empty() {
+            return Err("document_complete other than false must be refused".to_string());
+        }
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
     /// `ripr reports gap-ledger --check-output` over a committed `ripr check`
     /// golden, then `ripr review-comments --gap-ledger` over that ledger.
     /// Returns the ledger and the review-comments packet the CLI wrote.
