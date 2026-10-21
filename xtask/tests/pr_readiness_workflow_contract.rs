@@ -1,8 +1,8 @@
 //! Pin the protected PR qualification event at the workflow boundary.
 //!
-//! Draft, Ready, push and ordinary-label activity must not create the required
-//! `Ripr Rust Small Result` check. An explicit `merge-ready` label event is the
-//! only pull-request admission event; main and explicit manual authorities remain separate. The PR
+//! Draft, Ready, push and label activity must not create the required
+//! `Ripr Rust Small Result` check. The merge-queue `checks_requested` event is
+//! the only pull-request admission event; main and explicit manual authorities remain separate. The PR
 //! staleness watchdog is alert-only: it must never qualify a Ready head by
 //! dispatching the protected workflow on its branch (#4986).
 
@@ -12,20 +12,19 @@ use std::path::Path;
 const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
 const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "on:",
-    "  pull_request:",
-    "    types: [labeled]",
+    "  merge_group:",
+    "    types: [checks_requested]",
     "  push:",
     "    branches: [main, master]",
     "  workflow_dispatch:",
 ];
-const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
-const EXPECTED_CANCEL_IN_PROGRESS: &str =
-    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+const EXPECTED_CONCURRENCY_GROUP: &str =
+    "  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}";
+const EXPECTED_CANCEL_IN_PROGRESS: &str = "  cancel-in-progress: false";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
-/// The only name expression that can post the required context: main/manual
-/// runs and an explicit merge-ready request. Every other label event posts a
-/// different name; a skipped job would report success for a static name.
-const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+/// The result job carries the required context by a static name: the workflow
+/// has no pull_request trigger, and the job runs under `if: always()`.
+const EXPECTED_RESULT_NAME: &str = "Ripr Rust Small Result";
 const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
@@ -128,13 +127,13 @@ fn terminal_context(source: &str) -> Option<&str> {
 }
 
 #[test]
-fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
+fn required_pr_context_is_withheld_until_merge_queue() -> Result<(), String> {
     let source = workflow_source()?;
 
     assert_eq!(
         event_declarations(&source)?,
         EXPECTED_EVENT_DECLARATIONS,
-        "protected workflow must expose only the label-request PR, main push, and manual authorities",
+        "protected workflow must expose only the merge-queue PR request, main push, and manual authorities",
     );
     assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
     assert!(source.contains(EXPECTED_CANCEL_IN_PROGRESS));
@@ -148,7 +147,10 @@ fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
 #[test]
 fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace("types: [labeled]", "types: [labeled, synchronize]");
+    let changed = source.replace(
+        "types: [checks_requested]",
+        "types: [checks_requested, synchronize]",
+    );
     assert_ne!(changed, source, "trigger mutation must engage");
     assert_ne!(
         event_declarations(&changed)?,
@@ -159,16 +161,13 @@ fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
+fn contract_rejects_cancelling_queue_entries() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace(
-        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-        "  cancel-in-progress: false",
-    );
+    let changed = source.replace("  cancel-in-progress: false", "  cancel-in-progress: true");
     assert_ne!(changed, source, "cancellation mutation must engage");
     assert!(
         !changed.contains(EXPECTED_CANCEL_IN_PROGRESS),
-        "mutation must remove the pinned Ready-run cancellation expression"
+        "mutation must remove the pinned no-cancellation setting"
     );
     Ok(())
 }
@@ -176,20 +175,16 @@ fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
 #[test]
 fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
     let source = workflow_source()?;
-    // A static required name would be skipped-as-success on ordinary labels.
     let changed = source.replace(
-        &format!("  result:\n    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit\n    # merge-ready request. Any other pull_request label event is a nonrequest\n    # under a different name so the required context is never satisfied by it.\n    name: {EXPECTED_RESULT_NAME}"),
         "  result:\n    name: Ripr Rust Small Result",
+        "  result:\n    name: Ripr Rust Small Draft Result",
     );
     assert_ne!(changed, source, "result-name mutation must engage");
     assert_ne!(
         terminal_context(&changed),
         Some(EXPECTED_RESULT_NAME),
-        "a static result name must violate the required-context contract",
+        "a renamed result must violate the required-context contract",
     );
-    let widened = source.replace("label.name == 'merge-ready') &&", "label.name != '') &&");
-    assert_ne!(widened, source, "request-label mutation must engage");
-    assert_ne!(terminal_context(&widened), Some(EXPECTED_RESULT_NAME));
     Ok(())
 }
 
@@ -326,6 +321,11 @@ fn parsed_types(source: &str) -> Result<Vec<String>, String> {
         .ok_or_else(|| "workflow declares auditable on.pull_request.types".to_owned())
 }
 
+fn merge_group_types(source: &str) -> Result<Vec<String>, String> {
+    repo_policy::routed_rust_event_types(source, "merge_group")
+        .ok_or_else(|| "workflow declares auditable on.merge_group.types".to_owned())
+}
+
 fn publication_events(config: &str) -> Result<Vec<String>, String> {
     let config: toml::Value = toml::from_str(config).map_err(|error| format!("{error}"))?;
     config
@@ -377,7 +377,11 @@ fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -
         !events.iter().any(|event| event == "ready_for_review"),
         "UB: Ready must neither replace active work nor repeat completed/unavailable work"
     );
-    assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
+    assert_eq!(
+        merge_group_types(&workflow_source()?)?,
+        ["checks_requested"]
+    );
+    assert!(repo_policy::routed_rust_pull_request_types(&workflow_source()?).is_none());
     Ok(())
 }
 
@@ -465,12 +469,12 @@ fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(),
 }
 
 #[test]
-fn contract_rejects_replacing_required_merge_ready_admission() -> Result<(), String> {
+fn contract_rejects_replacing_required_merge_queue_admission() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace("types: [labeled]", "types: [opened]");
+    let changed = source.replace("types: [checks_requested]", "types: [opened]");
     assert_ne!(changed, source, "required-admission mutation engages");
     assert_ne!(event_declarations(&changed)?, EXPECTED_EVENT_DECLARATIONS);
-    assert_ne!(parsed_types(&changed)?, ["labeled"]);
+    assert_ne!(merge_group_types(&changed)?, ["checks_requested"]);
     Ok(())
 }
 

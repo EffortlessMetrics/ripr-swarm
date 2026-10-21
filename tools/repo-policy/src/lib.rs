@@ -895,51 +895,52 @@ pub fn routed_rust_workflow_contract_violations(
 
 /// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
 ///
-/// The workflow file is the authority. This classifier inspects `on.pull_request.types`
-/// so a re-added Draft or label event cannot be hidden behind a hardcoded
-/// desired policy (#4380, #4986).
+/// The workflow file is the authority. This classifier inspects
+/// `on.merge_group.types` so a re-added pull-request, Draft or label event
+/// cannot be hidden behind a hardcoded desired policy (#4380, #4986).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutedRustEventRoute {
     LaunchFullGate,
-    /// A non-request label event: the workflow runs but allocates no work and
-    /// posts only `Merge-ready Nonrequest`, never the required context.
-    NonrequestLabel,
     WorkflowNotTriggered,
 }
 
-pub const ROUTED_RUST_READY_EVENT: &str = "labeled";
+/// The only activity type of the merge-queue event that requests the protected
+/// qualification (#4986).
+pub const ROUTED_RUST_READY_EVENT: &str = "checks_requested";
 
-/// The only label whose event requests the protected qualification (#4986).
-pub const ROUTED_RUST_REQUEST_LABEL: &str = "merge-ready";
+/// Concurrency group: one lane per ref and event, so queue entries (distinct
+/// refs), push and manual work never replace each other.
+pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str =
+    "group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}";
 
-/// Result job name for every pull_request label event that is not a request.
-pub const ROUTED_RUST_NONREQUEST_RESULT_NAME: &str = "Merge-ready Nonrequest";
+/// Queue entries must never be cancelled by a later run: cancelling an entry's
+/// qualification fails its merge group.
+pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str = "cancel-in-progress: false";
 
-/// The result job name expression: the required context only for main/manual
-/// runs and an explicit merge-ready request, a different name otherwise.
-pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+/// The result job name. Static: the workflow has no pull_request trigger, so
+/// the job runs (`if: always()`) for every event that can start it.
+pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: Ripr Rust Small Result";
 
-/// Job-level request guard that withholds route, docs detection and admission
-/// (and therefore every implementation job) from nonrequest label events.
-pub const ROUTED_RUST_REQUEST_GUARD_SNIPPET: &str =
-    "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'";
-
-pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
-
-pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str =
-    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+/// The queue-entry resolver must read the PR out of the merge-group ref.
+pub const ROUTED_RUST_QUEUE_ENTRY_SNIPPET: &str =
+    "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}";
 
 pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
 
 pub const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
-    // Parse the repository's static inline on.pull_request.types declaration.
+    routed_rust_event_types(workflow, "pull_request")
+}
+
+pub fn routed_rust_event_types(workflow: &str, event: &str) -> Option<Vec<String>> {
+    // Parse the repository's static inline on.<event>.types declaration.
     // A commented declaration, dispatch input, or job's block-scalar text must
     // not impersonate event admission. Unsupported layouts return None so the
     // policy caller can reject unauditable declarations.
     let mut in_events = false;
-    let mut in_pull_request = false;
+    let mut in_event = false;
+    let header = format!("  {event}:");
     for raw in workflow.lines() {
         let line = raw.split(" #").next()?.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -956,10 +957,10 @@ pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
             break;
         }
         if line.starts_with("  ") && !line.starts_with("   ") {
-            in_pull_request = line == "  pull_request:";
+            in_event = line == header;
             continue;
         }
-        if in_pull_request && let Some(types) = line.strip_prefix("    types:") {
+        if in_event && let Some(types) = line.strip_prefix("    types:") {
             let items = types.trim().strip_prefix('[')?.strip_suffix(']')?;
             if items.trim().is_empty() {
                 return Some(Vec::new());
@@ -989,69 +990,75 @@ pub fn routed_rust_event_route(
     workflow: &str,
     event_name: &str,
     action: Option<&str>,
-    label: Option<&str>,
+    _label: Option<&str>,
 ) -> RoutedRustEventRoute {
-    if event_name == "pull_request" {
-        let action = action.unwrap_or("");
-        if let Some(types) = routed_rust_pull_request_types(workflow)
-            && !types.iter().any(|value| value == action)
-        {
-            return RoutedRustEventRoute::WorkflowNotTriggered;
-        }
-        if action == "labeled"
-            && !label.is_some_and(|value| value.eq_ignore_ascii_case(ROUTED_RUST_REQUEST_LABEL))
-        {
-            return RoutedRustEventRoute::NonrequestLabel;
-        }
+    let action = action.unwrap_or("");
+    let trigger = match event_name {
+        "merge_group" | "pull_request" => routed_rust_event_types(workflow, event_name)
+            .is_some_and(|types| types.iter().any(|value| value == action)),
+        _ => true,
+    };
+    if trigger {
+        RoutedRustEventRoute::LaunchFullGate
+    } else {
+        RoutedRustEventRoute::WorkflowNotTriggered
     }
-    RoutedRustEventRoute::LaunchFullGate
 }
 
-/// Enforce the merge-ready request law declared by
+/// Enforce the merge-queue request law declared by
 /// `.github/workflows/routed-rust.yml` (#4986, #8082).
 ///
-/// An explicit `merge-ready` label event is the sole pull-request qualification
-/// request. A skipped required job reports success, so this validator fails
-/// closed on every path that could let another event produce the protected
-/// required context: only `labeled` is subscribed, the result job name is an
-/// expression yielding the required name solely for a merge-ready request (or
-/// main/manual runs), route, docs detection and admission are withheld from
-/// other labels, and the result job always runs so a nonrequest exists only
-/// under a different name.
+/// The merge-group `checks_requested` event is the sole pull-request
+/// qualification request. A skipped required job reports success, so this
+/// validator fails closed on every path that could let another event produce
+/// the protected required context: no `pull_request` subscription exists,
+/// only `checks_requested` is subscribed, the queue entry is resolved from the
+/// merge-group ref, queue runs are never cancelled, and the static-named
+/// result job always runs so the required context is reported (failed) rather
+/// than skipped when a prerequisite is skipped or cancelled.
 pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
-    let has_pull_request_trigger = workflow
+    let mut violations = Vec::new();
+    if workflow
         .lines()
         .map(str::trim)
-        .any(|line| line == "pull_request:");
-    if !has_pull_request_trigger {
-        return Vec::new();
+        .any(|line| line == "pull_request:" || line == "pull_request_target:")
+    {
+        violations.push(
+            ".github/workflows/routed-rust.yml must not subscribe to pull_request or pull_request_target; the `merge_group` event is the sole pull-request qualification request and Ready, push, synchronize and label activity must start no work (#4986)".to_string(),
+        );
     }
-    let Some(types) = routed_rust_pull_request_types(workflow) else {
-        return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
-        ];
-    };
-    let mut violations = Vec::new();
-    let ready_only = [ROUTED_RUST_READY_EVENT];
-    let unexpected: Vec<&str> = types
-        .iter()
-        .map(String::as_str)
-        .filter(|value| !ready_only.contains(value))
-        .collect();
-    if !unexpected.is_empty() || types.len() != ready_only.len() {
-        violations.push(format!(
-            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. The `{ROUTED_RUST_REQUEST_LABEL}` label event is the sole pull-request qualification request and every other pull_request activity type must stay withheld (#4986)"
-        ));
+    match routed_rust_event_types(workflow, "merge_group") {
+        None => violations.push(
+            ".github/workflows/routed-rust.yml must declare an inline merge_group types array so the merge-queue admission contract is auditable (#4986)".to_string(),
+        ),
+        Some(types) => {
+            let queue_only = [ROUTED_RUST_READY_EVENT];
+            let unexpected: Vec<&str> = types
+                .iter()
+                .map(String::as_str)
+                .filter(|value| !queue_only.contains(value))
+                .collect();
+            if !unexpected.is_empty() || types.len() != queue_only.len() {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml merge_group types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?} (#4986)"
+                ));
+            }
+        }
     }
     if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep the event-qualified concurrency group with a unique per-run nonrequest group so push and manual work cannot replace each other and an ordinary label cannot cancel a merge-ready qualification (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must keep the event-qualified concurrency group so queue entries, push and manual work cannot replace each other (#4986)".to_string(),
         );
     }
     if !workflow.contains(ROUTED_RUST_READY_CANCEL_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` so a repeated merge-ready request replaces the prior admission attempt without cancelling push or manual runs (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: false` so a later run never cancels a queued entry's qualification and fails its merge group (#4986)".to_string(),
         );
+    }
+    if !workflow.contains(ROUTED_RUST_QUEUE_ENTRY_SNIPPET) {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml admission must resolve the queued PR from the merge-group ref (`{ROUTED_RUST_QUEUE_ENTRY_SNIPPET}`) so claim and scope admission (#8192) still bind the merged candidate"
+        ));
     }
     for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
         let mut in_job_condition = false;
@@ -1086,27 +1093,18 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         );
     }
     // The result job must run for every event (never skipped, a skipped
-    // required job reports success) and carry the single name expression.
+    // required job reports success) and carry the single static name.
     if !routed_rust_job_block_any(workflow, "result", |line| {
         line.trim() == ROUTED_RUST_RESULT_NAME_EXPRESSION
     }) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is posted only for main/manual runs and a `{ROUTED_RUST_REQUEST_LABEL}` request and every other label event posts `{ROUTED_RUST_NONREQUEST_RESULT_NAME}` (#4986)"
+            ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is the only context the merge queue waits on (#4986)"
         ));
     }
     if !routed_rust_job_block_any(workflow, "result", |line| line.trim() == "if: always()") {
         violations.push(
             ".github/workflows/routed-rust.yml result job must keep the job-level `if: always()` so the required context is reported (failed) rather than skipped when a prerequisite is skipped or cancelled (#4986)".to_string(),
         );
-    }
-    for job in ["route", "detect-docs-only", "admission"] {
-        if !routed_rust_job_block_any(workflow, job, |line| {
-            line.contains(ROUTED_RUST_REQUEST_GUARD_SNIPPET)
-        }) {
-            violations.push(format!(
-                ".github/workflows/routed-rust.yml job `{job}` must carry the request guard `{ROUTED_RUST_REQUEST_GUARD_SNIPPET}` so a nonrequest label event allocates no qualification work (#4986)"
-            ));
-        }
     }
     violations
 }

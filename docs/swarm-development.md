@@ -62,11 +62,11 @@ make-work campaign.
 Every normal swarm slice should finish the same way:
 
 - open a same-repo PR as Draft with one clear purpose, and mark it Ready once
-  the head is final, then apply `merge-ready` (only that label starts
-  `Ripr Rust Small Result`; a push after the request needs it re-applied, see
+  the head is final, then add it to the merge queue (only a queue entry runs
+  `Ripr Rust Small Result`; a push to a queued PR dequeues it, see
   `docs/CI.md`);
-- wait for `Ripr Rust Small Result` and any touched-surface checks;
-- merge only when clean and current;
+- wait for the queue entry's `Ripr Rust Small Result` and any touched-surface
+  checks; the queue performs the merge;
 - remove generated residue, isolated targets, and stale local branches or
   worktrees that are no longer needed.
 

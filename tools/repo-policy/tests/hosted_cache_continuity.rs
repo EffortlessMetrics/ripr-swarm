@@ -115,7 +115,7 @@ fn retiring_main_push_is_not_cache_continuity() {
     // Dispatch still exists, but an available manual run is not an automatic
     // lifecycle and a pre-merge ref cannot satisfy the producer's save guard.
     assert!(retired.contains("  workflow_dispatch:"));
-    assert!(retired.contains("types: [labeled]"));
+    assert!(retired.contains("types: [checks_requested]"));
 }
 
 #[test]

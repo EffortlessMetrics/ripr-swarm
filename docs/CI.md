@@ -47,25 +47,33 @@ overbroad policy filter. Enumeration is separate from the step's test execution;
 these source controls do not qualify a built wheel or guard every possible
 zero-test command.
 
-## Merge-ready label flow
+## Merge queue and merge-ready label flow
 
-The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
-PR without the label.
-Routed Rust Small is also requested by the `merge-ready` label (#4986; the
-required `Ripr Rust Small Result` exists only for that request). ub-review, the
-Python wheel workflow and source-of-truth still follow their own triggers until
-#4984/#8082 integrate them. Agents and authors prove
-the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
-starts the required Result and the non-required lanes once for the head it was applied to. A later push
-to a labeled PR does not rerun them: re-apply the label (remove it, then add it
-again) once the new head is ready to qualify. Removing the label does not cancel
-runs already in flight. Only a `merge-ready` labeled request shares a concurrency
-group, so re-applying the label supersedes the older run for that PR; a push or any
-other label event runs in its own group, skips its jobs, and neither cancels nor
-replaces a pending request. A push therefore does not cancel the older head's
-run: re-apply the label for the new head and let the older run finish or be
-superseded.
+The required `Ripr Rust Small Result` is requested once per merge-queue entry,
+by the `merge_group` event (`checks_requested`) on the exact queued merge
+commit. Draft, Ready, push, synchronize and label activity on a PR request no
+required work, so there is a single hosted qualification per landing, run
+against the combined tree that will become `main` (it no longer depends on a
+branch being up to date, and an out-of-date head cannot merge past a conflicting
+sibling). Authors and agents prove the change locally
+([validation](agent-context/validation.md#local-and-hosted-proof)), publish a
+Draft, mark it Ready after review, and add the PR to the merge queue. A failing
+queue run drops that entry; fix the PR and re-queue it. Queue entries run in
+their own concurrency groups and are never cancelled by later runs.
+
+The non-required lanes gated by `merge-ready` do not run on a Draft or plain
+Ready PR without that label; the label no longer requests the required Result.
+ub-review, the Python wheel workflow and source-of-truth still follow their own
+triggers until #4984/#8082 integrate them.
+
+The queue run reads the queued PR's claim and scope (#8192) through the same
+admission job as before: the PR number comes from the merge-group branch name
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
+the gate (`full-ci` still selects the advisory reports and artifacts, and
+`ripr-waive` still reaches the PR-evidence step). Admission is per PR, so the
+queue must use a group size of 1: a merge group carrying more than one commit is
+refused, never half-admitted. Batching is a follow-up that needs per-PR
+admission (see #8082).
 
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
@@ -85,20 +93,18 @@ superseded.
 | --- | --- | --- |
 | Push to a Draft or Ready PR | no | no |
 | Draft -> Ready (`ready_for_review`) | no | no |
-| Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
-| Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
-| Any other label | no (posts `Merge-ready Nonrequest`) | no |
+| Add `merge-ready` (`labeled`) | no | yes, once for that head |
+| Add to the merge queue | yes, once for that queue entry | no |
+| Any other label | no | no |
 
-The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
-is review state only and starts no required work. Gating the required job by
-label with a skipped job would report success, so `routed-rust.yml` instead
-subscribes to `labeled` and names the result job by an expression: it is
-`Ripr Rust Small Result` only for push, manual main/master runs and a
-`merge-ready` label event, and `Merge-ready Nonrequest` for every other label.
-Route, docs detection and admission carry the same request guard, so an
-ordinary label allocates no qualification work, and the result job keeps
-`if: always()` so a skipped prerequisite fails the required context instead of
-skipping it.
+The required check is requested by the merge queue (#4986). Draft -> Ready and
+labels are review/metadata state only and start no required work.
+`routed-rust.yml` subscribes to `merge_group` (`checks_requested`) and has no
+`pull_request` trigger, so no PR activity can start or skip the required job
+(a skipped required job would report success). The result job carries the static
+name `Ripr Rust Small Result` and keeps `if: always()` so a skipped prerequisite
+fails the required context instead of skipping it. `tools/repo-policy` pins this
+shape and rejects any re-added `pull_request` trigger.
 
 ## Verification Economics Policy
 
@@ -158,9 +164,9 @@ workflow behavior documented in [Current Workflows](#current-workflows).
     replacement;
   - synchronize-cancel favors the latest commit and may abandon near-complete
     work;
-  - Request-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
-    only on a `merge-ready` label event and cancels only when a repeated
-    request replaces it; ordinary labels use a unique group and cannot cancel it.
+  - Queue-entry (current `routed-rust.yml`, #4986) runs the PR qualification
+    only on a merge-queue entry and never cancels: each entry has its own ref
+    and group, and cancelling one would fail its merge group.
 - Any switch to or from `cancel-in-progress` must document the affected
   workflows, rollback path, cost tradeoff, and review impact.
 - Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
@@ -368,8 +374,8 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not request the required `Ripr Rust Small Result`; the merge queue does. |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when the PR is added to the merge queue (the queue run reads the PR's labels then). |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -685,22 +691,13 @@ Label events are not an implicit full-gate refresh, and Draft iteration does not
 allocate the heavy required gate (#4986):
 
 ```text
-opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; the merge-ready-gated lanes skip as well
+opened / reopened / synchronize / ready_for_review / labeled / unlabeled:
+  no Routed Rust Small run (the merge-ready-gated optional lanes still follow
+  their own label guards)
 
-ready_for_review (Draft -> Ready):
-  no Routed Rust Small run; Ready is review state, not a request
-
-labeled `merge-ready`:
-  the sole pull-request qualification request; validates the exact labeled head
-  and admits the gated non-required lanes
-
-labeled (any other label):
-  Routed Rust Small runs only its cheap result job, named `Merge-ready
-  Nonrequest`; it never creates or refreshes `Ripr Rust Small Result`
-
-unlabeled:
-  no Routed Rust Small run
+merge_group checks_requested:
+  the sole pull-request qualification request; validates the queued PR's
+  claim and scope and runs the gate on the exact queued merge commit
 
 push to main / workflow_dispatch on main or master:
   launch under their own authorities
@@ -710,16 +707,13 @@ workflow_dispatch on another branch or tag:
 ```
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
-`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
-group is qualified by `github.event_name` (and unique per run for a nonrequest
-label), so a repeated `merge-ready` request replaces the prior admission attempt
-while independent main and manual work and ordinary labels cannot replace each
-other. A PR with no request has no required check and blocks rather than
-inheriting stale proof. The result job name is an expression that yields
-`Ripr Rust Small Result` only for main/manual runs and a `merge-ready` request. A manual dispatch on a branch or
-tag other than `refs/heads/main` or `refs/heads/master` is diagnostic-only:
-its implementation jobs may run, but Result fails explicitly even if they all
-pass (#5394). The summary names the `merge-ready` request. This preserves
+`cancel-in-progress` is `false` and the concurrency group is qualified by
+`github.ref` and `github.event_name`, so queue entries and independent main and
+manual work cannot replace each other. A PR that is not in the queue has no
+required check and blocks rather than inheriting stale proof. A manual dispatch
+on a branch or tag other than `refs/heads/main` or `refs/heads/master` is
+diagnostic-only: its implementation jobs may run, but Result fails explicitly even if they all
+pass (#5394). This preserves
 workflow-testing diagnostics without letting a run that skips PR-only evidence
 qualify a PR. A skipped Result would report success, so the refusal runs inside
 the Result shell; it is not a job-level skip or a renamed required check.
@@ -764,13 +758,12 @@ needs its own evidence.
 
 - Open PRs as Draft (`gh pr create --draft`), then follow the
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting qualification with the `merge-ready` label. Ready alone never
-  creates the required check.
-- A push after the request leaves the new head without the required check.
-  Refresh affected proof and review, then remove and re-apply `merge-ready`
-  for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+  adding the PR to the merge queue. Ready alone never creates the required
+  check.
+- A push to a queued PR removes it from the queue. Refresh affected proof and
+  review, then queue the exact new head again.
+- Labels such as `full-ci` are read when the entry reaches the queue run; add
+  them before queueing.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1098,8 +1091,9 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and reports them (step-summary row plus a workflow warning). It is
 alert-only (#4986; issue #4937 option ii): it never dispatches
-`routed-rust.yml` and holds no `actions: write` permission. With
-merge-ready-label admission, a labeled head without the required check is a
+`routed-rust.yml` and holds no `actions: write` permission. Since
+the required check moved to the merge queue, the sweep only reports PRs that still carry the legacy `merge-ready` label
+(the label no longer requests the required Result); it is a candidate for retirement. With merge-ready-label admission, a labeled head without the required check was a
 dropped label-triggered delivery, a push made after the label, or a conflicting
 head with no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
 `pull_request` runs because `routed-rust.yml` evaluates from the merge ref,

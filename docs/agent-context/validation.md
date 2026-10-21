@@ -97,7 +97,7 @@ needs testing.
 
 ### Local mirror of the required hosted gate
 
-Hosted CI is requested late (merge-ready), so the coding session carries the
+Hosted CI is requested late (merge queue), so the coding session carries the
 proof until then. The required Rust producer (`.github/workflows/rust-gates.yml`)
 runs these steps (plus `cargo policy preflight`, a locked fixture `cargo fetch` and dependency-policy steps); `precommit` covers only the first row. Run the rows the change
 selects, in this order, and record each command and native exit status in the

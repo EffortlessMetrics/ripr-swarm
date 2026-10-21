@@ -44,7 +44,7 @@ branches:
 labels:
   - name: merge-ready
     color: "0e8a16"
-    description: Start pull-request CI. Add last; gated non-required lanes do not run on a Draft or Ready PR without it.
+    description: Start the gated non-required PR lanes. Add last. The required Result runs in the merge queue, not on this label.
   - name: full-ci
     color: "5319e7"
     description: Run required, advisory, and release-like CI lanes.

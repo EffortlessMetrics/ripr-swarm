@@ -250,8 +250,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "          BASE_SHA: ${{ github.event.merge_group.base_sha }}",
+        "          HEAD_SHA: ${{ github.event.merge_group.head_sha }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -304,7 +304,7 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
             .contains("src/unrelated.rs")
     );
     let production = shell("detect-docs-only")?;
-    assert!(fixture.detect(&production, "pull_request", &base, &head, None)?);
+    assert!(fixture.detect(&production, "merge_group", &base, &head, None)?);
     let range = "\"$BASE_SHA\"...\"$HEAD_SHA\"";
     assert_eq!(
         production.matches(range).count(),
@@ -313,7 +313,7 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
     );
     let mutant = production.replace(range, "\"$BASE_SHA\"...HEAD");
     // The same drift oracle rejects the historical checkout-based detector.
-    assert!(!fixture.detect(&mutant, "pull_request", &base, &head, None)?);
+    assert!(!fixture.detect(&mutant, "merge_group", &base, &head, None)?);
     assert_eq!(
         fixture.git(&["rev-parse", "HEAD"])?,
         merge,
@@ -344,14 +344,14 @@ fn filename_records_deletions_and_both_sides_of_renames_are_classified() -> Test
         fixture.write(path, "content\n")?;
         let head = fixture.commit()?;
         assert_eq!(
-            fixture.detect(&production, "pull_request", &base, &head, None)?,
+            fixture.detect(&production, "merge_group", &base, &head, None)?,
             expected,
             "added {path:?}"
         );
         fs::remove_file(fixture.root.join(path))?;
         let deleted = fixture.commit()?;
         assert_eq!(
-            fixture.detect(&production, "pull_request", &head, &deleted, None)?,
+            fixture.detect(&production, "merge_group", &head, &deleted, None)?,
             expected,
             "deleted {path:?}"
         );
@@ -372,7 +372,7 @@ fn filename_records_deletions_and_both_sides_of_renames_are_classified() -> Test
         fixture.git(&["mv", from, to])?;
         let head = fixture.commit()?;
         assert_eq!(
-            fixture.detect(&production, "pull_request", &base, &head, None)?,
+            fixture.detect(&production, "merge_group", &base, &head, None)?,
             expected,
             "rename {from} -> {to}"
         );
@@ -399,18 +399,18 @@ fn invalid_identities_empty_diff_and_non_pr_events_use_full_proof() -> TestResul
         &blob,
     ] {
         assert!(
-            !fixture.detect(&production, "pull_request", invalid, &head, None)?,
+            !fixture.detect(&production, "merge_group", invalid, &head, None)?,
             "invalid base {invalid}"
         );
         assert!(
-            !fixture.detect(&production, "pull_request", &base, invalid, None)?,
+            !fixture.detect(&production, "merge_group", &base, invalid, None)?,
             "invalid head {invalid}"
         );
     }
-    assert!(!fixture.detect(&production, "pull_request", &head, &head, None)?);
+    assert!(!fixture.detect(&production, "merge_group", &head, &head, None)?);
     fixture.write("src/mixed.rs", "fn mixed() {}\n")?;
     let mixed = fixture.commit()?;
-    assert!(!fixture.detect(&production, "pull_request", &base, &mixed, None)?);
+    assert!(!fixture.detect(&production, "merge_group", &base, &mixed, None)?);
     for event in ["push", "workflow_dispatch"] {
         assert!(
             !fixture.detect(&production, event, &base, &head, None)?,
@@ -427,17 +427,17 @@ fn missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed() -> Test
     fixture.write("change.md", "docs\n")?;
     let head = fixture.commit()?;
     let production = shell("detect-docs-only")?;
-    assert!(fixture.detect(&production, "pull_request", &base, &head, None)?);
+    assert!(fixture.detect(&production, "merge_group", &base, &head, None)?);
     let shallow = fixture.wrapper("if [ \"$1\" = rev-parse ] && [ \"$2\" = --is-shallow-repository ]; then echo true; exit 0; fi")?;
-    assert!(!fixture.detect(&production, "pull_request", &base, &head, Some(&shallow))?);
+    assert!(!fixture.detect(&production, "merge_group", &base, &head, Some(&shallow))?);
     let wrapper = fixture.wrapper("if [ \"$1\" = merge-base ]; then exit 2; fi")?;
-    assert!(!fixture.detect(&production, "pull_request", &base, &head, Some(&wrapper))?);
+    assert!(!fixture.detect(&production, "merge_group", &base, &head, Some(&wrapper))?);
     let wrapper =
         fixture.wrapper("if [ \"$1\" = diff ]; then printf 'partial.md\\0'; exit 23; fi")?;
-    assert!(!fixture.detect(&production, "pull_request", &base, &head, Some(&wrapper))?);
+    assert!(!fixture.detect(&production, "merge_group", &base, &head, Some(&wrapper))?);
     let tree = fixture.git(&["rev-parse", "HEAD^{tree}"])?;
     let disjoint = fixture.git(&["commit-tree", &tree, "-m", "unrelated root"])?;
-    assert!(!fixture.detect(&production, "pull_request", &disjoint, &head, None)?);
+    assert!(!fixture.detect(&production, "merge_group", &disjoint, &head, None)?);
     let left = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "left"])?;
     let right = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "right"])?;
     let merge_left = fixture.git(&[
@@ -475,7 +475,7 @@ fn missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed() -> Test
         "ambiguous.md",
         "without unique-base validation this would look docs-only"
     );
-    assert!(!fixture.detect(&production, "pull_request", &merge_left, &merge_right, None)?);
+    assert!(!fixture.detect(&production, "merge_group", &merge_left, &merge_right, None)?);
     Ok(())
 }
 
@@ -521,22 +521,12 @@ fn routed_result_admitted(
     assert!(env.len() >= 20, "actual result env is initialized");
     env.extend([
         ("EVENT_NAME", event),
-        // A pull_request result is a qualification only for an explicit
-        // merge-ready request; other labels are exercised separately.
-        (
-            "LABEL_NAME",
-            if event == "pull_request" {
-                "merge-ready"
-            } else {
-                ""
-            },
-        ),
         // Manual/push positives represent the independent main authority;
         // diagnostic branch/tag refusal is exercised by routed_dispatch_result.
         (
             "WORKFLOW_REF",
-            if event == "pull_request" {
-                "refs/pull/10/merge"
+            if event == "merge_group" {
+                "refs/heads/gh-readonly-queue/main/pr-10-aaaa"
             } else {
                 "refs/heads/main"
             },
@@ -565,21 +555,13 @@ fn routed_result_admitted(
 }
 
 #[test]
-fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies() -> TestResult {
+fn actual_result_block_has_no_label_driven_nonrequest_branch() -> TestResult {
     let source = job("result")?;
-    // The step keeps the label-aware nonrequest branch ahead of every
-    // qualification decision; the job name (policy-pinned) then differs from
-    // the required context, so this pass can never satisfy branch protection.
-    let (_, run) = source.split_once("        run: |\n").ok_or("result step")?;
-    let first_decision = run
-        .lines()
-        .find(|line| line.trim_start().starts_with("if ["))
-        .ok_or("first decision")?;
-    assert!(
-        first_decision.contains("\"${LABEL_NAME,,}\" != \"merge-ready\""),
-        "{first_decision}"
-    );
-    assert!(source.contains("'Merge-ready Nonrequest'"));
+    // The workflow has no pull_request trigger, so the result job carries the
+    // required name statically and never decides from a label.
+    assert!(source.contains("    name: Ripr Rust Small Result\n"));
+    assert!(!source.contains("Nonrequest"));
+    assert!(!source.contains("LABEL_NAME"));
     Ok(())
 }
 
@@ -588,7 +570,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
     let fixture = Fixture::new()?;
     assert!(routed_result(
         &fixture,
-        "pull_request",
+        "merge_group",
         "success",
         "true",
         "success",
@@ -597,7 +579,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
     for failed in ["failure", "cancelled", "skipped"] {
         assert!(!routed_result(
             &fixture,
-            "pull_request",
+            "merge_group",
             failed,
             "true",
             "success",
@@ -605,7 +587,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
         )?);
         assert!(!routed_result(
             &fixture,
-            "pull_request",
+            "merge_group",
             "success",
             "true",
             failed,
@@ -622,7 +604,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
     ] {
         assert!(!routed_result_admitted(
             &fixture,
-            "pull_request",
+            "merge_group",
             "success",
             "false",
             "skipped",
@@ -632,7 +614,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
     }
     assert!(routed_result_admitted(
         &fixture,
-        "pull_request",
+        "merge_group",
         "success",
         "false",
         "skipped",
