@@ -1101,6 +1101,13 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults",
   "crates/ripr/tests/cli_smoke.rs::doctor_exit_codes_distinguish_findings_usage_and_clean",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_only_inside_root_without_opt_in",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_follows_symlink_into_root",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::perl_exporter_lines_report_refused_hit_with_next_step",
+  "crates/ripr/tests/cli_smoke.rs::doctor_refuses_repo_local_perl_exporter_on_relative_path",
+  "crates/ripr/tests/cli_smoke.rs::doctor_runs_repo_local_perl_exporter_with_opt_in",
+  "crates/ripr/tests/cli_smoke.rs::doctor_runs_perl_exporter_outside_root_via_relative_path",
+  "crates/ripr/tests/cli_smoke.rs::doctor_refuses_perl_exporter_symlinked_into_root",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_keeps_already_enabled_languages",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_maps_javascript_to_the_typescript_entry",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_first_command_has_no_enable_step_for_rust_only",
@@ -17582,6 +17589,45 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0297"
+name = "Display and Debug fmt dispatch reach"
+spec = "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::debug_format_of_constructed_value_reaches_debug_fmt",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_dispatch_covers_braces_and_to_string",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::mismatched_trait_unrelated_type_and_unknown_value_do_not_reach",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_and_debug_impls_of_one_type_are_told_apart",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::same_named_type_declared_elsewhere_fails_closed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::rebound_formatting_macros_are_not_credited",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::associated_consts_and_factories_are_not_typed_as_self",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::inherent_to_string_wins_over_display",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::placeholders_must_account_for_every_argument",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::ambiguous_fmt_impls_for_one_type_fail_closed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::sibling_impl_of_another_type_is_not_linked",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::placeholder_and_macro_forms_are_parsed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::unrelated_fmt_call_does_not_hide_a_valid_dispatch",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::variant_named_like_the_type_is_not_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::rebinding_in_scope_of_the_macro_refuses",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::crate_qualified_variant_named_like_the_type_is_not_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::binders_nested_inside_formatting_macro_arguments_refuse",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::comma_splits_inside_generics_and_closures_never_link",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::field_access_receiver_is_not_the_typed_binding",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::macro_paths_must_be_exactly_rooted_std_or_core",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::only_leaf_imports_rebind_a_macro_name",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md",
 ]
 metrics = [
   "unit_test_pass_rate",
