@@ -189,3 +189,6 @@ crates/ripr/tests/call_budget_repo_exposure.rs|Command::new|1|call-budget-repo-e
 crates/ripr/tests/call_budget_repo_exposure.rs|use std::process::Command|1|call-budget-repo-exposure|#8600: imports Command only for the bounded binary invocation described above.
 crates/ripr/tests/call_budget_slice_positive.rs|Command::new|1|call-budget-slice-positive|#8600: runs the built ripr binary over a temp workspace to pin the saturated-table reading; no network or credential operation.
 crates/ripr/tests/call_budget_slice_positive.rs|use std::process::Command|1|call-budget-slice-positive|#8600: imports Command only for the bounded binary invocation described above.
+
+tools/repo-policy/tests/runner_inventory_diagnostics.rs|Command::new|1|runner-diagnostic-proof|#8858: Linux-only test harness executes the actual route shell with a local gh stub under a five-second GNU timeout; no API access, dispatch or production spawn.
+tools/repo-policy/tests/runner_inventory_diagnostics.rs|use std::process::Command|1|runner-diagnostic-proof|#8858: import for the same bounded local-only route-shell fixture helper.

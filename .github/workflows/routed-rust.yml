@@ -42,6 +42,7 @@ jobs:
       workflow: ${{ steps.route.outputs.workflow }}
       run_id: ${{ steps.route.outputs.run_id }}
       runner_query: ${{ steps.route.outputs.runner_query }}
+      runner_query_exit_code: ${{ steps.route.outputs.runner_query_exit_code }}
       runner_total: ${{ steps.route.outputs.runner_total }}
       cx43_online: ${{ steps.route.outputs.cx43_online }}
       cx43_idle_ready: ${{ steps.route.outputs.cx43_idle_ready }}
@@ -59,14 +60,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          target=github reason=runner_api_failed runner_query=not_attempted runner_total=not_available
+          target=github reason=runner_api_failed runner_query=not_attempted runner_query_exit_code=not_attempted runner_total=not_available
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
           idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
           elif runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)"; then
-            runner_query=ok
+            runner_query_exit_code=0 runner_query=ok
             runner_total="$(count '[.[].runners[]?] | length')"
             cx43_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43")))] | length')"
             cx43_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43") and index("rust-medium")))] | length')"
@@ -81,10 +82,14 @@ jobs:
             else reason=no_idle_runner
             fi
           else
+            runner_query_exit_code=$?
             runner_query=failed reason=runner_api_failed
           fi
-          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
-          { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_query_exit_code runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
+          { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "runner command exit code:$runner_query_exit_code" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$runner_query" = "failed" ]; then
+            { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- HTTP status and underlying cause are unknown; command exit code is not an HTTP status. Raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   detect-docs-only:
     if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
