@@ -5,6 +5,7 @@ mod expectations;
 mod family;
 mod ids;
 mod lexical;
+mod path_only_argument;
 mod propagation_boundary;
 mod repo;
 
@@ -24,7 +25,8 @@ pub(crate) use diff::resolve_probe_source_currentness;
 pub(crate) use diff::same_connectives;
 pub(crate) use expectations::{expected_sinks, required_oracles};
 pub(crate) use ids::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    normalize_rust_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;

@@ -27,6 +27,7 @@ Linked issues:
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
+- #9138 (assertion after an always-exiting try/finally)
 - #8959 (lexically bound runner registrations)
 
 Linked PRs:
@@ -921,7 +922,25 @@ to `amount - 20`, and `tests/lib.test.ts` has
     env read) keeps the credited assertion but the result now carries the
     `typescript_conditional_assertion_credit` limitation, naming the
     unevaluated condition and recording that the credited oracle may never
-    execute (classification-neutral disclosure, #8714).
+    execute (classification-neutral disclosure, #8714). Statements after an
+    unconditional exit in the same statement list (`return`, `throw`,
+    `break`, `continue`, a block holding one, an `if (true)` whose
+    consequent exits, an `if (false)` whose alternate exits, or an `if`
+    whose branches both exit) are dead code: their assertions are withheld
+    at collection and cannot credit `exposed`, and the conditional-credit
+    probe and walker stop at the same point so a dead `if (flag)` after
+    `return;` produces no limitation. An undecidable one-sided exit
+    (`if (skip) { return; }`) keeps the later assertion credited (#9003).
+    A `try` is an unconditional exit too (#9138) when its finalizer
+    exits, or when its block exits and it has no `catch` or its `catch`
+    exits as well (`try { return; } finally { cleanup(); }`,
+    `try { throw e; } finally {}`, `try { return; } catch (e) { return; }`);
+    the assertion after it is withheld. Undecidable shapes keep the later
+    credit: `try { if (x) { return; } } finally {}`, a `catch` that falls
+    through (`try { return; } catch (e) {}`), and a finalizer whose exit is
+    conditional. Assertions before the `try` and in its finalizer stay
+    credited. The one shared predicate also bounds the conditional-credit
+    probe and walker.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
@@ -1097,6 +1116,21 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
+- #8569: `crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs`
+  and `guard_entry_guard.rs` unit tests pin the unentered-guard rule: an
+  `exposed` non-predicate result whose changed line sits under an `if` /
+  `else if` / `else` arm that every related test call provably leaves untaken
+  reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
+  rebound parameter, helper or member call, file-level call, CRLF, deleted
+  line) keeps the ladder verdict.
+  The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
+  `comments_before_if_do_not_shift_the_condition_text`,
+  `mock_module_loaders_and_call_result_chains_are_unreadable`,
+  `indexed_and_parenthesized_receivers_are_not_readable`,
+  `bracket_indexed_calls_are_unreadable`, `deeply_nested_conditions_give_up`
+  and `nested_methods_and_comments_inside_conditions`) pin the reader, and
+  `bracket_calls_and_loaders_keep_exposed` is the production-path negative
+  for bracket-indexed calls and `jest.requireActual(..)` chains.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -1141,6 +1175,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
+- #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
+  reads the enclosing conditions and evaluates literal call inputs;
+  `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
+  `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 
