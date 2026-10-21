@@ -56,9 +56,10 @@ queued PR's claim and scope (#8192) through the same admission job: the PR
 number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
-reaches the PR-evidence step). Admission is per PR, so the queue must use a
-group size of 1; a merge group carrying more than one commit is refused, never
-half-admitted. Batching needs per-PR admission (#8082) and is a follow-up. The
+reaches the PR-evidence step). The exact-head binding is the head SHA in the
+queue branch name, so a push after enqueue fails admission. Admission is per
+PR, so the queue must use a group size of 1; the queued commit must be a single
+squash commit of the queued PR, or admission refuses it. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
 

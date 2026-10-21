@@ -194,21 +194,23 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS"
           if [ "$EVENT_NAME" = "merge_group" ]; then
-            # The queue branch is named for the entry's PR: .../pr-<number>-<sha>.
-            # Admission is per PR, so a merge group holding more than one
-            # squash commit (batching) is refused rather than half-admitted.
-            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
-            pr="${BASH_REMATCH[1]}"
-            commits="$(gh api "repos/${REPOSITORY}/compare/${GROUP_BASE_SHA}...${GROUP_HEAD_SHA}" --jq '.total_commits')"
-            [ "$commits" = "1" ] || { echo "::error::merge group carries $commits commits; candidate admission requires exactly one queued PR per group"; exit 1; }
+            # The queue branch is named for the entry's PR and the PR head it
+            # queued: .../pr-<number>-<head sha>. That immutable head is the
+            # exact-head binding, so a push after enqueue fails admission.
+            # Admission is per PR: the queued commit must be one squash commit
+            # of that PR. The ruleset's group size of 1 keeps other entries out.
+            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-([0-9a-f]{40})$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
+            pr="${BASH_REMATCH[1]}" head="${BASH_REMATCH[2]}"
+            commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
+            parents="$(jq -r '.parents | length' <<<"$commit")"
+            subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"
+            { [ "$parents" = "1" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
             current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
-            head="$(jq -r '.head.sha' <<<"$current")"
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
           { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; } >> "$GITHUB_OUTPUT"
