@@ -82,6 +82,9 @@ fn is_test_path(path: &str) -> bool {
         || path.contains("/__tests__/")
         || path.contains("/testdata/")
         || path.contains("/fixtures/")
+        || path.contains("/test/")
+        || path.contains("/test-fixtures/")
+        || path.contains("/testing/")
         || name == "tests.rs"
         || name.ends_with("_tests.rs")
         || name.ends_with("_test.rs")
@@ -99,6 +102,13 @@ pub(super) fn classify_path(path: &str) -> PathClass {
         || path.starts_with(".ripr/")
     {
         return PathClass::Evidence;
+    }
+    // Prose and lockfiles under a product prefix change no shipped behavior.
+    if path.ends_with(".md") {
+        return PathClass::Docs;
+    }
+    if path.ends_with("package-lock.json") {
+        return PathClass::Control;
     }
     // `schemas/` is the published wire contract, so a change there is product.
     if path.starts_with("crates/ripr/src/")

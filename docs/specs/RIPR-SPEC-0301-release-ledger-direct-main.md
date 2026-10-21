@@ -91,7 +91,7 @@ The validator fails on:
 7. a free-form value in any closed field, or any `not_in_cut_*` disposition on a
    reachable commit;
 8. any `blocking_unresolved` record, non-terminal open PR or `pending`/`failed_release_hold` claim in a `final` ledger, or a final
-   ledger without an audit digest;
+   ledger without an audit digest, or a final ledger validated without `--packet`;
 9. a Markdown or manifest projection whose digests differ from the ledger;
 10. a cut that is not the observed tip of `main`;
 11. a base other than the pinned 0.11 base (`--expected-base`, default
@@ -148,7 +148,8 @@ owner, and `source_sync_authority_effect` is `not_established` because the
 source-parent path inventory is not an input of v1.
 
 Path classes: `product` is `crates/ripr/src/`, `editors/` and `schemas/` (the
-published wire contract); `evidence` is any test path (`tests/`, `tests.rs`,
+published wire contract), except that any `.md` is `docs`, `package-lock.json`
+is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`; `evidence` is any test path (`tests/`, `tests.rs`,
 `*_tests.rs`, `fixtures/`), `benchmarks/`, `metrics/`, `docs/specs/` and
 `.ripr/`; `docs` is `docs/`, `changelog.d/` and any `.md`; `control` is
 `.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`, `xtask`,

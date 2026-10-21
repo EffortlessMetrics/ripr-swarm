@@ -28,33 +28,33 @@
     },
     {
       "commit_sha": "88ef9b2afb169c6083f2e4da4582bd0924fb3392",
-      "disposition": "included_structural_no_semantic_delta",
+      "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
-      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+      "note": "empty diff against its first parent: no final blob effect, so the rule gives what it gives a commit with no blob effect"
     },
     {
       "commit_sha": "3ae96d16bc6718a830866ee87b90efa40eac7c2a",
-      "disposition": "included_structural_no_semantic_delta",
+      "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
-      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+      "note": "empty diff against its first parent: no final blob effect, so the rule gives what it gives a commit with no blob effect"
     },
     {
       "commit_sha": "5d20d229de79738fa02bfe90f7429b3662b6362a",
-      "disposition": "included_structural_no_semantic_delta",
+      "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
-      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+      "note": "empty diff against its first parent: no final blob effect, so the rule gives what it gives a commit with no blob effect"
     },
     {
       "commit_sha": "89ac47a603092ba7f9f55cf74999b88649621abf",
-      "disposition": "included_structural_no_semantic_delta",
+      "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
-      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+      "note": "empty diff against its first parent: no final blob effect, so the rule gives what it gives a commit with no blob effect"
     },
     {
       "commit_sha": "e9dc68ee946299276376822311f896c2b54934bb",
-      "disposition": "included_structural_no_semantic_delta",
+      "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
-      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+      "note": "empty diff against its first parent: no final blob effect, so the rule gives what it gives a commit with no blob effect"
     },
     {
       "commit_sha": "3b8090e83dfac09f6a26d19752b4f6ad064ed4ad",

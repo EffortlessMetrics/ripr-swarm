@@ -130,6 +130,13 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         ("docs/specs/RIPR-SPEC-0001-x.md", PathClass::Evidence),
         (".ripr/traceability.toml", PathClass::Evidence),
         ("changelog.d/1-x.md", PathClass::Docs),
+        ("editors/vscode/README.md", PathClass::Docs),
+        ("editors/vscode/package-lock.json", PathClass::Control),
+        ("editors/vscode/test/runTest.ts", PathClass::Evidence),
+        (
+            "editors/vscode/test-fixtures/tls/a.pem",
+            PathClass::Evidence,
+        ),
         ("CHANGELOG.md", PathClass::Docs),
         ("docs/ROADMAP.md", PathClass::Docs),
         ("xtask/src/main.rs", PathClass::Control),
@@ -306,6 +313,17 @@ fn derived_ledger_validates_and_overrides_resolve_blocking_rows() -> Result<(), 
         "override recorded on the row",
     )?;
     let found = validate(&resolved, &Context::default());
+    require(
+        found.iter().any(|reason| reason.contains("--packet")),
+        "a final ledger needs the packet",
+    )?;
+    let mut final_packet = packet();
+    final_packet.open_prs.captured_at_main = Some(sha(6));
+    let context = Context {
+        packet: Some(final_packet),
+        ..Context::default()
+    };
+    let found = validate(&resolved, &context);
     require(
         found.is_empty(),
         &format!("resolved final ledger: {found:?}"),

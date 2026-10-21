@@ -90,6 +90,11 @@ pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     validate_selected_claims(ledger, context, &mut reasons);
     validate_open_prs(ledger, context, &mut reasons);
     validate_final(ledger, &mut reasons);
+    if ledger.stage == STAGE_FINAL && context.packet.is_none() {
+        reasons.push(
+            "a final ledger must be validated against the #2766 packet (--packet)".to_string(),
+        );
+    }
     validate_digests(ledger, context, &mut reasons);
     reasons
 }
