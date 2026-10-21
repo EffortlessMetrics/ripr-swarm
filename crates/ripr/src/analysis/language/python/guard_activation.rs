@@ -98,7 +98,7 @@ pub(super) fn python_guarded_arm_gap(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -106,13 +106,7 @@ pub(super) fn python_guarded_arm_gap(
                 })
         })
         .collect();
-    observed_values.sort_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then(left.value.cmp(&right.value))
-            .then(left.text.cmp(&right.text))
-    });
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     let mut parts = Vec::new();
     for (_, condition) in &conditions {
@@ -687,6 +681,7 @@ mod tests {
     fn test_row(bindings: &[(&str, &str)]) -> CallRow {
         use super::super::boundary::Binding;
         CallRow {
+            file: std::path::PathBuf::from("tests/test_subject.py"),
             line: 1,
             text: "quote(..)".to_string(),
             bindings: bindings

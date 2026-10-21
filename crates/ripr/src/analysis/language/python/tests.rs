@@ -7311,6 +7311,49 @@ fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::F
         .ok_or_else(|| "changed predicate should classify".to_string())
 }
 
+/// #8389: identical calls in distinct files retain both source locations,
+/// independently of the order in which related tests are discovered.
+#[test]
+fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), String> {
+    let owner_file = "src/pkg/mod.py";
+    let owners = extract_owners(
+        Path::new(owner_file),
+        "def price(x, k):\n    if x > 5:\n        return 1\n    return 0\n",
+    );
+    let source =
+        "from pkg.mod import price\n\n\ndef test_price():\n    assert price(5, 2) == 0\n\n";
+    let observed = |files: &[&str]| -> Result<Vec<crate::domain::ValueFact>, String> {
+        let tests = files
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect::<Vec<_>>();
+        assert_eq!(tests.len(), files.len(), "one pytest test per file");
+        let finding = classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
+            .ok_or_else(|| "changed predicate should classify".to_string())?;
+        Ok(finding.activation.observed_values)
+    };
+    let single = observed(&["tests/test_a.py"])?;
+    let expected = single
+        .iter()
+        .flat_map(|fact| {
+            ["tests/test_a.py", "tests/test_b.py"].map(|file| crate::domain::ValueFact {
+                file: Some(std::path::PathBuf::from(file)),
+                ..fact.clone()
+            })
+        })
+        .collect::<Vec<_>>();
+    for order in [
+        ["tests/test_a.py", "tests/test_b.py"],
+        ["tests/test_b.py", "tests/test_a.py"],
+    ] {
+        let both = observed(&order)?;
+        assert!(!single.is_empty());
+        assert_eq!(both.len(), 2 * single.len(), "{both:?}");
+        assert_eq!(both, expected);
+    }
+    Ok(())
+}
+
 #[test]
 fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
     let line = "    assert price(5, 2) == 0";
@@ -7323,6 +7366,20 @@ fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String>
             .any(|fact| fact.text == line.trim()),
         "an ordinary line is shown whole: {:?}",
         finding.activation.observed_values
+    );
+    // #8389: the boundary value facts name the test file they were read from.
+    let files = finding
+        .activation
+        .observed_values
+        .iter()
+        .map(|fact| fact.file.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.as_deref() == Some(Path::new("tests/test_mod.py"))),
+        "{files:?}"
     );
     Ok(())
 }

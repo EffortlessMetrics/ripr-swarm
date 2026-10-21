@@ -24,7 +24,7 @@ struct BoundaryValues {
     boundary: String,
     target: usize,
     lengths: Vec<usize>,
-    witness: Option<(usize, String)>,
+    witness: Option<(std::path::PathBuf, usize, String)>,
 }
 
 pub(in crate::analysis) fn refine_slice_boundary(
@@ -41,9 +41,9 @@ pub(in crate::analysis) fn refine_slice_boundary(
         Ok(values) => {
             gathered.unresolved_boundary = None;
             let equality = format!("{} == {}", values.operand, values.boundary);
-            if let Some((line, source)) = values.witness {
+            if let Some((file, line, source)) = values.witness {
                 gathered.activation.observed_values.push(ValueFact {
-                    file: None,
+                    file: Some(file),
                     line,
                     text: format!(
                         "{source} | {} = {} via immutable literal slice table cardinality",
@@ -174,7 +174,7 @@ fn boundary_values(
                 return Some(Err(unresolved()));
             };
             if length == target && witness.is_none() {
-                witness = Some((calls[0].line, text.clone()));
+                witness = Some((test.file.clone(), calls[0].line, text.clone()));
             }
             lengths.push(length);
         }

@@ -1385,6 +1385,14 @@ The evidence-first fields are additive in schema `0.2`:
   evidence-path prose therefore says `source ... value`; the separate admitted
   `ripr.observe` and `ripr.discriminate` stages retain their own meaning. Field
   names, typed values, provenance, ordering and caps are unchanged.
+- The shared activation value-fact sorter used by Rust activation/slice and
+  Python boundary/guard/term evidence treats the recorded file as part of fact
+  identity (#8935). Equal line, text, value and context from distinct files
+  remain separate, with deterministic ordering; exact duplicates within one
+  file collapse. Machine value objects still omit the file field, so distinct
+  source locations can produce identical serialized entries and increase
+  counts or consume capped slots. This does not change the line-keyed
+  `assertion_texts` limitation below or the separate test-grip sorter.
 - `identity.git_candidate_subject` (additive, no `schema_version` bump,
   #3278) appears in the `analysis_outcome.outcome.identity` object
   as a non-null object exactly when the run analyzed an immutable Git

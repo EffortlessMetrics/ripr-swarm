@@ -145,6 +145,9 @@ pub(in crate::analysis) fn activation_and_boundary_input(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ParameterValue {
+    /// Test file the call row was read from (#8389), so the value facts built
+    /// from it name their file.
+    file: Option<std::path::PathBuf>,
     parameter: String,
     value: String,
     line: usize,
@@ -429,7 +432,7 @@ fn observed_discriminator_values(
             && left_value.value == right_value.value
         {
             facts.push(ValueFact {
-                file: None,
+                file: row.first().and_then(|cell| cell.file.clone()),
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -462,7 +465,7 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
-                file: None,
+                file: left_value.file.clone(),
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
@@ -471,7 +474,7 @@ fn observed_discriminator_values(
         }
     }
     if let (Some(constant), Some(left_parameter)) = (&right_constant, left_parameter.as_deref()) {
-        for (line, text) in owner_calls_passing_constant(
+        for (file, line, text) in owner_calls_passing_constant(
             related_tests,
             owner,
             &parameters,
@@ -480,7 +483,7 @@ fn observed_discriminator_values(
             index,
         ) {
             facts.push(ValueFact {
-                file: None,
+                file: Some(file),
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -1268,6 +1271,7 @@ struct ElementView {
 /// The elements one run of one related call passes the iterated
 /// parameter, in order.
 struct ElementRun {
+    file: std::path::PathBuf,
     line: usize,
     text: String,
     elements: Vec<String>,
@@ -1389,6 +1393,7 @@ fn sequence_runs(
                 test, None, argument, &call.text,
             )? {
                 runs.push(ElementRun {
+                    file: test.file.clone(),
                     line: call.line,
                     text: call.text.to_string(),
                     elements,
@@ -1430,7 +1435,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
-            file: None,
+            file: Some(run.file.clone()),
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -2921,6 +2926,7 @@ fn owner_call_parameter_values_where(
                             _ => None,
                         }?;
                         Some(ParameterValue {
+                            file: Some(test.file.clone()),
                             parameter: (*parameter).clone(),
                             value: value.clone(),
                             line: call.line,
@@ -3225,6 +3231,7 @@ fn helper_transferred_rows(
                     return Vec::new();
                 };
                 bound.push(ParameterValue {
+                    file: row.first().and_then(|cell| cell.file.clone()),
                     parameter: parameter.clone(),
                     value,
                     line: row.first().map(|cell| cell.line).unwrap_or_default(),
@@ -3776,7 +3783,7 @@ fn owner_calls_passing_constant(
     left_parameter: &str,
     constant: &BoundaryConstant,
     index: &crate::analysis::rust_index::RustIndex,
-) -> Vec<(usize, String)> {
+) -> Vec<(std::path::PathBuf, usize, String)> {
     let Some(position) = parameters
         .iter()
         .position(|parameter| parameter == left_parameter)
@@ -3799,16 +3806,16 @@ fn owner_calls_passing_constant(
                 &constant.name,
             )
         })
-        .flat_map(|test| test.calls.iter())
-        .filter(|call| call.name == owner.name)
-        .filter_map(|call| {
+        .flat_map(|test| test.calls.iter().map(move |call| (test, call)))
+        .filter(|(_, call)| call.name == owner.name)
+        .filter_map(|(test, call)| {
             // A free owner's arguments come from its own call site, never a
             // same-line `Type::name(..)` (#6713).
             let text = owner_name_call_text(&call.text, &owner.name, is_free(owner))?;
             let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
-                .then(|| (call.line, call.text.to_string()))
+                .then(|| (test.file.clone(), call.line, call.text.to_string()))
         })
         .collect()
 }
@@ -4042,20 +4049,20 @@ pub(in crate::analysis) fn has_observed_boundary_equality(activation: &Activatio
         .any(|fact| fact.value.contains(" == "))
 }
 
-pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
+pub(in crate::analysis) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     facts.sort_by(|left, right| {
         left.line
             .cmp(&right.line)
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
-            // Same line/value/text from two files still collapses to one fact
-            // (the first file in path order), exactly as before #8389, so the
-            // JSON observed values and totals do not move.
+            // A file is part of the source location, even though machine
+            // output omits it. Break otherwise equal ties deterministically.
             .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
-        left.line == right.line
+        left.file == right.file
+            && left.line == right.line
             && left.text == right.text
             && left.value == right.value
             && left.context == right.context
@@ -4727,6 +4734,124 @@ mod tests {
         }));
     }
 
+    /// #8389: each equality fact names the test file that holds its call line.
+    #[test]
+    fn equality_facts_name_the_test_file_holding_their_call() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_call("score_uses_boundary", call);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test.calls[0].line = line;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "score(100, 100);");
+        let b = in_file("tests/b.rs", 31, "score(100, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&b, &a],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+        let equality = |line: usize| {
+            activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "amount == threshold")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(equality(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(equality(31), Some(PathBuf::from("tests/b.rs")));
+    }
+
+    /// The equality / helper / constant rows are pushed before the shared
+    /// `sort_value_facts` in `activation_evidence`, so they follow the same
+    /// identity rule as every other value fact: file is part of the source
+    /// location. Two test files calling the owner at the same line with the
+    /// same arguments keep two distinct facts (one per file, deterministic
+    /// path order, either input order); only exact same-file duplicates
+    /// collapse.
+    #[test]
+    fn same_line_equality_from_two_files_keeps_one_fact_per_file_through_activation_evidence() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str| {
+            let mut test = test_with_call("score_uses_boundary", "score(100, 100);");
+            test.file = PathBuf::from(file);
+            test.start_line = 10;
+            test.end_line = 12;
+            test.calls[0].line = 11;
+            test
+        };
+        let a = in_file("tests/a.rs");
+        let b = in_file("tests/b.rs");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+        for order in [[&a, &b], [&b, &a]] {
+            let activation = activation_evidence(
+                &probe,
+                Some(&owner),
+                &order,
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            );
+            let equalities = activation
+                .observed_values
+                .iter()
+                .filter(|fact| fact.value == "amount == threshold")
+                .collect::<Vec<_>>();
+            let files = equalities
+                .iter()
+                .map(|fact| fact.file.as_deref())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                files,
+                vec![
+                    Some(std::path::Path::new("tests/a.rs")),
+                    Some(std::path::Path::new("tests/b.rs")),
+                ],
+                "{equalities:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sort_value_facts_preserves_files_and_collapses_only_exact_duplicates() {
+        let fact = |file: &str| ValueFact {
+            file: Some(PathBuf::from(file)),
+            ..value_fact(4, "score(1)", "1", ValueContext::FunctionArgument)
+        };
+        for order in [["tests/b.rs", "tests/a.rs"], ["tests/a.rs", "tests/b.rs"]] {
+            let mut facts = order.iter().map(|file| fact(file)).collect::<Vec<_>>();
+            facts.extend(facts.clone());
+            sort_value_facts(&mut facts);
+            assert_eq!(facts, vec![fact("tests/a.rs"), fact("tests/b.rs")]);
+        }
+    }
+
+    #[test]
+    fn sort_value_facts_breaks_same_location_value_ties_by_text() {
+        let fact = |text: &str| ValueFact {
+            file: Some(PathBuf::from("tests/a.rs")),
+            ..value_fact(4, text, "1", ValueContext::FunctionArgument)
+        };
+        for order in [["zeta", "alpha"], ["alpha", "zeta"]] {
+            let mut facts = order.iter().map(|text| fact(text)).collect::<Vec<_>>();
+            sort_value_facts(&mut facts);
+            assert_eq!(facts, vec![fact("alpha"), fact("zeta")]);
+        }
+    }
+
     #[test]
     fn activation_evidence_resolves_direct_local_boundary_operand_alias() {
         let owner = function(
@@ -4885,6 +5010,7 @@ mod tests {
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "end == start"
         }));
+        assert_equality_facts_name_file(&activation, "tests/split.rs");
     }
 
     #[test]
@@ -5157,6 +5283,7 @@ mod tests {
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
         assert_eq!(owner_input_values(&activation), vec!["10"]);
+        assert_equality_facts_name_file(&activation, "tests/score.rs");
     }
 
     #[test]
@@ -5480,6 +5607,15 @@ mod tests {
         );
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
+        // The `argument names constant` witness names its test file (#8389).
+        assert!(
+            activation.observed_values.iter().any(|fact| {
+                fact.text.contains("argument names constant LIMIT")
+                    && fact.file.as_deref() == Some(std::path::Path::new("tests/score.rs"))
+            }),
+            "{:?}",
+            activation.observed_values
+        );
 
         // Opaque value and no argument naming it: the missing boundary is
         // honest about what ripr cannot see.
@@ -6325,6 +6461,24 @@ assert_eq!(input.amount, 100);"#
             item: Default::default(),
             impl_context: Default::default(),
         }
+    }
+
+    /// #8389: every observed equality fact (the boundary witnesses) names the
+    /// test file its call was read from, so human evidence can point at it.
+    fn assert_equality_facts_name_file(activation: &ActivationEvidence, file: &str) {
+        let files = activation
+            .observed_values
+            .iter()
+            .filter(|fact| fact.value.contains(" == "))
+            .map(|fact| fact.file.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            !files.is_empty()
+                && files
+                    .iter()
+                    .all(|found| found.as_deref() == Some(std::path::Path::new(file))),
+            "{file}: {files:?}"
+        );
     }
 
     fn test_with_call(name: &str, call: &str) -> TestSummary {
@@ -7439,6 +7593,35 @@ assert_eq!(input.amount, 100);"#
             .collect()
     }
 
+    /// #8389: each element-run fact names the test file of its own run.
+    #[test]
+    fn element_run_facts_name_the_file_of_their_run() {
+        let mut owner = function(
+            "pub fn score(xs: &[i64]) -> usize {\n    xs.iter().filter(|&&x| x > 0).count()\n}",
+        );
+        owner.item.has_body = true;
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_body_calls(call, &[(line, call)]);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "assert_eq!(score(&[-1, 0, 3]), 1);");
+        let b = in_file("tests/b.rs", 41, "assert_eq!(score(&[0, 7]), 1);");
+        let gathered = boundary_input(&owner, &probe(ProbeFamily::Predicate, "x > 0"), &[&b, &a]);
+        let file_at = |line: usize| {
+            gathered
+                .activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "x == 0")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(file_at(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(file_at(41), Some(PathBuf::from("tests/b.rs")));
+    }
+
     /// A boundary that is not one whole plain decimal literal (`0x10`,
     /// `1e3`, `10u8`) and not a same-file constant stays unresolved: its
     /// leading digits (`0`, `1`, `10`) are not its value.
@@ -7490,6 +7673,7 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(gathered.unresolved_boundary, None);
         assert!(missing_values(&gathered).is_empty());
         assert!(has_observed_boundary_equality(&gathered.activation));
+        assert_equality_facts_name_file(&gathered.activation, "tests/score.rs");
         // `**x` under `|x|` is the same element.
         let deref = adaptor_boundary(
             "xs.iter().filter(|x| **x > 0).count()",
