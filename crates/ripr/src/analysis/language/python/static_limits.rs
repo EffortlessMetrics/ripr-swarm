@@ -301,6 +301,58 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.cli_receiver_names,
         )
         || is_imported_functools_memoization_decorator(decorator, &owner.imports)
+        || is_imported_typing_marker_decorator(decorator, &owner.imports)
+}
+
+const TYPING_MODULES: [&str; 2] = ["typing", "typing_extensions"];
+
+/// Typing markers return the decorated function unchanged (they only set an
+/// attribute or do nothing), so test-to-owner call matching is unaffected.
+/// `typing.overload`, `abc.abstractmethod`, `contextlib.contextmanager` and
+/// `property` are deliberately excluded: they replace, block or re-shape the
+/// call.
+fn is_typing_marker_name(module: &str, name: &str) -> bool {
+    match name {
+        "final" | "override" => TYPING_MODULES.contains(&module),
+        "no_type_check" => module == "typing",
+        _ => false,
+    }
+}
+
+fn import_binds_typing_module(import: &PythonImport) -> bool {
+    TYPING_MODULES.contains(&import.imported.as_str()) && import.source_module.is_empty()
+}
+
+/// `@final` / `@override` / `@no_type_check` (and `typing.` / `typing_extensions.`
+/// qualified spellings) only when the name resolves to the typing module. A
+/// receiver or bare name rebound from another module, or bound by a competing
+/// import, stays limited, mirroring the functools memoization rule.
+fn is_imported_typing_marker_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+    if let Some((receiver, method)) = decorator.rsplit_once('.') {
+        let rebound = imports
+            .iter()
+            .any(|import| import.alias == receiver && !import_binds_typing_module(import));
+        if rebound {
+            return false;
+        }
+        if TYPING_MODULES.contains(&receiver) {
+            return is_typing_marker_name(receiver, method);
+        }
+        return imports.iter().any(|import| {
+            import_binds_typing_module(import)
+                && import.alias == receiver
+                && is_typing_marker_name(import.imported.as_str(), method)
+        });
+    }
+    let from_typing = imports.iter().any(|import| {
+        import.alias == decorator
+            && is_typing_marker_name(import.source_module.as_str(), import.imported.as_str())
+    });
+    let competing_alias = imports.iter().any(|import| {
+        import.alias == decorator
+            && !is_typing_marker_name(import.source_module.as_str(), import.imported.as_str())
+    });
+    from_typing && !competing_alias
 }
 
 fn is_functools_memoization_name(name: &str) -> bool {
@@ -771,6 +823,109 @@ mod tests {
                 "`{qualified}` with no competing import is the stdlib spelling"
             );
         }
+    }
+
+    fn from_module(module: &str, name: &str, alias: &str) -> PythonImport {
+        PythonImport {
+            imported: name.to_string(),
+            alias: alias.to_string(),
+            source_module: module.to_string(),
+        }
+    }
+
+    fn import_module(module: &str, alias: &str) -> PythonImport {
+        PythonImport {
+            imported: module.to_string(),
+            alias: alias.to_string(),
+            source_module: String::new(),
+        }
+    }
+
+    #[test]
+    fn typing_marker_decorators_do_not_limit() {
+        for (module, name) in [
+            ("typing", "final"),
+            ("typing", "override"),
+            ("typing", "no_type_check"),
+            ("typing_extensions", "final"),
+            ("typing_extensions", "override"),
+        ] {
+            let qualified = format!("{module}.{name}");
+            assert!(!is_transparent_owner_decorator(name));
+            let bare = owner_with(&[name], vec![from_module(module, name, name)]);
+            assert_eq!(decorator_limit(&bare), None, "from {module} import {name}");
+            let aliased = owner_with(&["mark"], vec![from_module(module, name, "mark")]);
+            assert_eq!(decorator_limit(&aliased), None, "aliased {qualified}");
+            let qualified_owner =
+                owner_with(&[qualified.as_str()], vec![import_module(module, module)]);
+            assert_eq!(decorator_limit(&qualified_owner), None, "{qualified}");
+            let module_alias = owner_with(
+                &[format!("t.{name}").as_str()],
+                vec![import_module(module, "t")],
+            );
+            assert_eq!(decorator_limit(&module_alias), None, "t.{name}");
+        }
+    }
+
+    #[test]
+    fn typing_marker_rebound_or_local_stays_limited() {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        // local same-name decorator with no typing import
+        for name in ["final", "override", "no_type_check"] {
+            assert_eq!(decorator_limit(&owner_with(&[name], Vec::new())), limited);
+        }
+        // bare name also bound from another module
+        let competing = owner_with(
+            &["final"],
+            vec![
+                from_module("typing", "final", "final"),
+                from_module("helpers", "final", "final"),
+            ],
+        );
+        assert_eq!(decorator_limit(&competing), limited);
+        // bare name only from another module
+        let other = owner_with(
+            &["override"],
+            vec![from_module("helpers", "override", "override")],
+        );
+        assert_eq!(decorator_limit(&other), limited);
+        // receiver rebound to a non-typing module
+        let rebound = owner_with(&["typing.final"], vec![import_module("wrappers", "typing")]);
+        assert_eq!(decorator_limit(&rebound), limited);
+        let from_rebound = owner_with(
+            &["typing.final"],
+            vec![from_module("helpers", "typing", "typing")],
+        );
+        assert_eq!(decorator_limit(&from_rebound), limited);
+        // alias bound to a non-typing module
+        let alias = owner_with(&["t.final"], vec![import_module("wrappers", "t")]);
+        assert_eq!(decorator_limit(&alias), limited);
+        // typing_extensions has no no_type_check marker we trust
+        let ext = owner_with(
+            &["typing_extensions.no_type_check"],
+            vec![import_module("typing_extensions", "typing_extensions")],
+        );
+        assert_eq!(decorator_limit(&ext), limited);
+    }
+
+    #[test]
+    fn typing_overload_and_call_reshaping_decorators_stay_limited() {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        for (module, name) in [
+            ("typing", "overload"),
+            ("abc", "abstractmethod"),
+            ("contextlib", "contextmanager"),
+            ("typing", "final_not_real"),
+        ] {
+            let owner = owner_with(&[name], vec![from_module(module, name, name)]);
+            assert_eq!(decorator_limit(&owner), limited, "{module}.{name}");
+        }
+        // a typing marker stacked with an unresolved decorator stays limited
+        let mixed = owner_with(
+            &["final", "retry"],
+            vec![from_module("typing", "final", "final")],
+        );
+        assert_eq!(decorator_limit(&mixed), limited);
     }
 
     #[test]

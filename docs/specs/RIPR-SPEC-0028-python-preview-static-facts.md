@@ -774,6 +774,26 @@ Expected static evidence:
 - a related test that reaches `century_index` without observing the
   changed return remains a gap.
 
+Typing markers are not decorator indirection:
+
+```python
+from typing import final, override
+
+class Child(Base):
+    @override
+    def rate(self, n):
+        return n + 1
+```
+
+Expected static evidence:
+
+- `@final`, `@override` and `@no_type_check` (and `typing.` /
+  `typing_extensions.` qualified or aliased spellings) return the function
+  unchanged, so the owner emits no `decorator_indirection`;
+- a rebound receiver, a competing alias, or a local same-named decorator stays
+  `decorator_indirection`; `typing.overload`, `abc.abstractmethod`,
+  `contextlib.contextmanager` and `property` also stay limited.
+
 Simple route decorator repair:
 
 ```python
@@ -802,7 +822,9 @@ framework-specific selectors and relate only to the referenced owner.
 Functools memoization transparency (`lru_cache` / `cache` /
 `cached_property`) is covered by
 `crates/ripr/src/analysis/language/python/static_limits.rs` tests and
-`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+`fixtures/python_functools_memoization_not_indirection`. Typing-marker
+transparency (`final` / `override` / `no_type_check`) is covered by the
+`typing_marker_*` tests in the same file. Arbitrary
 decorators such as `@retry` remain limited via
 `fixtures/python_decorator_indirection_limit`.
 
