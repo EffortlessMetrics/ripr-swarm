@@ -17276,6 +17276,8 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::projection_digest_disagreement_is_rejected",
   "xtask/src/reports/release_ledger/tests.rs::cut_that_is_not_exact_main_is_rejected",
   "xtask/src/reports/release_ledger/tests.rs::open_pr_inside_range_or_with_included_disposition_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::packet_roster_and_final_capture_commit_are_compared",
+  "xtask/src/reports/release_ledger/tests.rs::final_ledger_rejects_pending_claims_and_open_non_terminal_prs",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
 ]
 fixtures = []

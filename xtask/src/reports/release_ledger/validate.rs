@@ -8,24 +8,38 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::dto::{
     ADJUDICATION_BASIS, BLOCKING, CLAIM_RESOLUTIONS, DISPOSITIONS, Digests, HISTORY_NO_BLOB_EFFECT,
-    KIND, Ledger, NOT_REACHABLE, OPEN_PR_DISPOSITIONS, PRESENT_BUT_SUPERSEDED, PRESENT_EFFECTIVE,
-    Record, SCHEMA_VERSION, SOURCE_SYNC_EFFECTS, STAGE_DRY_RUN, STAGE_FINAL, TREE_EFFECTS,
+    KIND, Ledger, NOT_REACHABLE, PR_DISPOSITIONS, PRESENT_BUT_SUPERSEDED, PRESENT_EFFECTIVE,
+    Record, SCHEMA_VERSION, SOURCE_SYNC_EFFECTS, STAGE_DRY_RUN, STAGE_FINAL,
+    TERMINAL_PR_DISPOSITIONS, TREE_EFFECTS,
 };
 use crate::reports::release_denominator::{digest_json, is_sha};
 
-/// The part of the #2766 selected-claim packet the ledger must agree with.
+/// The part of `policy/release-selection.json` (#2766) the ledger must agree
+/// with. Unknown packet fields are ignored: the packet has its own checker.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(super) struct SelectionPacket {
+    #[serde(skip)]
     pub(super) digest: String,
-    pub(super) totals: BTreeMap<String, u64>,
-    #[serde(default)]
-    pub(super) open_prs: Vec<PacketOpenPr>,
+    pub(super) claims: Vec<PacketClaim>,
+    pub(super) open_prs: PacketOpenPrs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub(super) struct PacketClaim {
+    pub(super) claim_id: String,
+    pub(super) resolution: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub(super) struct PacketOpenPrs {
+    pub(super) captured_at_main: Option<String>,
+    pub(super) rows: Vec<PacketOpenPr>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(super) struct PacketOpenPr {
-    pub(super) number: u64,
-    pub(super) head_sha: String,
+    pub(super) pr: u64,
+    pub(super) head: String,
     pub(super) disposition: String,
 }
 
@@ -289,8 +303,8 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
         PRESENT_BUT_SUPERSEDED if basis.alive_paths == 0 || owned > 0 => {
             Some("present_but_superseded needs alive paths and no owned path or line")
         }
-        HISTORY_NO_BLOB_EFFECT if basis.alive_paths > 0 || basis.absent_paths == 0 => {
-            Some("history_reachable_no_final_blob_effect needs only absent touched paths")
+        HISTORY_NO_BLOB_EFFECT if basis.alive_paths > 0 => {
+            Some("history_reachable_no_final_blob_effect cannot have an alive touched path")
         }
         NOT_REACHABLE => {
             Some("a record in the reachable range cannot be not_reachable_from_candidate")
@@ -392,8 +406,25 @@ fn validate_selected_claims(ledger: &Ledger, context: &Context, reasons: &mut Ve
         if packet.digest != claims.packet_digest {
             reasons.push("selected_claims.packet_digest differs from the #2766 packet".to_string());
         }
-        if packet.totals != claims.totals {
+        let mut packet_totals: BTreeMap<String, u64> = BTreeMap::new();
+        for claim in &packet.claims {
+            *packet_totals.entry(claim.resolution.clone()).or_default() += 1;
+        }
+        if packet_totals != claims.totals {
             reasons.push("selected-claim totals differ from the #2766 packet".to_string());
+        }
+        let ledger_rows: BTreeSet<(&str, &str)> = claims
+            .rows
+            .iter()
+            .map(|row| (row.claim_ref.as_str(), row.resolution.as_str()))
+            .collect();
+        let packet_rows: BTreeSet<(&str, &str)> = packet
+            .claims
+            .iter()
+            .map(|claim| (claim.claim_id.as_str(), claim.resolution.as_str()))
+            .collect();
+        if ledger_rows != packet_rows {
+            reasons.push("selected-claim rows differ from the #2766 packet".to_string());
         }
     }
 }
@@ -413,9 +444,9 @@ fn validate_open_prs(ledger: &Ledger, context: &Context, reasons: &mut Vec<Strin
                 pr.number, pr.head_sha
             ));
         }
-        if !OPEN_PR_DISPOSITIONS.contains(&pr.disposition.as_str()) {
+        if !PR_DISPOSITIONS.contains(&pr.disposition.as_str()) {
             reasons.push(format!(
-                "open PR #{} disposition `{}` is not valid for a PR outside the cut",
+                "open PR #{} disposition `{}` is outside the #2766 PR vocabulary",
                 pr.number, pr.disposition
             ));
         }
@@ -428,11 +459,18 @@ fn validate_open_prs(ledger: &Ledger, context: &Context, reasons: &mut Vec<Strin
             .collect();
         let packet_rows: BTreeSet<(u64, &str, &str)> = packet
             .open_prs
+            .rows
             .iter()
-            .map(|pr| (pr.number, pr.head_sha.as_str(), pr.disposition.as_str()))
+            .map(|pr| (pr.pr, pr.head.as_str(), pr.disposition.as_str()))
             .collect();
         if ledger_rows != packet_rows {
             reasons.push("open_prs differ from the #2766 packet roster".to_string());
+        }
+        if ledger.stage == STAGE_FINAL
+            && packet.open_prs.captured_at_main.as_deref() != Some(ledger.source.cut_sha.as_str())
+        {
+            reasons
+                .push("the packet's open-PR roster was not captured at the cut commit".to_string());
         }
     }
 }
@@ -449,11 +487,17 @@ fn validate_final(ledger: &Ledger, reasons: &mut Vec<String>) {
         + ledger
             .open_prs
             .iter()
-            .filter(|pr| pr.disposition == BLOCKING)
+            .filter(|pr| !TERMINAL_PR_DISPOSITIONS.contains(&pr.disposition.as_str()))
+            .count()
+        + ledger
+            .selected_claims
+            .rows
+            .iter()
+            .filter(|row| matches!(row.resolution.as_str(), "pending" | "failed_release_hold"))
             .count();
     if unresolved > 0 {
         reasons.push(format!(
-            "final ledger holds {unresolved} blocking_unresolved rows"
+            "final ledger holds {unresolved} blocking_unresolved records, non-terminal open PRs or unresolved claims"
         ));
     }
     match &ledger.audit {

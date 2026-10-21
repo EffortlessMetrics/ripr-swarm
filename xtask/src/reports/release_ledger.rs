@@ -15,6 +15,7 @@ mod validate;
 mod tests;
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -37,10 +38,7 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
     let args = parse_args(args)?;
     let ledger: Ledger = read_json(args.input, "ledger")?;
     let context = Context {
-        packet: args
-            .packet
-            .map(|path| read_json::<SelectionPacket>(path, "selection packet"))
-            .transpose()?,
+        packet: args.packet.map(read_packet).transpose()?,
         markdown: args
             .markdown
             .map(|path| {
@@ -117,6 +115,16 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &str, what: &str) -> Result<T
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {what} {path}: {error}"))?;
     serde_json::from_str(&text).map_err(|error| format!("failed to parse {what} {path}: {error}"))
+}
+
+/// The packet digest is over the raw file bytes, so any edit to the packet is a
+/// different identity.
+fn read_packet(path: &str) -> Result<SelectionPacket, String> {
+    let bytes = fs::read(path).map_err(|error| format!("failed to read packet {path}: {error}"))?;
+    let mut packet: SelectionPacket = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("failed to parse packet {path}: {error}"))?;
+    packet.digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    Ok(packet)
 }
 
 fn counts<'a>(values: impl Iterator<Item = &'a str>) -> BTreeMap<&'a str, u64> {

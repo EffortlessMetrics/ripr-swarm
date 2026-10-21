@@ -2,7 +2,9 @@
 
 use super::dto::{ClaimRow, Digests, Ledger, MergedPr, OpenPr, Record, SelectedClaims, Source};
 use super::dto::{EffectBasis, Range};
-use super::validate::{Context, SelectionPacket, compute_digests, validate};
+use super::validate::{
+    Context, PacketClaim, PacketOpenPr, PacketOpenPrs, SelectionPacket, compute_digests, validate,
+};
 use std::collections::BTreeMap;
 
 fn sha(n: u8) -> String {
@@ -122,7 +124,7 @@ fn valid() -> Ledger {
         open_prs: vec![OpenPr {
             number: 50,
             head_sha: sha(50),
-            disposition: "not_in_cut_accepted_defer".to_string(),
+            disposition: "accepted_defer_with_non_claim".to_string(),
         }],
         digests: Digests {
             first_parent: String::new(),
@@ -235,8 +237,21 @@ fn selected_claim_totals_must_match_rows_and_packet() -> Result<(), String> {
     require_reason(&ledger, "do not match its rows")?;
     let packet = SelectionPacket {
         digest: "sha256:packet".to_string(),
-        totals: BTreeMap::from([("accepted_defer_with_non_claim".to_string(), 3)]),
-        open_prs: Vec::new(),
+        claims: ["claim-a", "claim-b", "claim-c"]
+            .iter()
+            .map(|id| PacketClaim {
+                claim_id: (*id).to_string(),
+                resolution: "accepted_defer_with_non_claim".to_string(),
+            })
+            .collect(),
+        open_prs: PacketOpenPrs {
+            captured_at_main: None,
+            rows: vec![PacketOpenPr {
+                pr: 50,
+                head: sha(50),
+                disposition: "accepted_defer_with_non_claim".to_string(),
+            }],
+        },
     };
     let context = Context {
         packet: Some(packet),
@@ -272,7 +287,7 @@ fn blocking_unresolved_fails_only_in_final() -> Result<(), String> {
         ));
     }
     ledger.stage = "final".to_string();
-    require_reason(&ledger, "blocking_unresolved rows")
+    require_reason(&ledger, "blocking_unresolved records")
 }
 
 #[test]
@@ -316,5 +331,60 @@ fn open_pr_inside_range_or_with_included_disposition_is_rejected() -> Result<(),
     require_reason(&ledger, "inside the reachable range")?;
     let mut ledger = valid();
     ledger.open_prs[0].disposition = "included_accepted_product".to_string();
-    require_reason(&ledger, "not valid for a PR outside the cut")
+    require_reason(&ledger, "outside the #2766 PR vocabulary")
+}
+
+#[test]
+fn packet_roster_and_final_capture_commit_are_compared() -> Result<(), String> {
+    let mut ledger = valid();
+    let mut packet = SelectionPacket {
+        digest: "sha256:packet".to_string(),
+        claims: vec![PacketClaim {
+            claim_id: "claim-a".to_string(),
+            resolution: "accepted_defer_with_non_claim".to_string(),
+        }],
+        open_prs: PacketOpenPrs {
+            captured_at_main: None,
+            rows: vec![PacketOpenPr {
+                pr: 50,
+                head: sha(51),
+                disposition: "accepted_defer_with_non_claim".to_string(),
+            }],
+        },
+    };
+    let context = Context {
+        packet: Some(packet.clone()),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    if !found.iter().any(|reason| reason.contains("roster")) {
+        return Err(format!("roster difference missed: {found:?}"));
+    }
+    packet.open_prs.rows[0].head = sha(50);
+    ledger.stage = "final".to_string();
+    let context = Context {
+        packet: Some(packet),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    if !found
+        .iter()
+        .any(|reason| reason.contains("not captured at the cut"))
+    {
+        return Err(format!("stale roster capture missed: {found:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn final_ledger_rejects_pending_claims_and_open_non_terminal_prs() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.stage = "final".to_string();
+    ledger.open_prs[0].disposition = "release_required_product".to_string();
+    require_reason(&ledger, "non-terminal open PRs")?;
+    let mut ledger = valid();
+    ledger.stage = "final".to_string();
+    ledger.selected_claims.rows[0].resolution = "pending".to_string();
+    ledger.selected_claims.totals = BTreeMap::from([("pending".to_string(), 1)]);
+    require_reason(&ledger, "unresolved claims")
 }

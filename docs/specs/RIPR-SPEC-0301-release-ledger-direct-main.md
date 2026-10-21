@@ -91,13 +91,17 @@ The validator fails on:
    disposition that contradicts the effect without an `override_ref`;
 7. a free-form value in any closed field, or any `not_in_cut_*` disposition on a
    reachable commit;
-8. any `blocking_unresolved` record or open PR in a `final` ledger, or a final
+8. any `blocking_unresolved` record, non-terminal open PR or `pending`/`failed_release_hold` claim in a `final` ledger, or a final
    ledger without an audit digest;
 9. a Markdown or manifest projection whose digests differ from the ledger;
 10. a cut that is not the observed tip of `main`.
 
-Open-PR rows must not be inside the reachable range and may carry only
-`not_in_cut_*` or `blocking_unresolved`; with a packet, the roster must match.
+Open-PR rows must not be inside the reachable range and carry the #2766 PR
+dispositions from `policy/release-selection.json`; with `--packet`, the claim
+rows, totals, packet digest (sha256 of the raw file bytes) and open-PR roster
+must match it, and a final ledger needs the roster captured at the cut commit.
+`history_reachable_no_final_blob_effect` requires no alive touched path (an
+empty diff has none).
 
 ## Required Evidence
 
@@ -131,6 +135,8 @@ valid-ledger control that yields no reasons.
   `free_form_vocabulary_is_rejected`, `projection_digest_disagreement_is_rejected`,
   `cut_that_is_not_exact_main_is_rejected`,
   `open_pr_inside_range_or_with_included_disposition_is_rejected`,
+  `packet_roster_and_final_capture_commit_are_compared`,
+  `final_ledger_rejects_pending_claims_and_open_non_terminal_prs`,
   `valid_ledger_has_no_reasons`).
 
 ## Implementation Mapping

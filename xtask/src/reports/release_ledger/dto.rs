@@ -25,13 +25,27 @@ pub(super) const DISPOSITIONS: &[&str] = &[
     BLOCKING,
 ];
 
-/// Dispositions an open PR at the cut may carry: it is by construction not in
-/// the cut, so an `included_*` value would contradict Git.
-pub(super) const OPEN_PR_DISPOSITIONS: &[&str] = &[
-    "not_in_cut_accepted_defer",
-    "not_in_cut_superseded",
-    "not_in_cut_unrelated",
-    BLOCKING,
+/// Open-PR dispositions, as in `policy/release-selection.json` (#2766). An
+/// open PR is by construction outside the cut, so these are the packet's own
+/// values rather than the commit vocabulary.
+pub(super) const PR_DISPOSITIONS: &[&str] = &[
+    "release_required_product",
+    "release_required_control",
+    "release_required_test_infrastructure",
+    "release_optional_pending_decision",
+    "accepted_defer_with_non_claim",
+    "candidate_exclusion_with_manifest",
+    "blocked_on_named_authority",
+    "superseded",
+    "unrelated_to_selected_candidate",
+];
+
+/// Open-PR dispositions that carry no unfinished work.
+pub(super) const TERMINAL_PR_DISPOSITIONS: &[&str] = &[
+    "accepted_defer_with_non_claim",
+    "candidate_exclusion_with_manifest",
+    "superseded",
+    "unrelated_to_selected_candidate",
 ];
 
 pub(super) const PRESENT_EFFECTIVE: &str = "present_effective";
@@ -52,17 +66,15 @@ pub(super) const SOURCE_SYNC_EFFECTS: &[&str] = &[
     "not_established",
 ];
 
-/// #2766 claim resolutions, as listed in the 0.11 cut checklist.
+/// #2766 claim resolutions, as in `policy/release-selection.json`.
 pub(super) const CLAIM_RESOLUTIONS: &[&str] = &[
-    "release_required_product",
-    "release_required_control",
-    "release_required_test_infrastructure",
-    "release_optional_pending_decision",
+    "pending",
+    "landed_and_accepted",
     "accepted_defer_with_non_claim",
     "candidate_exclusion_with_manifest",
-    "blocked_on_named_authority",
-    "superseded",
-    "unrelated_to_selected_candidate",
+    "failed_release_hold",
+    "final_candidate_execution_only",
+    "historical_evidence_only",
 ];
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -119,6 +131,7 @@ pub(super) struct MergedPr {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SelectedClaims {
+    /// `sha256:` of the raw bytes of `policy/release-selection.json`.
     pub(super) packet_digest: String,
     pub(super) rows: Vec<ClaimRow>,
     pub(super) totals: BTreeMap<String, u64>,
