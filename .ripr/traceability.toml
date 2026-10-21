@@ -15846,6 +15846,13 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_preserve_a_short_function_output_assertion",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_module_comparison_text",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_keep_ordinary_module_imports_conservative",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::message_only_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::message_only_change_stays_exposed_when_a_pattern_rejects_the_old_message",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::message_only_change_fails_open_on_unreadable_patterns_and_assertions",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::exception_class_change_is_not_a_message_only_change",
+  "crates/ripr/src/analysis/language/python/message_pin.rs::tests::pattern_matches_reads_literals_and_the_dot_wildcard",
+  "crates/ripr/src/analysis/language/python/message_pin.rs::tests::single_raise_message_reads_only_one_literal_argument",
+  "crates/ripr/src/analysis/language/python/message_pin.rs::tests::literal_message_pattern_reads_both_assertion_forms",
 ]
 fixtures = [
   "fixtures/python_empty_sink_unrelated_short_function",
@@ -15854,6 +15861,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/python/classify.rs",
+  "crates/ripr/src/analysis/language/python/message_pin.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
   "crates/ripr/src/analysis/language/python/probe_shape.rs",
   "crates/ripr/src/analysis/language/python/related_tests.rs",

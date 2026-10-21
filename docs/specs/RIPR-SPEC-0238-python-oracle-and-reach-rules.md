@@ -27,6 +27,8 @@ Linked issues:
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
 - #6733 (a removed term that is zero at every asserted input; rule 20)
+- #9185 (a message-only change under a literal pattern that fits both
+  messages; rule 2)
 - #7586 (a mock passed for a called parameter, and the wrapped-argument
   gate; rule 17, example 9)
 
@@ -231,6 +233,18 @@ as strong for one credit branch only; its table row is unchanged.
    literal (`pattern = '.*'` then `match=pattern` is `broad_error`); a
    name assigned more than once in the file is not resolved. Any other non-literal pattern keeps
    `exact_error_variant` / strong (Decision 5).
+   Change-aware reading (#9185): when the changed line is a message-only edit
+   of one `raise Exc("...")` (same exception expression, one literal string
+   argument on each side, no f-string), the old and the new message are both
+   known. If EVERY strong `exact_error_variant` assertion of the strong related
+   tests is a `pytest.raises(E, match=...)` or `assertRaisesRegex(E, ...)` with
+   a literal pattern made of literal characters (`.` is read as the regex
+   wildcard) that matches both messages, the patterns pin only the exception
+   class and the finding is `weakly_exposed` with missing discriminator
+   `message "<new message>"`. One pattern that rejects the old message, regex
+   syntax in a pattern, a non-literal pattern, a comparison of `str(exc.value)`,
+   an f-string message and an exception class change fail open and keep the
+   existing verdict.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns

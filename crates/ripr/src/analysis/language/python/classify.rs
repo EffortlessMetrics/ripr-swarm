@@ -5,6 +5,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
+use super::message_pin;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
@@ -457,6 +458,25 @@ pub(super) fn classify_change_for_owner(
         })
         .flatten();
     let mut guarded_arm_downgraded = false;
+    // Message-pin gate (#9185): a message-only change to a `raise` is
+    // discriminated by a `match=` pattern only when the pattern accepts one
+    // message and rejects the other. When every strong related error
+    // assertion pins the exception with a literal pattern that matches the old
+    // and the new message alike, it pins only the exception class. Unreadable
+    // patterns, non-literal messages and other assertion shapes fail open.
+    let message_pin_gap = (static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            message_pin::python_message_pin_gap(
+                line_text,
+                old_line_text,
+                &related_candidates,
+                &focus,
+            )
+        })
+        .flatten();
+    let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
     // The same gate evaluates simple integer arithmetic per row so a 20xx
@@ -542,6 +562,7 @@ pub(super) fn classify_change_for_owner(
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
+        && message_pin_gap.is_none()
         && unvaried_table.is_none()
     {
         (
@@ -618,6 +639,24 @@ pub(super) fn classify_change_for_owner(
             vec![format!(
                 "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
                 owner.name, gap.discriminator,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = message_pin_gap.as_ref()
+    {
+        // A strong error-variant oracle reaches the raise, but every message
+        // pattern it pins matches the old and the new message alike, so the
+        // assertion passes either way (#9185).
+        message_pin_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
+                owner.name, gap.reason,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -837,6 +876,18 @@ pub(super) fn classify_change_for_owner(
             // input would need to satisfy, with the reason listing the values
             // the strong related calls actually bind.
             guarded_arm_gap
+                .as_ref()
+                .map(|gap| MissingDiscriminatorFact {
+                    value: gap.discriminator.clone(),
+                    reason: gap.reason.clone(),
+                    flow_sink: flow_sink.clone(),
+                })
+                .into_iter()
+                .collect()
+        } else if message_pin_downgraded {
+            // The message-pin downgrade names the changed message a
+            // distinguishing pattern must reject the old text for.
+            message_pin_gap
                 .as_ref()
                 .map(|gap| MissingDiscriminatorFact {
                     value: gap.discriminator.clone(),

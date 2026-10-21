@@ -1610,6 +1610,110 @@ fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(),
     Ok(())
 }
 
+// #9185: a message-only change to a `raise` is discriminated by a `match=`
+// pattern only when the pattern accepts one message and rejects the other.
+const CHECK_SOURCE: &str = "def check(x):\n    if x < 0:\n        raise ValueError(\"negative value: must be at most zero\")\n    return x\n";
+const CHECK_OLD_LINE: &str = "        raise ValueError(\"negative value: must be at least zero\")";
+const CHECK_NEW_LINE: &str = "        raise ValueError(\"negative value: must be at most zero\")";
+
+fn classify_message_change(source: &str, tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        3,
+        CHECK_NEW_LINE,
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "message change must produce a finding".to_string())
+}
+
+#[test]
+fn message_only_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n",
+        "import unittest\nfrom src.subject import check\n\nclass T(unittest.TestCase):\n    def test_negative(self):\n        with self.assertRaisesRegex(ValueError, \"negative value\"):\n            check(-1)\n",
+        // `.` is the regex wildcard and still matches both messages.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.value: must be at\"):\n        check(-1)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        let reason = missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+            .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+        assert!(
+            reason.contains("matches the old message \"negative value: must be at least zero\""),
+            "{reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
+{
+    // One pattern that tells the messages apart is enough to discriminate.
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"at most zero\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_a():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n\ndef test_b():\n    with pytest.raises(ValueError, match=\"at most\"):\n        check(-2)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_fails_open_on_unreadable_patterns_and_assertions() -> Result<(), String> {
+    for tests in [
+        // Regex syntax is not evaluated.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.*value\"):\n        check(-1)\n",
+        // A non-literal pattern.
+        "import pytest\nfrom src.subject import check\n\nPATTERN = build()\n\ndef test_negative():\n    with pytest.raises(ValueError, match=PATTERN):\n        check(-1)\n",
+        // A comparison of the whole message is read by other rules.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError) as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
+    let file = Path::new("src/subject.py");
+    let source = "def check(x):\n    if x < 0:\n        raise TypeError(\"negative value: must be at most zero\")\n    return x\n";
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(TypeError, match=\"negative value\"):\n        check(-1)\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        3,
+        "        raise TypeError(\"negative value: must be at most zero\")",
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than
