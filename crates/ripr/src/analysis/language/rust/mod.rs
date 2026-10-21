@@ -2796,10 +2796,13 @@ fn declined_unchanged_file_limitation<'a>(
         AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
         AnalysisStage,
     };
-    let changed = changed_paths.collect::<std::collections::BTreeSet<_>>();
+    let portable = |path: &Path| path.to_string_lossy().replace('\\', "/");
+    let changed = changed_paths
+        .map(portable)
+        .collect::<std::collections::BTreeSet<_>>();
     let declined = rust_index::declined_rust_files(index)
         .into_iter()
-        .filter(|file| !changed.contains(file.path.as_path()))
+        .filter(|file| !changed.contains(&portable(&file.path)))
         .collect::<Vec<_>>();
     if declined.is_empty() {
         return Ok(None);

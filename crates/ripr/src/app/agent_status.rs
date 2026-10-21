@@ -1576,7 +1576,11 @@ fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
     let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
     let report = serde_json::from_str::<Value>(&text).ok()?;
     let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
-    Some(run_status == "seam_limit_applied")
+    // A declined Rust file leaves seams unanalyzed just as a cut does (#9308).
+    Some(matches!(
+        run_status,
+        "seam_limit_applied" | "limited_declined_files"
+    ))
 }
 
 fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
@@ -1596,7 +1600,7 @@ fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> St
         // A gap may sit past the cut, so "no repair applies" would claim an
         // absence the run did not establish; raising the limit is the step.
         return format!(
-            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. If the pilot summary lists `declined_rust_files`, those files were never analyzed either: split them below the Rust parse budget first. {inspect}"
         );
     }
     format!(

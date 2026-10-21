@@ -863,6 +863,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
         crate::output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         crate::output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
+    let declined_files = !report.declined_rust_files.is_empty();
     let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -885,8 +886,12 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let temporary = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+    // Mirrors the snapshot's own run_status so the receipt never calls an
+    // after analysis complete when the file it hashes says it is limited.
     let run_status = if report.limit_info.is_some() {
         "seam_limit_applied".to_string()
+    } else if declined_files {
+        crate::output::repo_exposure::GeneratedRustSkip::DECLINED_RUN_STATUS.to_string()
     } else {
         "complete".to_string()
     };
