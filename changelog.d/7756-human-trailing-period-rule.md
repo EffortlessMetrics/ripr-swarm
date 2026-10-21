@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The `ripr check` human render now follows one trailing-period rule: labelled field lines ("Summary:", "Changed file(s) by language:", "Analysis outcome:", "Counts:", "Safe next action:", "Discriminator:", "Next step:") and evidence/weakness list-item values carry no trailing period, while free-standing prose sentences (the "Note:" advisory) keep theirs. The period is stripped at the human-render emit boundary, so producer strings and the JSON/SARIF surfaces are unchanged (#7756).

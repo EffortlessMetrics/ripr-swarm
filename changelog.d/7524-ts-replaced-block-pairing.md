@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript: in an equal-length multi-line replacement, every added line now reads the removed line at the same position as its old line. Before, only the block's first added line found one. A message-only `throw` change on a later line now meets the RIPR-SPEC-0243 rule 4 guard, so a check that passes on both messages (chai `to.throw("blank")` for `"label must not be blank"` → `"label is blank"`) reads `weakly_exposed` instead of `exposed`. The RIPR-SPEC-0246 identity-copy and RIPR-SPEC-0248 dropped-term rules reach those lines the same way (#7524).
