@@ -38,3 +38,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (4)
+
+Reason:
+RIPR-SPEC-0152: base-side findings render at note severity in human output (#9004)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (5)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

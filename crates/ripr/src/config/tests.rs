@@ -2704,3 +2704,75 @@ fn config_error_display_keeps_unclosed_table_reason() {
         "verbose must not reprint the TOML snippet: {verbose:?}"
     );
 }
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_typescript_markers_and_source() -> Result<(), String> {
+    for marker in crate::config::TYPESCRIPT_PROJECT_MARKERS {
+        let root = temp_root(&format!("ts-marker-{}", marker.replace('.', "-")))?;
+        write_file(&root.join(marker), "{}")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::TypeScript],
+            "{marker} should enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    let root = temp_root("ts-source")?;
+    write_file(&root.join("tests/cart.test.ts"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_package_json_and_plain_javascript() -> Result<(), String> {
+    let root = temp_root("ts-not-detected")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("src/app.js"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn explicit_config_keeps_typescript_disabled_in_a_typescript_repo() -> Result<(), String> {
+    let root = temp_root("ts-explicit-rust")?;
+    write_file(&root.join("tsconfig.json"), "{}")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )?;
+    let config = load_for_root(&root)?;
+    assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), String> {
+    let root = temp_root("ts-explicit-wins")?;
+    write_file(&root.join("tsconfig.json"), "{}")?;
+    write_file(&root.join("src/app.ts"), "export {};\n")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript],
+        "explicit list is used verbatim: no duplicate, order preserved"
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}

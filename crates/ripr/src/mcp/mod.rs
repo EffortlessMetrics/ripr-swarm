@@ -3,6 +3,7 @@ mod framing;
 mod gaps;
 mod protocol;
 mod repair;
+mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
@@ -13,6 +14,16 @@ use std::path::PathBuf;
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
+
+/// Largest JSON-serialized request id (quotes and escapes included) the
+/// transport admits. JSON-RPC ids are correlation tokens, not payloads; an
+/// id near the response cap leaves no room for any correlated reply and
+/// would otherwise make the writer's `MCP output limit` fatal to the whole
+/// session. Larger ids are answered at receive with a bounded `-32600`
+/// frame carrying `"id": null` (the id is never echoed) and the session
+/// stays alive. Far below [`MAX_RESPONSE_BYTES`], so
+/// [`outer_envelope_budget`] always leaves a usable budget.
+pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
 /// Fixed wire overhead the pinned SDK (rmcp 3.5.1) can add around a
 /// measured tool or resource envelope when it serializes the complete
@@ -72,7 +83,9 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority. In this snapshot, staged and unstaged tracked edits and
+check authority; its optional `base` argument selects another revision when
+the default branch cannot be resolved. Its warm cache lives under the root's
+`target/ripr/`. In this snapshot, staged and unstaged tracked edits and
 untracked files are outside the analyzed scope. `ripr check` defaults to the
 working tree when staged or unstaged tracked edits exist; shared check
 authority does not mean identical input. Use `ripr check --committed` for

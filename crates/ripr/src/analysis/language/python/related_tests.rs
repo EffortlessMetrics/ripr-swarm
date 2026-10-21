@@ -20,6 +20,7 @@ pub(super) enum PythonRelationKind {
     ConstructorCall,
     LocalBinding,
     DunderProtocol,
+    ProtocolEntryCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -42,6 +43,7 @@ impl PythonRelationKind {
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
             Self::DunderProtocol => 3,
+            Self::ProtocolEntryCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -60,6 +62,7 @@ impl PythonRelationKind {
                 | Self::ConstructCall
                 | Self::ConstructorCall
                 | Self::LocalBinding
+                | Self::ProtocolEntryCall
         )
     }
 
@@ -76,6 +79,7 @@ impl PythonRelationKind {
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
             Self::DunderProtocol => "dunder_protocol",
+            Self::ProtocolEntryCall => "protocol_entry_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -557,6 +561,225 @@ pub(super) fn is_dunder_name(name: &str) -> bool {
     name.len() > 4 && name.starts_with("__") && name.ends_with("__")
 }
 
+/// Builtins through which Python invokes a dunder method on their sole
+/// argument: `reversed(x)` runs `type(x).__reversed__`, `len(x)` runs
+/// `__len__`. Operator syntax (`x[i]`, `a == b`) is deliberately absent: it
+/// cannot be bound to a receiver by call shape.
+pub(super) const PROTOCOL_ENTRIES: [(&str, &str); 8] = [
+    ("reversed", "__reversed__"),
+    ("len", "__len__"),
+    ("bool", "__bool__"),
+    ("iter", "__iter__"),
+    ("next", "__next__"),
+    ("hash", "__hash__"),
+    ("str", "__str__"),
+    ("repr", "__repr__"),
+];
+
+/// `(builtin start, builtin's open paren)` of each `builtin(<receiver>)` call
+/// in `text` whose sole argument is a receiver statically bound to the owner
+/// class known as `local`: an inline construction `Local(...)`, or the one
+/// local that `body` binds once to `Local(...)`. Mirrors the bound-receiver
+/// shapes of [`body_calls_method_on_owner_bound_receiver`].
+fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> Vec<(usize, usize)> {
+    let construct = format!("{local}(");
+    let constructions: Vec<usize> = body
+        .match_indices(&construct)
+        .filter(|(idx, _)| {
+            python_callee_start_has_boundary(body, *idx) && !python_text_hides_code(body, *idx)
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+    let bound = match constructions.as_slice() {
+        [only] => binding_target_for_construction(body, *only)
+            .filter(|var| assignment_count(body, var) == 1)
+            .filter(|var| !keyword_or_operator_binds_text(body, var, true))
+            .filter(|var| !binds_in_target_list(body, var))
+            .filter(|_| construction_is_whole_value(body, constructions[0], &construct)),
+        _ => None,
+    };
+    let needle = format!("{builtin}(");
+    text.match_indices(&needle)
+        .filter(|(idx, _)| {
+            python_callee_start_has_boundary(text, *idx) && !python_text_hides_code(text, *idx)
+        })
+        .filter(|(idx, _)| {
+            let argument = text[idx + needle.len()..].trim_start();
+            let inline = argument.starts_with(&construct) && {
+                let open = text.len() - argument.len() + construct.len() - 1;
+                super::no_behavior::matching_call_paren(text, open)
+                    .is_some_and(|close| text[close + 1..].trim_start().starts_with(')'))
+            };
+            inline
+                || bound.as_ref().is_some_and(|var| {
+                    argument
+                        .strip_prefix(var.as_str())
+                        .is_some_and(|rest| rest.trim_start().starts_with(')'))
+                })
+        })
+        .map(|(idx, _)| (idx, idx + needle.len() - 1))
+        .collect()
+}
+
+/// Whether `var` appears in a position that can bind it through a target list
+/// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
+/// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
+/// also demotes some reads (`f(r, 1)`); that only fails closed.
+fn binds_in_target_list(body: &str, var: &str) -> bool {
+    body.match_indices(var).any(|(idx, _)| {
+        let end = idx + var.len();
+        python_callee_start_has_boundary(body, idx)
+            && !next_char_is_identifier(body, end)
+            && !python_text_hides_code(body, idx)
+            && {
+                let after = body[end..].trim_start_matches([' ', '\t']);
+                let before = body[..idx].trim_end_matches([' ', '\t']);
+                after.starts_with(',')
+                    || (after.starts_with(':') && !after.starts_with(":="))
+                    || before.ends_with(',')
+                    || before.ends_with('*')
+                    || chained_or_bracketed_target(body, idx, before, after)
+            }
+    })
+}
+
+/// Whether the `var` occurrence just after `before` and just before `after`
+/// binds it through a chained assignment (`x = r = [1]`), or a single-element
+/// bracketed target (`[r] = ...`, `(r) = ...`, `for (r) in ...`,
+/// `with a as [r]`). A bare call argument `f(r)` is not a binding.
+fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let not_line_start = !body[line_start..idx].trim().is_empty();
+    let plain_assign = |rest: &str| rest.starts_with('=') && !rest.starts_with("==");
+    if not_line_start && plain_assign(after) {
+        return true;
+    }
+    let Some(closer) = after.chars().next().filter(|c| matches!(c, ']' | ')')) else {
+        return false;
+    };
+    let opener = if closer == ']' { '[' } else { '(' };
+    if !before.ends_with(opener) {
+        return false;
+    }
+    let rest = after[1..].trim_start_matches([' ', '\t']);
+    plain_assign(rest)
+        || (rest.starts_with(',') && opener_is_target_position(&body[line_start..idx - 1]))
+        || rest.starts_with("in ")
+        || before[..before.len() - 1].trim_end().ends_with(" as")
+}
+
+/// Whether text before a bracket opener puts it in a binding-target position
+/// (line start, or after `for`, `as`, `,` or `*`) rather than a call argument
+/// list (`len(r), 0` in `self.assertEqual(len(r), 0)`).
+fn opener_is_target_position(head: &str) -> bool {
+    let head = head.trim_end();
+    head.is_empty()
+        || head.ends_with([',', '*'])
+        || head
+            .rsplit(|ch: char| !is_python_identifier_char(ch))
+            .next()
+            .is_some_and(|word| word == "for" || word == "as")
+}
+
+/// Whether the construction at `idx` is the whole right-hand side of its
+/// statement: its matching paren ends the line (or is followed only by a
+/// comment), so `Class(0).as_list()`, `Class(0) or [1]` and
+/// `Class(0) if c else [1]` do not bind the receiver.
+fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool {
+    let open = idx + construct.len() - 1;
+    super::no_behavior::matching_call_paren(body, open).is_some_and(|close| {
+        let rest = body[close + 1..].split('\n').next().unwrap_or("").trim();
+        rest.is_empty() || rest.starts_with('#')
+    })
+}
+
+/// Whether the test rebinds the builtin `name` (an import, an assignment,
+/// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
+/// `name(...)` is no longer the builtin.
+fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+    test.imports.iter().any(|import| import.alias == name)
+        || test_rebinds_import_alias(test, name)
+        || test.constant_rebinding.rebinds(name)
+        || test.constant_rebinding.module_opaque
+        || test
+            .constant_rebinding
+            .module_bound
+            .iter()
+            .any(|bound| bound == name)
+}
+
+/// Protocol-entry calls of the owner dunder in `text` on a receiver bound to
+/// the owner class, each as `(builtin start, open paren)`; `body` is the
+/// test body that fixes the receiver binding.
+fn owner_protocol_entry_calls(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Vec<(usize, usize)> {
+    let builtins: Vec<&str> = PROTOCOL_ENTRIES
+        .iter()
+        .filter(|(_, dunder)| *dunder == owner.name)
+        .map(|(builtin, _)| *builtin)
+        .filter(|builtin| !builtin_is_shadowed(test, builtin))
+        .collect();
+    if builtins.is_empty() {
+        return Vec::new();
+    }
+    let Some(class) = dunder_method_class(owner) else {
+        return Vec::new();
+    };
+    let mut calls = Vec::new();
+    for local in owner_class_locals(test, owner, class) {
+        // The class spelling must still be the imported class: a module-level,
+        // tuple, annotated or walrus rebind of its head name replaces it.
+        let head = local.split('.').next().unwrap_or(&local);
+        if super::sink_alignment::function_scope_stand_in(test, head, owner) {
+            continue;
+        }
+        for builtin in &builtins {
+            calls.extend(protocol_entry_calls(text, &test.body_text, &local, builtin));
+        }
+    }
+    calls
+}
+
+/// Whether an assertion of the test takes a builtin protocol entry of the owner
+/// dunder on a receiver built from the owner class as an asserted operand
+/// (`assert list(reversed(Range(0))) == []`). An unasserted entry elsewhere in
+/// the body does not relate the test.
+fn protocol_entry_in_body(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.assertions
+        .iter()
+        .any(|assertion| oracle_operand_protocol_entry(&assertion.gate_text, test, owner))
+}
+
+/// Whether an assertion's text takes a protocol entry of the owner dunder on a
+/// bound owner-class receiver as an asserted operand (`list(reversed(Range(0)))
+/// == []`), not nested in a wrapper that may ignore it.
+pub(super) fn oracle_operand_protocol_entry(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> bool {
+    let Some(depth) = oracle_operand_depth(text) else {
+        return false;
+    };
+    if super::test_activation::activation_control(test).is_some() {
+        return false;
+    }
+    let calls = owner_protocol_entry_calls(text, test, owner);
+    if calls.is_empty() {
+        return false;
+    }
+    let wrappers: Vec<&str> = ORDER_PRESERVING_WRAPPERS
+        .into_iter()
+        .filter(|wrapper| !builtin_is_shadowed(test, wrapper))
+        .collect();
+    calls
+        .into_iter()
+        .any(|(start, open)| reaches_operand_depth(text, start, open, depth, &wrappers))
+}
+
 /// Relation for a dunder method owner (`__init__`, `__setitem__`, ...).
 ///
 /// Every class defines the same dunder names, so the bare name says nothing
@@ -591,6 +814,9 @@ fn dunder_method_relation(
     }
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
+    }
+    if protocol_entry_in_body(test, owner) {
+        return Some(PythonRelationKind::ProtocolEntryCall);
     }
     if test_constructs_class(test, owner, class) {
         return Some(
@@ -1138,7 +1364,7 @@ fn bracket_depth_at(text: &str, idx: usize) -> usize {
 /// Bracket depth of an asserted operand in an assertion's text: `0` in an
 /// `assert` statement, `1` inside an assertion call's arguments
 /// (`self.assertEqual(...)`). `None` when the text is neither shape.
-fn oracle_operand_depth(text: &str) -> Option<usize> {
+pub(super) fn oracle_operand_depth(text: &str) -> Option<usize> {
     if text
         .strip_prefix("assert")
         .and_then(|rest| rest.chars().next())
@@ -1167,7 +1393,13 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
     text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(text, idx)
             && !line_prefix_looks_like_comment_or_string(text, idx)
-            && reaches_operand_depth(text, idx, idx + needle.len() - 1, depth)
+            && reaches_operand_depth(
+                text,
+                idx,
+                idx + needle.len() - 1,
+                depth,
+                &MATERIALIZING_WRAPPERS,
+            )
     })
 }
 
@@ -1176,10 +1408,21 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// wrapper may ignore it (`always_true(utils.sign(0))`).
 const MATERIALIZING_WRAPPERS: [&str; 5] = ["list", "tuple", "set", "frozenset", "sorted"];
 
+/// Wrappers that keep the entry's element order. `sorted`/`set`/`frozenset`
+/// erase the ordering `__reversed__` determines, so a protocol entry under them
+/// asserts nothing about the owner.
+const ORDER_PRESERVING_WRAPPERS: [&str; 2] = ["list", "tuple"];
+
 /// Whether the call starting at `start` (its `(` at `open`) sits at the
-/// asserted operand `depth`, directly or only inside materializing wrappers
+/// asserted operand `depth`, directly or only inside the given `wrappers`
 /// that take it as their sole argument.
-fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) -> bool {
+fn reaches_operand_depth(
+    text: &str,
+    start: usize,
+    open: usize,
+    depth: usize,
+    wrappers: &[&str],
+) -> bool {
     let (mut start, mut open) = (start, open);
     loop {
         let here = bracket_depth_at(text, start);
@@ -1203,9 +1446,7 @@ fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) ->
             .rev()
             .find(|(_, ch)| !is_python_identifier_char(*ch))
             .map_or(0, |(at, ch)| at + ch.len_utf8());
-        if !MATERIALIZING_WRAPPERS.contains(&&before[name_start..])
-            || before[..name_start].ends_with('.')
-        {
+        if !wrappers.contains(&&before[name_start..]) || before[..name_start].ends_with('.') {
             return false;
         }
         (start, open) = (name_start, before.len());
