@@ -206,7 +206,14 @@ fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
         }
         let receiver = receiver_before(masked, at);
         let lets = lets_before(masked, at);
-        if expr_has_type(receiver, &lets, self_type) {
+        if expr_has_type(
+            receiver,
+            Scope {
+                lets: &lets,
+                body: masked,
+            },
+            self_type,
+        ) {
             return true;
         }
     }
@@ -316,7 +323,11 @@ fn macro_dispatch(
         };
         let args = split_top_level(masked, raw, open + 1, close);
         let lets = lets_before(masked, name_start);
-        if args_dispatch(&args, format_index, &lets, fmt_trait, self_type) {
+        let scope = Scope {
+            lets: &lets,
+            body: masked,
+        };
+        if args_dispatch(&args, format_index, scope, fmt_trait, self_type) {
             return true;
         }
     }
@@ -329,7 +340,7 @@ type Arg<'a> = (&'a str, &'a str);
 fn args_dispatch(
     args: &[Arg<'_>],
     format_index: usize,
-    lets: &str,
+    scope: Scope<'_>,
     fmt_trait: FmtTrait,
     self_type: &str,
 ) -> bool {
@@ -400,7 +411,7 @@ fn args_dispatch(
         return false;
     }
     resolved.iter().any(|(placeholder_trait, expr)| {
-        *placeholder_trait == Some(fmt_trait) && expr_has_type(expr, lets, self_type)
+        *placeholder_trait == Some(fmt_trait) && expr_has_type(expr, scope, self_type)
     })
 }
 
@@ -473,7 +484,7 @@ fn string_literal_content(raw: &str) -> Option<&str> {
 /// tuple struct or enum variant, or a `let` binding initialized so (or
 /// annotated `: self_type`) before the macro. Associated consts and factory
 /// functions (`T::LABEL`, `T::make()`) may have another type and are refused.
-fn expr_has_type(expr: &str, lets: &str, self_type: &str) -> bool {
+fn expr_has_type(expr: &str, scope: Scope<'_>, self_type: &str) -> bool {
     let mut expr = expr.trim();
     loop {
         let stripped = expr
@@ -489,7 +500,7 @@ fn expr_has_type(expr: &str, lets: &str, self_type: &str) -> bool {
         return false;
     }
     if expr.bytes().all(is_ident_byte) {
-        return expr == self_type || binding_has_type(lets, expr, self_type);
+        return expr == self_type || binding_has_type(scope, expr, self_type);
     }
     initializer_is_one_head_expr(expr) && constructs_self(expr, self_type)
 }
@@ -517,14 +528,24 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
     }
 }
 
-/// Occurrences of `binding` in a binding position (`let`, `for`, `if let`,
-/// `while let`, closure parameters, match arms). More than one means a later
-/// rebinding may change the type, so the binding stays untyped.
-fn binder_count(lets: &str, binding: &str) -> usize {
-    let bytes = lets.as_bytes();
+/// What a macro argument can be typed from: the statements finished before
+/// the macro (`lets`) and the whole masked test body (`body`).
+#[derive(Clone, Copy)]
+struct Scope<'a> {
+    lets: &'a str,
+    body: &'a str,
+}
+
+/// Occurrences of `binding` in a binding position anywhere in the masked
+/// test body: `let` / `if let` / `while let` patterns, `for` patterns,
+/// closure parameters, `fn` parameters and `match` arm patterns. Exactly
+/// one (the typed `let`) keeps the name typed; any other binder, even one
+/// opening the macro's own scope, may shadow it, so the name stays untyped.
+fn binder_count(body: &str, binding: &str) -> usize {
+    let bytes = body.as_bytes();
     let mut count = 0usize;
     let mut search = 0usize;
-    while let Some(at) = lets[search..].find(binding).map(|at| search + at) {
+    while let Some(at) = body[search..].find(binding).map(|at| search + at) {
         search = at + binding.len();
         let after = at + binding.len();
         let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
@@ -532,17 +553,19 @@ fn binder_count(lets: &str, binding: &str) -> usize {
         if !whole {
             continue;
         }
-        let line_start = lets[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-        let before = &lets[line_start..at];
-        // Pattern side only: after `let`/`for` and before `=`/`in`.
-        let after_keyword = |keyword: &str, end: &[&str]| {
+        let segment_start = body[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        let before = &body[segment_start..at];
+        let rest = body[after..].split([';', '{', '}']).next().unwrap_or("");
+        let pattern_of = |keyword: &str, stop: &str| {
             before
                 .rfind(keyword)
-                .is_some_and(|at| !end.iter().any(|stop| before[at..].contains(stop)))
+                .is_some_and(|keyword_at| !before[keyword_at..].contains(stop))
         };
-        let is_binder = after_keyword("let ", &["="])
-            || after_keyword("for ", &[" in "])
-            || before.matches('|').count() % 2 == 1;
+        let is_binder = pattern_of("let ", "=")
+            || pattern_of("for ", " in ")
+            || before.contains("fn ")
+            || before.matches('|').count() % 2 == 1
+            || (rest.contains("=>") && !before.contains("=>"));
         if is_binder {
             count += 1;
         }
@@ -550,8 +573,9 @@ fn binder_count(lets: &str, binding: &str) -> usize {
     count
 }
 
-fn binding_has_type(lets: &str, binding: &str, self_type: &str) -> bool {
-    if binder_count(lets, binding) != 1 {
+fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
+    let lets = scope.lets;
+    if binder_count(scope.body, binding) != 1 {
         return false;
     }
     let Some(statement) = last_let_statement(lets, binding) else {
@@ -1022,19 +1046,31 @@ mod tests {
     }
 
     #[test]
-    fn rebinding_after_the_typed_let_refuses() {
+    fn rebinding_in_scope_of_the_macro_refuses() {
         let owner = ["fmt::Debug for DecodeError"];
-        for tail in [
-            "let e = other();",
-            "for e in items {}",
-            "if let Some(e) = found {}",
-            "let f = |e| e;",
+        let typed = "let e = DecodeError::InvalidByte(0, 1);\n";
+        let fmt = "format!(\"{:?}\", e)";
+        for scoped in [
+            format!("if let Some(e) = found {{\n{fmt};\n}}"),
+            format!("for e in items {{\n{fmt};\n}}"),
+            format!("while let Some(e) = next() {{\n{fmt};\n}}"),
+            format!("let f = |e| {{ {fmt} }};"),
+            format!("match found {{ Some(e) => {fmt}, None => String::new() }};"),
+            format!("let e = other();\n{fmt};"),
+            format!("fn inner(e: u8) {{ {fmt}; }}"),
         ] {
-            let body =
-                format!("let e = DecodeError::InvalidByte(0, 1);\n{tail}\nformat!(\"{{:?}}\", e);");
-            // `;` ends statements; make the tail one so `lets` includes it.
-            let body = body.replace("{}\nformat", "{};\nformat");
+            let body = format!("{typed}{scoped}");
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
+        // An unrelated binder name leaves `e` typed.
+        let body = format!("{typed}if let Some(x) = found {{\n{fmt};\n}}");
+        assert!(direct(&reasons(&owner, 0, &[&body]), "t0"), "{body}");
+    }
+
+    #[test]
+    fn crate_qualified_variant_named_like_the_type_is_not_the_type() {
+        let owner = ["fmt::Debug for DecodeError"];
+        let body = "format!(\"{:?}\", crate::Error::DecodeError(inner));";
+        assert!(reasons(&owner, 0, &[body]).is_empty());
     }
 }

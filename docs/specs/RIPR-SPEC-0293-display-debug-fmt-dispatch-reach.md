@@ -69,6 +69,13 @@ link is established from syntax:
 5. The argument is built as the type by a struct literal, tuple struct, enum
    variant, the bare type name, or a `let` initialized that way or annotated
    with the type. Associated consts and factory functions are not typed.
+   Path prefixes before the type must be lowercase module segments, so a
+   variant named like the type (`Error::DecodeError(..)`,
+   `crate::Error::DecodeError(..)`) is not the type.
+6. A named operand is typed only when the test body binds that name exactly
+   once (the typed `let`). Any other binder (`if let`, `while let`, `for`,
+   closure or `fn` parameter, `match` arm, another `let`), even one opening
+   the macro's own scope, leaves it untyped.
 
 Existing shadow checks for the owner's type and trait still apply. Derived
 `Debug` has no indexed `fmt` owner and is out of scope.
@@ -84,6 +91,10 @@ Existing shadow checks for the owner's type and trait still apply. Derived
 - Discriminator: Display and Debug impls of one type are told apart.
 
 ## Non-Goals
+
+- A variant imported by name (`use Error::DecodeError;` then
+  `DecodeError(inner)`) is indistinguishable from the type by syntax and is
+  a known limitation of the bare-name form and is not refused.
 
 - Derived `Debug`, trait objects, generic dispatch, and values returned by
   calls whose type needs inference.
