@@ -2117,7 +2117,7 @@ fn ripr_artifact_disclosure(
     };
     let entries = advice_roots
         .iter()
-        .map(|root| format!("/{}/", diff::artifact_root_pathspec(root)))
+        .map(|root| diff::artifact_root_gitignore_entry(root))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -2739,6 +2739,14 @@ mod tests {
         }
         assert!(file_is_eol_only_churn(file, &parsed.raw_line1_bom_paths));
         Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_disclosure_escapes_gitignore_metacharacters() {
+        let files = [changed_file("build/cache*/nested/a.json")];
+        let roots = vec![PathBuf::from("build/cache*")];
+        let message = ripr_artifact_disclosure(&roots, &files);
+        assert!(message.contains(r"Add /build/cache\*/ to"), "{message}");
     }
 
     #[test]
