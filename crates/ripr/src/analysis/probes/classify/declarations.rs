@@ -101,17 +101,32 @@ fn supported_declaration(node: &SyntaxNode) -> bool {
             .and_then(|list| list.syntax().parent())
             .is_some_and(|parent| ast::Fn::can_cast(parent.kind()));
     }
+    // A whole enum variant that carries named fields (`Bad { offset: usize },`
+    // on one line) is a type declaration, never a construction (#8999). It
+    // may own the line only when it holds no expression (discriminant) or
+    // macro syntax.
+    if ast::Variant::can_cast(node.kind()) {
+        return node
+            .children()
+            .any(|child| ast::RecordFieldList::can_cast(child.kind()))
+            && !node.descendants().any(|child| {
+                ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+            });
+    }
     if !ast::RecordField::can_cast(node.kind()) {
         return false;
     }
-    // Only named struct fields are admitted here. Enum/union/tuple and macro
-    // contexts have separate contracts; a real RecordExprField never matches.
-    let owned_by_struct = node
+    // Named struct and enum-variant fields are admitted here. Union, tuple
+    // and macro contexts have separate contracts; a real RecordExprField
+    // never matches.
+    let owned_by_declaration = node
         .parent()
         .and_then(ast::RecordFieldList::cast)
         .and_then(|list| list.syntax().parent())
-        .is_some_and(|parent| ast::Struct::can_cast(parent.kind()));
-    owned_by_struct
+        .is_some_and(|parent| {
+            ast::Struct::can_cast(parent.kind()) || ast::Variant::can_cast(parent.kind())
+        });
+    owned_by_declaration
         && !node.descendants().any(|child| {
             ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
         })
