@@ -99,6 +99,39 @@ fn comment_and_string_module_mentions_do_not_register_tests() -> Result<(), Stri
     Ok(())
 }
 
+/// rustc drops a leading UTF-8 BOM, so a BOM-prefixed module file must walk
+/// exactly like the same file without one (#9009).
+#[test]
+fn a_leading_bom_does_not_change_the_module_walk() -> Result<(), String> {
+    let bom = "\u{feff}";
+    let fixture = Fixture::new("#[cfg(test)] mod tests;", "src/tests/data/used_tests.rs")?;
+    fixture.write("src/tests/mod.rs", &format!("{bom}/* mod used_tests; */\n"))?;
+    fixture.write(
+        "src/lib.rs",
+        &format!("{bom}pub mod used;\n#[cfg(test)] mod tests;\n"),
+    )?;
+    fixture.write("src/used.rs", &format!("{bom}{OWNER}"))?;
+    let finding = fixture.finding()?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
+
+    let fixture = Fixture::new("#[cfg(test)] mod tests;", "src/tests/data/used_tests.rs")?;
+    fixture.write(
+        "src/tests/mod.rs",
+        &format!("{bom}#[path = \"data/used_tests.rs\"] mod renamed;\n"),
+    )?;
+    let finding = fixture.finding()?;
+    assert_eq!(
+        finding
+            .related_tests
+            .iter()
+            .map(|test| test.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["discount_applies"]
+    );
+    Ok(())
+}
+
 #[test]
 fn real_cfg_and_renamed_modules_keep_collected_tests() -> Result<(), String> {
     for declaration in [
