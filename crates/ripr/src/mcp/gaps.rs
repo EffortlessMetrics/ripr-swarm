@@ -38,9 +38,10 @@ pub(crate) struct RepairFixSite {
 /// 1. candidate actionability — the shared `#3281` predicate
 ///    [`Finding::is_candidate_actionable`];
 /// 2. an established discriminator — the canonical gap names a non-empty
-///    normalized discriminator and no producer-named missing discriminator
-///    exists. A producer that names its missing discriminators refuses as
-///    `missing_discriminator`; a finding whose canonical gap was withheld
+///    normalized discriminator, and any producer-named missing discriminator
+///    sits on a weakly exposed finding, where the named value is the repair
+///    target (#8717). A producer that names its missing discriminators on
+///    any other class refuses as `missing_discriminator`; a finding whose canonical gap was withheld
 ///    behind the finding's own typed static limitation refuses as
 ///    `static_limitation`; only a producer that names no missing
 ///    discriminator and populates no canonical gap at all for the language
@@ -102,7 +103,16 @@ impl RepairReadiness {
                 || finding.missing.iter().any(|entry| {
                     entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX)
                 });
-        if producer_named_missing_discriminator {
+        // A named missing discriminator on a weakly exposed finding is the
+        // repair target itself (#8717): the existing test reaches the changed
+        // behavior without pinning the named value, and `ripr repair` extends
+        // that test. It stays a refusal for every other class, where the
+        // missing value does not describe a weak-test repair. Whether the
+        // item is actually startable remains the shared seam validator's
+        // decision, conjoined after these finding-level gates.
+        let named_missing_is_repair_target = producer_named_missing_discriminator
+            && finding.class == crate::domain::ExposureClass::WeaklyExposed;
+        if producer_named_missing_discriminator && !named_missing_is_repair_target {
             return Self {
                 ready: false,
                 fix_site: None,
@@ -185,7 +195,7 @@ impl RepairReadiness {
                 "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
             }
             Some("missing_discriminator") => {
-                "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator)"
+                "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator on a finding that is not weakly exposed)"
             }
             Some("discriminator_not_populated_for_language") => {
                 "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
@@ -1102,12 +1112,60 @@ mod tests {
                 flow_sink: None,
             },
         );
+        // #8717: on a weakly exposed finding the named value is the repair
+        // target, so the discriminator gate passes and the finding is ready.
         let item = GapItem::from_finding(&named_missing, Path::new("."))?;
+        if !item.repair_readiness.ready || item.repair_readiness.ineligibility.is_some() {
+            return Err(format!(
+                "a weak finding with a named missing discriminator is the repair target: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // Discriminating negative: the same named value on any non-weak class
+        // keeps the typed refusal.
+        for class in [
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            crate::domain::ExposureClass::NoStaticPath,
+            crate::domain::ExposureClass::InfectionUnknown,
+            crate::domain::ExposureClass::PropagationUnknown,
+            crate::domain::ExposureClass::StaticUnknown,
+            crate::domain::ExposureClass::Exposed,
+        ] {
+            let mut other = named_missing.clone();
+            other.class = class.clone();
+            let item = GapItem::from_finding(&other, Path::new("."))?;
+            if item.repair_readiness.ready
+                || item.repair_readiness.ineligibility != Some("missing_discriminator")
+            {
+                return Err(format!(
+                    "a named missing discriminator on {class:?} must stay the typed refusal: {:?}",
+                    item.repair_readiness.ineligibility
+                ));
+            }
+        }
+        // A weak finding whose canonical gap is absent stays refused even
+        // with a named missing discriminator.
+        let mut ungapped = named_missing.clone();
+        ungapped.canonical_gap = None;
+        let item = GapItem::from_finding(&ungapped, Path::new("."))?;
         if item.repair_readiness.ready
-            || item.repair_readiness.ineligibility != Some("missing_discriminator")
+            || item.repair_readiness.ineligibility
+                != Some("discriminator_not_populated_for_language")
         {
             return Err(format!(
-                "a producer-named missing discriminator must stay the typed refusal: {:?}",
+                "a named missing discriminator cannot substitute for a populated gap: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // The fix-site gate still applies to the weak repair target.
+        let mut no_site = named_missing.clone();
+        no_site.related_tests.clear();
+        let item = GapItem::from_finding(&no_site, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+        {
+            return Err(format!(
+                "a weak finding without a fix site must stay refused: {:?}",
                 item.repair_readiness.ineligibility
             ));
         }
@@ -1336,7 +1394,7 @@ mod tests {
     /// clearing it (the boundary got pinned by a test) lets the same finding
     /// through the discriminator gate.
     #[test]
-    fn populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing()
+    fn populated_rust_gap_opens_the_discriminator_gate_for_weak_named_or_nothing_missing()
     -> Result<(), String> {
         let mut boundary = finding()?;
         boundary.language = Some(crate::domain::LanguageId::Rust);
@@ -1357,12 +1415,25 @@ mod tests {
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
             });
+        // Weak + named missing discriminator + populated gap: the repair
+        // target, ready at the finding level (#8717).
         let item = GapItem::from_finding(&boundary, Path::new("."))?;
+        if !item.repair_readiness.ready {
+            return Err(format!(
+                "a weak Rust finding naming its missing discriminator with the gap populated is the repair target: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // The same named value on a non-weak class keeps the typed refusal
+        // ahead of the populated gap.
+        let mut unrevealed = boundary.clone();
+        unrevealed.class = crate::domain::ExposureClass::ReachableUnrevealed;
+        let item = GapItem::from_finding(&unrevealed, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
             return Err(format!(
-                "a producer-named missing discriminator must keep the typed refusal even with the gap populated: {:?}",
+                "a named missing discriminator on a non-weak class must keep the typed refusal even with the gap populated: {:?}",
                 item.repair_readiness.ineligibility
             ));
         }

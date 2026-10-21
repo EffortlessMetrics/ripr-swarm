@@ -1220,11 +1220,15 @@ mod tests {
     }
 
     #[test]
-    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+    fn producer_named_missing_discriminator_on_a_non_weak_class_keeps_its_typed_refusal()
+    -> Result<(), String> {
         // The unpopulated state must not swallow the honest actionable
         // refusal: a producer that names the missing discriminator still
         // answers `missing_discriminator`.
+        // A non-weak class: on a weakly exposed finding the named value is
+        // the repair target and no longer refuses (#8717).
         let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.class = crate::domain::ExposureClass::ReachableUnrevealed;
         named_missing.canonical_gap = None;
         named_missing.activation.missing_discriminators.push(
             crate::domain::MissingDiscriminatorFact {

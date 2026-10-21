@@ -3456,3 +3456,154 @@ fn gap_details_disclose_pre_cap_related_test_totals_across_refreshes() -> Result
     );
     Ok(())
 }
+
+/// #8717 weak-boundary fixture: `is_adult` narrows `> 18` to `>= 18` and the
+/// lone test `assert!(is_adult(30))` never pins the boundary, so the seam is a
+/// weakly gripped predicate boundary the CLI repair gate admits.
+fn install_weak_boundary_fixture() -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-weak-boundary-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"weak-boundary-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"weak_boundary_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/adult.rs"),
+        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "feat"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "widen boundary")?;
+    Ok(root)
+}
+
+/// #8717: a weakly gripped boundary that names its missing discriminator is
+/// the repair target. MCP reports it repair-ready and binds an `awaiting_edit`
+/// attempt exactly when `ripr repair` admits the same item, and an item the
+/// CLI refuses (the sibling return-value gap on the same line) stays refused
+/// with the shared validator's typed reason and no attempt.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_admits()
+-> Result<(), String> {
+    const BOUNDARY: &str = "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18";
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_weak_boundary_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    if !items.iter().any(|item| item["canonical_id"] == BOUNDARY) {
+        return Err(format!("fixture lost the boundary item {BOUNDARY}: {list}"));
+    }
+    let mut cli_admitted = 0;
+    let mut cli_refused = 0;
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        if item["class"] != "weakly_exposed" {
+            return Err(format!("fixture items must be weakly exposed: {item}"));
+        }
+        let gap = session.call_tool(
+            &format!("gap-{id}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        // Stimulus precondition: the producer names the missing value.
+        if gap["item"]["missing"]
+            .as_array()
+            .is_none_or(|missing| missing.is_empty())
+        {
+            return Err(format!(
+                "fixture item {id} must name a missing value: {gap}"
+            ));
+        }
+        let finding_id = gap["item"]["finding_id"]
+            .as_str()
+            .ok_or("gap omitted finding_id")?
+            .to_string();
+        let prepare = session.call_tool(
+            &format!("prepare-{id}"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
+            || prepare["repair_packet_ready"] != item["repair_packet_ready"]
+        {
+            return Err(format!(
+                "MCP surfaces disagree on readiness for {id}: {item} {gap} {prepare}"
+            ));
+        }
+        match cli_repair_refusal(&root, &finding_id)? {
+            None => {
+                cli_admitted += 1;
+                if item["repair_packet_ready"] != true
+                    || !item["repair_ineligibility"].is_null()
+                    || prepare["attempt"]["state"] != "awaiting_edit"
+                    || prepare["fix_site"]["file"] != "tests/adult.rs"
+                {
+                    return Err(format!(
+                        "`ripr repair` admits {id}; MCP must be ready with an attempt and the weak test as fix site: {item} {prepare}"
+                    ));
+                }
+            }
+            Some(refusal) => {
+                cli_refused += 1;
+                if item["repair_packet_ready"] != false
+                    || !prepare["attempt"].is_null()
+                    || item["repair_ineligibility"].as_str().is_none()
+                    || item["repair_ineligibility"] == "missing_discriminator"
+                {
+                    return Err(format!(
+                        "`ripr repair` refuses {id} ({refusal}); MCP must stay not-ready with the shared validator's typed reason and no attempt: {item} {prepare}"
+                    ));
+                }
+            }
+        }
+        if id == BOUNDARY && item["repair_packet_ready"] != true {
+            return Err(format!(
+                "the weak boundary naming its discriminator must be repair-ready: {item}"
+            ));
+        }
+    }
+    if cli_admitted == 0 || cli_refused == 0 {
+        return Err(format!(
+            "control needs one CLI-admitted and one CLI-refused item; admitted={cli_admitted} refused={cli_refused}"
+        ));
+    }
+    Ok(())
+}
