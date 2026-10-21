@@ -16,6 +16,7 @@ use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
+use super::macro_definition::{definition_at, macro_definitions};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
@@ -179,12 +180,34 @@ pub(crate) fn probes_for_file_with_relations(
         added_type_bound_lines(index, changed)
     };
 
+    // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
+    // token text, not a Rust expression. One `static_unknown` probe per
+    // definition names that limit; no expression-family probe is seeded.
+    let added_macros = find_file_facts(index, &changed.path)
+        .map(|facts| macro_definitions(&facts.source))
+        .unwrap_or_default();
+    let removed_macros = old_source.map(macro_definitions).unwrap_or_default();
+    let mut macro_unknown_seeded = std::collections::BTreeSet::<String>::new();
+
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
         if should_ignore_changed_line(text)
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
         {
+            continue;
+        }
+        if let Some(definition) = definition_at(&added_macros, added.new_side_line) {
+            if macro_unknown_seeded.insert(definition.name.clone()) {
+                let before = removed_before(added.new_side_line, text, changed, &added_run_starts);
+                probes.push(SeededProbe::from_probe(build_probe(
+                    &build_context,
+                    added,
+                    ProbeFamily::StaticUnknown,
+                    before,
+                    Some(text.to_string()),
+                )));
+            }
             continue;
         }
         if changed_line_is_test_evidence(
@@ -488,6 +511,18 @@ pub(crate) fn probes_for_file_with_relations(
         // the old guard; probing the old line again would read the same
         // guard as deleted behavior.
         if guard_edit_counterparts.contains(&removed.line) {
+            continue;
+        }
+        if let Some(definition) = definition_at(&removed_macros, removed.line) {
+            if macro_unknown_seeded.insert(definition.name.clone()) {
+                probes.push(SeededProbe::from_probe(build_probe(
+                    &build_context,
+                    removed,
+                    ProbeFamily::StaticUnknown,
+                    Some(text.to_string()),
+                    None,
+                )));
+            }
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -4984,5 +5019,84 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+    fn macro_source_index(path: &Path, source: &str) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: std::collections::BTreeMap::from([(
+                path.to_path_buf(),
+                crate::analysis::FileFacts {
+                    path: path.to_path_buf(),
+                    source: source.into(),
+                    ..crate::analysis::FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        })
+    }
+
+    /// #8999 item 6 (log 756c279): changed matcher/transcriber lines of a
+    /// `macro_rules!` definition are token text, so they seed one honest
+    /// `static_unknown` probe per definition, never `field_construction`,
+    /// `match_arm` or `call_deletion`; an ordinary fn body beside the
+    /// definition keeps its expression probe.
+    #[test]
+    fn macro_rules_definition_lines_seed_one_static_unknown_not_expression_probes() {
+        let source = "macro_rules! info {\n    ($args:ident) => {\n        log!(Level::Info, $args)\n    };\n    ($name:ident: $ty:ty) => {\n        $name { field: $ty }\n    };\n}\nfn check(n: usize) -> bool {\n    n >= 4\n}\n";
+        let path = PathBuf::from("src/macros.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(2, "($args:ident) => {"),
+                line(3, "log!(Level::Info, $args)"),
+                line(5, "($name:ident: $ty:ty) => {"),
+                line(6, "$name { field: $ty }"),
+                line(10, "n >= 4"),
+            ],
+            removed_lines: vec![line(10, "n > 4")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let in_macro = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 8)
+            .collect::<Vec<_>>();
+        assert_eq!(in_macro.len(), 1, "one probe per definition: {in_macro:?}");
+        assert_eq!(in_macro[0].family, ProbeFamily::StaticUnknown);
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
+            "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// Removed-only macro definition text is also macro text.
+    #[test]
+    fn removed_macro_rules_lines_do_not_seed_expression_probes() {
+        let path = PathBuf::from("src/macros.rs");
+        // New file has the (already edited) macro; old text is reconstructed.
+        let source = "macro_rules! m {\n    () => {\n        1\n    };\n}\n";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "$name { field: $ty }".to_string(),
+            }],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "{probes:?}"
+        );
     }
 }
