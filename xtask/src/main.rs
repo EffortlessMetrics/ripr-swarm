@@ -3633,32 +3633,92 @@ fn pr_body_template_missing_lines(body: &str) -> Vec<&'static str> {
             if value.is_empty() {
                 return true;
             }
-            PR_BODY_GATED_LINES.contains(line) && pr_body_value_is_placeholder(value)
+            if PR_BODY_GATED_LINES.contains(line) {
+                return pr_body_value_is_placeholder(value);
+            }
+            pr_body_value_is_unfilled_placeholder(value)
         })
         .collect()
 }
 
-fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
-    let label = template_line.trim_end_matches(':');
-    body.lines().find_map(|raw| {
-        let trimmed = raw.trim().trim_start_matches('\u{feff}');
-        let line = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-        let (head, value) = line.split_once(':')?;
-        head.trim()
-            .eq_ignore_ascii_case(label)
-            .then_some(value.trim())
-    })
+/// Labels admission accepts for a template line, in admission's order.
+/// Mirrors `LABELS` in `candidate_admission.py:32-49`: the canonical
+/// template label first, then any shorter/alternate label admission
+/// also accepts at line start.
+fn pr_body_template_labels(template_line: &str) -> Vec<&str> {
+    let primary = template_line.trim_end_matches(':');
+    let mut labels = vec![primary];
+    match template_line {
+        "Governing issue or accepted claim:" => labels.push("Owner / governing claim"),
+        "Acceptance delta (one sentence):" => labels.push("Acceptance delta"),
+        "Proposed replacement of PR (if any; not yet accepted):" => {
+            labels.push("Proposed replacement of PR");
+        }
+        "Accepted winner and losing candidate disposition (when decided):" => {
+            labels.push("Accepted winner and losing candidate disposition");
+        }
+        _ => {}
+    }
+    labels
 }
 
-fn pr_body_value_is_placeholder(value: &str) -> bool {
-    let normalized = value
+fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
+    // Mirror `extract_fields` in `candidate_admission.py:62-75` exactly:
+    // a line counts only when its whitespace-stripped form starts with
+    // `label:` (case-insensitive). Bulleted (`- Label: ...`) and spaced
+    // (`Label : ...`) forms therefore do not count. The first non-empty
+    // value wins; a blank occurrence does not mask a later filled one.
+    let labels: Vec<String> = pr_body_template_labels(template_line)
+        .iter()
+        .map(|label| format!("{}:", label.to_lowercase()))
+        .collect();
+    let mut saw_match = false;
+    for raw in body.lines() {
+        let line = raw.trim().trim_start_matches('\u{feff}');
+        let folded = line.to_lowercase();
+        for prefix in &labels {
+            if folded.starts_with(prefix.as_str()) {
+                saw_match = true;
+                let Some(value) = line.get(prefix.len()..) else {
+                    continue;
+                };
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+                break;
+            }
+        }
+    }
+    saw_match.then_some("")
+}
+
+fn pr_body_normalized_value(value: &str) -> String {
+    // Mirror `normalize` in `candidate_admission.py:57-59`.
+    value
         .trim()
         .trim_matches('`')
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .to_lowercase();
+        .to_lowercase()
+}
+
+fn pr_body_value_is_placeholder(value: &str) -> bool {
+    // Mirror `invalid` in `candidate_admission.py:78-80` over
+    // `PLACEHOLDERS` (`candidate_admission.py:19-31`).
+    let normalized = pr_body_normalized_value(value);
     PR_BODY_PLACEHOLDERS.contains(&normalized.as_str()) || normalized.starts_with('<')
+}
+
+/// Unfilled-template markers for the non-gated template lines. Unlike
+/// the admission-gated lines, these lines may legitimately record an
+/// explicit non-applicable value such as `none` or `n/a`; only the
+/// still-unfilled markers (`TBD`, `<...>`, ...) count as missing.
+fn pr_body_value_is_unfilled_placeholder(value: &str) -> bool {
+    let normalized = pr_body_normalized_value(value);
+    normalized.starts_with('<')
+        || matches!(normalized.as_str(), "tbd" | "todo" | "pending" | "unknown")
 }
 
 /// Resolve the optional offline PR-body input for `check-pr-shape`.
@@ -20276,11 +20336,30 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
 }
 
 fn pr_shape_report_body(warnings: &[String]) -> String {
-    let status = if warnings.is_empty() { "pass" } else { "warn" };
+    // A PR-body template failure is a failed check, not an advisory
+    // warning: `check_pr_shape_with_args` returns `Err` for it, so the
+    // report status must agree (`fail`) in body-file mode. Other shape
+    // warnings remain advisory (`warn`).
+    let body_failed = warnings
+        .iter()
+        .any(|warning| warning.contains("PR body is missing or has a placeholder value for"));
+    let status = if body_failed {
+        "fail"
+    } else if warnings.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    };
     let mut body = format!("# ripr PR shape report\n\nStatus: {status}\n\n");
-    body.push_str(
-        "This report is advisory. It highlights likely missing evidence before review.\n\n",
-    );
+    if body_failed {
+        body.push_str(
+            "This report records a failed PR-body check. It highlights likely missing evidence before review.\n\n",
+        );
+    } else {
+        body.push_str(
+            "This report is advisory. It highlights likely missing evidence before review.\n\n",
+        );
+    }
     body.push_str("## Warnings\n\n");
     if warnings.is_empty() {
         body.push_str("None detected.\n");
