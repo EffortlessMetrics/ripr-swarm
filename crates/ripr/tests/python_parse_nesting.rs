@@ -226,5 +226,16 @@ fn unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget() -> Result
             "unbalanced brackets inside string literals must not count as nesting\n{stdout}"
         ));
     }
+    // Absence of the budget text alone could also mean the run produced
+    // nothing: require that the Python project was analyzed and that the
+    // table file was not refused.
+    if !stdout.contains("src/app.py") {
+        return Err(format!("expected a finding for the changed file\n{stdout}"));
+    }
+    if stdout.contains("language_scope_unsupported") || stdout.contains("src/deep.py") {
+        return Err(format!(
+            "the bracket-literal table must be analyzed, not refused or limited\n{stdout}"
+        ));
+    }
     Ok(())
 }
