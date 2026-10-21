@@ -792,6 +792,8 @@ reason = "pilot start-command root rendering; not an exposure-verdict example a 
 id = "RIPR-SPEC-0292"
 scope = "out"
 reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
