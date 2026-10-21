@@ -479,6 +479,12 @@ mod tests {
                     .to_string()
             )
         );
+        assert_eq!(
+            CliCommand::from_parts(Some("--hepl"), Vec::new()),
+            Err(
+                "unknown command \"--hepl\". Did you mean `--help`? Run `ripr --help`.".to_string()
+            )
+        );
         // A flag nowhere near a top-level flag gets no invented suggestion.
         assert_eq!(
             CliCommand::from_parts(Some("--bogus"), Vec::new()),
