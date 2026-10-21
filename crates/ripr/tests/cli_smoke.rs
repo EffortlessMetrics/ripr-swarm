@@ -15284,8 +15284,12 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     let recovered: serde_json::Value =
         serde_json::from_str(&recovered_baseline).map_err(|e| e.to_string())?;
     assert_eq!(recovered["source_report"], original["source_report"]);
-    assert_eq!(recovered["entries"], original["entries"]);
     assert_eq!(recovered["summary"]["entries"], 1);
+    assert_eq!(recovered["entries"].as_array().map(Vec::len), Some(1));
+    // A retry has a fresh timestamp; its debt identity and evidence must match.
+    for field in ["identity", "evidence", "decision", "path"] {
+        assert_eq!(recovered["entries"][0][field], original["entries"][0][field]);
+    }
     assert!(!workspace.join(".ripr/gate-baseline.json").exists());
 
     let dry_run_out = workspace.join(".ripr/dry-run-baseline.json");
