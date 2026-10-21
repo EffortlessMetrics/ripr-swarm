@@ -2077,7 +2077,7 @@ fn scan_macro_sites(
                     }
                 },
             );
-            (*path, union, singleton)
+            ((*path).clone(), union, singleton)
         })
     };
     let per_file: Vec<_> = map_scans(files, scan_file).into_iter().flatten().collect();
