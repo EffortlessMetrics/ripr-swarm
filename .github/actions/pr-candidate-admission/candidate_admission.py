@@ -139,7 +139,8 @@ def dependabot_identity(current: dict[str, Any]) -> dict[str, str] | None:
 
     Dependabot writes its own PR body and cannot carry the template lines, so
     the claim is the dependency policy in docs/CI.md. The delta names the update
-    branch so sibling updates never share an identity. Only the GitHub-attested
+    branch. Peers are compared only on identity lines in their own bodies, so a
+    derived identity never competes with another Dependabot PR. Only the GitHub-attested
     bot author on a dependabot/ branch of this repository qualifies; a fork or
     a human-authored PR must still write the lines itself.
     """
@@ -482,6 +483,7 @@ def self_test() -> None:
     admitted = run(fixture(body="Bumps markdown-it.", head=head, **bump), [])
     assert admitted["status"] == "admitted"
     assert admitted["claim"] == "docs/ci.md dependency update policy"
+    assert admitted["acceptance_delta"] == f"dependency update {bump['ref']}".casefold()
     sibling = fixture(
         number=11,
         body="Bumps another.",
