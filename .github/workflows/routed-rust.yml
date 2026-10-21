@@ -61,6 +61,7 @@ jobs:
           GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
@@ -68,7 +69,13 @@ jobs:
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
           idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            # A queued PR is built from the base repository's queue branch, so a
+            # fork-authored PR is only visible through the PR itself.
+            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || HEAD_REPO="unresolved"
+            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
+          fi
+          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
           elif runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)"; then
             runner_query=ok

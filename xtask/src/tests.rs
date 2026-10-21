@@ -11505,6 +11505,30 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&queue_unbound)
     );
 
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "requires exactly one queued PR per group",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     let cancellation_disabled = workflow.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",

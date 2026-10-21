@@ -1068,6 +1068,26 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             ".github/workflows/routed-rust.yml admission must resolve the queued PR from the merge-group ref (`{ROUTED_RUST_QUEUE_ENTRY_SNIPPET}`) so claim and scope admission (#8192) still bind the merged candidate"
         ));
     }
+    for (label, snippet) in [
+        (
+            "forward the queued PR's labels to the gate",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "apply the fork guard to queued PRs before selecting self-hosted runners",
+            "{ [ \"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\" != \"$REPOSITORY\" ]",
+        ),
+        (
+            "refuse merge groups that carry more than one queued PR",
+            "candidate admission requires exactly one queued PR per group",
+        ),
+    ] {
+        if !workflow.contains(snippet) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml must {label} (`{snippet}`) (#4986)"
+            ));
+        }
+    }
     let ready_only = [ROUTED_RUST_READY_EVENT];
     let unexpected: Vec<&str> = types
         .iter()
