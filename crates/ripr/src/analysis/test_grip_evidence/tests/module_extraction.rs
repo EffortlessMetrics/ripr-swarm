@@ -176,7 +176,6 @@ fn semantic_projection(seam: &RepoSeam, evidence: &TestGripEvidence) -> serde_js
     })
 }
 
-#[test]
 fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Result<(), String> {
     let mut baseline = None;
     for placement in PLACEMENTS {
@@ -237,7 +236,6 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
     Ok(())
 }
 
-#[test]
 fn module_extraction_same_named_sibling_cannot_observe_owner() -> Result<(), String> {
     for placement in PLACEMENTS {
         let (_root, index, seam) = motion_case(placement, 9, true, false)?;
@@ -255,7 +253,6 @@ fn module_extraction_same_named_sibling_cannot_observe_owner() -> Result<(), Str
     Ok(())
 }
 
-#[test]
 fn module_extraction_changed_value_keeps_semantic_discriminator() -> Result<(), String> {
     for placement in PLACEMENTS {
         // The current contradiction authority deliberately leaves qualified
@@ -286,7 +283,6 @@ fn module_extraction_changed_value_keeps_semantic_discriminator() -> Result<(), 
     Ok(())
 }
 
-#[test]
 fn module_extraction_imported_sibling_stays_unrelated() -> Result<(), String> {
     for placement in PLACEMENTS {
         let (_root, index, seam) = motion_case(placement, 9, true, true)?;
@@ -299,7 +295,6 @@ fn module_extraction_imported_sibling_stays_unrelated() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
 fn module_extraction_local_function_shadows_imported_owner() -> Result<(), String> {
     for placement in PLACEMENTS {
         let (_root, index, seam) =
@@ -319,7 +314,6 @@ fn module_extraction_local_function_shadows_imported_owner() -> Result<(), Strin
     Ok(())
 }
 
-#[test]
 fn module_extraction_private_child_is_not_accessible_to_parent_observer() -> Result<(), String> {
     for placement in [Placement::InlineChild, Placement::FileChild] {
         // Intentionally inaccessible Rust: parsing a spelled path must not
@@ -341,7 +335,6 @@ fn module_extraction_private_child_is_not_accessible_to_parent_observer() -> Res
     Ok(())
 }
 
-#[test]
 fn module_extraction_ambiguous_import_is_not_an_established_observer() -> Result<(), String> {
     for placement in PLACEMENTS {
         // Duplicate bindings are deliberately invalid/ambiguous input. A
@@ -363,7 +356,6 @@ fn module_extraction_ambiguous_import_is_not_an_established_observer() -> Result
     Ok(())
 }
 
-#[test]
 fn module_extraction_pub_crate_keeps_existing_direct_relation() -> Result<(), String> {
     for placement in [Placement::InlineChild, Placement::FileChild] {
         let (_ordinary_root, ordinary_index, ordinary_seam) =
@@ -378,4 +370,162 @@ fn module_extraction_pub_crate_keeps_existing_direct_relation() -> Result<(), St
         );
     }
     Ok(())
+}
+
+fn module_extraction_unit_kind_requires_default_target_authority() -> Result<(), String> {
+    for (package, observer, manifest_tail, expected) in [
+        ("", "src/lib.rs", "", TestKind::InlineUnit),
+        ("", "src/main.rs", "", TestKind::InlineUnit),
+        ("member", "src/lib.rs", "", TestKind::InlineUnit),
+        (
+            "",
+            "src/lib.rs",
+            "autolib = false\n\n[[test]]\nname = \"contract\"\npath = \"src/lib.rs\"\n",
+            TestKind::Integration,
+        ),
+        ("", "tests/observer.rs", "", TestKind::Integration),
+        // A non-root source file retains the existing conservative fallback.
+        // The manifest predicate alone must not certify arbitrary src/*.rs.
+        ("", "src/observer.rs", "", TestKind::Integration),
+    ] {
+        let root = claim_index_fixture_root(4680)?;
+        let package_path = PathBuf::from(package);
+        if !package.is_empty() {
+            fs::write(
+                root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"member\"]\nresolver = \"3\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        fs::create_dir_all(root.join(&package_path).join("src"))
+            .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join(&package_path).join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"module-motion-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{manifest_tail}"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        let owner_file = package_path.join("src/child.rs");
+        let observer_file = package_path.join(observer);
+        fs::write(
+            root.join(&owner_file),
+            "pub(crate) fn compute() -> i32 { 9 }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let mut files = vec![owner_file.clone(), observer_file.clone()];
+        let declarations = match observer {
+            "src/lib.rs" => "mod child;\n",
+            "src/main.rs" => "mod child;\nfn main() {}\n",
+            "tests/observer.rs" => "#[path = \"../src/child.rs\"] mod child;\n",
+            _ => "",
+        };
+        if observer == "src/observer.rs" {
+            let library = package_path.join("src/lib.rs");
+            fs::write(
+                root.join(&library),
+                "mod child;\n#[cfg(test)] mod observer;\n",
+            )
+            .map_err(|error| error.to_string())?;
+            files.push(library);
+        }
+        fs::create_dir_all(
+            root.join(&observer_file)
+                .parent()
+                .ok_or("observer parent")?,
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join(&observer_file),
+            format!(
+                "{declarations}#[cfg(test)] mod tests {{\n#[test]\nfn exact_value() {{ assert_eq!(crate::child::compute(), 9); }}\n}}\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        let index = build_index(&root, &files)?;
+        assert_eq!(index.tests().len(), 1, "{package}/{observer}");
+        let seam = inventory_seams_from_index(&[owner_file], &index)
+            .into_iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or("owner return seam")?;
+        // This exercises the identity producer directly: relation admission
+        // is covered by the paired motion fixture, not inferred from kind.
+        let context = CompactGripContext::new(&index);
+        let target = test_target_evidence(
+            &context,
+            &seam,
+            &index.tests()[0],
+            RelationReason::DirectOwnerCall,
+        )
+        .ok_or("current indexed target")?;
+        assert_eq!(target.file(), observer_file);
+        assert_eq!(target.test_kind(), expected, "{package}/{observer}");
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_controls() -> Result<(), String> {
+    // Hosted diagnostic execution is fail-fast across test subjects. Keep all
+    // of this paired fixture's controls observable in one subject, while any
+    // error or panic still fails the subject. No failed control is ignored.
+    type Probe = fn() -> Result<(), String>;
+    let probes: [(&str, Probe); 9] = [
+        (
+            "direct_observer",
+            module_extraction_parent_inline_and_file_child_keep_direct_observer,
+        ),
+        (
+            "qualified_sibling",
+            module_extraction_same_named_sibling_cannot_observe_owner,
+        ),
+        (
+            "changed_value",
+            module_extraction_changed_value_keeps_semantic_discriminator,
+        ),
+        (
+            "imported_sibling",
+            module_extraction_imported_sibling_stays_unrelated,
+        ),
+        (
+            "local_shadow",
+            module_extraction_local_function_shadows_imported_owner,
+        ),
+        (
+            "private_child",
+            module_extraction_private_child_is_not_accessible_to_parent_observer,
+        ),
+        (
+            "ambiguous_import",
+            module_extraction_ambiguous_import_is_not_an_established_observer,
+        ),
+        (
+            "pub_crate",
+            module_extraction_pub_crate_keeps_existing_direct_relation,
+        ),
+        (
+            "target_authority",
+            module_extraction_unit_kind_requires_default_target_authority,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, probe) in probes {
+        match std::panic::catch_unwind(probe) {
+            Ok(Ok(())) => eprintln!("module-motion probe {name}: PASS"),
+            Ok(Err(error)) => failures.push(format!("{name}: {error}")),
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("non-string panic");
+                failures.push(format!("{name}: {message}"));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
