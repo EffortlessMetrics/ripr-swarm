@@ -2639,7 +2639,28 @@ integer sets the budget explicitly. An unparseable value fails the run
 `schema_version` (additive optional member).
 
 When the budget engages, the document carries one `run_limitations[]` entry and
-is never complete:
+is never complete.
+
+The existing `analysis_outcome` envelope also carries `document_complete: false`,
+`findings_rendered` and `findings_total`. These optional fields describe the
+rendered document, not analysis: `analysis_complete`, the typed `outcome`, and
+the full `summary` counts remain producer facts. The fields are absent when the
+findings budget omits nothing, preserving unbounded output bytes. Consumers
+must not use `analysis_complete: true` alone as a complete-document verdict.
+The shared completeness reader recognizes both this envelope disclosure and
+the original `run_limitations[]` shape; a present non-boolean document flag
+does not establish completeness.
+
+PR evidence summaries retain the producer analysis verdict, report an
+incomplete run for bounded documents, and render document completeness and
+rendered/total counts in Markdown. Typed analysis-artifact consumers (including
+agent review summaries, packets and receipts) refuse bounded documents with the
+`RIPR_CHECK_FINDINGS_BYTES=0` recovery rather than projecting their prefix as a
+complete artifact. `review-comments --check-output` uses the same bounded-input
+disclosure rule. Check-output ledger live currentness remains `not_evaluated`;
+this does not grant it replay or assignment authority.
+
+The run-limitation entry contains:
 
 - `category` / `run_status` — always `"limited_findings_bound"` for machine
   filtering (the `limited_*` family).
@@ -2661,8 +2682,8 @@ bounded check document (`reports gap-ledger --check-output`) propagate
 the bounded check itself. `pr-evidence` renders its internal check input
 unbounded: routing counts the full finding set regardless of the external
 budget, since that JSON never leaves the process. The run exit code is
-unchanged (analysis completed); consumers must read `run_limitations[]`
-before treating `findings[]` as the full set. When the limitation is
+unchanged (analysis completed); consumers must read document completeness or
+`run_limitations[]` before treating `findings[]` as the full set. When the limitation is
 present, `summary.findings` can exceed `findings.len()`; consumers that
 require equal counts must disable the bound (`=0`) or handle the limited
 output.

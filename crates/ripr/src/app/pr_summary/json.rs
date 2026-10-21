@@ -82,7 +82,7 @@ fn build_summary(
         .as_ref()
         .and_then(|value| value.get("analysis_complete"))
         .and_then(Value::as_bool);
-    let run_status = derive_run_status(diff_report_value, analysis_complete);
+    let run_status = derive_run_status(diff_report_value);
     let changed_surfaces = derive_changed_surfaces(diff_report_value);
     let gaps = derive_gaps(gap_ledger_value, baseline_value);
     let limitations = derive_limitations(repo_exposure_value);
@@ -120,8 +120,8 @@ fn build_summary(
     }
 }
 
-fn derive_run_status(diff_report_value: Option<&Value>, analysis_complete: Option<bool>) -> String {
-    if analysis_complete == Some(false) {
+fn derive_run_status(diff_report_value: Option<&Value>) -> String {
+    if diff_report_value.is_some_and(crate::output::gate::discloses_incomplete_analysis_outcome) {
         return "incomplete".to_string();
     }
     // Prefer diff-report run_status (top-level field per DiffReport struct).

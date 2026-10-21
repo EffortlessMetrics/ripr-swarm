@@ -810,6 +810,29 @@ fn gate_gap_ledger_and_baseline_refuse_limited_findings_bound() -> Result<(), St
 }
 
 #[test]
+fn bounded_document_is_not_a_complete_denominator() {
+    for complete in [json!(false), json!(null), json!("false")] {
+        let value = json!({"analysis_outcome": {
+            "analysis_complete": true,
+            "document_complete": complete,
+            "outcome": {"kind": "complete_with_findings"}
+        }});
+        assert!(discloses_limited_findings_bound(&value));
+        assert!(discloses_incomplete_analysis_outcome(&value));
+    }
+    let legacy = json!({
+        "analysis_outcome": {"analysis_complete": true},
+        "run_limitations": [{"run_status": "limited_findings_bound"}]
+    });
+    assert!(discloses_incomplete_analysis_outcome(&legacy));
+    assert!(!discloses_incomplete_analysis_outcome(
+        &json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": true
+        }})
+    ));
+}
+
+#[test]
 fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     assert!(discloses_incomplete_analysis_outcome(&json!({
         "analysis_outcome": {

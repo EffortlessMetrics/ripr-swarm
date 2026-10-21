@@ -330,6 +330,29 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_summary_rejects_bounded_document() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("bounded-document");
+        write_complete_artifacts(&root)?;
+        let path = root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
+        let mut value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        value["analysis_outcome"]["document_complete"] = serde_json::json!(false);
+        write_file(&path, &value.to_string())?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let json = render_agent_review_summary_json(&report)?;
+        let rendered: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(rendered["status"], "incomplete");
+        assert!(rendered["analysis_outcome"].is_null());
+        assert!(json.contains("document is bounded"));
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert!(markdown.contains("Status: incomplete"));
+        assert!(markdown.contains("document is bounded"));
+        std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_fails_closed_on_incomplete_analysis_outcome() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("incomplete-outcome");
         write_complete_artifacts(&root)?;

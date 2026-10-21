@@ -90,6 +90,18 @@ limitation exists. JSON/status output must expose the same DTO and derive
 `analysis_complete` from its closed kind; it must not maintain an independent
 completeness flag.
 
+Findings-array byte-budget truncation is document incompleteness, not a new
+analysis kind (#9010). When the check JSON renderer omits findings, its existing
+analysis-outcome envelope adds `document_complete: false`, `findings_rendered`
+and `findings_total`; analysis completeness, typed producer outcome and full
+summary counts are unchanged. Unbounded output omits these fields. Consumers
+must recognize both the envelope flag and the original findings-bound run
+limitation. A present malformed document flag cannot authorize a complete
+denominator. PR summaries expose the document limitation in JSON and rendered
+Markdown; typed artifact readers and review-comments check-output admission
+refuse bounded inputs with the full-set budget recovery. Existing incomplete
+analysis remains incomplete independently of this document disclosure.
+
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
 (#7440 for check, #7793 for diff). Retained findings, counts,

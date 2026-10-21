@@ -183,6 +183,11 @@ pub(crate) fn validate_analysis_outcome_artifact(
             "Analysis outcome artifact root does not match the review root.",
         ));
     }
+    if crate::output::gate::discloses_limited_findings_bound(value) {
+        return Err(invalid(
+            "Analysis outcome artifact document is bounded or has invalid document_complete; rerun check with RIPR_CHECK_FINDINGS_BYTES=0 before consuming the full findings set.",
+        ));
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
         return Err(invalid(
             "Analysis outcome artifact is missing the analysis_outcome envelope.",
@@ -340,6 +345,34 @@ mod tests {
                 "outcome": outcome
             }
         }))
+    }
+
+    #[test]
+    fn bounded_document_cannot_authorize_typed_artifact_consumers() -> Result<(), String> {
+        let outcome = complete_outcome(AnalysisOutcomeKind::CompleteWithFindings)?;
+        let root = workspace_root()?;
+        let root_display = root.display().to_string();
+        let full = artifact(&outcome, true)?;
+        assert!(validate_analysis_outcome_artifact(&root, &root_display, &full).is_ok());
+        for complete in [
+            serde_json::json!(false),
+            Value::Null,
+            serde_json::json!("false"),
+        ] {
+            let mut bounded = full.clone();
+            bounded["analysis_outcome"]["document_complete"] = complete;
+            assert!(matches!(
+                validate_analysis_outcome_artifact(&root, &root_display, &bounded),
+                Err(AnalysisOutcomeArtifactError::Invalid(reason)) if reason.contains("document") && reason.contains("RIPR_CHECK_FINDINGS_BYTES")
+            ));
+        }
+        let mut legacy = full;
+        legacy["run_limitations"] = serde_json::json!([{"category": "limited_findings_bound"}]);
+        assert!(matches!(
+            validate_analysis_outcome_artifact(&root, &root_display, &legacy),
+            Err(AnalysisOutcomeArtifactError::Invalid(reason)) if reason.contains("document")
+        ));
+        Ok(())
     }
 
     #[test]

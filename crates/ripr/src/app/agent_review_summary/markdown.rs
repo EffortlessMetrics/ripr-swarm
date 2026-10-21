@@ -32,7 +32,19 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
                 "incomplete"
             }
         )),
-        None => rendered.push_str("Analysis outcome: unavailable (incomplete)\n"),
+        None => {
+            rendered.push_str("Analysis outcome: unavailable (incomplete)\n");
+            if let Some(surface) = report
+                .surfaces
+                .iter()
+                .find(|surface| surface.name == "analysis_outcome" && surface.status == "invalid")
+            {
+                rendered.push_str(&format!(
+                    "Analysis artifact limitation: {}\n",
+                    crate::output::markdown::inline_prose(&surface.summary)
+                ));
+            }
+        }
     }
     if let Some(before) = &report.static_movement.before_class {
         let after = report

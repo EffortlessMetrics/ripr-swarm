@@ -1525,20 +1525,23 @@ pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
 
 /// Whether a JSON document discloses the `limited_findings_bound` run state
 /// (#5203): the producer rendered a findings-array prefix, not the full
-/// analysis set. The producer emits exactly one position (`run_limitations[]`,
-/// the only slot the check schema opens for this state), so only that
-/// position is read; a future producer adding positions extends this predicate.
+/// analysis set. Read both the current document-completeness disclosure and
+/// the original `run_limitations[]` shape. A present malformed document flag
+/// cannot establish a complete denominator; absent flags retain compatibility.
 pub(crate) fn discloses_limited_findings_bound(value: &Value) -> bool {
     let run_status = crate::output::json::FINDINGS_BOUND_RUN_STATUS;
     value
-        .get("run_limitations")
-        .and_then(Value::as_array)
-        .is_some_and(|limitations| {
-            limitations.iter().any(|entry| {
-                entry.get("run_status").and_then(Value::as_str) == Some(run_status)
-                    || entry.get("category").and_then(Value::as_str) == Some(run_status)
+        .pointer("/analysis_outcome/document_complete")
+        .is_some_and(|complete| complete.as_bool() != Some(true))
+        || value
+            .get("run_limitations")
+            .and_then(Value::as_array)
+            .is_some_and(|limitations| {
+                limitations.iter().any(|entry| {
+                    entry.get("run_status").and_then(Value::as_str) == Some(run_status)
+                        || entry.get("category").and_then(Value::as_str) == Some(run_status)
+                })
             })
-        })
 }
 
 /// Fail-closed refusal for gate inputs built from a findings-bounded producer
@@ -1560,7 +1563,7 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
     }
 }
 
-/// Whether a producer supplied the typed incomplete-analysis envelope.
+/// Whether the producer analysis or its rendered document is incomplete.
 ///
 /// This is intentionally separate from the older run-state vocabulary: an
 /// unsupported input or another typed limitation is still an incomplete
@@ -1570,6 +1573,7 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
         .pointer("/analysis_outcome/analysis_complete")
         .and_then(Value::as_bool)
         == Some(false)
+        || discloses_limited_findings_bound(value)
 }
 
 /// Whether a gap-ledger document discloses a blocked producer run: the

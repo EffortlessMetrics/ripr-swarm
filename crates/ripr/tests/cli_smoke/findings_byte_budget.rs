@@ -93,6 +93,54 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             bounded_report["summary"]["findings"], total,
             "summary keeps full analysis counts under a render bound"
         );
+        assert_eq!(
+            bounded_report["analysis_outcome"]["analysis_complete"],
+            true
+        );
+        assert_eq!(
+            bounded_report["analysis_outcome"]["outcome"],
+            baseline["analysis_outcome"]["outcome"]
+        );
+        assert_eq!(
+            bounded_report["analysis_outcome"]["document_complete"],
+            false
+        );
+        assert_eq!(bounded_report["analysis_outcome"]["findings_rendered"], 1);
+        assert_eq!(bounded_report["analysis_outcome"]["findings_total"], total);
+        assert!(
+            baseline["analysis_outcome"]
+                .get("document_complete")
+                .is_none()
+        );
+
+        // Feed actual check output to the installed PR-summary composition
+        // route, retaining the producer verdict and exposing the document cut.
+        let reports = fixture.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+        for (bytes, limited) in [(&bounded.stdout, true), (&default.stdout, false)] {
+            std::fs::write(reports.join("diff-report.json"), bytes)
+                .map_err(|error| error.to_string())?;
+            let composed = run_ripr(&["pr-summary", "--root", &root_arg]);
+            assert!(
+                composed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&composed.stderr)
+            );
+            let summary: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(reports.join("pr-evidence-summary.json"))
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(summary["run_status"] == "incomplete", limited);
+            assert_eq!(summary["analysis_complete"], true);
+            let markdown = std::fs::read_to_string(reports.join("pr-evidence-summary.md"))
+                .map_err(|error| error.to_string())?;
+            assert_eq!(markdown.contains("**Document Complete**: `false`"), limited);
+            if limited {
+                assert!(markdown.contains(&format!("1 of {total} findings")));
+                assert!(markdown.contains("RIPR_CHECK_FINDINGS_BYTES=0"));
+            }
+        }
         let limitations = bounded_report["run_limitations"]
             .as_array()
             .ok_or("bounded run must disclose run_limitations")?;

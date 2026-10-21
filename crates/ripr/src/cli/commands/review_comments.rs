@@ -251,6 +251,12 @@ fn load_review_comments_analysis_outcome(
             path.display()
         )
     })?;
+    if output::gate::discloses_limited_findings_bound(&value) {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer document is bounded or has invalid document_complete; rerun check with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
     let _producer_schema_version = value
         .get("schema_version")
         .and_then(serde_json::Value::as_str)
@@ -1176,6 +1182,31 @@ mod tests {
                 .ok_or_else(|| "expected typed outcome".to_string())?;
         assert_eq!(outcome.kind.as_str(), "partial_with_limitations");
         assert_eq!(outcome.limitations[0].recovery.kind.as_str(), "retry");
+        for complete in [
+            serde_json::json!(false),
+            serde_json::Value::Null,
+            serde_json::json!("false"),
+        ] {
+            artifact["analysis_outcome"]["document_complete"] = complete;
+            std::fs::write(
+                &path,
+                serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            let refusal = load_review_comments_analysis_outcome(
+                Some(&path),
+                Path::new("."),
+                "main",
+                diff_text,
+            );
+            assert!(
+                matches!(refusal, Err(reason) if reason.contains("document") && reason.contains("RIPR_CHECK_FINDINGS_BYTES"))
+            );
+        }
+        artifact["analysis_outcome"]
+            .as_object_mut()
+            .ok_or("envelope missing")?
+            .remove("document_complete");
         artifact["analysis_outcome"]["analysis_complete"] = serde_json::json!(true);
         std::fs::write(
             &path,

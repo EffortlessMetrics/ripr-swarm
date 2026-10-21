@@ -218,6 +218,7 @@ pub(crate) fn render_with_config(
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
+    let mut document_disclosure_offset = None;
     if let Some(outcome) = &output.analysis_outcome {
         let serialized = serde_json::to_string(outcome).unwrap_or_else(|error| {
             format!(
@@ -231,6 +232,7 @@ pub(crate) fn render_with_config(
         } else {
             "    \"analysis_complete\": false,\n"
         });
+        document_disclosure_offset = Some(out.len());
         out.push_str("    \"outcome\": ");
         out.push_str(&serialized);
         out.push_str("\n  },\n");
@@ -292,6 +294,18 @@ pub(crate) fn render_with_config(
     } else {
         None
     };
+    // Rendering can omit findings without changing the producer's analysis
+    // verdict. Add the document disclosure only after the streaming cutoff is
+    // known; unbounded documents retain their exact existing bytes.
+    if let (Some(offset), Some(bound)) = (document_disclosure_offset, findings_bound.as_ref()) {
+        out.insert_str(
+            offset,
+            &format!(
+                "    \"document_complete\": false,\n    \"findings_rendered\": {},\n    \"findings_total\": {},\n",
+                bound.rendered, bound.total
+            ),
+        );
+    }
     // Additive advisory field — emitted only when the caller passed
     // `--suppression-policy` (#1441). Absent otherwise, so existing goldens
     // and consumers without a policy see identical output.

@@ -414,6 +414,80 @@ mod tests {
 
     // ── Findings-array byte budget (#5203) ──
 
+    #[test]
+    fn bounded_document_preserves_analysis_and_limits_consumers() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::app::pr_summary::{
+            build_pr_evidence_summary, render_evidence_summary_md, render_pr_evidence_summary_json,
+        };
+
+        let mut output = three_finding_output();
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 3,
+                probe_count: 3,
+                finding_count: 3,
+            },
+            Vec::new(),
+        )?);
+        let config = crate::config::RiprConfig::default();
+        let full: serde_json::Value =
+            serde_json::from_str(&render_with_config(&output, &config, None))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(full["analysis_outcome"]["analysis_complete"], true);
+        assert!(full["analysis_outcome"].get("document_complete").is_none());
+        assert!(!crate::output::gate::discloses_incomplete_analysis_outcome(
+            &full
+        ));
+
+        let bounded: serde_json::Value = serde_json::from_str(&render_with_config(
+            &output,
+            &config,
+            Some((1, FindingsBudgetSource::Configured)),
+        ))
+        .map_err(|error| error.to_string())?;
+        assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
+        assert_eq!(bounded["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            bounded["analysis_outcome"]["outcome"],
+            full["analysis_outcome"]["outcome"]
+        );
+        assert_eq!(bounded["analysis_outcome"]["document_complete"], false);
+        assert_eq!(bounded["analysis_outcome"]["findings_rendered"], 1);
+        assert_eq!(bounded["analysis_outcome"]["findings_total"], 3);
+        assert!(crate::output::gate::discloses_incomplete_analysis_outcome(
+            &bounded
+        ));
+
+        // The envelope alone must carry the limitation through consumers that
+        // do not forward the separate legacy run_limitations channel.
+        let mut envelope_only = bounded.clone();
+        envelope_only
+            .as_object_mut()
+            .ok_or("document must be an object")?
+            .remove("run_limitations");
+        let summary = build_pr_evidence_summary(None, None, None, Some(&envelope_only), None, None);
+        let summary_json: serde_json::Value =
+            serde_json::from_str(&render_pr_evidence_summary_json(&summary))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(summary_json["run_status"], "incomplete");
+        assert_eq!(summary_json["analysis_complete"], true);
+        assert_eq!(
+            summary_json["analysis_outcome"],
+            bounded["analysis_outcome"]
+        );
+        let markdown = render_evidence_summary_md(&summary);
+        assert!(markdown.contains("**Run Status**: `incomplete`"));
+        assert!(markdown.contains("**Analysis Complete**: `true`"));
+        assert!(markdown.contains("**Document Complete**: `false`"));
+        assert!(markdown.contains("1 of 3 findings"));
+        Ok(())
+    }
+
     fn three_finding_output() -> CheckOutput {
         let mut output = sample_output(None);
         output.findings.push(finding_with_expression(

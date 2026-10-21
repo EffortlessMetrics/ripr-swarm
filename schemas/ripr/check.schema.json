@@ -199,6 +199,9 @@
       "required": ["analysis_complete", "outcome"],
       "properties": {
         "analysis_complete": { "type": "boolean" },
+        "document_complete": { "type": "boolean" },
+        "findings_rendered": { "type": "integer", "minimum": 0 },
+        "findings_total": { "type": "integer", "minimum": 0 },
         "outcome": { "$ref": "#/$defs/analysis_outcome" }
       }
     },

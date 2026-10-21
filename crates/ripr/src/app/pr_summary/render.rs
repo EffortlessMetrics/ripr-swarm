@@ -463,6 +463,25 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
         )
     ));
     if let Some(outcome) = &s.analysis_outcome {
+        if let Some(complete) = outcome.get("document_complete") {
+            let complete = complete
+                .as_bool()
+                .map_or_else(|| "unknown".to_string(), |value| value.to_string());
+            let rendered = outcome.get("findings_rendered").and_then(Value::as_u64);
+            let total = outcome.get("findings_total").and_then(Value::as_u64);
+            out.push_str(&format!(
+                "**Document Complete**: {}\n\n",
+                code_span(&complete)
+            ));
+            if let (Some(rendered), Some(total)) = (rendered, total) {
+                out.push_str(&format!(
+                    "Document contains {rendered} of {total} findings.\n\n"
+                ));
+            }
+            if complete != "true" {
+                out.push_str("Re-run check with `RIPR_CHECK_FINDINGS_BYTES=0` for the full findings set.\n\n");
+            }
+        }
         let kind = outcome
             .pointer("/outcome/kind")
             .and_then(Value::as_str)
