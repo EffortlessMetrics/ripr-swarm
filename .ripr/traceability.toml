@@ -16977,3 +16977,31 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0293"
+name = "Display and Debug fmt dispatch reach"
+spec = "docs/specs/RIPR-SPEC-0293-display-debug-fmt-dispatch-reach.md"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::debug_format_of_constructed_value_reaches_debug_fmt",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_dispatch_covers_braces_and_to_string",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::mismatched_trait_unrelated_type_and_unknown_value_do_not_reach",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_and_debug_impls_of_one_type_are_told_apart",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::same_named_type_declared_elsewhere_fails_closed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::rebound_formatting_macros_are_not_credited",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::associated_consts_and_factories_are_not_typed_as_self",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::inherent_to_string_wins_over_display",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::placeholders_must_account_for_every_argument",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0293-display-debug-fmt-dispatch-reach.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+

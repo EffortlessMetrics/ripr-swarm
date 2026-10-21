@@ -1714,3 +1714,11 @@ path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-st
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issues #8706, #8707 and #8751 record the Python framework scan contract: per scanned directory only sorted regular .py test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; and evidence is matched only against code lines (scanning stops at an unquoted #, skips single-line string contents, and only the matching delimiter closes a triple-quoted string) so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real import pytest / import unittest."
+
+[[artifact]]
+id = "RIPR-SPEC-0293"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0293-display-debug-fmt-dispatch-reach.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the Display/Debug fmt dispatch contract: a test that formats a value built as the impl's self type through a matching placeholder or to_string is related to the changed fmt as a direct owner call, fail-closed on ambiguity."

@@ -1,4 +1,4 @@
-//! Formatting dispatch as reach of a changed `Display::fmt` / `Debug::fmt`.
+//! Formatting dispatch (RIPR-SPEC-0293) as reach of a changed `Display::fmt` / `Debug::fmt`.
 //!
 //! A test never spells `fmt`: `format!("{:?}", err)`, `err.to_string()` and
 //! `write!(out, "{}", err)` run the owner's `fmt` through the formatting
@@ -13,18 +13,20 @@
 //! - exactly one indexed `fmt` carries that trait and self type, and exactly
 //!   one `struct`/`enum`/`union`/`type` named `T` is declared in the index (a
 //!   same-named type elsewhere, possibly with a derived `Debug`, fails closed);
-//! - a formatting macro (or `.to_string()` for `Display`) in the test has a
-//!   placeholder whose trait matches (`{}` vs `{:?}`), and
-//! - the placeholder's argument is typed `T` by a constructor head or a
-//!   preceding `let` (the same resolver method-call reach uses).
+//! - a formatting macro (or `.to_string()` for `Display`, when no inherent
+//!   `to_string` exists for `T`) not rebound by `macro_rules!`/`use` has a
+//!   placeholder whose trait matches (`{}` vs `{:?}`), with every positional
+//!   argument accounted for by the format string, and
+//! - the placeholder's argument is built as `T` (struct literal, tuple
+//!   struct, enum variant) directly or by a preceding `let`.
 //!
 //! An argument of unknown type, a mismatched trait, a width/precision
 //! argument (`$`, `*`) or an unrelated type admits nothing. Derived `Debug`
 //! has no indexed `fmt` owner and is out of scope.
 
 use super::{
-    impl_self_type_name, impl_trait_name, initializer_is_one_head_expr, initializer_type_head,
-    is_ident_byte, let_binding_mentions_type, method_call_resolves_to_impl,
+    impl_self_type_name, impl_trait_name, initializer_is_one_head_expr, is_ident_byte,
+    is_variant_name, last_let_statement, type_head,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
@@ -73,19 +75,106 @@ pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
         .any(|needle| body.contains(needle))
 }
 
+/// Facts about the owner's type and the workspace that hold for every test
+/// of one owner, computed once per owner and probe instead of per test.
+pub(super) struct FmtContext {
+    /// Exactly one type named like the owner's self type is declared.
+    type_declared_once: bool,
+    /// Some indexed function named `to_string` belongs to an impl of the
+    /// self type: an inherent `to_string` would win over `Display`.
+    competing_to_string: bool,
+    /// Formatting macros a `macro_rules!` or non-std `use` can rebind.
+    shadowed_macros: Vec<&'static str>,
+}
+
+impl FmtContext {
+    pub(super) fn new(index: &RustIndex, owner: &FunctionSummary) -> Option<Self> {
+        let (_, self_type) = fmt_owner(owner)?;
+        let competing_to_string = index.functions().iter().any(|function| {
+            function.name == "to_string"
+                && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
+        });
+        let mut declared = 0usize;
+        let mut shadowed_macros = Vec::new();
+        for file in index.files().values() {
+            let source: &str = &file.source;
+            let names_type = source.contains(self_type.as_str());
+            let names_macro = source.contains("macro_rules") || source.contains("use ");
+            if !names_type && !names_macro {
+                continue;
+            }
+            let masked = mask_comments_and_strings(source);
+            if names_type {
+                declared += declarations_in(&masked, &self_type);
+            }
+            if names_macro {
+                for &(name, _) in FORMAT_MACROS {
+                    if !shadowed_macros.contains(&name) && rebinds_macro(&masked, name) {
+                        shadowed_macros.push(name);
+                    }
+                }
+            }
+        }
+        Some(Self {
+            type_declared_once: declared == 1,
+            competing_to_string,
+            shadowed_macros,
+        })
+    }
+}
+
+/// Whether masked source defines `macro_rules! name` or imports `name` from
+/// a non-std/core path (`use mylog::println;`).
+fn rebinds_macro(masked: &str, name: &str) -> bool {
+    if !masked.contains(name) {
+        return false;
+    }
+    let mut previous = "";
+    for token in masked
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+    {
+        if token == name && previous == "macro_rules" {
+            return true;
+        }
+        previous = token;
+    }
+    masked.split(';').any(|statement| {
+        let Some(at) = statement
+            .match_indices("use ")
+            .map(|(at, _)| at)
+            .find(|&at| {
+                !statement[..at]
+                    .bytes()
+                    .next_back()
+                    .is_some_and(is_ident_byte)
+            })
+        else {
+            return false;
+        };
+        let path = &statement[at + "use ".len()..];
+        let names = path
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|token| token == name);
+        let root = path.trim_start().split("::").next().unwrap_or("").trim();
+        names && !matches!(root, "std" | "core" | "alloc")
+    })
+}
+
 /// Whether `test` formats a value of the owner's self type through the
-/// owner's trait. `same_fmt_impls` counts indexed `fmt` functions with the
-/// owner's trait and self type; more than one is ambiguous and fails closed.
+/// owner's trait. `same_name_ids` are the indexed functions named like the
+/// owner; more than one `fmt` for the owner's trait and self type is
+/// ambiguous and fails closed.
 pub(super) fn test_dispatches_to_fmt(
     test: &TestSummary,
     owner: &FunctionSummary,
     same_name_ids: &[&str],
-    index: &RustIndex,
+    context: &FmtContext,
 ) -> bool {
     let Some((fmt_trait, self_type)) = fmt_owner(owner) else {
         return false;
     };
-    if !body_may_dispatch_fmt(&test.body) {
+    if !context.type_declared_once || !body_may_dispatch_fmt(&test.body) {
         return false;
     }
     let same_fmt_impls = same_name_ids
@@ -99,36 +188,75 @@ pub(super) fn test_dispatches_to_fmt(
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
-    let dispatches = (fmt_trait == FmtTrait::Display
-        && method_call_resolves_to_impl(test, "to_string", &self_type, None))
-        || macro_dispatch(&test.body, &masked, fmt_trait, &self_type);
-    dispatches && type_declared_once(index, &self_type)
+    (fmt_trait == FmtTrait::Display
+        && !context.competing_to_string
+        && to_string_dispatch(&masked, &self_type))
+        || macro_dispatch(&test.body, &masked, fmt_trait, &self_type, context)
 }
 
-/// Whether exactly one `struct`/`enum`/`union`/`type` named `name` is
-/// declared across the indexed files (comments and strings masked).
-fn type_declared_once(index: &RustIndex, name: &str) -> bool {
-    let mut declared = 0usize;
-    for file in index.files().values() {
-        if !file.source.contains(name) {
+/// `value.to_string()` where `value` is typed as `self_type` by the strict
+/// rule below (constructor literal or typed `let`).
+fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
+    let mut search = 0usize;
+    while let Some(at) = masked[search..].find(".to_string").map(|at| search + at) {
+        search = at + 1;
+        let after = masked[at + ".to_string".len()..].trim_start();
+        if !after.starts_with("()") {
             continue;
         }
-        let masked = mask_comments_and_strings(&file.source);
-        declared += declarations_in(&masked, name);
-        if declared > 1 {
-            return false;
+        let receiver = receiver_before(masked, at);
+        let lets = lets_before(masked, at);
+        if expr_has_type(receiver, &lets, self_type) {
+            return true;
         }
     }
-    declared == 1
+    false
 }
 
+/// The receiver expression ending at `dot`: an identifier or a bracketed
+/// constructor (`Site::new(..)`, `Site { .. }`, `(expr)`), else empty.
+fn receiver_before(masked: &str, dot: usize) -> &str {
+    let bytes = masked.as_bytes();
+    let mut start = dot;
+    if matches!(bytes.get(dot.wrapping_sub(1)), Some(b')' | b'}')) {
+        let (open_byte, close_byte) = if bytes[dot - 1] == b')' {
+            (b'(', b')')
+        } else {
+            (b'{', b'}')
+        };
+        let mut depth = 0usize;
+        let mut open = None;
+        for index in (0..dot).rev() {
+            if bytes[index] == close_byte {
+                depth += 1;
+            } else if bytes[index] == open_byte {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    open = Some(index);
+                    break;
+                }
+            }
+        }
+        let Some(mut open) = open else { return "" };
+        while open > 0 && bytes[open - 1].is_ascii_whitespace() && open_byte == b'{' {
+            open -= 1;
+        }
+        start = open;
+    }
+    while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
+        start -= 1;
+    }
+    masked.get(start..dot).unwrap_or("")
+}
+
+/// Count of `struct`/`enum`/`union`/`type` declarations of `name`.
 fn declarations_in(masked: &str, name: &str) -> usize {
-    let mut tokens = masked
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|token| !token.is_empty());
     let mut previous = "";
     let mut count = 0usize;
-    for token in &mut tokens {
+    for token in masked
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+    {
         if token == name && matches!(previous, "struct" | "enum" | "union" | "type") {
             count += 1;
         }
@@ -145,7 +273,13 @@ fn trait_of(name: &str) -> Option<FmtTrait> {
     }
 }
 
-fn macro_dispatch(raw: &str, masked: &str, fmt_trait: FmtTrait, self_type: &str) -> bool {
+fn macro_dispatch(
+    raw: &str,
+    masked: &str,
+    fmt_trait: FmtTrait,
+    self_type: &str,
+    context: &FmtContext,
+) -> bool {
     if raw.len() != masked.len() {
         return false;
     }
@@ -162,6 +296,16 @@ fn macro_dispatch(raw: &str, masked: &str, fmt_trait: FmtTrait, self_type: &str)
         else {
             continue;
         };
+        if context.shadowed_macros.contains(&name) {
+            continue;
+        }
+        // A path-qualified macro is the std one only through `std::`/`core::`.
+        let qualifier = masked.get(..name_start).unwrap_or("");
+        if qualifier.ends_with("::")
+            && !(qualifier.ends_with("std::") || qualifier.ends_with("core::"))
+        {
+            continue;
+        }
         let after = masked[bang + 1..].trim_start();
         let open = masked.len() - after.len();
         if bytes.get(open) != Some(&b'(') {
@@ -212,23 +356,51 @@ fn args_dispatch(
             _ => positional.push(masked.trim()),
         }
     }
+    // Resolve every placeholder first. The placeholders must account for
+    // each positional argument exactly (a turbofish or closure comma splits
+    // one argument into several and shifts the rest), and every named
+    // argument must be used; otherwise nothing is credited.
     let mut next = 0usize;
-    placeholders.iter().any(|placeholder| {
+    let mut used = vec![false; positional.len()];
+    let mut used_named: Vec<&str> = Vec::new();
+    let mut resolved: Vec<(Option<FmtTrait>, &str)> = Vec::new();
+    for placeholder in &placeholders {
         let expr = match &placeholder.arg {
             PlaceholderArg::Next => {
                 let at = next;
                 next += 1;
-                positional.get(at).copied()
+                match positional.get(at) {
+                    Some(expr) => {
+                        used[at] = true;
+                        *expr
+                    }
+                    None => return false,
+                }
             }
-            PlaceholderArg::Index(at) => positional.get(*at).copied(),
-            PlaceholderArg::Name(name) => named
-                .iter()
-                .find(|(candidate, _)| candidate == name)
-                .map(|(_, value)| *value)
-                .or(Some(name)),
+            PlaceholderArg::Index(at) => match positional.get(*at) {
+                Some(expr) => {
+                    used[*at] = true;
+                    *expr
+                }
+                None => return false,
+            },
+            PlaceholderArg::Name(name) => {
+                match named.iter().find(|(candidate, _)| candidate == name) {
+                    Some((_, value)) => {
+                        used_named.push(name);
+                        *value
+                    }
+                    None => *name,
+                }
+            }
         };
-        placeholder.fmt_trait == Some(fmt_trait)
-            && expr.is_some_and(|expr| expr_has_type(expr, lets, self_type))
+        resolved.push((placeholder.fmt_trait, expr));
+    }
+    if used.iter().any(|used| !used) || named.iter().any(|(name, _)| !used_named.contains(name)) {
+        return false;
+    }
+    resolved.iter().any(|(placeholder_trait, expr)| {
+        *placeholder_trait == Some(fmt_trait) && expr_has_type(expr, lets, self_type)
     })
 }
 
@@ -292,8 +464,11 @@ fn string_literal_content(raw: &str) -> Option<&str> {
     raw.strip_prefix('"')?.strip_suffix('"')
 }
 
-/// Whether the argument expression is a value of `self_type`: a unit/path
-/// name, a constructor head, or a `let` binding typed so before the macro.
+/// Whether the argument expression is a value of `self_type`, from syntax
+/// that constructs `Self` itself: the bare type name, a struct literal,
+/// tuple struct or enum variant, or a `let` binding initialized so (or
+/// annotated `: self_type`) before the macro. Associated consts and factory
+/// functions (`T::LABEL`, `T::make()`) may have another type and are refused.
 fn expr_has_type(expr: &str, lets: &str, self_type: &str) -> bool {
     let mut expr = expr.trim();
     loop {
@@ -310,9 +485,43 @@ fn expr_has_type(expr: &str, lets: &str, self_type: &str) -> bool {
         return false;
     }
     if expr.bytes().all(is_ident_byte) {
-        return expr == self_type || let_binding_mentions_type(lets, expr, self_type);
+        return expr == self_type || binding_has_type(lets, expr, self_type);
     }
-    initializer_is_one_head_expr(expr) && initializer_type_head(expr) == Some(self_type)
+    initializer_is_one_head_expr(expr) && constructs_self(expr, self_type)
+}
+
+fn constructs_self(expr: &str, self_type: &str) -> bool {
+    let Some((segments, next)) = type_head(expr) else {
+        return false;
+    };
+    let opens = matches!(next, Some(b'(' | b'{'));
+    match segments.as_slice() {
+        [.., last] if opens && *last == self_type => true,
+        [.., ty, variant] => *ty == self_type && is_variant_name(variant),
+        _ => false,
+    }
+}
+
+fn binding_has_type(lets: &str, binding: &str, self_type: &str) -> bool {
+    let Some(statement) = last_let_statement(lets, binding) else {
+        return false;
+    };
+    let Some(eq) = statement.find('=') else {
+        return false;
+    };
+    let pattern = &statement[..eq];
+    if let Some(colon) = pattern.find(':') {
+        return type_head(&pattern[colon + 1..])
+            .is_some_and(|(segments, _)| segments.last() == Some(&self_type));
+    }
+    let init = statement[eq + 1..].trim();
+    initializer_is_one_head_expr(init)
+        && constructs_self(
+            init.trim_start_matches(['&'])
+                .trim_start()
+                .trim_start_matches("mut "),
+            self_type,
+        )
 }
 
 /// Statements finished (`;`) before `at`: the only `let`s that can type an
@@ -440,6 +649,16 @@ mod tests {
         bodies: &[&str],
         extra_sources: &[&str],
     ) -> Vec<(String, RelationReason)> {
+        reasons_full(impls, owner, bodies, extra_sources, Vec::new())
+    }
+
+    fn reasons_full(
+        impls: &[&str],
+        owner: usize,
+        bodies: &[&str],
+        extra_sources: &[&str],
+        extra_functions: Vec<FunctionSummary>,
+    ) -> Vec<(String, RelationReason)> {
         // Each distinct self type is declared once in the owner's file.
         let mut declared: Vec<&str> = impls
             .iter()
@@ -469,11 +688,12 @@ mod tests {
                 },
             );
         }
-        let functions: Vec<FunctionSummary> = impls
+        let mut functions: Vec<FunctionSummary> = impls
             .iter()
             .map(|header| fmt_function("src/error.rs", header))
             .collect();
         let owner = functions[owner].clone();
+        functions.extend(extra_functions);
         let tests: Vec<TestSummary> = bodies
             .iter()
             .enumerate()
@@ -640,5 +860,92 @@ mod tests {
             "{ctor}assert!(matches!(e, DecodeError::A), \"{{}}\", 1);"
         )));
         assert!(!display(&format!("{ctor}write!(e, \"{{}}\", 1);")));
+    }
+
+    const CTOR: &str = "let e = DecodeError::InvalidByte(0, 1);\n";
+
+    #[test]
+    fn rebound_formatting_macros_are_not_credited() {
+        let body = format!("{CTOR}format!(\"{{}}\", e);");
+        let owner = ["fmt::Display for DecodeError"];
+        let local = reasons_with(
+            &owner,
+            0,
+            &[&body],
+            &["macro_rules! format { ($($t:tt)*) => {}; }"],
+        );
+        assert!(local.is_empty(), "{local:?}");
+        let imported = reasons_with(&owner, 0, &[&body], &["use mylog::format;\n"]);
+        assert!(imported.is_empty(), "{imported:?}");
+        let std_import = reasons_with(&owner, 0, &[&body], &["use std::format;\n"]);
+        assert!(direct(&std_import, "t0"), "{std_import:?}");
+        // Rebinding `println` leaves `format!` credited.
+        let other = reasons_with(&owner, 0, &[&body], &["use mylog::println;\n"]);
+        assert!(direct(&other, "t0"), "{other:?}");
+        let qualified = format!("{CTOR}mylog::format!(\"{{}}\", e);");
+        assert!(reasons(&owner, 0, &[&qualified]).is_empty());
+        let std_qualified = format!("{CTOR}std::format!(\"{{}}\", e);");
+        assert!(direct(&reasons(&owner, 0, &[&std_qualified]), "t0"));
+    }
+
+    #[test]
+    fn associated_consts_and_factories_are_not_typed_as_self() {
+        let owner = ["fmt::Debug for DecodeError"];
+        for body in [
+            "format!(\"{:?}\", DecodeError::LABEL);".to_string(),
+            "format!(\"{:?}\", DecodeError::make());".to_string(),
+            "let x = DecodeError::make();\nformat!(\"{:?}\", x);".to_string(),
+            "let x = DecodeError::LABEL;\nformat!(\"{:?}\", x);".to_string(),
+            "let x = DecodeError::new().unwrap();\nformat!(\"{:?}\", x);".to_string(),
+        ] {
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+        let annotated = "let x: DecodeError = make();\nformat!(\"{:?}\", x);";
+        assert!(direct(&reasons(&owner, 0, &[annotated]), "t0"));
+        let unit_variant = "format!(\"{:?}\", DecodeError::Overflow);";
+        assert!(direct(&reasons(&owner, 0, &[unit_variant]), "t0"));
+    }
+
+    #[test]
+    fn inherent_to_string_wins_over_display() {
+        let body = format!("{CTOR}assert_eq!(e.to_string(), \"x\");");
+        let owner = ["fmt::Display for DecodeError"];
+        assert!(
+            direct(&reasons(&owner, 0, &[&body]), "t0"),
+            "blanket ToString"
+        );
+        let mut inherent = fmt_function("src/error.rs", "DecodeError");
+        inherent.name = "to_string".to_string();
+        inherent.id = SymbolId("src/error.rs::impl DecodeError::to_string".to_string());
+        let related = reasons_full(&owner, 0, &[&body], &[], vec![inherent]);
+        assert!(related.is_empty(), "{related:?}");
+    }
+
+    #[test]
+    fn unrelated_fmt_call_does_not_hide_a_valid_dispatch() {
+        let body = format!("{CTOR}let _ = fmt::Display::fmt(&other, f);\nformat!(\"{{}}\", e);");
+        let related = reasons(
+            &["fmt::Display for DecodeError", "fmt::Display for Other"],
+            0,
+            &[&body],
+        );
+        assert!(direct(&related, "t0"), "{related:?}");
+    }
+
+    #[test]
+    fn placeholders_must_account_for_every_argument() {
+        let owner = ["fmt::Display for DecodeError"];
+        for body in [
+            // Turbofish and closure commas split one argument into several.
+            format!("{CTOR}format!(\"{{:?}} {{:?}} {{}}\", g::<A, B>(), e, y);"),
+            format!("{CTOR}format!(\"{{:?}} {{:?}} {{}}\", f(|a, b| a), e, y);"),
+            // Unused positional, out-of-range index, unused named argument.
+            format!("{CTOR}format!(\"{{}}\", e, 1);"),
+            format!("{CTOR}format!(\"{{1}}\", e);"),
+            format!("{CTOR}format!(\"{{}}\", e, unused = 1);"),
+            format!("{CTOR}format!(\"{{}} {{}}\", e);"),
+        ] {
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
     }
 }

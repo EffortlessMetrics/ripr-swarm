@@ -870,6 +870,8 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
+    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+        std::cell::OnceCell::new();
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -892,10 +894,19 @@ fn find_related_tests_with_candidates<'a>(
                 || body_contains_owner_call(&test.body, owner_name));
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
-        let dispatches_to_fmt = !calls_owner_by_name
-            && owner_fn.is_some_and(|owner| {
-                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, index)
-            });
+        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
+            fmt_context
+                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
+                .as_ref()
+                .is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+        });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
