@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `python-wheelhouse-qualification.yml` now builds the candidate wheel, installs it with pip and uv inside a private network namespace on a runner with no checkout, runs the installed `ripr` on a Python fixture for its subject count, and feeds real rows to `cargo xtask qualify-python-wheelhouse`. Before, the workflow staged no wheel and wrote rows hard-coded as failed, so it could never pass (#4631, #2769).

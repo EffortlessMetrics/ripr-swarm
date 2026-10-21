@@ -15,18 +15,30 @@ Dispatch `.github/workflows/python-wheelhouse-qualification.yml` with:
 
 - `candidate_sha`: the full 40-character immutable candidate commit SHA.
 
-The job checks out that SHA with `contents: read` and `persist-credentials:
-false`, stages `dist/wheels` or `packaging/python/dist` when present, installs
-through isolated pip and uv consumers, and retains receipts as an Actions
-artifact for 5 days. Staging must yield exactly one wheel; zero or mixed
-filenames leave the required rows missing. The workflow hashes that one staged
-path rather than the first glob match.
+Three jobs run. `stage` checks out the SHA with `contents: read` and
+`persist-credentials: false`, builds exactly one linux/x86_64 wheel with the
+pinned maturin, downloads the pinned offline pip and uv tooling, and records
+the wheel digest and the digest of the `ripr` script inside it. `install` runs
+once per client (pip, uv) on a runner that has no checkout, installs from the
+staged wheelhouse only, runs the installed `ripr` on a Python fixture, and
+writes one row. `aggregate` checks the SHA out again, assembles the identity
+and rows, and runs the gate below. Receipts are retained as an Actions artifact
+for 5 days.
 
-Network isolation is an independent `urllib.request.urlopen('https://pypi.org')`
-probe after `PIP_NO_INDEX`/`UV_OFFLINE` are set. Source-checkout reachability
-is whether `${GITHUB_WORKSPACE}/Cargo.toml` is readable from the consumer
-working directory. This lane does not add a sandbox or filesystem unmount, so
-those probes typically remain true on GitHub-hosted runners and fail closed.
+Isolation is measured, not assumed:
+
+- Network: the install and the journey run in a private network namespace
+  (`unshare --net`), and the journey fails if `https://pypi.org` is reachable
+  inside it.
+- Source checkout: the consumer job never checks out the repository; the row
+  records whether any `Cargo.toml` exists under the workspace.
+- Cargo and ambient `ripr`: probed with the same minimal `PATH` the consumer
+  uses, before the install.
+- Planted binary: a wrong-path `ripr` is placed on `PATH` behind the install and
+  must be what runs without it; the installed one must resolve first, match the
+  wheel's script digest, and report the candidate version and SHA.
+- Subjects: `subject_count` is the number of findings the installed binary
+  produced on the fixture; a run that analyzes nothing cannot pass.
 
 ## Gate
 
@@ -38,16 +50,11 @@ escape, a detected planted wrong-PATH binary, and network disabled after
 staging. Failed, `not_run`, unsupported, missing, zero-subject, or mismatched
 rows cannot satisfy the aggregate.
 
-When this candidate has no staged wheels, or more than one, the required rows
-stay missing and the aggregate cannot pass. That is the honest result until
-#4490 produces a single wheelhouse artifact. Installed-use analysis remains
-#4626; a wheel install without a nonzero discriminator still cannot pass.
-
 ## Claim boundary
 
 A passing run would establish that the named candidate's selected linux/x86_64
 wheel installed from a local wheelhouse through pip and uv with the isolation
 controls above. It does not establish PyPI publication, a compatibility floor,
 a support-tier promotion, or the five-target matrix. A green pip `--no-index`
-install is not network isolation; a PATH that omits the checkout is not a
-source-checkout barrier.
+install is not network isolation on its own; the namespace probe is the
+evidence.

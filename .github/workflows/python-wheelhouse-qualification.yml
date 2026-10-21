@@ -17,25 +17,23 @@ concurrency:
   group: python-wheelhouse-qualification-${{ inputs.candidate_sha }}
   cancel-in-progress: false
 
-jobs:
-  qualify:
-    name: local wheelhouse pip and uv rows
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-      CARGO_TERM_COLOR: always
-    steps:
-      - name: Initialize receipt root
-        run: |
-          set -euo pipefail
-          base="${RUNNER_TEMP}/ripr-python-wheelhouse"
-          mkdir -p "${base}/receipts/rows" "${base}/wheelhouse" "${base}/consumer" "${base}/decoy"
-          echo "QUAL_ROOT=${base}/receipts" >> "$GITHUB_ENV"
-          echo "WHEELHOUSE=${base}/wheelhouse" >> "$GITHUB_ENV"
-          echo "CONSUMER_ROOT=${base}/consumer" >> "$GITHUB_ENV"
-          echo "DECOY_ROOT=${base}/decoy" >> "$GITHUB_ENV"
+env:
+  CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  RUST_TARGET: x86_64-unknown-linux-gnu
+  MATURIN_VERSION: "1.14.1"
+  UV_VERSION: "0.12.19"
+  PIP_VERSION: "26.2.1"
 
+jobs:
+  stage:
+    name: build and stage the single candidate wheel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    outputs:
+      native_version: ${{ steps.bind.outputs.native_version }}
+      wheel_sha256: ${{ steps.stage.outputs.wheel_sha256 }}
+      payload_sha256: ${{ steps.stage.outputs.payload_sha256 }}
+    steps:
       - name: Checkout immutable candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -43,86 +41,213 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify candidate identity
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+          targets: ${{ env.RUST_TARGET }}
+
+      - name: Bind candidate identity
+        id: bind
         run: |
           set -euo pipefail
-          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"
-          test "$(git rev-parse HEAD^{tree})"
-          python3 -c "import json,os,pathlib,subprocess; p=pathlib.Path(os.environ['QUAL_ROOT'])/'candidate-identity.json'; p.write_text(json.dumps({'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'source_tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),'limitations':[],'non_claims':['no PyPI publication','no compatibility-floor claim','no support-tier promotion']},indent=2)+'\n')"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          native="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "ripr") | .version')"
+          echo "native_version=${native}" >> "$GITHUB_OUTPUT"
+          mkdir -p "${RUNNER_TEMP}/stage"
+          jq -n --arg c "${CANDIDATE_SHA}" --arg t "$(git rev-parse 'HEAD^{tree}')" \
+            '{source_commit: $c, source_tree: $t, limitations: ["linux/x86_64 only", "Python preview-language journey only"],
+              non_claims: ["no PyPI publication", "no compatibility-floor claim", "no support-tier promotion"]}' \
+            > "${RUNNER_TEMP}/stage/candidate-identity.json"
+
+      - name: Build one wheel and the offline tooling
+        id: stage
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/stage"
+          python3 -m venv "${RUNNER_TEMP}/build-venv"
+          py="${RUNNER_TEMP}/build-venv/bin/python"
+          "${py}" -m pip install --disable-pip-version-check "pip==${PIP_VERSION}" "maturin==${MATURIN_VERSION}"
+          mkdir -p "${stage}/wheelhouse" "${stage}/tooling"
+          (cd packaging/python && "${py}" -m maturin build --release --target "${RUST_TARGET}" --compatibility linux --out "${stage}/wheelhouse")
+          "${py}" -m pip download --disable-pip-version-check --no-deps --only-binary=:all: \
+            --dest "${stage}/tooling" "pip==${PIP_VERSION}" "uv==${UV_VERSION}"
+          mapfile -t wheels < <(find "${stage}/wheelhouse" -maxdepth 1 -type f -name '*.whl' | sort)
+          test "${#wheels[@]}" = "1"
+          echo "wheel_sha256=$(sha256sum "${wheels[0]}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          "${py}" - "${wheels[0]}" >> "$GITHUB_OUTPUT" <<'PY'
+          import hashlib, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              scripts = [n for n in z.namelist() if n.endswith(".data/scripts/ripr")]
+              assert len(scripts) == 1, scripts
+              print("payload_sha256=" + hashlib.sha256(z.read(scripts[0])).hexdigest())
+          PY
+          tar -czf "${stage}/python-basic-fixture.tar.gz" fixtures/python/basic
+
+      - name: Upload staged wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-wheelhouse-stage-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/stage
+          if-no-files-found: error
+          retention-days: 5
+
+  install:
+    name: ${{ matrix.client }} offline install and Python journey
+    needs: stage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [pip, uv]
+    env:
+      CLIENT: ${{ matrix.client }}
+      NATIVE_VERSION: ${{ needs.stage.outputs.native_version }}
+      EXPECTED_WHEEL_SHA256: ${{ needs.stage.outputs.wheel_sha256 }}
+      EXPECTED_PAYLOAD_SHA256: ${{ needs.stage.outputs.payload_sha256 }}
+    steps:
+      # No checkout: the consumer job has no source tree or Cargo project to reach.
+      - name: Download staged wheelhouse
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: python-wheelhouse-stage-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/stage
+
+      - name: Probe isolation before the consumer runs
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/stage"; state="${RUNNER_TEMP}/state"; decoy="${RUNNER_TEMP}/decoy"
+          mkdir -p "${state}" "${decoy}"
+          printf '%s\n' '#!/bin/sh' 'echo planted-wrong-path' > "${decoy}/ripr"
+          chmod +x "${decoy}/ripr"
+          mapfile -t wheels < <(find "${stage}/wheelhouse" -maxdepth 1 -type f -name '*.whl')
+          if [ ${#wheels[@]} -ne 1 ]; then echo "need exactly one staged wheel" >&2; exit 1; fi
+          test "$(sha256sum "${wheels[0]}" | awk '{print $1}')" = "${EXPECTED_WHEEL_SHA256}"
+          base="/usr/bin:/bin"
+          probe() { env -i HOME="${HOME}" PATH="$1" bash -c "$2" >/dev/null 2>&1 && echo true || echo false; }
+          {
+            echo "WHEEL=${wheels[0]}"
+            echo "CARGO_REACHABLE=$(probe "${base}:${decoy}" 'command -v cargo || command -v rustc')"
+            echo "AMBIENT_REACHABLE=$(probe "${base}" 'test -x /usr/bin/ripr || test -x /bin/ripr')"
+            echo "SOURCE_REACHABLE=$(find "${GITHUB_WORKSPACE}" -name Cargo.toml -print -quit | grep -q . && echo true || echo false)"
+            echo "PLANTED_DETECTED=$([ "$(env -i HOME="${HOME}" PATH="${decoy}:${base}" ripr)" = planted-wrong-path ] && echo true || echo false)"
+          } > "${state}/flags.env"
+          cat "${state}/flags.env"
+
+      - name: Install with the network namespace removed
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/stage"; state="${RUNNER_TEMP}/state"; me="$(id -un)"
+          source "${state}/flags.env"
+          if [ "${CLIENT}" = pip ]; then
+            consumer_path="${RUNNER_TEMP}/pip-consumer/bin:${RUNNER_TEMP}/decoy:/usr/bin:/bin"
+            script='python3 -m venv "$ROOT/pip-consumer" &&
+              "$ROOT/pip-consumer/bin/python" -m pip install --disable-pip-version-check --no-index --find-links "$ROOT/stage/tooling" "pip==$PIP_VERSION" &&
+              "$ROOT/pip-consumer/bin/python" -m pip install --disable-pip-version-check --no-index --find-links "$ROOT/stage/wheelhouse" "ripr-rs==$NATIVE_VERSION"'
+            executable="${RUNNER_TEMP}/pip-consumer/bin/ripr"
+          else
+            consumer_path="${RUNNER_TEMP}/uv-bin:${RUNNER_TEMP}/decoy:/usr/bin:/bin"
+            script='python3 -m venv "$ROOT/uv-bootstrap" &&
+              "$ROOT/uv-bootstrap/bin/python" -m pip install --disable-pip-version-check --no-index --find-links "$ROOT/stage/tooling" "pip==$PIP_VERSION" "uv==$UV_VERSION" &&
+              mkdir -p "$ROOT/uv-bin" && UV_OFFLINE=1 UV_TOOL_DIR="$ROOT/uv-tools" UV_TOOL_BIN_DIR="$ROOT/uv-bin" UV_CACHE_DIR="$ROOT/uv-cache" \
+                "$ROOT/uv-bootstrap/bin/python" -m uv tool install --offline "$WHEEL"'
+            executable="${RUNNER_TEMP}/uv-bin/ripr"
+          fi
+          sudo unshare --net -- sudo -u "${me}" env "HOME=${HOME}" "ROOT=${RUNNER_TEMP}" "WHEEL=${WHEEL}" \
+            "PIP_VERSION=${PIP_VERSION}" "UV_VERSION=${UV_VERSION}" "NATIVE_VERSION=${NATIVE_VERSION}" "PATH=${PATH}" \
+            bash -ec "${script}"
+          { echo "EXECUTABLE=${executable}"; echo "CONSUMER_PATH=${consumer_path}"; } >> "${state}/flags.env"
+          test "$(sha256sum "${executable}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+
+      - name: Run the Python journey with the network namespace removed
+        run: |
+          set -euo pipefail
+          state="${RUNNER_TEMP}/state"; me="$(id -un)"
+          source "${state}/flags.env"
+          project="${RUNNER_TEMP}/${CLIENT} consumer"
+          mkdir -p "${project}"
+          tar -xzf "${RUNNER_TEMP}/stage/python-basic-fixture.tar.gz" -C "${project}"
+          fixture="${project}/fixtures/python/basic"
+          sudo unshare --net -- sudo -u "${me}" env -i "HOME=${HOME}" "PATH=${CONSUMER_PATH}" "FIXTURE=${fixture}" \
+            "OUT=${RUNNER_TEMP}" "NATIVE_VERSION=${NATIVE_VERSION}" "SHA=${CANDIDATE_SHA}" bash -ec '
+            test "$(command -v ripr)" = "'"${EXECUTABLE}"'"
+            test "$(ripr --version)" = "ripr ${NATIVE_VERSION} (${SHA})"
+            if python3 -c "import urllib.request; urllib.request.urlopen(\"https://pypi.org\", timeout=5)" 2>/dev/null; then
+              echo "network still reachable" >&2; exit 1
+            fi
+            ripr check --root "$FIXTURE" --diff "$FIXTURE/diff.patch" --mode fast --json > "$OUT/check.json"
+            id="$(jq -er ".findings[0].id" "$OUT/check.json")"
+            cd "$FIXTURE" && ripr explain --root . --diff diff.patch --mode fast "$id" | grep -F "$id" > /dev/null'
+          jq -e '.summary.probes > 0 and .summary.findings > 0 and .findings[0].language == "python"
+            and any(.preview_languages[]?; .language == "python" and .analyzed == true)' "${RUNNER_TEMP}/check.json" > /dev/null
+          echo "SUBJECT_COUNT=$(jq -er '.summary.findings' "${RUNNER_TEMP}/check.json")" >> "${state}/flags.env"
+
+      - name: Write the client row
+        run: |
+          set -euo pipefail
+          source "${RUNNER_TEMP}/state/flags.env"
+          mkdir -p "${RUNNER_TEMP}/rows"
+          jq -n --arg client "${CLIENT}" --arg wheel "$(basename "${WHEEL}")" --arg ws "${EXPECTED_WHEEL_SHA256}" \
+            --arg ps "$(sha256sum "${EXECUTABLE}" | awk '{print $1}')" --argjson n "${SUBJECT_COUNT}" \
+            --argjson cargo "${CARGO_REACHABLE}" --argjson src "${SOURCE_REACHABLE}" \
+            --argjson amb "${AMBIENT_REACHABLE}" --argjson planted "${PLANTED_DETECTED}" \
+            '{client: $client, os: "linux", arch: "x86_64", status: "passed", wheel_filename: $wheel,
+              wheel_sha256: $ws, payload_sha256: $ps, subject_count: $n, cargo_reachable: $cargo,
+              source_checkout_reachable: $src, ambient_ripr_reachable: $amb, planted_wrong_path_detected: $planted,
+              network_disabled_after_staging: true,
+              limitations: ["Python preview-language journey; network removed with a private network namespace"]}' \
+            > "${RUNNER_TEMP}/rows/${CLIENT}.json"
+
+      - name: Upload client row
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-wheelhouse-row-${{ matrix.client }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/rows
+          if-no-files-found: error
+          retention-days: 5
+
+  aggregate:
+    name: wheelhouse aggregate
+    needs: [stage, install]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout immutable candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
         with:
           toolchain: 1.95.0
 
-      - name: Stage local wheelhouse
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          cp dist/wheels/*.whl "${WHEELHOUSE}/" 2>/dev/null || true
-          cp packaging/python/dist/*.whl "${WHEELHOUSE}/" 2>/dev/null || true
-          python3 -m pip install --user uv
-          printf '%s\n' '#!/bin/sh' 'echo planted-wrong-path' > "${DECOY_ROOT}/ripr"
-          chmod +x "${DECOY_ROOT}/ripr"
-
-      - name: Isolated pip and uv wheelhouse installs
-        run: |
-          set -euo pipefail
-          cd "${CONSUMER_ROOT}"
-          export PIP_NO_INDEX=1 UV_OFFLINE=1
-          if python3 -c "import urllib.request; urllib.request.urlopen('https://pypi.org', timeout=5)"; then network=false; else network=true; fi
-          export PATH="${CONSUMER_ROOT}/venv/bin:${CONSUMER_ROOT}/uv/bin:${DECOY_ROOT}:/usr/bin:/bin"
-          cargo_ok=false; ambient=false; planted=false; source_ok=false
-          if command -v cargo >/dev/null || command -v rustc >/dev/null; then cargo_ok=true; fi
-          if [ -x /usr/bin/ripr ] || [ -x /bin/ripr ]; then ambient=true; fi
-          if [ "$(command -v ripr 2>/dev/null || true)" = "${DECOY_ROOT}/ripr" ] && [ "$(ripr)" = "planted-wrong-path" ]; then planted=true; fi
-          if test -r "${GITHUB_WORKSPACE}/Cargo.toml"; then source_ok=true; fi
-          shopt -s nullglob
-          wheels=("${WHEELHOUSE}"/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "need exactly one staged wheel; required pip/uv rows stay missing pending #4490" >&2
-            exit 0
-          fi
-          python3 -m venv "${CONSUMER_ROOT}/venv"
-          "${CONSUMER_ROOT}/venv/bin/pip" install --no-index --find-links "${WHEELHOUSE}" ripr-rs
-          mkdir -p "${CONSUMER_ROOT}/uv/bin"
-          PATH="${HOME}/.local/bin:${PATH}" UV_TOOL_BIN_DIR="${CONSUMER_ROOT}/uv/bin" UV_TOOL_DIR="${CONSUMER_ROOT}/uv/tools" UV_FIND_LINKS="${WHEELHOUSE}" HOME="${CONSUMER_ROOT}" uv tool install --offline ripr-rs
-          pip_bin="${CONSUMER_ROOT}/venv/bin/ripr"
-          uv_bin="${CONSUMER_ROOT}/uv/bin/ripr"
-          test -x "${pip_bin}" && test "${pip_bin}" != "${DECOY_ROOT}/ripr"
-          test -x "${uv_bin}" && test "${uv_bin}" != "${DECOY_ROOT}/ripr"
-          test "$(command -v ripr)" != "${DECOY_ROOT}/ripr"
-          python3 - "$pip_bin" "$uv_bin" "$cargo_ok" "$source_ok" "$ambient" "$planted" "$network" "${wheels[0]}" <<'PY'
-          import hashlib, json, os, pathlib, sys
-          wheel = pathlib.Path(sys.argv[8])
-          sha = hashlib.sha256(wheel.read_bytes()).hexdigest()
-          root = pathlib.Path(os.environ["QUAL_ROOT"]) / "rows"
-          root.mkdir(parents=True, exist_ok=True)
-          def digest(path):
-              return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-          def flag(index):
-              return sys.argv[index] == "true"
-          def write(client, binary):
-              row = {"client": client, "os": "linux", "arch": "x86_64", "status": "failed",
-                     "wheel_filename": wheel.name, "wheel_sha256": sha, "payload_sha256": digest(binary),
-                     "subject_count": 0, "cargo_reachable": flag(3), "source_checkout_reachable": flag(4),
-                     "ambient_ripr_reachable": flag(5), "planted_wrong_path_detected": flag(6),
-                     "network_disabled_after_staging": flag(7),
-                     "limitations": ["installed-use analysis is owned by #4626; subject_count stays 0 so this row cannot pass"]}
-              (root / f"{client}.json").write_text(json.dumps(row, indent=2) + "\n")
-          write("pip", sys.argv[1]); write("uv", sys.argv[2])
-          PY
+      - name: Download identity and client rows
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: python-wheelhouse-*-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pulled
 
       - name: Evaluate wheelhouse aggregate
-        if: always()
-        run: cargo xtask qualify-python-wheelhouse --receipts "${QUAL_ROOT}"
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/receipts"
+          mkdir -p "${root}/rows"
+          cp "${RUNNER_TEMP}/pulled/python-wheelhouse-stage-${CANDIDATE_SHA}/candidate-identity.json" "${root}/"
+          find "${RUNNER_TEMP}/pulled" -path '*python-wheelhouse-row-*' -name '*.json' -exec cp {} "${root}/rows/" \;
+          echo "QUAL_ROOT=${root}" >> "$GITHUB_ENV"
+          cargo xtask qualify-python-wheelhouse --receipts "${root}"
 
       - name: Upload Actions-only receipts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: python-wheelhouse-qualification-${{ inputs.candidate_sha }}
-          path: ${{ runner.temp }}/ripr-python-wheelhouse/receipts
+          path: ${{ runner.temp }}/receipts
           if-no-files-found: error
           retention-days: 5
