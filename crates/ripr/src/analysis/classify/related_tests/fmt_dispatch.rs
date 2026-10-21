@@ -1135,4 +1135,20 @@ mod tests {
         let body = format!("{typed}format!(\"{{}}\", format!(\"{{:?}}\", e));");
         assert!(direct(&reasons(&owner, 0, &[&body]), "t0"), "{body}");
     }
+
+    #[test]
+    fn comma_splits_inside_generics_and_closures_never_link() {
+        // Valid Rust uses every argument, so a comma inside `::<A, B>` or
+        // `|a, b|` always leaves an unused positional piece and refuses.
+        let owner = ["fmt::Display for DecodeError"];
+        for body in [
+            format!("{CTOR}format!(\"{{}} {{}}\", g::<A, B>(), e);"),
+            format!("{CTOR}format!(\"{{1}} {{0}}\", e, g::<A, B>());"),
+            format!("{CTOR}format!(\"{{}} {{}}\", f(|a, b| a + b), e);"),
+            format!("{CTOR}format!(\"{{x}} {{}}\", e, x = g::<A, B>());"),
+            format!("{CTOR}format!(\"{{x}} {{}}\", e, x = f(|a, b| a));"),
+        ] {
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+    }
 }
