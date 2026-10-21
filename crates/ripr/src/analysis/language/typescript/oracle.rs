@@ -232,17 +232,46 @@ pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
         },
         // A finalizer that exits replaces the try completion. Otherwise the
         // block must exit and so must any catch (the catch is the only other
-        // way out of the try). A loop or `switch` is never decided here.
+        // way out of the try), unless the block's first statement is a
+        // non-throwing exit, which makes the catch unreachable (#9150). A
+        // loop or `switch` is never decided here.
         Statement::TryStatement(try_stmt) => {
             try_stmt
                 .finalizer
                 .as_ref()
                 .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
                 || (try_stmt.block.body.iter().any(statement_completes_abruptly)
-                    && try_stmt.handler.as_ref().is_none_or(|handler| {
-                        handler.body.body.iter().any(statement_completes_abruptly)
-                    }))
+                    && (try_stmt
+                        .block
+                        .body
+                        .first()
+                        .is_some_and(statement_is_non_throwing_exit)
+                        || try_stmt.handler.as_ref().is_none_or(|handler| {
+                            handler.body.body.iter().any(statement_completes_abruptly)
+                        })))
         }
+        _ => false,
+    }
+}
+
+/// `true` for a statement that leaves its block without throwing and without
+/// evaluating anything that could throw: a bare `return;`, a `return` of a
+/// plain literal, `break` or `continue` (#9150). As the FIRST statement of a
+/// `try` block nothing can throw into the `catch` first, so the `catch` can
+/// never run. Anything else (`return f();`, `throw`, a call before the exit)
+/// stays undecidable and keeps the fail-closed catch requirement.
+fn statement_is_non_throwing_exit(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
+        Statement::ReturnStatement(ret) => ret.argument.as_ref().is_none_or(|argument| {
+            matches!(
+                argument,
+                Expression::BooleanLiteral(_)
+                    | Expression::NumericLiteral(_)
+                    | Expression::StringLiteral(_)
+                    | Expression::NullLiteral(_)
+            )
+        }),
         _ => false,
     }
 }

@@ -16398,6 +16398,7 @@ fixtures = [
   "fixtures/typescript_finally_completion",
   "fixtures/ts_dead_assertion_after_return",
   "fixtures/ts_dead_assertion_after_try_finally",
+  "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",
