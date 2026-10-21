@@ -3141,6 +3141,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
     let mut root_explicitly_provided = false;
@@ -3167,6 +3168,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3219,13 +3221,14 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
-    worktree_scope_conflict(
+    drill_in_scope_conflict(
         "explain",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(missing_selector_error(
             "missing finding selector",
             "ripr check --json",
@@ -3242,33 +3245,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // finding); with an unmoved root it is used as typed.
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     let selector = selector
-        .map(
-            |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
-                Err(_) if replay => match prefix.as_deref() {
-                    Some(prefix) => {
-                        // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
-                        let bare = item.trim_start_matches("./");
-                        let anchored = if bare.starts_with(&format!("{prefix}/")) {
-                            bare.to_string()
-                        } else {
-                            format!("{prefix}/{bare}")
-                        };
-                        match anchored.rsplit_once(':') {
-                            Some((file, _)) => {
-                                check::refuse_root_shadowed_selector(&input.root, file)
-                                    .map(|()| anchored)
-                            }
-                            None => Ok(anchored),
-                        }
-                    }
-                    None => Ok(item),
-                },
-                bound => bound,
-            },
-        )
+        .map(|item| bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay))
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let worktree_from_default =
+        !worktree && dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3316,6 +3299,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &config,
                 explicit.mode,
                 worktree,
+                worktree_from_default,
                 progress_sink,
             )?
         }
@@ -3341,29 +3325,89 @@ pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
     )
 }
 
-/// A `--worktree` drill-in without `--root` resolves the implicit project
-/// root the same way `ripr check --worktree` does, so a manual invocation
-/// from a project subdirectory analyzes the scope that listed the finding.
-/// An explicit `--root` is kept as given.
-pub(super) fn resolve_worktree_root(
-    input: &mut CheckInput,
-    worktree: bool,
-    root_explicitly_provided: bool,
-) -> Result<(), String> {
-    if worktree && !root_explicitly_provided {
-        check::resolve_implicit_workspace_root(input)?;
+/// #8872/#8902: bind a member-relative `file:line` drill-in selector (`explain`
+/// and `context`) to the invocation directory. With `--from`/`--diff`
+/// (`replay`) the named file need not exist in the working tree (for example a
+/// file the diff deletes), so a selector that binds to nothing is not refused:
+/// it is anchored to the invocation directory instead (never left as a bare
+/// suffix that could match a sibling member's finding); with an unmoved root it
+/// is used as typed.
+fn bind_member_drill_in_selector(
+    prefix: Option<&str>,
+    root: &Path,
+    item: String,
+    replay: bool,
+) -> Result<String, String> {
+    match check::bind_member_selector_item(prefix, root, &item) {
+        Err(_) if replay => match prefix {
+            Some(prefix) => {
+                // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                let bare = item.trim_start_matches("./");
+                let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                    bare.to_string()
+                } else {
+                    format!("{prefix}/{bare}")
+                };
+                match anchored.rsplit_once(':') {
+                    Some((file, _)) => {
+                        check::refuse_root_shadowed_selector(root, file).map(|()| anchored)
+                    }
+                    None => Ok(anchored),
+                }
+            }
+            None => Ok(item),
+        },
+        bound => bound,
     }
-    Ok(())
 }
 
-/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
-/// beside `--diff`, and an artifact from `--from` already fixes the scope.
-pub(super) fn worktree_scope_conflict(
+/// `ripr check` reads the working tree by default when it holds uncommitted
+/// tracked edits, and prints finding ids from that run. `explain`/`context`
+/// must resolve those ids against the same subject, so a live-repository
+/// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
+/// follows the shared `app::diff_source` default instead of re-analysing
+/// committed history only.
+pub(super) fn dirty_tree_default_is_worktree(
+    input: &CheckInput,
+    from_artifact: bool,
+    committed: bool,
+) -> bool {
+    !committed
+        && !from_artifact
+        && input.diff_file.is_none()
+        && input.git_candidate.is_none()
+        && app::diff_source::select_live_diff_source(
+            &input.root,
+            app::diff_source::DiffSourceRequest::Default,
+            input.git_timeout,
+        )
+        .is_working_tree()
+}
+
+/// Explicit live sources are mutually exclusive and cannot override a supplied
+/// diff or an artifact. These are argv errors, before root or input reads.
+pub(super) fn drill_in_scope_conflict(
     command: &str,
     worktree: bool,
+    committed: bool,
     diff_file: bool,
     from_artifact: bool,
 ) -> Result<(), String> {
+    if committed && worktree {
+        return Err(format!(
+            "{command} --committed and --worktree select different diff sources; pass one"
+        ));
+    }
+    if committed && diff_file {
+        return Err(format!(
+            "{command} --committed cannot be combined with --diff"
+        ));
+    }
+    if committed && from_artifact {
+        return Err(format!(
+            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     if worktree && diff_file {
         return Err(format!(
             "{command} --worktree cannot be combined with --diff"
