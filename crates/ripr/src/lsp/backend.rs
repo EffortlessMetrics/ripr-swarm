@@ -4413,6 +4413,7 @@ mod workspace_input_tests {
         for non_input in [
             "src/app.js",
             "src/api.generated.ts",
+            "src/types.d.ts",
             "src/node_modules/p/i.ts",
             "src/vendor/lib.ts",
             "lib/app.ts",
