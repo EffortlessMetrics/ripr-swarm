@@ -112,7 +112,8 @@ field, error variant, effect, call deletion or match arm.
 
 This table documents which propositions each adapter may emit today. It is
 normative documentation, not a second capability registry; once #5531 lands it
-is validated against or derived from that registry. An adapter that reports an
+is validated against or derived from that registry (which has no `miss` field yet;
+adding one is a follow-up). An adapter that reports an
 unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
@@ -126,8 +127,8 @@ unsupported state as unknown and fabricates no reason conforms.
 | `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
 | `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
 
-"Pending" means the row-evidence prerequisites in this spec have landed or are
-tracked, and the producer has not yet mapped them. Perl's narrower coverage is
+"Pending" means the producer has not mapped that reason yet; the row-evidence
+prerequisites for it are specified in this document. Perl's narrower coverage is
 a capability difference, not a parity failure.
 
 ### Projection law
@@ -215,8 +216,8 @@ excluded from deterministic identity.
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
-Python and TypeScript record no miss yet. Before a producer (#5491, #5495)
-may write a `no_assertion` miss, each extracted test carries an assertion
+Which adapters write a miss is stated in the capability table above. Before a
+producer may write a `no_assertion` miss, each extracted test carries an assertion
 admission state, computed fail-closed from the test's syntax:
 
 - `recognized_assertion_present`: the oracle extractor credited an assertion.
@@ -397,9 +398,8 @@ actionability or rendered output.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript miss producers (#5491, #5495) are not yet landed; the
-  contract and their prerequisites are specified here, the mapping is not.
-  Richer Perl reasons that need row-owned facts (#5562).
+- Per-adapter miss mappings: the capability table states which reasons each
+  adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
   support-tier promotion, or runtime or mutation-kill claim.
 
