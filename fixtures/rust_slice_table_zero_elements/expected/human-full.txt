@@ -24,7 +24,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table
+  - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
   - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
   - propagation yes: Changed behavior appears to influence returned value: 0
   - observation yes: A related test observes a value or effect near the changed behavior
