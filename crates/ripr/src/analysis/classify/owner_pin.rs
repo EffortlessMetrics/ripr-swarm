@@ -3211,6 +3211,7 @@ impl OwnerReturnPin {
                             operands[at],
                             &self.name,
                             self.returns_scalar,
+                            false,
                         )
                         .and_then(|text| {
                             self.awaited_call_shape(text, &self.name)
@@ -3340,10 +3341,28 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            let Some(call) = self.awaited_call_shape(operand, &self.name) else {
+            if let Some(call) = self.awaited_call_shape(operand, &self.name) {
+                (call, expected, Some(operand))
+            } else if (test.start_line..=test.end_line).contains(&assertion.line)
+                && owner_named_outside(test, &assertion.text, &self.name)
+                // `let hit = owner(..); assert!(hit);` reads like
+                // `assert_eq!(hit, true)`: the same binding rules as the
+                // `assert_eq!` reading (an immutable once-bound scalar
+                // used only in assertions) decide whether `hit` is the call.
+                && let Some(text) = let_bound_owner_call(
+                    test,
+                    assertion,
+                    operand,
+                    &self.name,
+                    self.returns_scalar,
+                    true,
+                )
+                && let Some(call) = self.awaited_call_shape(text, &self.name)
+            {
+                (call, expected, Some(text))
+            } else {
                 return false;
-            };
-            (call, expected, Some(operand))
+            }
         } else {
             return false;
         };
@@ -9283,6 +9302,9 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
+/// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
+/// / `assert!(!operand)`, whose condition is the operand itself.
+///
 /// `scalar` (cell-0094): the owner returns a primitive scalar, so the
 /// binding is `Copy` with no interior mutability and nothing can change
 /// it. Its other uses may then also sit in any other std assertion macro
@@ -9295,6 +9317,7 @@ fn let_bound_owner_call<'a>(
     operand: &str,
     name: &str,
     scalar: bool,
+    bare_condition: bool,
 ) -> Option<&'a str> {
     let operand = operand.trim();
     if !is_plain_identifier(operand) || operand == name || operand == "self" {
@@ -9339,6 +9362,10 @@ fn let_bound_owner_call<'a>(
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
+        // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
+        // as the whole condition, which is the `assert_eq!(operand, bool)`
+        // operand once; the scalar check below bounds it to one mention.
+        let whole_operand = whole_operand || (reviewed && bare_condition);
         let read_only = scalar
             && !reviewed
             && READ_ONLY_ASSERTION_MACROS
