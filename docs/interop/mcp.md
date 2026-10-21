@@ -291,7 +291,8 @@ identity: identity and location, the changed behavior (expression,
 before/after, delta kind, probe family), causal attribution (canonical gap
 owner, behavior kind, probe kind, normalized discriminator), discriminator
 availability and the producer's observed/missing evidence, related tests with
-oracle kind and strength, and typed limitation states for anything the
+oracle kind and strength, the nonnegative `related_tests_total` before the
+producer's retained-row cap, and typed limitation states for anything the
 producer did not establish. The readiness block reports the committed
 producer repair-readiness facts (candidate actionability, an established
 discriminator, and a strong directly-related test fix site on a test

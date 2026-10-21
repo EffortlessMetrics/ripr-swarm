@@ -2616,7 +2616,7 @@ fn ripr_artifact_ignore(
             artifact_roots_display(&uncovered),
             uncovered
                 .iter()
-                .map(|root| format!("/{root}/"))
+                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -4404,6 +4404,60 @@ mod tests {
                 || hostile_command.ends_with(quoted_windows.as_str()),
             "hostile root is not a single quoted word: {hostile_command}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_ignore_advice_covers_only_the_literal_root() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("literal-ignore-advice");
+        std::fs::create_dir_all(root.join("build/cache*/nested"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("empty-excludes"), "").map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["init"]).map_err(|error| error.to_string())?;
+        // Use an absolute excludes path so neither the test host nor Git's
+        // relative config-path interpretation can supply the expected rule.
+        let excludes = root.join("empty-excludes");
+        crate::git::run_git(
+            &root,
+            &[
+                "config",
+                "core.excludesFile",
+                excludes.to_str().ok_or("non-UTF-8 path")?,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        let roots = [PathBuf::from("build/cache*")];
+        let DoctorArtifactIgnore::Unignored { warning } = ripr_artifact_ignore(&root, &roots)
+        else {
+            return Err("expected missing ignore rule".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, r"/build/cache\*/");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        for (path, expected) in [
+            ("build/cache*/nested/a.json", Some(0)),
+            ("build/cache1/user.rs", Some(1)),
+            ("build/cache-other/user.rs", Some(1)),
+        ] {
+            let probe = crate::git::run_git_output_with_deadline(
+                &root,
+                &["check-ignore", "--no-index", "-q", "--", path],
+                Some(std::time::Duration::from_secs(5)),
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(probe.status.code(), expected, "{path}: {probe:?}");
+        }
+        assert_eq!(
+            ripr_artifact_ignore(&root, &roots),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
