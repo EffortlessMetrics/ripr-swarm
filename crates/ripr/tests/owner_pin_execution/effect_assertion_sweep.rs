@@ -1,6 +1,6 @@
-//! Generated dead-context sweep for effect-family assertion admission (#8927).
-//! Every context below provably never runs the assertion, so no effect finding
-//! may be credited from it; the `direct` rows are the discriminating controls.
+//! Generated execution-context sweep for effect-family assertion admission (#8927).
+//! Dead contexts must not credit their assertion. Direct and mixed live rows
+//! retain credit; other live forms document the current conservative refusals.
 
 use super::*;
 
@@ -55,7 +55,6 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 "outer_loop_after_inner_break",
                 format!("'o: loop {{ loop {{ break 'o; }} {a} }}"),
             ),
-            ("labeled_block", format!("'a: {{\n{a}\n}}")),
             ("loop_after_break", format!("loop {{ break; {a} }}")),
             (
                 "uninvoked_macro_rules",
@@ -75,6 +74,9 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
     let live = |a: &str| -> Vec<(&'static str, String)> {
         vec![
             ("direct", a.to_string()),
+            // The label does not skip its body; refusal here is a conservative
+            // miss, not evidence that the assertion never runs.
+            ("labeled_block", format!("'a: {{\n{a}\n}}")),
             ("if_true", format!("if true {{\n{a}\n}}")),
             ("closure_called", format!("let c = || {{\n{a}\n}};\nc();")),
             (

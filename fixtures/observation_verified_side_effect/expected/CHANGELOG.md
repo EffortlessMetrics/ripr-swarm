@@ -310,3 +310,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_verified_side_effect (16)
+
+Reason:
+RIPR-SPEC-0094 #8954: reconcile the additional human-full consumer with genuine line18 ReturnValue weakly_exposed and SideEffect exposed, zero CallDeletion; preserve conditional return guidance.
+
+Command:
+`cargo xtask goldens bless observation_verified_side_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
