@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr repair`, `ripr pilot`, `ripr status`, `ripr continue` and `ripr agent stub` run from a Cargo workspace member directory now resolve the workspace root through the same implicit-root owner as `ripr check` (same stderr disclosure; `--root .` opts out), so repair sees the gaps `check` finds and artifacts land in the workspace `target/ripr` instead of `crates/<member>/target/ripr` (#8767).

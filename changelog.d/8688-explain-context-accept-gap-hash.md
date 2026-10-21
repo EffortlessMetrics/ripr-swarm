@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr explain` and `ripr context` now accept the seam-derived hash-form canonical gap ID (`gap:<16hex>`) that `ripr rerun --json` and `ripr repo-exposure` JSON carry, resolving it through the same seam-to-finding binding as seam IDs. The ID `ripr check` prints stays the producer form; both spellings of one gap now drill into the same finding on the fresh and `--from` artifact paths (#8688).
