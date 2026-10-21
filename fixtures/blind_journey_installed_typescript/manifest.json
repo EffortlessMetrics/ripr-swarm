@@ -13,7 +13,7 @@
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
   "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "the base and head snapshots' package-lock.json are the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the variant snapshots are gaining their full lockfiles one per change (#9104); until all land, each variant's manifest hash says whether it holds the full lockfile or the root-entry skeleton; the journey environment records the installed node/npm/vitest identities above"
+  "lockfile_note": "each snapshot's package-lock.json is the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); all ten snapshots carry the same lockfile (#9104); the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
@@ -218,7 +218,7 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
-   "the base and head snapshots retain a full npm lockfile; the variant snapshots are gaining their full lockfiles one per change (#9104); until all land, each variant's manifest hash says whether it holds the full lockfile or the root-entry skeleton, and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
+   "all ten snapshots (base, head and eight variants) carry the same full npm lockfile (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [
    "no installed usefulness, candidate qualification or blind acceptance is claimed",
