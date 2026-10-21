@@ -1,4 +1,6 @@
-//! Production-index probes for the bounded direct relation in #4680.
+//! Production-index probes for the independent module-motion repair in #4680.
+//! Binding/shadowing residuals remain recorded on #4680 with the diagnostic
+//! source at 3114051e and hosted run 39588780826; they are outside this repair.
 
 use super::*;
 
@@ -20,8 +22,6 @@ enum Control {
     Ordinary,
     CrateVisible,
     PrivateChild,
-    ShadowedImport,
-    AmbiguousImport,
 }
 
 fn motion_case(
@@ -78,31 +78,17 @@ fn motion_case_with_control(
     } else {
         call
     };
-    let import = if matches!(control, Control::AmbiguousImport) {
-        format!(
-            "use {};\nuse super::other::compute;\n",
-            call.trim_end_matches("()")
-        )
-    } else if imported {
+    let import = if imported {
         format!("use {};\n", call.trim_end_matches("()"))
     } else {
         String::new()
     };
     let call = if imported { "compute()" } else { call };
-    let shadow = if matches!(control, Control::ShadowedImport) {
-        "fn compute() -> i32 { 99 }\n"
-    } else {
-        ""
-    };
-    let expected = if wrong_owner || matches!(control, Control::ShadowedImport) {
-        99
-    } else {
-        9
-    };
+    let expected = if wrong_owner { 99 } else { 9 };
     let source = format!(
         "{declaration}\nmod other {{ pub(super) fn compute() -> i32 {{ 99 }} }}\n\
          #[cfg(test)]\nmod tests {{\n{import}\
-         #[test]\nfn exact_value() {{\n{shadow}assert_eq!({call}, {expected});\n}}\n}}\n"
+         #[test]\nfn exact_value() {{\nassert_eq!({call}, {expected});\n}}\n}}\n"
     );
     fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let mut files = vec![PathBuf::from("src/lib.rs")];
@@ -123,11 +109,7 @@ fn motion_case_with_control(
             .iter()
             .filter(|f| f.name == "compute")
             .count(),
-        if matches!(control, Control::ShadowedImport) {
-            3
-        } else {
-            2
-        },
+        2,
         "{placement:?}: both owner and same-named sibling must be indexed"
     );
     let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
@@ -201,6 +183,17 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
             assert_eq!(target.test_kind(), TestKind::InlineUnit);
             assert_eq!(target.provenance(), TestTargetProvenance::RustIndexFunction);
             assert_eq!(target.currentness, TestTargetCurrentness::Current);
+            let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+            let compact_target = compact
+                .related_tests
+                .iter()
+                .find(|test| test.test_name == "exact_value")
+                .and_then(|test| test.test_target.as_ref())
+                .ok_or("compact indexed test identity missing")?;
+            assert_eq!(
+                compact_target, target,
+                "{placement:?}: full/compact identity"
+            );
             // This is a snapshot digest: source motion intentionally changes
             // it, but moving the same bytes to an equivalent root must not.
             if let Some(expected) = &workspace_identity {
@@ -295,52 +288,12 @@ fn module_extraction_imported_sibling_stays_unrelated() -> Result<(), String> {
     Ok(())
 }
 
-fn module_extraction_local_function_shadows_imported_owner() -> Result<(), String> {
-    for placement in PLACEMENTS {
-        let (_root, index, seam) =
-            motion_case_with_control(placement, 9, false, true, Control::ShadowedImport)?;
-        let evidence = evidence_for_seam(&seam, &index);
-        assert_ne!(
-            evidence.reach.state,
-            StageState::Yes,
-            "{placement:?}: {evidence:?}"
-        );
-        assert_ne!(
-            evidence.discriminate.state,
-            StageState::Yes,
-            "{placement:?}: {evidence:?}"
-        );
-    }
-    Ok(())
-}
-
 fn module_extraction_private_child_is_not_accessible_to_parent_observer() -> Result<(), String> {
     for placement in [Placement::InlineChild, Placement::FileChild] {
         // Intentionally inaccessible Rust: parsing a spelled path must not
         // manufacture a reachable relation which ordinary visibility forbids.
         let (_root, index, seam) =
             motion_case_with_control(placement, 9, false, false, Control::PrivateChild)?;
-        let evidence = evidence_for_seam(&seam, &index);
-        assert_ne!(
-            evidence.reach.state,
-            StageState::Yes,
-            "{placement:?}: {evidence:?}"
-        );
-        assert_ne!(
-            evidence.discriminate.state,
-            StageState::Yes,
-            "{placement:?}: {evidence:?}"
-        );
-    }
-    Ok(())
-}
-
-fn module_extraction_ambiguous_import_is_not_an_established_observer() -> Result<(), String> {
-    for placement in PLACEMENTS {
-        // Duplicate bindings are deliberately invalid/ambiguous input. A
-        // parser-only analyzer must retain uncertainty instead of choosing one.
-        let (_root, index, seam) =
-            motion_case_with_control(placement, 9, false, true, Control::AmbiguousImport)?;
         let evidence = evidence_for_seam(&seam, &index);
         assert_ne!(
             evidence.reach.state,
@@ -464,6 +417,101 @@ fn module_extraction_unit_kind_requires_default_target_authority() -> Result<(),
     Ok(())
 }
 
+fn module_extraction_private_owner_keeps_descendant_observer() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        let root = claim_index_fixture_root(4680)?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"module-motion-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let child = "fn compute() -> i32 { 9 }\n#[cfg(test)] mod tests {\n#[test]\nfn exact_value() { assert_eq!(super::compute(), 9); }\n}\n";
+        let (source, owner_file, owner_id) = match placement {
+            Placement::InlineChild => (
+                format!("mod child {{\n{child}}}\n"),
+                "src/lib.rs",
+                "src/lib.rs::child::compute",
+            ),
+            Placement::FileChild => {
+                fs::write(root.join("src/child.rs"), child).map_err(|error| error.to_string())?;
+                (
+                    "mod child;\n".to_string(),
+                    "src/child.rs",
+                    "src/child.rs::compute",
+                )
+            }
+            Placement::Parent => return Err("child-only fixture".to_string()),
+        };
+        fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let mut files = vec![PathBuf::from("src/lib.rs")];
+        if matches!(placement, Placement::FileChild) {
+            files.push(PathBuf::from(owner_file));
+        }
+        let index = build_index(&root, &files)?;
+        assert_eq!(index.tests().len(), 1);
+        let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
+        let selected = seams
+            .iter()
+            .filter(|seam| seam.owner() == owner_id && seam.kind() == SeamKind::ReturnValue)
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1);
+        let evidence = evidence_for_seam(selected[0], &index);
+        assert_eq!(
+            evidence.related_tests.len(),
+            1,
+            "{placement:?}: {evidence:?}"
+        );
+        assert_eq!(
+            evidence.related_tests[0].relation_reason,
+            RelationReason::DirectOwnerCall
+        );
+        assert_eq!(
+            evidence.reach.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+        assert_eq!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+fn module_extraction_visibility_keeps_existing_helper_witness() -> Result<(), String> {
+    let root = claim_index_fixture_root(4680)?;
+    fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"module-motion-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute() }\n}\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::child::exercise(), 9); }\n}\n")
+        .map_err(|error| error.to_string())?;
+    let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+    assert_eq!(index.tests().len(), 1);
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let selected = seams
+        .iter()
+        .filter(|seam| {
+            seam.owner() == "src/lib.rs::child::compute" && seam.kind() == SeamKind::ReturnValue
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selected.len(), 1);
+    let evidence = evidence_for_seam(selected[0], &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+        "{evidence:?}"
+    );
+    assert_eq!(evidence.reach.state, StageState::Yes, "{evidence:?}");
+    Ok(())
+}
+
 #[test]
 fn module_extraction_controls() -> Result<(), String> {
     // Hosted diagnostic execution is fail-fast across test subjects. Keep all
@@ -488,16 +536,8 @@ fn module_extraction_controls() -> Result<(), String> {
             module_extraction_imported_sibling_stays_unrelated,
         ),
         (
-            "local_shadow",
-            module_extraction_local_function_shadows_imported_owner,
-        ),
-        (
             "private_child",
             module_extraction_private_child_is_not_accessible_to_parent_observer,
-        ),
-        (
-            "ambiguous_import",
-            module_extraction_ambiguous_import_is_not_an_established_observer,
         ),
         (
             "pub_crate",
@@ -506,6 +546,14 @@ fn module_extraction_controls() -> Result<(), String> {
         (
             "target_authority",
             module_extraction_unit_kind_requires_default_target_authority,
+        ),
+        (
+            "private_descendant",
+            module_extraction_private_owner_keeps_descendant_observer,
+        ),
+        (
+            "helper_witness",
+            module_extraction_visibility_keeps_existing_helper_witness,
         ),
     ];
     let mut failures = Vec::new();

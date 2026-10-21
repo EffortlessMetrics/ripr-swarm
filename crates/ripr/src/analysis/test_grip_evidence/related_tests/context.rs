@@ -50,6 +50,10 @@ pub(crate) struct CompactGripContext<'a> {
     /// parse, its line index, and its test-function lookup, built once per
     /// file instead of once per seam and related test.
     parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
+    /// Manifest-backed default target identity, once per observer file.
+    /// Small, immutable-index answers survive evidence window boundaries.
+    default_unit_test_files: Mutex<BTreeMap<&'a Path, bool>>,
+    pub(super) private_visibility: super::visibility::PrivateVisibilityMemo,
     /// Per production file: the parser-backed module layout new-test-target
     /// admission reads. File-bounded and small, so it survives windows.
     pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
@@ -637,6 +641,8 @@ impl<'a> CompactGripContext<'a> {
             source_digest_cache: Mutex::new(BTreeMap::new()),
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
+            default_unit_test_files: Mutex::new(BTreeMap::new()),
+            private_visibility: Default::default(),
             inline_unit_layouts: Default::default(),
             owner_lookups: Mutex::new(BTreeMap::new()),
             fixture_names: Mutex::new(BTreeMap::new()),
@@ -719,6 +725,31 @@ impl<'a> CompactGripContext<'a> {
             .filter(|function| function.name == name);
         let function = matches.next()?;
         matches.next().is_none().then_some(function)
+    }
+
+    /// An observer in a manifest-certified default crate root remains an
+    /// inline unit test when its owner moves into another source file.
+    /// Custom targets retain the existing cross-file Integration fallback.
+    pub(in crate::analysis::test_grip_evidence) fn is_default_unit_test_file(
+        &self,
+        path: &Path,
+    ) -> bool {
+        let Some((path, _)) = self.index.files().get_key_value(path) else {
+            return false;
+        };
+        let mut cache = memo(&self.default_unit_test_files);
+        *cache.entry(path.as_path()).or_insert_with(|| {
+            // is_default_target_root requires this shape from its caller;
+            // by itself it does not reject arbitrary src/<module>.rs.
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("lib.rs" | "main.rs")
+            ) && path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "src")
+                && self.index.member_crates.is_default_target_root(path)
+        })
     }
 
     /// SHA-256 of an indexed file's source, computed once per context.
