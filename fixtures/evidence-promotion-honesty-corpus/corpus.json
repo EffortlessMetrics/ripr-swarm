@@ -2906,6 +2906,37 @@
       ]
     },
     {
+      "id": "py_fallthrough_return_early_exit_no_exposed_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_fallthrough_return_early_exit",
+      "vector": "every_strong_call_takes_the_early_exit_so_the_changed_fallthrough_return_is_not_exposed",
+      "probe_family": "return_value",
+      "assertions": [
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
+      ]
+     },
+    {
       "id": "py_local_owner_stand_in_control_real_import_keeps_credit",
       "language": "python",
       "tier": "pure",
@@ -7903,6 +7934,35 @@
           "kind": "exact_value",
           "strength": "strong",
           "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "ts_dead_assertion_after_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_dead_assertion_after_return",
+      "vector": "strong_assertion_after_unconditional_return_in_test_body_treated_as_discriminator",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
         }
       ]
     },
