@@ -2338,6 +2338,7 @@ impl Size {
             },
             test_name: "clamp_to_boundary".to_string(),
             text: String::new(),
+            already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
         };
