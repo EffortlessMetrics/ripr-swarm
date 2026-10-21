@@ -53,6 +53,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     }
 
     let options = parse_gate_options(rest)?;
+    crate::atomic_file::ensure_default_output_contained(&options.input.root)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     // Only `--pr-guidance` and `--gap-ledger` feed gate candidates.

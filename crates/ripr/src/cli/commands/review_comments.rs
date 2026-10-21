@@ -449,6 +449,7 @@ fn review_comments_with_admission(
         ));
     }
 
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
         root: options.root.clone(),

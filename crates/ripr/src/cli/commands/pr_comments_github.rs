@@ -62,22 +62,28 @@ pub(super) fn parse_pr_comments_existing_options(
     Ok(options)
 }
 
+/// Keep the raw `gh api` pages beside the normalized file, through the
+/// symlink-refusing advisory writer (a planted leaf link is refused).
+fn store_raw_copy(root: &Path, bytes: &[u8]) -> Result<(), String> {
+    let raw_copy = root.join(DEFAULT_RAW);
+    if let Some(parent) = raw_copy.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("{EXISTING} could not create {}: {err}", parent.display()))?;
+    }
+    crate::output::file_write::write(&raw_copy, bytes)
+        .map_err(|err| format!("{EXISTING} could not write {}: {err}", raw_copy.display()))
+}
+
 pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_existing_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let pages = if options.raw.as_os_str() == "-" {
         // The workflow pipes `gh api` straight in; keep the raw pages beside
         // the normalized file so the uploaded artifact still shows them.
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
             .map_err(|err| format!("{EXISTING} could not read standard input: {err}"))?;
-        let raw_copy = options.root.join(DEFAULT_RAW);
-        if let Some(parent) = raw_copy.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                format!("{EXISTING} could not create {}: {err}", parent.display())
-            })?;
-        }
-        fs::write(&raw_copy, &bytes)
-            .map_err(|err| format!("{EXISTING} could not write {}: {err}", raw_copy.display()))?;
+        store_raw_copy(&options.root, &bytes)?;
         serde_json::from_slice(&bytes)
             .map_err(|err| format!("{EXISTING}: standard input is not JSON: {err}"))?
     } else {
@@ -206,6 +212,7 @@ fn validate_out_file(out: &Path) -> Result<(), String> {
 
 pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_requests_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let plan = read_json(&options.root.join(&options.plan), REQUESTS)?;
     let planned = publish_requests(&plan, &options.pull_request, &options.head_sha);
 
@@ -257,7 +264,7 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
         ));
     }
     let manifest_path = out_dir.join(REQUESTS_MANIFEST);
-    fs::write(&manifest_path, manifest).map_err(|err| {
+    crate::output::file_write::write(&manifest_path, manifest.as_bytes()).map_err(|err| {
         format!(
             "{REQUESTS} could not write {}: {err}",
             manifest_path.display()
@@ -331,6 +338,7 @@ pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<Summa
 
 pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_summary_options(args)?;
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let guidance = read_json(&options.root.join(&options.pr_guidance), SUMMARY)?;
     let pages = match options.raw.as_deref() {
         None => Value::Array(Vec::new()),
@@ -365,7 +373,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     }
     let manifest_path = out_dir.join(SUMMARY_MANIFEST);
     let Some(request) = request else {
-        fs::write(&manifest_path, "").map_err(|err| {
+        crate::output::file_write::write(&manifest_path, b"").map_err(|err| {
             format!(
                 "{SUMMARY} could not write {}: {err}",
                 manifest_path.display()
@@ -383,7 +391,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
         manifest_field(&file.display().to_string()),
         manifest_field(&request.message)
     );
-    fs::write(&manifest_path, line).map_err(|err| {
+    crate::output::file_write::write(&manifest_path, line.as_bytes()).map_err(|err| {
         format!(
             "{SUMMARY} could not write {}: {err}",
             manifest_path.display()
@@ -489,7 +497,7 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
     let mut text = serde_json::to_string_pretty(value)
         .map_err(|err| format!("{command} could not render {}: {err}", path.display()))?;
     text.push('\n');
-    fs::write(path, text)
+    crate::output::file_write::write(path, text.as_bytes())
         .map_err(|err| format!("{command} could not write {}: {err}", path.display()))
 }
 
@@ -497,7 +505,8 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
 mod tests {
     use super::{
         is_request_file, parse_pr_comments_existing_options, parse_pr_comments_requests_options,
-        pr_comments_existing, pr_comments_requests, validate_out_dir, validate_out_file,
+        pr_comments_existing, pr_comments_requests, store_raw_copy, validate_out_dir,
+        validate_out_file,
     };
     use std::path::{Path, PathBuf};
 
@@ -991,5 +1000,59 @@ mod tests {
                 .err()
                 .is_some()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raw_copy_refuses_a_planted_leaf_link_and_writes_a_normal_leaf() -> Result<(), String> {
+        use std::fs;
+        let base = scratch("raw-leaf-link");
+        let root = base.join("root");
+        let review = root.join("target/ripr/review");
+        fs::create_dir_all(&review).map_err(|err| err.to_string())?;
+        // Positive control: a normal checkout writes the raw copy.
+        store_raw_copy(&root, b"[1]")?;
+        let written = fs::read_to_string(review.join("existing-comments.raw.json"))
+            .map_err(|err| err.to_string())?;
+        assert_eq!(written, "[1]");
+        // Hostile: the leaf is a link to an outside file.
+        let sentinel = base.join("outside.json");
+        fs::write(&sentinel, "ORIG").map_err(|err| err.to_string())?;
+        let leaf = review.join("existing-comments.raw.json");
+        fs::remove_file(&leaf).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&sentinel, &leaf).map_err(|err| err.to_string())?;
+        let result = store_raw_copy(&root, b"[]");
+        let kept = fs::read_to_string(&sentinel).map_err(|err| err.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert!(result.is_err(), "planted leaf link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_refuses_a_target_ripr_review_link_before_writing() -> Result<(), String> {
+        use std::fs;
+        let base = scratch("review-dir-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        fs::create_dir_all(root.join("target/ripr")).map_err(|err| err.to_string())?;
+        fs::create_dir_all(&external).map_err(|err| err.to_string())?;
+        fs::write(root.join("pages.json"), "[]").map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|err| err.to_string())?;
+        let result = pr_comments_existing(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--raw",
+            "pages.json",
+        ]));
+        let leaked = fs::read_dir(&external)
+            .map_err(|err| err.to_string())?
+            .count();
+        let _ = fs::remove_dir_all(&base);
+        assert!(result.is_err_and(|err| err.contains("refusing to write ripr output")));
+        assert_eq!(leaked, 0, "output escaped through target/ripr/review");
+        Ok(())
     }
 }

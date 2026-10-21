@@ -378,8 +378,17 @@ impl PacketRun {
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
     /// the shell redirect did.
     fn ripr_to(&self, args: &[String], out: &str) -> StageResult {
-        let file =
-            fs::File::create(self.path(out)).map_err(|err| format!("cannot write {out}: {err}"))?;
+        let target = self.path(out);
+        // Same symlink-refusing owner as every other advisory write: refuse a
+        // planted link or non-regular leaf, then truncate by replacing the
+        // regular file with an exclusive no-follow create.
+        crate::output::file_write::validate_destination(&target)
+            .map_err(|err| format!("cannot write {out}: {err}"))?;
+        if target.exists() {
+            fs::remove_file(&target).map_err(|err| format!("cannot write {out}: {err}"))?;
+        }
+        let file = crate::output::file_write::create_exclusive(&target)
+            .map_err(|err| format!("cannot write {out}: {err}"))?;
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
@@ -1205,7 +1214,7 @@ impl PacketRun {
             ],
         )
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}"))?;
-        fs::write(self.path("target/ripr/reports/pr.diff"), &diff)
+        crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}"))?;
         let receipt = DiffReceipt {
             tool: "ripr",
@@ -1219,9 +1228,11 @@ impl PacketRun {
         let mut json = serde_json::to_string_pretty(&receipt)
             .map_err(|err| format!("cannot render the diff receipt: {err}"))?;
         json.push('\n');
-        fs::write(self.path("target/ripr/reports/pr-diff.receipt.json"), json).map_err(|err| {
-            format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}")
-        })?;
+        crate::output::file_write::write(
+            &self.path("target/ripr/reports/pr-diff.receipt.json"),
+            json.as_bytes(),
+        )
+        .map_err(|err| format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}"))?;
         if diff.is_empty() {
             let names = git_bytes(
                 &self.root,
@@ -1328,7 +1339,7 @@ impl PacketRun {
         let mut json = serde_json::to_string(&serde_json::json!({ "labels": labels }))
             .map_err(|err| format!("cannot render the labels: {err}"))?;
         json.push('\n');
-        fs::write(self.path(LABELS_JSON), json)
+        crate::output::file_write::write(&self.path(LABELS_JSON), json.as_bytes())
             .map_err(|err| format!("cannot write {LABELS_JSON}: {err}"))
     }
 

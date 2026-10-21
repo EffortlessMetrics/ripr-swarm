@@ -35,13 +35,24 @@ fn ensure_default_output_contained_with(
     })?;
     // Compare resolved locations rather than asking `is_symlink`, so NTFS
     // junctions and other aliases are judged by where they actually land.
-    for relative in [
+    let mut candidates: Vec<std::path::PathBuf> = [
         "target",
         "target/ripr",
         "target/ripr/cache",
         "target/ripr/reports",
-    ] {
-        let path = root.join(relative);
+    ]
+    .iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    // Every other output sub-tree (`review`, `workflow`, `receipts`, ...) is a
+    // direct child of `target/ripr`; a committed link at any of them redirects
+    // that command family just as `target` does.
+    if let Ok(entries) = std::fs::read_dir(root.join("target/ripr")) {
+        let mut children: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+        children.sort();
+        candidates.extend(children);
+    }
+    for path in candidates {
         match std::fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             _ => {}
@@ -955,6 +966,31 @@ mod tests {
             })
         );
         assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_any_target_ripr_child_link() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-child-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("target/ripr/review")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Positive control: a real review directory passes.
+        ensure_default_output_contained_with(&ws, None)?;
+        std::fs::remove_dir(ws.join("target/ripr/review")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            refused.is_err_and(
+                |e| e.contains("target/ripr/review") || e.contains("target\\ripr\\review")
+            ),
+            "target/ripr/review link must refuse"
+        );
         Ok(())
     }
 
