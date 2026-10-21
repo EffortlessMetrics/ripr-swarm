@@ -50,7 +50,7 @@ The report should:
   wording is reserved for imports that actually contained mutant records;
 - retain the full shared join-provenance disclosure on stderr, in JSON
   `provenance.disclosure`, and in the Markdown Provenance section, so a saved
-  report keeps both input-head qualifications (see RIPR-SPEC-0286). Like
+  report keeps both input-head qualifications (see RIPR-SPEC-0294). Like
   `ripr outcome`, disclose
   snapshot heads: when the repo-exposure snapshot carries a head SHA, name
   the subject the join assumes; when the cargo-mutants JSON names a

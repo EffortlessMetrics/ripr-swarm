@@ -14,7 +14,7 @@ use super::classify::{
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::{diff_probe_id, normalize_expression};
+use super::ids::diff_probe_id;
 use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -1267,7 +1267,7 @@ fn parse_inline_module(
 /// (whitespace between `pub` and the qualifier is legal Rust).
 /// Text without a qualifier passes through unchanged; unrecognized shapes
 /// fall through so the module parse fails closed below.
-fn strip_visibility(text: &str) -> &str {
+pub(super) fn strip_visibility(text: &str) -> &str {
     let Some(after_pub) = text.strip_prefix("pub") else {
         return text;
     };
@@ -1325,15 +1325,8 @@ fn build_probe(
             find_owner_function(context.index, &context.changed.path, new_line)
                 .map(|function| function.id.clone())
         });
-    let norm_expr = normalize_expression(text);
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
-    let id = diff_probe_id(
-        &context.changed.path,
-        &family,
-        owner.as_ref(),
-        &norm_expr,
-        1,
-    );
+    let id = diff_probe_id(&context.changed.path, &family, owner.as_ref(), text, 1);
     let expected_sinks = expected_sinks(text, &family);
     let required_oracles = required_oracles(text, &family);
 

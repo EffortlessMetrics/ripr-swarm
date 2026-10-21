@@ -91,6 +91,23 @@ are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
 
+Finding IDs remain content-addressed by path, probe family, owner and normalized
+expression. Line movement, checkout root, diff/discovery order and unrelated
+files do not change those inputs. Formatting whitespace outside Rust literals
+collapses; whitespace inside ordinary/raw string, byte, C-string and character
+literals remains data. The terminator of an actual line comment remains one LF:
+moving that boundary can change which tokens are active. CRLF, trailing comment
+whitespace and following indentation normalize to that same boundary. Comment
+text otherwise retains its existing contribution to source identity; this is
+not comment elision or general semantic equivalence. A material change to an
+identity input invalidates the
+ID so an earlier suppression cannot silently select a different value. Genuine
+repeated expressions retain distinct ordinal-suffixed IDs. The public-path
+metamorphic and stale-suppression controls are in
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
+fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+ordinal tests do not establish collision stability or waive this requirement.
+
 Each finding should carry:
 
 - changed behavior

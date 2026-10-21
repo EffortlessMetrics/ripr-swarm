@@ -2712,7 +2712,7 @@ fn consumer_still_parses_legacy_packets_without_frozen_fields() -> Result<(), St
         .change("change:lib/My/App.pm:15:return")
         .ok_or_else(|| "missing change".to_string())?;
     assert!(
-        change.changed_observable.is_none(),
+        change.changed_observable.as_deref().is_none(),
         "legacy packet without changed_observable must default to None, not fail"
     );
     assert!(
@@ -3025,6 +3025,88 @@ fn h2_return_prefix_aliasing_aligns() -> Result<(), String> {
         "`return $x` observable must align to `$x` observed_sink (normalized)"
     );
     Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 9, example 19: a sink that differs from the changed
+/// observable only in whitespace outside a quoted literal is the same sink.
+/// Whitespace that separates two identifier characters or sits inside a literal is
+/// part of the value and keeps the finding at `weakly_exposed`.
+#[test]
+fn h2_sink_whitespace_aligns_outside_literals_only() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    for (observable, sink, expected) in [
+        ("$amount*0.9", "$amount * 0.9", ExposureClass::Exposed),
+        (
+            "return  $amount *0.9",
+            "$amount* 0.9",
+            ExposureClass::Exposed,
+        ),
+        ("$a - -1", "$a- -1", ExposureClass::Exposed),
+        ("'a  b'", "'a b'", ExposureClass::WeaklyExposed),
+        ("$a lt $b", "$altb", ExposureClass::WeaklyExposed),
+        ("scalar @a", "scalar@a", ExposureClass::Exposed),
+        ("$a - -1", "$a--1", ExposureClass::WeaklyExposed),
+        ("$a =~ $b", "$a = ~$b", ExposureClass::WeaklyExposed),
+        ("1 . 5", "1.5", ExposureClass::WeaklyExposed),
+        ("$x =~ /a  b/", "$x =~ /a b/", ExposureClass::WeaklyExposed),
+        ("q(a, b)", "q(a,b)", ExposureClass::WeaklyExposed),
+        (
+            "$amount * 0.9",
+            "$amount * 0.8",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let packet = with_sinks(observable, Some(sink));
+        assert_eq!(
+            first_finding_misses(&packet)?.0,
+            expected,
+            "{observable:?} vs {sink:?}"
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 18, example 32: a producer that wrote
+/// `changed_observable: null` found nothing for a sink to align to, so a strong
+/// oracle on the owner is unknown, not a gap. A packet that never carried the
+/// field (an older packet) keeps `weakly_exposed`.
+#[test]
+fn h2_producer_declared_absent_observable_is_unknown_not_a_gap() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let declared_null = EXACT_RETURN_PACKET.replace(
+        "\"changed_text_digest\": \"sha256:return\",",
+        "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": null,",
+    );
+    assert_ne!(declared_null, EXACT_RETURN_PACKET);
+    let findings = findings_from_packet(&declared_null)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    let next_step = finding.recommended_next_step.as_deref().unwrap_or("");
+    assert!(next_step.contains("found no observable"), "{next_step}");
+    assert!(!next_step.contains("Add a focused"), "{next_step}");
+    assert_eq!(
+        first_finding_misses(EXACT_RETURN_PACKET)?.0,
+        ExposureClass::WeaklyExposed,
+        "a packet without the field keeps today's class"
+    );
+    Ok(())
+}
+
+/// Spacing that can carry meaning never aligns, even inside constructs the
+/// canonical form does not model (regex bodies, `q` forms, `$"`).
+#[test]
+fn sink_text_eq_fails_closed_on_spacing_that_carries_meaning() {
+    for (left, right) in [
+        ("$\" . \"a, b\"", "$\" . \"a,b\""),
+        ("m{a, b}", "m{a,b}"),
+        ("$a / 2", "$a/2"),
+        ("$a == -1", "$a==-1"),
+        ("1 # note\n + 2", "1 # note + 2"),
+    ] {
+        assert!(!sink_text_eq(left, right), "{left:?} vs {right:?}");
+    }
+    assert!(sink_text_eq("$a == 1", "$a==1"));
 }
 
 /// `t/app.t` must NEVER project the production source path as the related-test

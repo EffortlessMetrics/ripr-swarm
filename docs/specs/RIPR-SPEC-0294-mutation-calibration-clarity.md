@@ -1,4 +1,4 @@
-# RIPR-SPEC-0286: Mutation calibration output clarity contract
+# RIPR-SPEC-0294: Mutation calibration output clarity contract
 
 Status: proposed
 

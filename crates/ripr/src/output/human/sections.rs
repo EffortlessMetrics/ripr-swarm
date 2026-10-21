@@ -60,13 +60,28 @@ fn next_step_prefix(step: &str) -> &'static str {
     }
 }
 
+/// #9004: base-side evidence (`base_deleted`, `moved_or_renamed`) is never a
+/// candidate edit target, so it must not read as an actionable warning. A
+/// configured `warning` is shown as `note`; `off`, `info` and `note` are kept.
+/// Display only: counts, JSON and classification are unchanged.
+fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
+    let configured = config.severity().for_exposure(&finding.class);
+    if finding.source_currentness.is_base_side()
+        && configured == crate::config::ConfigSeverity::Warning
+    {
+        crate::config::ConfigSeverity::Note.as_str()
+    } else {
+        configured.as_str()
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,
 ) -> String {
     let mut out = String::new();
-    let severity = config.severity().for_exposure(&finding.class).as_str();
+    let severity = display_severity(finding, config);
     out.push_str(&format!(
         "  File: {}:{}\n",
         crate::analysis::finding_location_text(root, &finding.probe.location.file),
@@ -404,7 +419,7 @@ pub(super) fn render_finding_with_shared_sections(
     shared: Option<&super::shared::SharedSections>,
 ) -> String {
     let mut out = String::new();
-    let severity = config.severity().for_exposure(&finding.class).as_str();
+    let severity = display_severity(finding, config);
     out.push_str(&format!(
         "{} {}:{}\n",
         severity.to_ascii_uppercase(),
