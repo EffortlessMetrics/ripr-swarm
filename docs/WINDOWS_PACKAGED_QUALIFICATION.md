@@ -13,7 +13,7 @@ Dispatch `.github/workflows/windows-packaged-qualification.yml` with both:
 - `candidate_ref`: the protected candidate tag/ref that must resolve to that
   SHA (for W5, use the ref recorded by the active release transaction).
 
-The job checks out the SHA, rejects branch refs (unless `rehearsal` is true, which accepts only `refs/heads/rehearsal/windows-packaged-<sha>` and marks the receipt `rehearsal: true`, so a rehearsal never counts as the qualifying pass and needs no release tag), and fails before packaging if
+The job checks out the SHA, rejects branch refs (unless `rehearsal` is true, which accepts only `refs/heads/rehearsal/windows-packaged-<sha>` and records `rehearsal: true` in the identity and receipt and prefixes the claim boundary with NON-QUALIFYING REHEARSAL; it needs no release tag, and only the tag path is the qualifying pass), and fails before packaging if
 the ref does not resolve to the same commit. It uses Rust 1.95, Node 24, an
 isolated Cargo home/target/prefix, and an extracted VSIX directory. The
 installed CLI path and crate, binary, and VSIX SHA-256 digests are retained.
