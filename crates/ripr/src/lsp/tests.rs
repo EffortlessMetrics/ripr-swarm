@@ -12622,8 +12622,7 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
 }
 
 /// A committed fixture whose working tree adds one Python file that the
-/// default configuration does not enable (#8585). Python-only: a build
-/// without `lang-python` has no adapter to report as not enabled (#9120).
+/// default configuration does not enable (#8585).
 #[cfg(feature = "lang-python")]
 fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     let root = boundary_gap_git_fixture_root(name)?;
