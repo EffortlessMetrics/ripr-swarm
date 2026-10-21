@@ -6566,6 +6566,41 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(scalar_values("f(0x)"), vec!["0".to_string()]);
     }
 
+    #[test]
+    fn scalar_values_radix_literal_spellings_never_collapse_to_zero() {
+        // #9164 adversarial spellings: suffixes, separators, case, sign.
+        let cases = [
+            ("f(0xFFu8)", "0xFF"),
+            ("f(0b1010_1010)", "0b1010_1010"),
+            ("f(0o77)", "0o77"),
+            ("f(0XFF)", "0XFF"),
+            ("f(0B101)", "0B101"),
+            ("f(0O17)", "0O17"),
+            ("f(0xdead_beef)", "0xdead_beef"),
+            ("f(-0b11)", "-0b11"),
+            ("f(0b1010u8)", "0b1010"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(scalar_values(text), vec![expected.to_string()], "{text}");
+        }
+        // The suffix digits are not a separate value that could read as a boundary.
+        assert!(!scalar_values("f(0xFFu8)").contains(&"8".to_string()));
+        // Distinct spellings stay distinct.
+        assert_ne!(scalar_values("f(0b1010)"), scalar_values("f(0b1011)"));
+        // Decimal, float and exponent reading is unchanged.
+        assert_eq!(scalar_values("f(100)"), vec!["100".to_string()]);
+        assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
+        assert_eq!(scalar_values("f(-5)"), vec!["-5".to_string()]);
+        assert_eq!(scalar_values("f(0.5f32)"), vec!["0.5".to_string()]);
+        assert_eq!(scalar_values("f(1e5)"), vec!["1".to_string()]);
+        assert_eq!(scalar_values("f(99u32)"), vec!["99".to_string()]);
+        assert!(scalar_values("f(a0, b1x, c0o7)").is_empty());
+        // Non-radix letter after a zero is not a radix literal.
+        assert_eq!(scalar_values("f(0xg)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0b2)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0o8)"), vec!["0".to_string()]);
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:src/lib.rs:2:score".to_string()),
