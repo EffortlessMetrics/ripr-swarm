@@ -65,6 +65,33 @@ so initialization options become the compatibility fallback for keys the pull
 did not return. In the push-fallback and initialization-only modes the
 precedence above is unchanged.
 
+### Literal artifact-root ignore advice (#8751, #9011)
+
+For an in-repository artifact root selected from `RIPR_CACHE_DIR` or
+`[perl].cache_dir`, doctor's artifact-ignore warning and the changed-scope
+artifact disclosure must recommend a root-anchored, directory-only Gitignore
+rule for that literal root. Escape `\`, `*`, `?`, `[` and `]` in the rule;
+ordinary roots retain their existing spelling. For example, `build/cache*`
+requires `/build/cache\*/`, which covers its descendants without ignoring
+source siblings such as `build/cache1/user.rs` or `build/cache-other/user.rs`.
+
+Gitignore rule encoding is separate from shell quoting and Git pathspec
+semantics. The ignore probe still passes the plain filesystem pathname to
+`check-ignore`; tracking and untracking retain plain roots under Git's global
+`--literal-pathspecs` mode, and emitted shell commands retain argument quoting.
+This obligation does not change artifact-root ownership, input filtering,
+configuration precedence, or output schemas. Newline-containing and non-UTF-8
+path advice is outside this bounded contract.
+
+### Doctor blocking and advisory marks (#9033)
+
+Doctor's human output marks a blocking failure with `!` and an advisory with
+`~`. A failed core check or a failed required runtime probe is blocking: it
+uses `!` and the run exits 2. An advisory never changes the exit status: the
+artifact root not covered by git ignore rules, the artifact root tracked by
+git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
+marks. This obligation does not change JSON fields or output schemas.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share
@@ -122,6 +149,10 @@ Repository configuration evidence should cover:
 - unsafe relative-path shapes being rejected where paths are configurable;
 - escaped NUL characters in relative paths being rejected before filesystem
   use, while Unicode, spaces, and existing path normalization remain supported;
+- empty or NUL-bearing `perl.executable` values failing shared configuration
+  validation with a key-named diagnostic that does not echo the path; omitted
+  values keep the default and valid paths retain exact spelling and the existing
+  user opt-in boundary, without existence or execution probes;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -137,6 +168,9 @@ Repository configuration evidence should cover:
   directory paths remain accepted, and shared value parsing is unchanged;
 - output schemas remaining unchanged when severity or report caps come from
   config;
+- literal artifact-root rule advice from both consumers, with a real Git
+  descendant-positive/source-sibling-negative control and separate raw-path
+  versus encoded-rule assertions;
 - docs and example config staying aligned with supported keys.
 
 ## Non-Goals
@@ -341,7 +375,38 @@ and language detection remains a shallow root scan (the locator stays
 cargo-only).
 ```
 
+### Literal artifact-root rule excludes no source sibling
+
+Given the configured artifact root `build/cache*` exists without an ignore
+rule, doctor's warning recommends `/build/cache\*/`. When that exact advice
+is written to `.gitignore`, Git ignores `build/cache*/nested/a.json` and leaves
+`build/cache1/user.rs` and `build/cache-other/user.rs` unignored; doctor then
+reports the artifact root as ignored. The changed-scope disclosure recommends
+the same escaped rule when it excluded a file under that root.
+
+### Doctor advisories never block
+
+Given a repository whose ignore rules do not cover the artifact root, or whose
+index tracks an artifact root, or whose cache directory is unwritable, doctor
+prints each advisory starting with `~ ` and exits with the status of its core
+checks alone; only a failed core check or required runtime probe prints `!`
+and exits 2.
+
 ## Test Mapping
+
+- `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
+  pins literal rule escaping and unchanged raw path spelling.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots`
+  pins the `~ ` advisory mark on the tracked-artifacts warning.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry`
+  pins the `~ ` advisory mark on the not-ignored artifact-root warning.
+- `crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written`
+  pins the `~ ` advisory mark and successful exit for an unwritable cache.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root`
+  feeds the actual advice to Git and distinguishes descendants from siblings
+  (Unix-only literal-star filesystem fixture).
+- `crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters`
+  pins the second consumer's emitted literal rule.
 
 - `crates/ripr/tests/default_suppression_disclosure.rs` — real CLI explicit
   opt-in, unchanged full stdout, malformed-unused versus explicit refusal,
@@ -395,12 +460,16 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`
 - `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_an_empty_path`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_nul_without_echoing_the_path`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_preserves_valid_paths_and_the_opt_in_boundary`
+- `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_unusable_perl_executable_paths`
 - `crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths`
 - `crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing`
 - `crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults`
 - `crates/ripr/src/lsp/config.rs::tests::pulled_settings_override_initialization_options_for_returned_keys`
 - `crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides`
-- `crates/ripr/src/app.rs::tests::configured_finding_severity_applies_to_human_json_and_github`
+- `crates/ripr/src/app/tests/rendering_contracts.rs::configured_finding_severity_applies_to_human_json_and_github`
 - `crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
@@ -468,6 +537,14 @@ Planned tests:
 ## Implementation Mapping
 
 Current implementation:
+
+- `crates/ripr/src/analysis/diff/path.rs::artifact_root_gitignore_entry` owns
+  literal Gitignore rule encoding. Its consumers are
+  `crates/ripr/src/cli/commands/doctor.rs::ripr_artifact_ignore` for the doctor
+  warning and
+  `crates/ripr/src/analysis/pipeline.rs::ripr_artifact_disclosure` for the
+  changed-scope disclosure. Neither consumer uses that encoder for Git argv
+  or shell arguments.
 
 - `crates/ripr/src/config.rs` owns config parsing, defaults, validation,
   presence (`config_entry_present` / `config_present_at_root`), skipped-closer

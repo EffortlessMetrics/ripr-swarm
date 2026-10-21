@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0fb82713
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0fb82713
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:0fb82713 --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

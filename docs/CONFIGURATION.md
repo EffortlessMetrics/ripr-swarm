@@ -130,6 +130,10 @@ refreshing the workflow. These commands can be pasted from another directory.
 If the root cannot be represented losslessly, the refusal omits executable
 retries and names the UTF-8-parent/alias remedy; existing files remain intact.
 Where quoting differs, a labeled PowerShell form accompanies the command.
+Workflow refresh warnings from `init` and `doctor` follow the same root and
+quoting rules, including the upgrade instruction emitted by an unreleased
+generator. If the selected root cannot be represented losslessly, the warning
+remains but its executable refresh command is omitted.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
@@ -1043,7 +1047,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found. Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a root `tsconfig.json` or `jsconfig.json`, or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under root `src/` or `tests/`, are found (`package.json` and JavaScript source files alone do not select it). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 
@@ -1154,6 +1158,12 @@ languages continue. The accepted managed producer values are
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer ≥ 1 | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` is rejected at parse time with a named error — it does not disable the timeout; remove the key for the default. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
+
+`executable` must be nonempty and contain no NUL characters. These invalid
+values fail configuration validation even when the executable opt-in is unset.
+Other executable paths retain their exact spelling, including spaces, Unicode,
+absolute paths and platform separators; validation does not probe their existence.
+Remove the key to use the producer's default exporter.
 
 A timed-out or failed managed export does not replace the previous published
 packet. Each invocation stages its output separately. Once its process has
@@ -1280,7 +1290,7 @@ other modes:    LSP initializationOptions  >  ripr.toml  >  CheckInput::default(
   [Server provisioning](SERVER_PROVISIONING.md) — how VS Code launches and
   resolves the server.
 - [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md) — how to
-  enable and interpret TypeScript/JavaScript (opt-in) and Python (marker-auto
+  enable and interpret TypeScript/JavaScript and Python (both marker-auto
   when no `ripr.toml` exists; opt out with `enabled = ["rust"]`) evidence.
 - [Roadmap](ROADMAP.md) and
   [Implementation plan](IMPLEMENTATION_PLAN.md) — when the `ripr.toml`

@@ -1146,14 +1146,26 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            // TRANSITIONAL (#8747): the JSON evidence path keeps the legacy
+            // "none unknown oracle" phrase until its goldens are re-blessed.
+            if matches!(test.oracle_strength, crate::domain::OracleStrength::None) {
+                format!(
+                    "{} {} oracle",
+                    test.oracle_strength.as_str(),
+                    test.oracle_kind.as_str().replace('_', " ")
+                )
+            } else {
+                crate::output::related_test_miss::oracle_projection(
+                    &test.oracle_strength,
+                    &test.oracle_kind,
+                    test.oracle.is_some(),
+                )
+            }
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));
@@ -1180,10 +1192,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
@@ -1739,6 +1747,7 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),

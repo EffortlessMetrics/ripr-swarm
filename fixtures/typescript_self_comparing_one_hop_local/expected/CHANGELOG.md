@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_self_comparing_one_hop_local (3)
+
+Reason:
+RIPR-SPEC-0122 / #8729 (#8856): preserve the producer-owned NoCanonicalGap refusal advisory for this preview finding; no TypeScript verdict, JSON, or repair eligibility change
+
+Command:
+`cargo xtask goldens bless typescript_self_comparing_one_hop_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

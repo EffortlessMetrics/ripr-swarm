@@ -2592,6 +2592,184 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
     Ok(())
 }
 
+/// The refuted counts may rise by the picks the run admitted (7167): the
+/// stale baseline (top 5: 1 confirmed, 11 refuted of 21 picks; top 10: 1/16 of
+/// 32) against the grown run (3/14 of 24; 7/19 of 39) must pass, while a
+/// refuted pick that was not admitted by growth, a worse mix and a shrinking
+/// pick count must still fail.
+#[test]
+fn ranking_gate_allows_refuted_counts_to_grow_with_admitted_picks_only() -> Result<(), String> {
+    let cut = |picks: u64, confirmed: u64, refuted: u64| {
+        let scored = confirmed + refuted;
+        json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": refuted,
+            "unscored": picks - scored,
+            "precision": confirmed as f64 / scored as f64,
+            "scored_share": scored as f64 / picks as f64,
+            "distinct_functions": picks,
+            "distinct_function_share": 1.0,
+        })
+    };
+    let receipt = |top5: Value, top10: Value| {
+        json!({
+            "schema_version": "ripr-pilot-ranking-v1",
+            "corpus_version": "test",
+            "status": "complete",
+            "repos_total": 5,
+            "unavailable_repos": 0,
+            "pooled": {"top5": top5, "top10": top10},
+        })
+    };
+    let config = load_config(&committed_config())?;
+    let boards = vec!["ranking".to_string()];
+    let report = |value: &Value, baseline: Option<&Value>| -> Result<Value, String> {
+        let samples = parse_ingest(value, &config)?;
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("r"),
+            baseline,
+            true,
+        ))
+    };
+    let regressed = |report: &Value| {
+        report["gate"]["regressions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["metric"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let baseline = report(&receipt(cut(21, 1, 11), cut(32, 1, 16)), None)?;
+
+    // The stale-baseline run from #8903: precision and shares improve and the
+    // refuted counts rise by fewer than the picks added.
+    let grown = report(&receipt(cut(24, 3, 14), cut(39, 7, 19)), Some(&baseline))?;
+    assert!(regressed(&grown).is_empty(), "{}", grown["gate"]);
+
+    // The same baseline still catches a refuted count above what growth adds:
+    // 4 more refuted top-5 picks for 3 more picks.
+    let beyond = regressed(&report(
+        &receipt(cut(24, 3, 15), cut(39, 7, 19)),
+        Some(&baseline),
+    )?);
+    assert_eq!(beyond, vec!["ranking.pilot_refuted_top5".to_string()]);
+
+    // Without growth the count is as strict as before: one more refuted pick
+    // at the same pick count fails.
+    let flat = regressed(&report(
+        &receipt(cut(21, 1, 11), cut(32, 1, 17)),
+        Some(&baseline),
+    )?);
+    assert!(
+        flat.contains(&"ranking.pilot_refuted_top10".to_string()),
+        "{flat:?}"
+    );
+
+    // A shrinking pick count earns no margin either.
+    let shrunk = regressed(&report(
+        &receipt(cut(20, 1, 12), cut(32, 1, 16)),
+        Some(&baseline),
+    )?);
+    assert!(
+        shrunk.contains(&"ranking.pilot_refuted_top5".to_string()),
+        "{shrunk:?}"
+    );
+
+    // From the refreshed baseline, three more picks that are all refuted pass
+    // the refuted counts (they are admitted growth) but drag top-10 precision
+    // from 7/26 to 7/29, past its floor, so the precision row still fails.
+    let fresh = report(&receipt(cut(24, 3, 14), cut(39, 7, 19)), None)?;
+    let diluted = regressed(&report(
+        &receipt(cut(27, 3, 17), cut(42, 7, 22)),
+        Some(&fresh),
+    )?);
+    assert_eq!(diluted, vec!["ranking.pilot_precision_top10".to_string()]);
+    Ok(())
+}
+
+/// Across repositories each one's own verdict decides a growth-allowance
+/// metric: an unchanged repository must not revoke another's allowance, and a
+/// repository that worsens without admitting picks must still fail.
+#[test]
+fn pick_growth_allowance_is_judged_per_repository() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let def = config
+        .metric
+        .iter()
+        .find(|def| def.id == "ranking.pilot_refuted_top10")
+        .ok_or("refuted metric is configured")?;
+    let sample = |repo: &str, refuted: u64, picks: u64| {
+        json!({
+            "repo": repo,
+            "status": "below_target",
+            "value": refuted as f64,
+            "detail": format!("0 confirmed, {refuted} refuted of {picks} picks"),
+        })
+    };
+    let row = |a: (u64, u64), b: (u64, u64)| {
+        let worst = a.0.max(b.0) as f64;
+        json!({
+            "id": def.id,
+            "value": worst,
+            "samples": [sample("a", a.0, a.1), sample("b", b.0, b.1)],
+        })
+    };
+    let compare = |now: &Value, before: &Value| {
+        compare_with_baseline(def, now, &context("r"), Some(&json!({"metrics": [before]})))
+    };
+    let before = row((0, 5), (10, 20));
+    // Only repository b admitted picks (20 -> 22) and its refuted count rose
+    // by that many; repository a is unchanged.
+    let grown = compare(&row((0, 5), (12, 22)), &before);
+    assert_eq!(grown["regressed"], json!(false), "{grown}");
+    // Repository b refuted one more pick without admitting any: fails.
+    let flipped = compare(&row((0, 5), (11, 20)), &before);
+    assert_eq!(flipped["regressed"], json!(true), "{flipped}");
+    // Growth in repository a does not excuse repository b.
+    let borrowed = compare(&row((2, 7), (11, 20)), &before);
+    assert_eq!(borrowed["regressed"], json!(true), "{borrowed}");
+    // A baseline whose evidence lacks the pick count gets no margin.
+    let mut legacy = before.clone();
+    legacy["samples"][1]["detail"] = json!("10 refuted");
+    let strict = compare(&row((0, 5), (12, 22)), &legacy);
+    assert_eq!(strict["regressed"], json!(true), "{strict}");
+    Ok(())
+}
+
+#[test]
+fn evidence_picks_reads_the_pick_count_only_from_the_ranking_wording() {
+    assert_eq!(
+        evidence_picks(
+            "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6) over 5 of 5 repositories"
+        ),
+        Some(39)
+    );
+    assert_eq!(
+        evidence_picks("7 confirmed, 19 refuted of 39 results"),
+        None
+    );
+    assert_eq!(evidence_picks("23 distinct functions in 32 picks"), None);
+    assert_eq!(evidence_picks("refuted of picks"), None);
+}
+
+#[test]
+fn pick_growth_allowance_is_limited_to_lower_is_better_ingested_metrics() -> Result<(), String> {
+    let text = fs::read_to_string(committed_config()).map_err(|err| err.to_string())?;
+    let marker = "id = \"ranking.pilot_confirmed_top5\"\n";
+    assert!(text.contains(marker));
+    let flagged = text.replace(marker, &format!("{marker}pick_growth_allowance = true\n"));
+    assert!(
+        parse_config(&flagged).is_err_and(|err| err.contains("pick_growth_allowance")),
+        "a higher-is-better metric must not take a growth margin"
+    );
+    parse_config(&text)?;
+    Ok(())
+}
+
 #[test]
 fn the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("dx-step-summary-{}", std::process::id()));

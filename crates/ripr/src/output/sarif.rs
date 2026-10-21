@@ -2056,6 +2056,7 @@ weakly_gripped = "note"
     fn assertion_values(count: usize) -> Vec<ValueFact> {
         (1..=count)
             .map(|line| ValueFact {
+                file: None,
                 line,
                 text: format!("assert_eq!(value, {line});"),
                 value: format!("value_{line}"),
@@ -2496,6 +2497,7 @@ weakly_gripped = "note"
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 12,
                     text: "discounted_total(50, 100)".to_string(),
                     value: "amount = 50".to_string(),
@@ -2579,6 +2581,7 @@ weakly_gripped = "note"
             observe: stage(StageState::Yes, "returned value asserted"),
             discriminate: stage(StageState::Weak, "equality boundary absent"),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "amount = 50".to_string(),

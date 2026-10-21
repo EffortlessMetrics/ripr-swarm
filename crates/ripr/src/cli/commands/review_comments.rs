@@ -621,6 +621,20 @@ fn review_comments_with_admission(
     let owner_files = changed_lines
         .iter()
         .map(|line| line.file.clone())
+        // Test-edit disclosure also reads removed-only Rust paths. Admit
+        // those inputs without adding them to current placement/selection.
+        .chain(
+            analysis::parse_unified_diff(&diff_text)
+                .into_iter()
+                .filter_map(|file| {
+                    (file
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension == "rs")
+                        && (!file.added_lines.is_empty() || !file.removed_lines.is_empty()))
+                    .then_some(file.path)
+                }),
+        )
         .collect::<Vec<_>>();
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
@@ -645,6 +659,26 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    let changed_tests = analysis::cancellation::with_token(&cancellation, || {
+        analysis::diff_test_changes(
+            &input.root,
+            &options.head,
+            &diff_text,
+            &config,
+            ceiling
+                .max_index_files
+                .saturating_sub(corpus_payload.file_count),
+            ceiling.max_payload_bytes.saturating_sub(payload_bytes),
+        )
+    });
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        now(),
+        options.timeout_ms,
+        "language_facts",
+    )?;
     let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
@@ -657,6 +691,7 @@ fn review_comments_with_admission(
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
+        .with_changed_tests(changed_tests)
         .with_changed_owners(changed_owners)
         .with_enclosing_owners(enclosing_owners);
     let changed_owner_names = working_set
@@ -1393,6 +1428,7 @@ mod tests {
                 PathBuf::from("README.md"),
             ],
             changed_lines: Vec::new(),
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: Some("HEAD~1".to_string()),
@@ -2060,14 +2096,13 @@ mod tests {
         std::fs::metadata(&fixture.unreadable).map_err(|error| {
             format!("census uses metadata; unreadable fixture must still be stattable: {error}")
         })?;
-        if std::fs::read(&fixture.unreadable).is_ok() {
-            // Mode 000 that remains readable (typically euid 0) cannot
-            // produce the builder error. Passing here would be a
-            // zero-subject green for the receipt assertions below.
-            return Err(
-                "chmod 000 remained readable; this host cannot produce the ordinary-failure stimulus"
-                    .to_string(),
-            );
+        // Mode 000 that remains readable (typically euid 0) cannot produce
+        // the builder error. The skip prints, so it is not a silent green.
+        if crate::testing::access_denial::skip_unless_denied(
+            "review_comments_ordinary_canonical_analysis_failure_records_failed",
+            crate::testing::access_denial::file_read_denied(&fixture.unreadable)?,
+        ) {
+            return Ok(());
         }
 
         // The changed file stays readable so language_facts census and
@@ -2866,6 +2901,131 @@ mod tests {
         assert_eq!(receipt["status"], "complete");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn review_comments_disclosure_keeps_test_named_production_source_in_its_role()
+    -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = over_ceiling_fixture("review-disclosure-production-role")?;
+        let path = root.join("src/unit_tests.rs");
+        std::fs::rename(root.join("src/unit_1.rs"), &path).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let before = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        std::fs::write(&path, before.replace("amount >= 10", "amount > 10"))
+            .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let changes = analysis::diff_test_changes(
+            &root,
+            "HEAD",
+            &diff,
+            &crate::config::RiprConfig::default(),
+            1,
+            u64::MAX,
+        );
+        assert!(!changes.unresolved, "production source must be resolved");
+        assert!(
+            changes.files.is_empty(),
+            "a filename alone cannot create test-role evidence: {changes:?}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
+    fn review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-test-disclosure-head-budget");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"head_budget\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[workspace]\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        let before = "pub fn price(points: u32) -> u32 {\n    if points > 10 { 20 } else { 10 }\n}\n#[cfg(test)]\nmod tests {\n    use super::price;\n    #[test]\n    fn above_threshold() { assert_eq!(price(11), 20); }\n}\n";
+        let padding = format!("// {}\n", "large head blob ".repeat(1024));
+        let lib = root.join("src/lib.rs");
+        std::fs::write(&lib, format!("{before}{padding}")).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let after = before.replace("points > 10", "points >= 10");
+        let head_source = format!("{after}{padding}");
+        std::fs::write(&lib, &head_source).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        // Admission sees the current worktree; disclosure must separately
+        // bound the larger requested-head source rather than trust that stat.
+        std::fs::write(&lib, &after).map_err(|err| err.to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let census = analysis::analyzable_corpus_payload_size(&root, &config, &[])?;
+        assert_eq!(census.file_count, 1);
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let payload = census.total_bytes + diff.len() as u64;
+        let mut control = None;
+        for (label, files, bytes, unchanged) in [
+            ("admitted", 2, payload + head_source.len() as u64, true),
+            ("bytes", 2, payload + head_source.len() as u64 - 1, false),
+            ("files", 1, u64::MAX, false),
+        ] {
+            let out = root.join(format!("target/{label}/review.json"));
+            review_comments_with_diff_loader_at_with_ceiling(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "HEAD^",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                load_review_comments_diff,
+                Instant::now,
+                GuidancePayloadCeiling {
+                    max_index_files: files,
+                    max_payload_bytes: bytes,
+                },
+            )?;
+            let report: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&out).map_err(|err| err.to_string())?)
+                    .map_err(|err| err.to_string())?;
+            assert_eq!(report["summary"]["unchanged_tests"], unchanged, "{label}");
+            assert_eq!(read_receipt(&out)?["status"], "complete", "{label}");
+            let cards = report["comments"].as_array().ok_or("missing comments")?;
+            assert_eq!(cards.len(), 1, "fixture must retain its unresolved card");
+            if unchanged {
+                control = Some(report["comments"].clone());
+            } else {
+                assert_eq!(Some(&report["comments"]), control.as_ref(), "{label}");
+                assert!(
+                    report["warnings"].as_array().is_some_and(|warnings| {
+                        warnings.iter().any(|warning| {
+                            warning["message"].as_str().is_some_and(|text| {
+                                text.contains("Test-edit attribution is unresolved")
+                            })
+                        })
+                    }),
+                    "{label}: {report}"
+                );
+            }
+        }
+        remove_fixture_tree(&root)
     }
 
     /// #4586: review-comments must name a changed production file that

@@ -46,6 +46,19 @@ closes a block opened outside its run (a lone inserted or removed
 moves existing code between branches, so it keeps its probe and the change
 never reads as "no behavioral candidates" (#4216 row 5).
 
+A line that Git reports as both removed and added inside one replacement block
+seeds no probe on either side when its text is byte-identical (leading
+whitespace included, since it is content inside a multiline string), occurs
+exactly once on each side of the block, contains an alphanumeric character,
+does not begin as a continuation (`.call()`, `&&`, `?`), and sits under the
+same nearest opener on both sides (#8389). The whole block keeps its probes
+when paired lines change relative order, when an unpaired line opens or closes
+a block, when a paired line crosses an edited line (unpaired removed lines
+before it and unpaired added lines after it, or the reverse), or when any line
+of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
+Only `name: value,` field lines may cross an edited line, since they may move
+within their literal. Text is compared exactly apart from a trailing `\r`.
+
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same
 family already represents that exact old line (#7807). Pairing uses the Git
@@ -77,6 +90,23 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+
+Finding IDs remain content-addressed by path, probe family, owner and normalized
+expression. Line movement, checkout root, diff/discovery order and unrelated
+files do not change those inputs. Formatting whitespace outside Rust literals
+collapses; whitespace inside ordinary/raw string, byte, C-string and character
+literals remains data. The terminator of an actual line comment remains one LF:
+moving that boundary can change which tokens are active. CRLF, trailing comment
+whitespace and following indentation normalize to that same boundary. Comment
+text otherwise retains its existing contribution to source identity; this is
+not comment elision or general semantic equivalence. A material change to an
+identity input invalidates the
+ID so an earlier suppression cannot silently select a different value. Genuine
+repeated expressions retain distinct ordinal-suffixed IDs. The public-path
+metamorphic and stale-suppression controls are in
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
+fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
 
@@ -561,6 +591,9 @@ Fixture coverage:
 - `probes_for_file_keeps_lone_structural_line_hunks`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `an_identical_line_inside_a_replacement_block_seeds_no_probe`
+- `identical_line_suppression_is_fail_closed`
+- `identical_line_pairing_never_hides_reorders_or_block_moves`
 
 ## Implementation Mapping
 
