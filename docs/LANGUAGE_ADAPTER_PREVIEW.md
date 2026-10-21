@@ -222,7 +222,7 @@ Useful references:
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
 
-## Repo-Mode Analysis: Rust/Perl Full, Python Bounded Preview, TypeScript Stub
+## Repo-Mode Analysis: Rust/Perl Full, Python and TypeScript Bounded Preview
 
 The preview adapters (TypeScript, Python) implement diff-mode static exposure
 analysis. Repo-mode analysis differs per adapter:
@@ -244,8 +244,19 @@ analysis. Repo-mode analysis differs per adapter:
   baseline claim. A workspace with no Python production source is an honest
   zero with zero counts, not a fabricated limitation. Broader Python repo
   support remains preview until #1160's tier ruling.
-- **TypeScript** remains an intentional stub that returns an empty result
-  (`typescript/mod.rs`).
+- **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
+  selects the production `.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs` files under
+  the same shared cap (#2109; default 800, `RIPR_MAX_REPO_INDEX_FILES`) and
+  runs the diff-mode owner/test/oracle/probe producers over every behavior
+  line, keeping one finding per owner, probe family and delta. Findings keep
+  their `typescript` or `javascript` language identity and preview status;
+  no Rust `RepoSeam` is fabricated. Test, declaration, generated, vendor and
+  build files never seed findings (tests still feed the evidence index). A
+  capped run, a truncated walk, an unreadable root, unreadable or
+  unparseable files, or typed indexing limitations disclose a partial
+  language run and can never back an all-clear, badge or baseline claim; a
+  fully discovered workspace without TS/JS production source is an honest
+  zero. No support-tier, gate or baseline promotion.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
@@ -271,10 +282,10 @@ result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub); `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
-| `repo-seams-json` / `repo-seams-md` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
-| `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
-| `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
+| `repo-seams-json` / `repo-seams-md` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
+| `repo-badge-json` / `repo-badge-shields` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
+| `agent-seam-packets-json` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
 
 Diff-scoped `check` formats (`check --json`, `check --format human`, SARIF from
 a diff) work normally on all four languages. The base/head `review-comments`
@@ -299,10 +310,10 @@ adapter, and the canonical exporter (`perl-ripr-facts`) is not yet published, so
 no released ripr build plus exporter combination analyzes Perl yet; a released
 install reports changed Perl files as not analyzed.
 
-**Until the TypeScript stub is implemented**, do not interpret a zero-seam
-repo-mode report for TypeScript as evidence of clean coverage. Run
-`ripr check --diff <diff>` against a representative PR diff to get real
-exposure evidence for that language. For Python, read repo-mode results
+Do not interpret a zero-seam repo-mode report for TypeScript or Python as
+evidence of clean coverage; the seam renderers do not show preview findings.
+Run `ripr check --diff <diff>` against a representative PR diff, or read the
+repo analysis result. For both languages, read repo-mode results
 together with the disclosed run status: a capped or partial run covers only
 its selected working set, and preview-tier exposure evidence is draft-mode
 input, not a coverage claim.
