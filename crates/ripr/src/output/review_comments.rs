@@ -91,6 +91,13 @@ pub(crate) fn render_review_comments_json_with_scope(
     let mut summary_only = Vec::new();
     let mut suppressed = Vec::new();
     let changed_test_paths = changed_test_paths(working_set);
+    // Resolved diff attribution owns disclosure, including an empty test set.
+    // Keep legacy grouping separate for suppression and unattributed callers.
+    let test_changes = working_set.changed_tests.as_ref();
+    let unchanged_tests = test_changes.map_or_else(
+        || changed_test_paths.is_empty(),
+        |changes| changes.files.is_empty() && !changes.unresolved,
+    );
     let actionable = selection
         .top_seams
         .iter()
@@ -109,7 +116,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     } else {
         selection.warnings.clone()
     };
-    if working_set.changed_tests.unresolved {
+    if test_changes.is_some_and(|changes| changes.unresolved) {
         warnings.push("Test-edit attribution is unresolved for part of the diff; unchanged tests are not established.".to_string());
     }
     if suppressed_repo_fallback {
@@ -206,7 +213,7 @@ pub(crate) fn render_review_comments_json_with_scope(
             "comments": comments.len(),
             "summary_only": summary_only.len(),
             "suppressed": suppressed.len(),
-            "unchanged_tests": changed_test_paths.is_empty() && !working_set.changed_tests.unresolved,
+            "unchanged_tests": unchanged_tests,
         },
         "comments": comments,
         "summary_only": summary_only,
@@ -1255,8 +1262,8 @@ fn changed_test_paths(working_set: &AgentBriefResolvedWorkingSet) -> Vec<String>
         .chain(
             working_set
                 .changed_tests
-                .files
                 .iter()
+                .flat_map(|changes| &changes.files)
                 .map(|path| normalize_path_text(path)),
         )
         .collect::<Vec<_>>();
@@ -2824,6 +2831,28 @@ mod tests {
         }
         assert_eq!(objects[0]["message"], "bounded by latency budget");
         assert_eq!(objects[1]["message"], "another note");
+    }
+
+    #[test]
+    fn resolved_production_edits_do_not_become_test_edits_from_filename() -> Result<(), String> {
+        for path in ["src/unit_test.rs", "src/unit_tests.rs"] {
+            let working_set = AgentBriefResolvedWorkingSet::base(
+                "main",
+                vec![
+                    AgentBriefLine::new("src/pricing.rs", 88),
+                    AgentBriefLine::new(path, 2),
+                ],
+            )
+            .with_changed_tests(crate::analysis::DiffTestChanges {
+                files: Vec::new(),
+                unresolved: false,
+            });
+            let report = render_value(&working_set, &[classified(88)])?;
+            assert_eq!(report["summary"]["unchanged_tests"], true, "{path}");
+            assert_eq!(report["summary"]["comments"], 1, "{path}");
+            assert_eq!(report["summary"]["suppressed"], 0, "{path}");
+        }
+        Ok(())
     }
 
     #[test]

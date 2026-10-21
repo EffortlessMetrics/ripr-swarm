@@ -1828,6 +1828,8 @@ name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
   "crates/ripr/tests/review_test_changes.rs::review_comments_discloses_removed_and_inline_test_edits",
+  "crates/ripr/tests/review_test_changes.rs::review_comments_preserves_unchanged_tests_for_test_named_production",
+  "crates/ripr/src/output/review_comments.rs::tests::resolved_production_edits_do_not_become_test_edits_from_filename",
   "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree",
   "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_disclosure_keeps_test_named_production_source_in_its_role",
   "crates/ripr/src/output/review_comments.rs::tests::unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations",

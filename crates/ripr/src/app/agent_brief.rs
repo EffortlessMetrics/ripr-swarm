@@ -74,7 +74,8 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     pub(crate) changed_lines: Vec<AgentBriefLine>,
     /// Disclosure only: removed test lines must never enter placement or
     /// recommendation matching as if they were current source locations.
-    pub(crate) changed_tests: crate::analysis::DiffTestChanges,
+    /// None retains legacy disclosure for callers without diff attribution.
+    pub(crate) changed_tests: Option<crate::analysis::DiffTestChanges>,
     pub(crate) changed_owners: Vec<AgentBriefChangedOwner>,
     /// Every owner function whose span contains a changed line, including
     /// outer owners of a nested function. `changed_owners` keeps only the
@@ -151,7 +152,7 @@ impl AgentBriefResolvedWorkingSet {
     }
 
     pub(crate) fn with_changed_tests(mut self, changes: crate::analysis::DiffTestChanges) -> Self {
-        self.changed_tests = changes;
+        self.changed_tests = Some(changes);
         self
     }
 

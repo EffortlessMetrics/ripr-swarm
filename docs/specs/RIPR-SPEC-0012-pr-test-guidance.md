@@ -379,6 +379,9 @@ The JSON report uses schema version `0.1`:
   Rust test/helper function spans. Added lines use head-source spans; removed lines use
   reconstructed old-source spans and old coordinates. These disclosure paths
   never become current-line placement targets or evidence of discrimination.
+  Resolved diff attribution owns this flag, including a resolved empty test set;
+  filename-based display grouping cannot add changed tests to that result.
+  Callers without diff attribution retain the existing fallback behavior.
   Unavailable source, exhausted disclosure budget, or unresolved attribution
   within this bounded classifier withholds `true` and
   emits a warning; it does not alter the causal analysis status or hide an open
@@ -556,6 +559,11 @@ Git history and a smaller dirty worktree to pin byte/file disclosure budgets,
 the affirmative production-only control, and unchanged cards/causal receipts.
 `review_comments_disclosure_keeps_test_named_production_source_in_its_role`
 pins that a production file's test-shaped name does not establish a test role.
+`review_comments_preserves_unchanged_tests_for_test_named_production` follows
+separate and inline production-only edits through real Git diffs to final JSON;
+`resolved_production_edits_do_not_become_test_edits_from_filename` pins producer
+precedence for both Rust test-shaped suffixes. The Git regression also retains
+whole-test deletion with a surviving related test and shifted-coordinate controls.
 
 Initial implementation should add tests for:
 
