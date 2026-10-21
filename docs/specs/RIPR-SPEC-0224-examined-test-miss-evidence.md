@@ -57,9 +57,12 @@ facades own none of these.
 
 ### Class gate
 
-- `exposed`: no class-level row misses.
+- `exposed`: no class-derived row miss. Row-level facts such as a
+  `no_call_path` on a matched row whose relation does not establish reach may
+  still appear.
 - `static_unknown` and every other explicitly unknown, blocked or partial
-  state: no speculative row miss.
+  state: no speculative row miss. A withheld `static_unknown` finding may
+  restore the misses its reveal pass established for its rows.
 - A concrete gap class may carry a miss only on a row for which the producer
   established it. A row inside a concrete gap stays `miss: null` when its own
   evidence is unresolved.
@@ -85,11 +88,13 @@ so changing only the explanation changes no decision field.
 
 ### Assertion admission
 
-Three states stay distinct: a recognized assertion; proven no assertion-like
+Three states stay distinct: a recognized assertion; established absence of any assertion-like
 construct after complete extraction; and an assertion-like, refused, custom or
 dynamic form whose admission is unresolved. An empty recognized-assertion
 vector is not by itself `no_assertion`. `assertion_not_credited` is not a
-bucket for unsupported syntax; only a typed proven refusal (#5446) may use it.
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
+emission on a refused row predates this rule and stays a documented exception
+until #5446 lands.
 
 ### Minimum evidence per miss
 
@@ -98,8 +103,8 @@ bucket for unsupported syntax; only a typed proven refusal (#5446) may use it.
 | `no_call_path` | no established path to the changed owner under the producer's relation model |
 | `no_assertion` | path established, extraction complete, no executable assertion-like construct |
 | `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
-| `assertion_not_credited` | a typed proven refusal accepted by #5446 |
-| `weak_assertion` | an admitted, family-relevant oracle below the producer's strong or exact threshold |
+| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
 | `missing_input` | a row-owned predicate-activation or boundary omission |
 | `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
 | `observation_unconfirmed` | a path/assertion relationship exists but observation can be neither proved nor refuted |
@@ -163,7 +168,8 @@ excluded from deterministic identity.
   RIPR-SPEC-0229 unselected-arm facts),
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
-  `exposed` findings and the unknown classes get no class-level miss.
+  `exposed` findings and the unknown classes get no class-derived miss; row-level
+  facts such as `no_call_path` can still appear on them.
 - `observation_unconfirmed` is an unknown, not an established miss: its sentence
   says ripr could not confirm that the assertion observes the changed
   behavior (#5508). Only `assertion_not_observing` claims the assertion
@@ -397,7 +403,7 @@ actionability or rendered output.
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal from #5359.
+  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
 - Per-adapter miss mappings: the capability table states which reasons each
   adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
