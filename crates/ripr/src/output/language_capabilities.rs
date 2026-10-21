@@ -64,6 +64,8 @@ pub(crate) fn render_json(language: Option<LanguageId>) -> String {
         "kind": "ripr_language_capabilities",
         "semantic_digest": semantic_digest(CAPABILITY_CELLS),
         "availability_note": "adapter_compiled is build availability only; it neither implies nor limits a cell's state",
+        "filtered_by": language.map(|wanted| json!({"language": wanted.as_str()})),
+        "digest_scope": "whole_table",
         "languages": languages,
         "support_state_vocabulary": vocabulary,
         "absent_cell_meaning": "not_proven",
@@ -106,7 +108,9 @@ pub(crate) fn render_human(language: Option<LanguageId>) -> String {
             }
         }
     }
-    out.push_str("\nA combination with no row is not_proven. Use --json for the machine form.\n");
+    out.push_str(
+        "\nStatic evidence only: no runtime mutation outcome and no sufficiency claim.\nA combination with no row is not_proven. Use --json for the machine form.\n",
+    );
     out
 }
 
@@ -144,6 +148,9 @@ mod tests {
         assert!(!cells.is_empty());
         assert!(cells.iter().all(|c| c["language"] == "python"));
         assert_eq!(all["semantic_digest"], python["semantic_digest"]);
+        assert_eq!(python["filtered_by"]["language"], "python");
+        assert!(all["filtered_by"].is_null());
+        assert_eq!(python["digest_scope"], "whole_table");
     }
 
     #[test]
