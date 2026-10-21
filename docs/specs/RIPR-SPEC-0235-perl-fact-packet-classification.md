@@ -236,7 +236,7 @@ For each change, the first match wins:
    identifier, so `scalar @a` equals `scalar@a`), between two characters
    that can fuse into one operator (`- -1` is not `--1`), and next to a `.`
    (`1 . 5` is not `1.5`). Inside a quoted literal it is compared exactly.
-   Text containing `/`, `~`, a backtick, `$"`, `$'` or a `q`, `qq`, `qw`,
+   Text containing `/`, `~`, `#`, a backtick, `$"`, `$'` or a `q`, `qq`, `qw`,
    `qr`, `m`, `s`, `tr` or `y` word, where spacing can carry meaning that
    ripr does not model, compares exactly. An `exposed` change emits
    `perl_already_discriminated:` and

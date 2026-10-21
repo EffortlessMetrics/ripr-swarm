@@ -665,6 +665,10 @@ fn packet_to_findings_with_currentness(
             }
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let observable_unavailable = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && packet.observable_declared_absent(&change.change_id);
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -945,6 +949,11 @@ fn packet_to_findings_with_currentness(
                 // RIPR-SPEC-0235 rule 16: say why this is unknown and what
                 // settles it, instead of asking for an assertion that may exist.
                 "A related Perl test reaches this code with an assertion the fact producer grades broad, so ripr cannot tell whether it pins the changed behavior. If it asserts the specific message, class or value, no change is needed; otherwise tighten it."
+                    .to_string()
+            } else if observable_unavailable {
+                // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
+                // asking for an assertion that may already exist.
+                "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
                     .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
@@ -3317,7 +3326,7 @@ fn sink_aligned_observation(
 
 /// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
 /// cannot change what the expression means. It fails closed: text with a
-/// construct whose spacing can carry meaning (`/`, `~`, a backtick, `$"`,
+/// construct whose spacing can carry meaning (`/`, `~`, `#`, a backtick, `$"`,
 /// `$'`, or a `q`, `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word) compares
 /// exactly. Otherwise whitespace inside a quoted literal is kept, and outside
 /// one it is dropped except between two identifier characters
@@ -3334,7 +3343,7 @@ fn sink_text_eq(left: &str, right: &str) -> bool {
 fn canonical_sink_text(text: &str) -> Option<String> {
     let is_word = |c: char| c == '_' || c.is_alphanumeric();
     let fuses = |c: char| matches!(c, '<' | '>' | '=' | '!' | '&' | '|' | '*' | '+' | '-' | ':');
-    if text.contains(['/', '~', '`']) || text.contains("$\"") || text.contains("$'") {
+    if text.contains(['/', '~', '`', '#']) || text.contains("$\"") || text.contains("$'") {
         return None;
     }
     let mut out = String::with_capacity(text.len());

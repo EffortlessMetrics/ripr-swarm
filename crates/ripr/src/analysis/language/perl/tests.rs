@@ -3082,6 +3082,9 @@ fn h2_producer_declared_absent_observable_is_unknown_not_a_gap() -> Result<(), S
     let finding = findings.first().ok_or("expected one finding")?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown);
     assert!(finding.activation.missing_discriminators.is_empty());
+    let next_step = finding.recommended_next_step.as_deref().unwrap_or("");
+    assert!(next_step.contains("found no observable"), "{next_step}");
+    assert!(!next_step.contains("Add a focused"), "{next_step}");
     assert_eq!(
         first_finding_misses(EXACT_RETURN_PACKET)?.0,
         ExposureClass::WeaklyExposed,
@@ -3099,6 +3102,7 @@ fn sink_text_eq_fails_closed_on_spacing_that_carries_meaning() {
         ("m{a, b}", "m{a,b}"),
         ("$a / 2", "$a/2"),
         ("$a == -1", "$a==-1"),
+        ("1 # note\n + 2", "1 # note + 2"),
     ] {
         assert!(!sink_text_eq(left, right), "{left:?} vs {right:?}");
     }
