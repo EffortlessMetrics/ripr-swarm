@@ -11547,6 +11547,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "check the live head is not newer",
             "[ \"$ref_sha\" != \"$head\" ]",
         ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
     ] {
         let mutated = workflow.replace(snippet, "removed");
         assert_ne!(mutated, workflow, "fixture must remove {needle}");

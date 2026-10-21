@@ -215,11 +215,12 @@ jobs:
             commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
             if [ "$ref_sha" != "$head" ]; then
               # The ref names the base, so it cannot prove the queued squash is of
-              # the live head. A head commit newer than the queued commit means a
-              # push landed after enqueue.
+              # the live head. GitHub itself dequeues a PR whose head changes; this
+              # is defense in depth: a head committed no earlier than the queued
+              # squash is refused (a backdated push is not detected).
               queued_at="$(jq -r '.commit.committer.date' <<<"$commit")"
               pushed_at="$(gh api "repos/${REPOSITORY}/commits/${head}" --jq '.commit.committer.date')"
-              [[ "$pushed_at" < "$queued_at" || "$pushed_at" = "$queued_at" ]] || { echo "::error::PR #${pr} head $head (committed $pushed_at) is newer than the queued commit (committed $queued_at)"; exit 1; }
+              [[ "$pushed_at" < "$queued_at" ]] || { echo "::error::PR #${pr} head $head (committed $pushed_at) is newer than the queued commit (committed $queued_at)"; exit 1; }
             fi
             parents="$(jq -r '.parents | length' <<<"$commit")"
             subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"

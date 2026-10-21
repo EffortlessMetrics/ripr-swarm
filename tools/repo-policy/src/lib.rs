@@ -1090,6 +1090,10 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "check the live head is not newer than the queued commit",
             "[ \"$ref_sha\" != \"$head\" ]",
         ),
+        (
+            "refuse a live head not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
     ] {
         if !workflow.contains(snippet) {
             violations.push(format!(
