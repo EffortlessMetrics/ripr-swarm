@@ -44,7 +44,7 @@ Running a Cargo-built binary (`target/debug/ripr.exe doctor`) with an
 installed `ripr` on PATH printed the PATH-mismatch warning on every run:
 
 ```text
-- warning: `ripr` on PATH is C:/Users/.../.cargo/bin/ripr.exe, not the running binary .../target/debug/ripr.exe; this report describes the running binary, and unless that PATH entry is a shim that launches it, commands that run `ripr` get a different binary
+- warning: `ripr` on PATH is <cargo-home>/bin/ripr.exe, not the running binary .../target/debug/ripr.exe; this report describes the running binary, and unless that PATH entry is a shim that launches it, commands that run `ripr` get a different binary
 ```
 
 For contributors, the running binary being a build output is the normal,
