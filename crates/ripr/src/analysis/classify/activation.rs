@@ -1088,6 +1088,29 @@ fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    // A destructuring `let (si, _) = ...;`, `let Some(si) = ... else`, or a
+    // local `const`/`static` binds the name in the pattern left of `=`.
+    let binds_in_pattern = masked.split([';', '\n']).any(|statement| {
+        let statement = statement.trim_start();
+        ["let ", "const ", "static "]
+            .iter()
+            .any(|keyword| statement.starts_with(keyword))
+            && statement.split('=').next().is_some_and(|pattern| {
+                pattern
+                    .match_indices(name)
+                    .any(|(at, _)| is_token(pattern, at))
+            })
+    });
+    if binds_in_pattern {
+        return true;
+    }
     masked.match_indices(name).any(|(start, _)| {
         !masked[..start].chars().next_back().is_some_and(is_word)
             && !masked[start + name.len()..]
