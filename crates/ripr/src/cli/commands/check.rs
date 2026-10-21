@@ -1784,12 +1784,25 @@ fn check_inner(
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+        // #8547: both routes read seams of the selected finding's file
+        // (the repair route adds its related-test evidence files); they
+        // share one bounded seam index built once for this invocation,
+        // repair first so its wider file set covers the stub route's.
+        let mut seam_index = None;
+        let repair_route = crate::app::task_first::check_repair_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
+        let stub_route = app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
         navigation
-            .with_stub_route(app::test_stub::check_stub_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            .with_stub_route(stub_route)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -1797,11 +1810,7 @@ fn check_inner(
             // the outcome carries the named refusal so a finding offered
             // no repair start renders one advisory line naming why,
             // instead of a silent gap on the triage screen.
-            .with_repair_route_outcome(crate::app::task_first::check_repair_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            .with_repair_route_outcome(repair_route)
     } else {
         navigation
     };
