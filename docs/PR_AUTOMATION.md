@@ -798,8 +798,13 @@ Current:
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
-cargo xtask goldens bless <fixture> --reason "..."
+cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-0001: reviewed static-exposure output change"
 ```
+
+The bless line is a template: replace `<fixture>`, the example spec ID and
+the description with the fixture, governing spec and semantic change you
+reviewed. The reason must cite an existing spec under `docs/specs/`; an
+ellipsis or a description without a spec ID is rejected before fixture execution.
 
 There are no `--write` variants of `metrics`, `docs-index`, or
 `capability-matrix`; earlier revisions of this section listed them as future
