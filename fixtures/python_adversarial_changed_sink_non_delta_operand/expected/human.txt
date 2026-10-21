@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_adversarial_changed_sink_non_delta_operand/input
 config: <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 1 no path); 1 of 1 finding unsuppressed
 
 Changed file(s) by language: python = 1
 
@@ -12,33 +12,34 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
   File: src/account.py:7
   Language: python
   Language status: preview
-  Static exposure: unknown (severity: note, confidence 0.20)
-  Why unknown: the analysis could not determine a static exposure state
+  Static exposure: no path (severity: warning, confidence 0.40)
+  Why no path: no related test was found that reaches this change
+  Canonical gap: gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance
   Changed behavior: return max(0, self._balance)
-  Analyzer limit: Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior
-  Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+  Missing discriminator: No Python test references `balance(`; add a pytest or unittest test that calls the changed owner
+  Evidence: reach no · infection yes · propagation yes · observation no · discriminator no
     - reach no: 0 related Python test(s) found for owner `balance`
-    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
-    - 7 more detail line(s) in --format human-full
+    - infection yes: Changed Python return expression can alter the owner return value: `return max(0, self._balance)`
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
   ripr context --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_account.py:python_preview:c7d70a2d --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input` for the full gate's answer
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_account.py:python_preview:c7d70a2d --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
-  establish a static test path. Scope analyzed: 1 changed expression(s) and 0 statically linked
-  related test(s). This is not a coverage assessment. A test may already exercise these changes
-  through macros, helper-call chains, or integration tests that ripr's static model does not yet
-  trace; if none does, add co-located tests that observe the changed behavior.
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
+  assessment. A test may already exercise these changes through macros, helper-call chains, or
+  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
+  that observe the changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

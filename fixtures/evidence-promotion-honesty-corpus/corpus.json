@@ -3324,7 +3324,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "no_static_path"
         },
         {
           "type": "maximum_class",

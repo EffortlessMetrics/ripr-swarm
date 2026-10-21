@@ -41,8 +41,10 @@ observing a different sink.
 
 The test file shares the owner file stem, but the test references neither the
 `balance` property (it reads `._balance`) nor any other attribute named
-`balance`, so it is not a related test (RIPR-SPEC-0028): reach reads `no`, and
-the `@property` decorator keeps the class at `static_unknown`.
+`balance`, so it is not a related test (RIPR-SPEC-0028): reach reads `no`. A plain built-in `@property` is a
+transparent accessor (#6585), so it no longer holds the finding at
+`static_unknown`; with zero related tests the class is `no_static_path`, the same
+verdict a plain function with no related test receives.
 
 **This fixture must NEVER read `exposed`.** The companion unit test
 `changed_sink_token_credits_when_oracle_observes_the_delta_value` pins the

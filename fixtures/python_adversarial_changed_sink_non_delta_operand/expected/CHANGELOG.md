@@ -509,3 +509,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (22)
+
+Reason:
+RIPR-SPEC-0028: plain @property is a transparent accessor (#6585); 0 related tests gives reach no, so no_static_path like plain functions
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
