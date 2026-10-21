@@ -17053,7 +17053,7 @@ tests = [
   "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_how_to_read_is_present_on_md_and_json_surfaces",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
   "crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end",
-  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v1_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_span_containment_atuin_fixture_matches_checked_reports",
