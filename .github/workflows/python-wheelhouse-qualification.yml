@@ -51,12 +51,12 @@ jobs:
         id: bind
         run: |
           set -euo pipefail
-          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"
           native="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "ripr") | .version')"
           echo "native_version=${native}" >> "$GITHUB_OUTPUT"
           mkdir -p "${RUNNER_TEMP}/stage"
-          jq -n --arg c "${CANDIDATE_SHA}" --arg t "$(git rev-parse 'HEAD^{tree}')" \
+          jq -n --arg c "${CANDIDATE_SHA,,}" --arg t "$(git rev-parse 'HEAD^{tree}')" \
             '{source_commit: $c, source_tree: $t, limitations: ["linux/x86_64 only", "Python preview-language journey only"],
               non_claims: ["no PyPI publication", "no compatibility-floor claim", "no support-tier promotion"]}' \
             > "${RUNNER_TEMP}/stage/candidate-identity.json"
@@ -173,7 +173,7 @@ jobs:
           tar -xzf "${RUNNER_TEMP}/stage/python-basic-fixture.tar.gz" -C "${project}"
           fixture="${project}/fixtures/python/basic"
           sudo unshare --net -- sudo -u "${me}" env -i "HOME=${HOME}" "PATH=${CONSUMER_PATH}" "FIXTURE=${fixture}" \
-            "OUT=${RUNNER_TEMP}" "NATIVE_VERSION=${NATIVE_VERSION}" "SHA=${CANDIDATE_SHA}" bash -ec '
+            "OUT=${RUNNER_TEMP}" "NATIVE_VERSION=${NATIVE_VERSION}" "SHA=${CANDIDATE_SHA,,}" bash -ec '
             test "$(command -v ripr)" = "'"${EXECUTABLE}"'"
             test "$(ripr --version)" = "ripr ${NATIVE_VERSION} (${SHA})"
             if python3 -c "import urllib.request; urllib.request.urlopen(\"https://pypi.org\", timeout=5)" 2>/dev/null; then
