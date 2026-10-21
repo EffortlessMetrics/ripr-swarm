@@ -264,6 +264,18 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
+## Path keywords never seed assertion-target affinity (#9171)
+
+An owner-less probe (an import, a `const`, a struct or field line) relates a
+test through `assertion_target_affinity` when a long identifier of the changed
+expression appears in the test's assertion tokens. Rust keywords are syntax,
+not names for the changed behavior: `crate` is five bytes, so
+`pub(crate) use ..` or `crate::seed() + 2` used to relate every test that
+asserts on any `crate::..` path and credit its oracle to the change. Keywords
+(`crate`, `super`, `where`, `const`, `static`, `match`, ...) no longer count as
+probe tokens for this signal. A real identifier shared with the assertion still
+relates. Fixture: `fixtures/rust_path_keyword_affinity`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

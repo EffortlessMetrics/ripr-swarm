@@ -834,6 +834,7 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter(|t| t.len() >= ASSERTION_TOKEN_MIN_LEN)
         .filter(|t| !GENERIC_PROBE_TOKENS.contains(&t.as_str()))
+        .filter(|t| !is_rust_keyword(t))
         .filter(|t| !common_tokens.assertion_tokens.contains(t.as_str()))
         .map(String::as_str)
         .collect();
@@ -2201,6 +2202,41 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "test",
     "tests",
 ];
+
+/// Rust keywords long enough to pass `ASSERTION_TOKEN_MIN_LEN`. A path or
+/// declaration keyword (`crate::helper(..)`, `pub(crate) use`, `const`,
+/// `static`) is syntax shared by unrelated code, so it must never tie a test
+/// to a probe through assertion-target affinity (#9171).
+fn is_rust_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "crate"
+            | "super"
+            | "where"
+            | "const"
+            | "static"
+            | "async"
+            | "await"
+            | "match"
+            | "break"
+            | "while"
+            | "trait"
+            | "unsafe"
+            | "extern"
+            | "struct"
+            | "return"
+            | "yield"
+            | "macro"
+            | "final"
+            | "override"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "abstract"
+            | "become"
+            | "continue"
+    )
+}
 
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
@@ -10342,6 +10378,89 @@ try_parse_summary(raw).map_err(Into::into)"
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
+        assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #9171: a path keyword in an owner-less probe (`pub(crate) use ..`,
+    /// `crate::seed()`) is syntax, not a name for the changed behavior. A test
+    /// whose assertion merely spells `crate::helper::pick(1)` must not relate.
+    #[test]
+    fn path_keyword_in_owner_less_probe_relates_no_assertion_test() {
+        let assertion_text = "assert_eq!(crate::helper::pick(1), 2);";
+        let unrelated = test_with_assertions(
+            "tests/other.rs",
+            "picks_two",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        // The fixture really does carry the keyword as an assertion token.
+        assert!(
+            unrelated.assertions[0]
+                .observed_tokens
+                .iter()
+                .any(|token| token == "crate"),
+            "fixture must observe the `crate` token: {:?}",
+            unrelated.assertions[0].observed_tokens
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![unrelated],
+            ..Default::default()
+        });
+
+        for expression in [
+            "pub(crate) use std::collections::BTreeSet;",
+            "pub const LIMIT: u32 = crate::seed() + 2;",
+        ] {
+            let probe = probe("src/lib.rs", expression);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {expression}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {expression}");
+        }
+
+        // Discriminating control: a real identifier shared with the assertion
+        // still relates through the same signal.
+        let probe = probe("src/lib.rs", "pub const PICKED: u32 = pick_seed;");
+        let helper_assertion = "assert_eq!(pick_seed, 2);";
+        let related_test = test_with_assertions(
+            "tests/other.rs",
+            "picks_seed",
+            helper_assertion,
+            vec![oracle_fact(
+                helper_assertion,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![related_test],
+            ..Default::default()
+        });
+        let related = find_related_tests(&probe, None, &index, true, None, None);
+        assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
     }
 
