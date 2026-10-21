@@ -4277,6 +4277,7 @@ mod workspace_input_tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_detection_inputs_classify_like_the_detector() {
         let root = std::env::temp_dir().join("ripr-workspace-input-root");

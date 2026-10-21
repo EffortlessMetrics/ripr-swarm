@@ -6651,6 +6651,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_detection_inputs_change_cache_identity() -> Result<(), String> {
         let root = isolated_dir("typescript-detection-inputs");
