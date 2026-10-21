@@ -492,6 +492,64 @@ fn ts_assertion_after_conditional_exit_stays_credited() {
     );
 }
 
+/// Decidable `if` exits end the list too; an undecidable one-sided exit does
+/// not (#9003 review).
+#[test]
+fn ts_decidable_if_exit_withholds_following_assertion() {
+    for exit in [
+        "if (true) { return; }",
+        "if (true) return;",
+        "if (false) { x(); } else { return; }",
+        "if (flag) { return; } else { throw new Error(\"x\"); }",
+    ] {
+        let body = format!("  {exit}\n  expect(price(150)).toBe(130);");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+    for live in [
+        "if (flag) { return; }",
+        "if (false) { return; }",
+        "if (true) { x(); }",
+        "if (flag) { return; } else { x(); }",
+    ] {
+        let body = format!("  {live}\n  expect(price(150)).toBe(130);");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "assertion after `{live}` stays credited"
+        );
+    }
+}
+
+/// A dead conditional assertion after `return;` must not produce a
+/// conditional-credit limitation; the live assertion before it is credited.
+#[test]
+fn ts_dead_conditional_after_return_yields_no_credit_gap() {
+    let body = "  expect(price(150)).toBe(130);\n  return;\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    let source = test_file(body);
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    assert_eq!(tests.len(), 1, "fixture must register its test");
+    assert_eq!(
+        tests[0].assertions.len(),
+        1,
+        "only the live assertion counts"
+    );
+    assert!(gap.is_none(), "dead `if (flag)` must not disclose: {gap:?}");
+    assert!(
+        credit_gap_for_body(body).is_none(),
+        "standalone detector must agree"
+    );
+    let control =
+        "  expect(price(150)).toBe(130);\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(control).is_some(),
+        "live conditional control still discloses"
+    );
+}
+
 /// End to end: the only strong oracle sits after `return;`, so the changed
 /// predicate must not classify `exposed`.
 #[test]

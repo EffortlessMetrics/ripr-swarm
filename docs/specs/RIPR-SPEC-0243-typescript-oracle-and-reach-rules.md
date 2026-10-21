@@ -921,7 +921,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     env read) keeps the credited assertion but the result now carries the
     `typescript_conditional_assertion_credit` limitation, naming the
     unevaluated condition and recording that the credited oracle may never
-    execute (classification-neutral disclosure, #8714).
+    execute (classification-neutral disclosure, #8714). Statements after an
+    unconditional exit in the same statement list (`return`, `throw`,
+    `break`, `continue`, a block holding one, an `if (true)` whose
+    consequent exits, an `if (false)` whose alternate exits, or an `if`
+    whose branches both exit) are dead code: their assertions are withheld
+    at collection and cannot credit `exposed`, and the conditional-credit
+    probe and walker stop at the same point so a dead `if (flag)` after
+    `return;` produces no limitation. An undecidable one-sided exit
+    (`if (skip) { return; }`) keeps the later assertion credited (#9003).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
