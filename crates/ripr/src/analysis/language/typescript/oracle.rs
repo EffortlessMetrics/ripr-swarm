@@ -241,17 +241,24 @@ pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
                 .as_ref()
                 .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
                 || (try_stmt.block.body.iter().any(statement_completes_abruptly)
-                    && (try_stmt
-                        .block
-                        .body
-                        .first()
-                        .is_some_and(statement_is_non_throwing_exit)
+                    && (try_catch_is_unreachable(try_stmt)
                         || try_stmt.handler.as_ref().is_none_or(|handler| {
                             handler.body.body.iter().any(statement_completes_abruptly)
                         })))
         }
         _ => false,
     }
+}
+
+/// `true` when the `try` block's first statement is a non-throwing exit, so
+/// nothing can throw into its `catch` and the handler body is dead code
+/// (#9150). Collection and the conditional-credit walker skip such a handler.
+pub(crate) fn try_catch_is_unreachable(try_stmt: &oxc_ast::ast::TryStatement<'_>) -> bool {
+    try_stmt
+        .block
+        .body
+        .first()
+        .is_some_and(statement_is_non_throwing_exit)
 }
 
 /// `true` for a statement that leaves its block without throwing and without
@@ -519,6 +526,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
             if let Some(handler) = &try_stmt.handler
                 && !finalizer_replaces
+                && !try_catch_is_unreachable(try_stmt)
             {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,

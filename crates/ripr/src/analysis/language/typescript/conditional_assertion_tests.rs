@@ -650,6 +650,49 @@ fn ts_dead_assertion_after_try_finally_return_does_not_expose() -> Result<(), St
     Ok(())
 }
 
+/// An assertion inside a provably unreachable `catch` (the `try` block opens
+/// with a non-throwing exit) never runs, so it earns no credit and raises no
+/// conditional-credit gap (#9150); a live catch keeps both.
+#[test]
+fn ts_assertion_inside_unreachable_catch_is_withheld() -> Result<(), String> {
+    let assertion = "expect(price(150)).toBe(130);";
+    for dead in ["return;", "return 1;", "break;", "continue;"] {
+        let body = format!("  try {{ {dead} }} catch (e) {{ {assertion} }}");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion in the catch after `{dead}` is dead and must be withheld"
+        );
+    }
+    let gap = "  try { return; } catch (e) {\n    if (flag) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert!(
+        credit_gap_for_body(gap).is_none(),
+        "a conditional inside an unreachable catch must not disclose"
+    );
+    for live in ["work(); return;", "return f();", "throw e;"] {
+        let body = format!("  try {{ {live} }} catch (e) {{ {assertion} }}");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "catch after `{live}` can run and stays credited"
+        );
+    }
+    let dead = finding_for_body(&format!("  try {{ return; }} catch (e) {{ {assertion} }}"))?;
+    assert_ne!(
+        dead.class,
+        ExposureClass::Exposed,
+        "an exact assertion solely in a dead catch must not expose: {dead:?}"
+    );
+    let live = finding_for_body(&format!(
+        "  try {{ work(); return; }} catch (e) {{ {assertion} }}"
+    ))?;
+    assert_eq!(
+        live.class,
+        ExposureClass::Exposed,
+        "a reachable catch keeps its credited assertion: {live:?}"
+    );
+    Ok(())
+}
+
 /// A dead conditional assertion after `return;` must not produce a
 /// conditional-credit limitation; the live assertion before it is credited.
 #[test]

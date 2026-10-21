@@ -943,7 +943,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
     exit (a bare `return;`, a `return` of a plain literal, `break` or
     `continue`), nothing can throw into the `catch`, so the `catch` never
     runs and the `try` exits regardless of it (`try { return; } catch (e)
-    {}`, #9150). Any other first statement keeps the fail-closed catch
+    {}`, #9150). Assertions inside that unreachable `catch` are withheld too, and
+    its conditionals raise no credit gap. Any other first statement keeps the fail-closed catch
     requirement: `try { work(); return; } catch (e) {}`, `try { return f();
     } catch (e) {}` and `try { throw e; } catch (e) {}` stay credited.
     Assertions before the `try` and in its finalizer stay
