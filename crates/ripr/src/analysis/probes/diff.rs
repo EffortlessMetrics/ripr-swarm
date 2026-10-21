@@ -1306,6 +1306,20 @@ fn build_probe(
     after: Option<String>,
 ) -> Probe {
     let text = changed_line.text.trim();
+    // #9080: no value or effect assertion observes a memory-ordering swap, so
+    // a call whose only edit is an atomic `Ordering` variant has no honest
+    // value/effect family; it stays an explicit unknown.
+    let family = if matches!(family, ProbeFamily::CallDeletion | ProbeFamily::SideEffect)
+        && before
+            .as_deref()
+            .zip(after.as_deref())
+            .is_some_and(|(before, after)| {
+                super::path_only_argument::only_atomic_ordering_differs(before, after)
+            }) {
+        ProbeFamily::StaticUnknown
+    } else {
+        family
+    };
     let delta = delta_for_family(&family);
     // Use `new_side_line` for all index lookups and the SourceLocation: for
     // added lines this equals `line`; for removed lines it is the new-file
@@ -4080,6 +4094,55 @@ mod tests {
         assert!(
             probes.iter().any(|probe| probe.location.line == 5),
             "{probes:?}"
+        );
+    }
+
+    /// #9080: an atomic `Ordering` swap is not a value or effect change a
+    /// test can observe, but a changed value argument on the same call is.
+    #[test]
+    fn atomic_ordering_swap_is_static_unknown_and_value_argument_change_is_not() {
+        let call_family = |old: &str, new: &str| {
+            let changed = ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 10,
+                    new_side_line: 10,
+                    text: new.to_string(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 10,
+                    new_side_line: 10,
+                    text: old.to_string(),
+                }],
+            };
+            probes_for_file(Path::new("workspace"), &changed, &RustIndex::default())
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let ordering = call_family(
+            "self.inner.compare_exchange(0, v, Ordering::AcqRel, Ordering::Acquire);",
+            "self.inner.compare_exchange(0, v, Ordering::Release, Ordering::Acquire);",
+        );
+        assert!(
+            !ordering.is_empty() && ordering.iter().all(|f| *f == ProbeFamily::StaticUnknown),
+            "{ordering:?}"
+        );
+        let value = call_family(
+            "self.inner.compare_exchange(0, v, Ordering::AcqRel, Ordering::Acquire);",
+            "self.inner.compare_exchange(1, v, Ordering::AcqRel, Ordering::Acquire);",
+        );
+        assert!(
+            value.contains(&ProbeFamily::CallDeletion),
+            "a value argument change keeps its call family: {value:?}"
+        );
+        let cmp = call_family(
+            "self.sort(a, b, cmp::Ordering::Less);",
+            "self.sort(a, b, cmp::Ordering::Greater);",
+        );
+        assert!(
+            cmp.contains(&ProbeFamily::CallDeletion),
+            "cmp::Ordering is not an atomic ordering: {cmp:?}"
         );
     }
 
