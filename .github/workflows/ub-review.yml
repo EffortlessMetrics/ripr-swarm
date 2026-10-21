@@ -46,7 +46,9 @@ jobs:
       # Sensors resolve the locked anyhow fixture offline. Prepare the runner's
       # default Cargo home, also used by the action's sanitized sensor process.
       - name: Prepare locked owner-return fixture dependencies
-        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
       - name: ub-review
         env:
