@@ -162,7 +162,10 @@ pub(crate) fn repair_card_for_entry(
         candidate_seams,
     )
     .map_err(AgentCardError::witness_unavailable)?;
-    let (witness_pack, finding_gap_id) = witness_pack;
+    let SeamWitnessBinding {
+        witness: witness_pack,
+        finding_gap_id,
+    } = witness_pack;
     let (finding_id, witness) = match witness_pack {
         Some((id, witness)) => (Some(id), Some(witness)),
         None => (None, None),
@@ -745,6 +748,15 @@ fn detail_sources_for(
     Ok(sources)
 }
 
+/// What the seam-finding join yields for one seam: the projected witness (with
+/// its finding id) and the bound finding's own canonical gap id. Binding is
+/// not projection, so the gap id can be present without a witness.
+#[derive(Default)]
+struct SeamWitnessBinding {
+    witness: Option<(String, DiagnosticWitness)>,
+    finding_gap_id: Option<String>,
+}
+
 /// Run the check pipeline and project the witness for the finding that names
 /// this seam's canonical gap, when one exists. The witness is the single
 /// instruction authority (`FixInstructionSummary::from_witness`); no second
@@ -755,11 +767,11 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
     candidate_seams: &[ClassifiedSeam],
-) -> Result<(Option<(String, DiagnosticWitness)>, Option<String>), String> {
+) -> Result<SeamWitnessBinding, String> {
     // The expensive workspace check only feeds the canonical-gap match; with
     // no gap id the match cannot bind, so skip the analysis entirely.
     if canonical_gap_id.is_none() {
-        return Ok((None, None));
+        return Ok(SeamWitnessBinding::default());
     }
     let output = check_workspace_with_config(
         CheckInput {
@@ -770,10 +782,15 @@ fn witness_for_seam(
         config,
     )
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
-    Ok((
-        witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),
-        bound_finding_gap_id(&output.findings, entry, canonical_gap_id, candidate_seams),
-    ))
+    Ok(SeamWitnessBinding {
+        witness: witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),
+        finding_gap_id: bound_finding_gap_id(
+            &output.findings,
+            entry,
+            canonical_gap_id,
+            candidate_seams,
+        ),
+    })
 }
 
 /// Select the finding that names this seam's canonical gap from an
