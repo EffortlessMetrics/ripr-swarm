@@ -890,7 +890,7 @@ mod tests {
             "from typing import final\n\n@final\ndef rate(n):\n    return n + 1\n",
             "import typing\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
             "import typing as t\n\n@t.final\ndef rate(n):\n    return n + 1\n",
-            "from typing import final\n\n@final\nclass Rate:\n    pass\n",
+            "from typing import final\n\n@final\nclass rate:\n    pass\n",
             "from typing import (\n    final,\n    override,\n)\n\n@final\ndef rate(n):\n    return n + 1\n",
         ] {
             assert_eq!(parsed_limit(plain)?, None, "{plain}");
@@ -916,6 +916,14 @@ mod tests {
             "from typing import final as f\n\nf = wrapper\n\n@f\ndef rate(n):\n    return n + 1\n",
             "from typing import final\n\nfor final in wrappers:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
             "import typing\n\n@typing.final(wrapper)\ndef rate(n):\n    return n + 1\n",
+            // unreadable decorator shapes the head alone does not reveal
+            "from typing import final\n\n@final\n@wrap(x)[0]\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\n@wrap(x) if c else y\ndef rate(n):\n    return n + 1\n",
+            // a rebind on the line that closes a typing import block
+            "from typing import (\n    final,\n); final = wrapper\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // a star import split by a backslash continuation
+            "from typing import final\nfrom helpers import \\\n    *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\nif c: from helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
             // class-scope rebind of the marker
             "from typing import override\n\nclass A(B):\n    def override(fn):\n        return lambda *a: 0\n\n    @override\n    def rate(self, n):\n        return n + 1\n",
             // an unreadable decorator stacked with the marker

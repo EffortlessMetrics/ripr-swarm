@@ -1841,19 +1841,55 @@ fn typing_markers_distrusted(source: &str) -> bool {
     source.lines().any(|line| {
         let line = line.trim_start();
         if let Some(rest) = line.strip_prefix('@') {
-            let rest = rest.trim_end();
-            let head = rest.split('(').next().unwrap_or_default();
-            return head.is_empty()
-                || !head
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
-                || head.starts_with('.')
-                || head.ends_with('.');
+            return !is_plain_decorator(rest.split('#').next().unwrap_or_default().trim());
         }
         // A star import anywhere on the line (`import os; from m import *`,
-        // `if x: from m import *`) may shadow a marker.
-        contains_word(line, "import") && line.contains('*') && !is_typing_import_line(line)
+        // `if x: from m import *`) may shadow a marker; so may one split by a
+        // backslash continuation.
+        (contains_word(line, "import")
+            && (line.contains('*') || line.trim_end().ends_with('\\'))
+            && !is_typing_import_line(line))
+            || line.starts_with('*')
     })
+}
+
+/// A decorator that is a dotted name, optionally followed by one call whose
+/// parentheses close at the end of the line (`name`, `a.b`, `name(...)`).
+/// Anything else (`name(x)[0]`, `name(x) if c else y`, a multi-line call, a
+/// subscript, a lambda) cannot be read, so the file is not trusted.
+fn is_plain_decorator(text: &str) -> bool {
+    let head_end = text.find('(').unwrap_or(text.len());
+    let head = &text[..head_end];
+    let plain_head = !head.is_empty()
+        && !head.starts_with('.')
+        && !head.ends_with('.')
+        && head
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    if !plain_head {
+        return false;
+    }
+    let call = &text[head_end..];
+    if call.is_empty() {
+        return true;
+    }
+    let mut depth = 0usize;
+    for (index, c) in call.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 && index + 1 != call.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 fn is_typing_import_line(line: &str) -> bool {
@@ -1871,7 +1907,22 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
     let mut in_typing_block = false;
     for line in source.lines() {
         let trimmed = line.trim_start();
-        let allowed = if in_typing_block || is_typing_import_line(trimmed) {
+        // Parentheses in a trailing comment must not open or close the block.
+        let code = trimmed.split('#').next().unwrap_or_default();
+        let mut scanned = line;
+        let allowed = if in_typing_block {
+            if let Some(close) = code.find(')') {
+                // Only text before the closing parenthesis belongs to the import.
+                in_typing_block = false;
+                scanned = &code[close + 1..];
+                false
+            } else {
+                true
+            }
+        } else if is_typing_import_line(trimmed) {
+            if code.contains('(') && !code.contains(')') {
+                in_typing_block = true;
+            }
             true
         } else if let Some(rest) = trimmed.strip_prefix('@') {
             let head = rest.split('(').next().unwrap_or_default();
@@ -1879,14 +1930,7 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
         } else {
             false
         };
-        // Parentheses in a trailing comment must not open or close the block.
-        let code = trimmed.split('#').next().unwrap_or_default();
-        if is_typing_import_line(trimmed) && code.contains('(') && !code.contains(')') {
-            in_typing_block = true;
-        } else if in_typing_block && code.contains(')') {
-            in_typing_block = false;
-        }
-        if !allowed && contains_word(line, name) {
+        if !allowed && contains_word(scanned, name) {
             return true;
         }
     }

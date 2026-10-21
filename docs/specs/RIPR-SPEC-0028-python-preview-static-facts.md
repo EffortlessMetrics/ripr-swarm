@@ -799,7 +799,7 @@ Expected static evidence:
   star import from another module, or any decorator in the file that is not
   a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
   `decorator_indirection`. This is a lexical fail-closed screen, not a scope
-  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`) is not seen; `typing.overload`, `abc.abstractmethod`,
+  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda or multi-line call decorator withholds trust for the whole file; `typing.overload`, `abc.abstractmethod`,
   `contextlib.contextmanager` and `property` also stay limited.
 
 Simple route decorator repair:
