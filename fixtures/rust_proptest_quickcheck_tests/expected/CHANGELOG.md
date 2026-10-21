@@ -135,3 +135,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (12)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

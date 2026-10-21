@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check --format human-full` and `ripr explain` no longer list three generic "Weakness" bullets (no test path, no oracle, no strong discriminator) under a `no_static_path` finding whose Evidence block already says `reach no`, `observation no` and `discriminator no`; a distinct entry such as the missing boundary input stays, and `--json` `missing` is unchanged (#9033).

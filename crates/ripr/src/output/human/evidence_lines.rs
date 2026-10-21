@@ -310,6 +310,7 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         .filter(|missing| {
             !is_duplicate_discriminator_missing(missing, &discriminator_values)
                 && !is_preview_actionability_missing_summary(missing)
+                && !restates_no_static_path_evidence(finding, missing)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -320,6 +321,23 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// The three generic `missing` entries a `no_static_path` finding always
+/// carries. Its Evidence block already says `reach no`, `observation no` and
+/// `discriminator no` in the same words, so listing them again under Weakness
+/// makes one fact (no test reaches this code) read as four problems (#9033).
+/// The entries stay in the JSON `missing` list; only the human projection
+/// drops them, and a distinct entry such as the missing boundary input stays.
+const NO_STATIC_PATH_RESTATED_MISSING: [&str; 3] = [
+    "No static test path reaches the changed owner",
+    "No relevant oracle was detected",
+    "No strong discriminator was detected",
+];
+
+fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
+    finding.class == crate::domain::ExposureClass::NoStaticPath
+        && NO_STATIC_PATH_RESTATED_MISSING.contains(&missing)
 }
 
 fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&str]) -> bool {

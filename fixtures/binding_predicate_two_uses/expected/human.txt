@@ -15,7 +15,7 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:classify:predicate_boundary:predicate:count==ceiling
   Changed behavior: 60
-  Missing discriminator (1 of 4): No detected boundary input for the changed predicate
+  Missing discriminator: No detected boundary input for the changed predicate
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and

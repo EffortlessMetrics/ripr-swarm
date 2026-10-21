@@ -3643,6 +3643,34 @@ mod tests {
         assert!(digest.contains("  Missing discriminator:"), "{digest}");
     }
 
+    // #9033: a `no_static_path` finding's Evidence block already says
+    // `reach no`, `observation no` and `discriminator no`; the Weakness list
+    // must not restate them as three more problems, but must keep a distinct
+    // entry, and other classes keep every entry.
+    #[test]
+    fn no_static_path_weakness_list_drops_restated_evidence() {
+        let restated = [
+            "No static test path reaches the changed owner",
+            "No relevant oracle was detected",
+            "No strong discriminator was detected",
+        ];
+        let distinct = "No detected boundary input for the changed predicate";
+        let mut finding = sample_finding();
+        finding.missing = restated
+            .iter()
+            .chain(std::iter::once(&distinct))
+            .map(|line| (*line).to_string())
+            .collect();
+        finding.activation.missing_discriminators.clear();
+        finding.class = ExposureClass::NoStaticPath;
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        assert_eq!(lines, vec![distinct.to_string()], "{lines:?}");
+
+        finding.class = ExposureClass::ReachableUnrevealed;
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        assert_eq!(lines.len(), 4, "other classes keep every entry: {lines:?}");
+    }
+
     // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real
