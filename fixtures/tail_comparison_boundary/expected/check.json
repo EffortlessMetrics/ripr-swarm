@@ -228,7 +228,7 @@
       },
       "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.84,
       "probe": {
         "id": "probe:src_lib.rs:return_value:b8337f94",
         "family": "return_value",
@@ -239,17 +239,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: items >= 10"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: items >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: items >= 10 (line 3)", "related test tests/orders.rs:4 big_order_ships_free uses strong exact value oracle: assert_eq!(shipping(20), 0);", "related test tests/orders.rs:9 small_order_pays_shipping uses strong exact value oracle: assert_eq!(shipping(2), 800);", "related test tests/orders.rs:14 five_items_earn_a_gift uses strong exact value oracle: assert_eq!(earns_gift(5), true);", "related test tests/orders.rs:14 five_items_earn_a_gift uses strong exact value oracle: assert_eq!(earns_gift(4), false);", "source assertion argument value 0 at line 5", "source assertion argument value 20 at line 5", "source assertion argument value 2 at line 10", "source assertion argument value 800 at line 10", "source assertion argument value 5 at line 15", "source assertion argument value true at line 15", "source assertion argument value 4 at line 16", "source assertion argument value false at line 16"],
+      "evidence_path": ["reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Complete propagation witness reaches returned value: items >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: items >= 10 (line 3)", "related test tests/orders.rs:4 big_order_ships_free uses strong exact value oracle: assert_eq!(shipping(20), 0);", "related test tests/orders.rs:9 small_order_pays_shipping uses strong exact value oracle: assert_eq!(shipping(2), 800);", "related test tests/orders.rs:14 five_items_earn_a_gift uses strong exact value oracle: assert_eq!(earns_gift(5), true);", "related test tests/orders.rs:14 five_items_earn_a_gift uses strong exact value oracle: assert_eq!(earns_gift(4), false);", "source assertion argument value 0 at line 5", "source assertion argument value 20 at line 5", "source assertion argument value 2 at line 10", "source assertion argument value 800 at line 10", "source assertion argument value 5 at line 15", "source assertion argument value true at line 15", "source assertion argument value 4 at line 16", "source assertion argument value false at line 16", "missing discriminator items == 10: No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"items >= 10","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: items >= 10", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: items >= 10", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift", "Related tests contain input values, but the equality-boundary discriminator is missing"],
+      "missing": ["Missing discriminator value: items == 10", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(shipping(20), 0);",
         "10": "assert_eq!(shipping(2), 800);",
@@ -300,6 +300,11 @@
           }
         ],
         "missing_discriminators": [
+          {
+            "value": "items == 10",
+            "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+            "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+          }
         ]
       },
       "observed_values": [
@@ -345,6 +350,11 @@
         }
       ],
       "missing_discriminators": [
+        {
+          "value": "items == 10",
+          "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+          "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+        }
       ],
       "related_tests_total": 4,
       "related_tests": [
@@ -357,8 +367,8 @@
           "oracle": "assert_eq!(shipping(20), 0);",
           "relation_reason": "helper_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
         },
         {
           "name": "small_order_pays_shipping",
@@ -369,8 +379,8 @@
           "oracle": "assert_eq!(shipping(2), 800);",
           "relation_reason": "helper_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
         },
         {
           "name": "five_items_earn_a_gift",
@@ -400,8 +410,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
-      "suggested_next_action": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "recommended_next_step": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion. Missing discriminator: `items == 10`.",
+      "suggested_next_action": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion. Missing discriminator: `items == 10`.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
