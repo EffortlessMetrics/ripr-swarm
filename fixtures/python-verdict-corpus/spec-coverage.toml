@@ -606,3 +606,9 @@ reason = "xtask spot-check admission by report schema version; not an exposure-v
 id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
