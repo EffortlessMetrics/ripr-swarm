@@ -452,7 +452,8 @@ shapes receive Invalid Request and the transport can read the next frame.
 Unknown request IDs are omitted in SDK-dispatched error responses, while
 transport-level protocol errors (well-formed messages with invalid typed
 shapes) carry an explicit null id per JSON-RPC; readable IDs remain
-correlated. Messages are capped at 256 KiB and response envelopes at
+correlated, except that ids over 16 KiB (serialized) are rejected at receive
+with `-32600` and `id: null` rather than echoed. Messages are capped at 256 KiB and response envelopes at
 128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
 wire frame is at most 128 KiB+1 (pinned by
 `exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
