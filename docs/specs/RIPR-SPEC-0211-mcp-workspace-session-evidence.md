@@ -150,10 +150,12 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
-  Class/language are exact wire tokens. An unknown `language` is Invalid
-  Params (`-32602`) listing the allowed wire strings, because an empty page
-  would read as "no gaps in that language"; a known language with no match
-  produces an empty page.
+  Class/language are exact wire tokens. An unknown `class` is Invalid
+  Params (`-32602`) naming the seven exposure-class tokens, with the echoed
+  token truncated so the error stays bounded; an unknown `language` is
+  Invalid Params (`-32602`) listing the allowed wire strings, because an
+  empty page would read as "no gaps in that language"; a known value with
+  no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
@@ -416,10 +418,15 @@ is not evidence that a resource with a particular identity exists.
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
+  + `list_gaps_bounds_the_echoed_unknown_class_token` — unknown class is
+  `-32602` naming the vocabulary; valid classes after a real refresh return
+  exactly their filtered gaps; near-cap, escape-heavy and multibyte tokens
+  yield a bounded, id-correlated `-32602`, not `-32603`.
 - `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
-  raw-document ceiling, raw-document overflow, all three string filters,
+  raw-document ceiling, raw-document overflow, the `file` and `language` filters,
   typed refusals bound to the current snapshot, and same-session recovery.
 - `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
   — a request id whose serialized form exceeds 16384 bytes (including one
