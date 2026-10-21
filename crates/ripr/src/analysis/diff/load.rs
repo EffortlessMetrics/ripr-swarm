@@ -1310,9 +1310,10 @@ fn remote_name_is_plain(name: &str) -> bool {
 /// names the add-remote step when it is not; an unqualified ref with no
 /// remote names the add-remote step, with exactly one remote names that
 /// remote, and with several remotes (or a probe that cannot answer) falls
-/// back to plain `git fetch`, which follows the default remote. Per-remote
-/// ref discovery for an unqualified ref (which of several remotes tracks
-/// it) would need network probes and stays out.
+/// back to plain `git fetch`, which follows the default remote. Before that,
+/// locally present remote-tracking refs (`refs/remotes/<remote>/<ref>`) are
+/// probed for every configured remote — a local probe, no network: exactly
+/// one names the followable advice, several are all named without picking.
 fn missing_ref_repair(
     root: &Path,
     missing_ref: &str,
@@ -1335,33 +1336,30 @@ fn missing_ref_repair(
         );
     }
     let remotes = configured_remotes(root, git_timeout);
+    // A branch name can gain a remote-tracking form; rev expressions
+    // (`main~1`, `topic@{0}`), explicit `refs/...` paths, and option-shaped
+    // names never name a fetched branch. Slashes stay eligible: a nested
+    // branch (`feature/topic`) is not necessarily a remote qualifier.
+    let branch_like = !missing_ref.starts_with('-')
+        && !missing_ref.starts_with("refs/")
+        && !missing_ref.contains(['~', '^', ':', '?', '*', '[', '\\'])
+        && !missing_ref.contains("@{");
+    // #8652: a missing ref may already live in remote-tracking form. A
+    // fetch creates `refs/remotes/<remote>/<ref>`, never a local `<ref>`,
+    // so when that form resolves it is the followable advice;
+    // re-prescribing the fetch loops on the same failure. This probe runs
+    // before the qualified-remote arm so a nested branch name is not
+    // mistaken for an unconfigured remote.
+    if branch_like
+        && let Some(advice) =
+            remote_tracking_advice(root, missing_ref, flag, remotes.as_deref(), git_timeout)
+    {
+        return advice;
+    }
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
-    // Only a plain branch name can gain a remote-tracking form; rev
-    // expressions (`main~1`, `topic@{0}`), explicit `refs/...` paths, and
-    // option-shaped names never name a fetched branch.
-    let plain_branch = !missing_ref.contains('/')
-        && !missing_ref.starts_with('-')
-        && !missing_ref.contains(['~', '^', ':', '?', '*', '[', '\\'])
-        && !missing_ref.contains("@{");
-    // #8652: an unqualified missing ref may already live in
-    // remote-tracking form. A fetch creates `<remote>/<ref>`, never a
-    // local `<ref>`, so when that form resolves it is the followable
-    // advice; re-prescribing the fetch loops on the same failure.
-    if plain_branch
-        && let Some([only]) = remotes.as_deref()
-        && remote_name_is_plain(only)
-    {
-        let tracking = format!("{only}/{missing_ref}");
-        if git_ref_output(root, &format!("{tracking}^{{commit}}"), git_timeout)
-            .is_some_and(|output| output.status.success())
-        {
-            return format!(
-                "the fetched branch is `{tracking}`, not a local `{missing_ref}`: pass `{flag} {tracking}`"
-            );
-        }
-    }
+    let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {
         Some([]) if !plain_branch => format!(
             "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it"
@@ -1396,6 +1394,45 @@ fn missing_ref_repair(
 fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
     let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
     (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
+}
+
+/// Advice naming locally present remote-tracking forms of `missing_ref`.
+/// Each candidate is verified as the full `refs/remotes/<remote>/<ref>`
+/// ref: the short `<remote>/<ref>` spelling can be shadowed by a tag or
+/// local branch of that name, which Git resolves first, so neither the
+/// probe nor the suggestion may use it. Exactly one candidate is the
+/// followable advice; several are all named without picking one; an
+/// unknown remote list invents none.
+fn remote_tracking_advice(
+    root: &Path,
+    missing_ref: &str,
+    flag: &str,
+    remotes: Option<&[String]>,
+    git_timeout: Option<Duration>,
+) -> Option<String> {
+    let found: Vec<String> = remotes?
+        .iter()
+        .filter(|remote| remote_name_is_plain(remote))
+        .map(|remote| format!("refs/remotes/{remote}/{missing_ref}"))
+        .filter(|tracking| {
+            git_ref_output(root, &format!("{tracking}^{{commit}}"), git_timeout)
+                .is_some_and(|output| output.status.success())
+        })
+        .collect();
+    match found.as_slice() {
+        [] => None,
+        [only] => Some(format!(
+            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
+        )),
+        _ => Some(format!(
+            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            found
+                .iter()
+                .map(|tracking| format!("`{tracking}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -3371,8 +3408,8 @@ mod tests {
     fn missing_ref_repair_names_the_remote_tracking_form_it_can_resolve() -> std::io::Result<()> {
         // #8652: a fetch creates `origin/topic`, never a local `topic`.
         // When that remote-tracking ref already resolves, the repair must
-        // name the followable `--base origin/topic`, not re-prescribe the
-        // fetch that already happened.
+        // name the followable `--base refs/remotes/origin/topic`, not
+        // re-prescribe the fetch that already happened.
         let dir = unique_fixture_root("missing-ref-remote-tracking")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
@@ -3384,13 +3421,96 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base origin/topic"),
+            repair.contains("--base refs/remotes/origin/topic"),
             "the repair must name the resolvable remote-tracking ref, got: {repair}"
         );
         let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
         assert!(
-            head_repair.contains("--head origin/topic") && !head_repair.contains("--base"),
+            head_repair.contains("--head refs/remotes/origin/topic")
+                && !head_repair.contains("--base"),
             "the head repair must name its own flag, got: {head_repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag() -> std::io::Result<()> {
+        // A tag named `origin/topic` wins Git's short-name resolution over
+        // `refs/remotes/origin/topic`; the advice must name the full
+        // remote-tracking ref so following it loads the fetched branch.
+        let dir = unique_fixture_root("missing-ref-tracking-tag-shadow")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["commit", "--allow-empty", "-m", "second"])?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+        run_git_checked(&dir, &["tag", "origin/topic", "HEAD~1"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/origin/topic"),
+            "the repair must name the unambiguous remote-tracking ref, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_probes_every_configured_remote() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tracking-multi-remote")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        for remote in ["origin", "upstream"] {
+            run_git_checked(
+                &dir,
+                &["remote", "add", remote, "https://example.test/fork.git"],
+            )?;
+        }
+        run_git_checked(&dir, &["update-ref", "refs/remotes/upstream/topic", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/upstream/topic"),
+            "the repair must name the one existing tracking ref, got: {repair}"
+        );
+
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("refs/remotes/origin/topic")
+                && repair.contains("refs/remotes/upstream/topic")
+                && !repair.contains("pass `--base refs/remotes/origin/topic`"),
+            "several tracking refs must all be named, none picked, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_probes_nested_branch_names() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tracking-nested")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(
+            &dir,
+            &["update-ref", "refs/remotes/origin/feature/topic", "HEAD"],
+        )?;
+
+        let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/origin/feature/topic"),
+            "a slashed branch must probe remote-tracking forms, got: {repair}"
         );
 
         ignore_remove_dir_all(&dir);
