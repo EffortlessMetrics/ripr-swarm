@@ -801,7 +801,7 @@ fn status_success_schema() -> Value {
                             },
                             "git_work_tree": {
                                 "type": "string",
-                                "enum": ["detected", "not_detected"]
+                                "enum": ["not_detected", "marker_invalid"]
                             },
                             "error_code": {
                                 "type": "string",
@@ -917,11 +917,11 @@ fn status_success_schema() -> Value {
                         "properties": {
                             "kind": { "type": "string", "const": "workspace_diff" },
                             "base": { "type": "string", "enum": ["default_branch", "explicit"] },
-                            "base_revision": { "type": ["string", "null"] },
+                            "base_revision": { "type": "string" },
                             "mode": { "type": "string", "const": "draft" },
                             "scope": { "type": "string", "const": "diff" }
                         },
-                        "required": ["kind", "base", "base_revision", "mode", "scope"],
+                        "required": ["kind", "base", "mode", "scope"],
                         "additionalProperties": false
                     },
                     "scope": scope_disclosure_schema(),
@@ -1063,7 +1063,7 @@ fn refresh_output_schema() -> Value {
                         "additionalProperties": false
                     },
                     "scope": scope_disclosure_schema(),
-                    "requested_base": { "type": ["string", "null"] },
+                    "requested_base": { "type": "string" },
                     "snapshot": { "type": ["object", "null"] },
                     "last_known_good": { "type": ["object", "null"] },
                     "claim_boundary": { "type": "string" },
@@ -1072,7 +1072,7 @@ fn refresh_output_schema() -> Value {
                         "items": { "type": "string" }
                     }
                 },
-                "required": ["schema_version", "attempt", "scope", "requested_base", "snapshot", "last_known_good", "claim_boundary", "limitations"],
+                "required": ["schema_version", "attempt", "scope", "snapshot", "last_known_good", "claim_boundary", "limitations"],
                 "additionalProperties": false
             },
             typed_failure_document_schema(REFRESH_SCHEMA_VERSION)

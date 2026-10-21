@@ -983,6 +983,18 @@ impl WorkspaceSession {
             .as_ref()
             .map(|failure| failure.value())
             .unwrap_or(Value::Null);
+        // Base-less callers keep the unchanged v1 shape: `base_revision` and
+        // the `explicit` base value exist only after an explicit-base refresh.
+        let mut desired_input = json!({
+            "kind": "workspace_diff",
+            "base": "default_branch",
+            "mode": "draft",
+            "scope": "diff",
+        });
+        if let Some(base) = &self.desired_base {
+            desired_input["base"] = json!("explicit");
+            desired_input["base_revision"] = json!(base);
+        }
         json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
@@ -991,13 +1003,7 @@ impl WorkspaceSession {
             } else {
                 Value::Null
             },
-            "current_desired_input": {
-                "kind": "workspace_diff",
-                "base": if self.desired_base.is_some() { "explicit" } else { "default_branch" },
-                "base_revision": self.desired_base,
-                "mode": "draft",
-                "scope": "diff",
-            },
+            "current_desired_input": desired_input,
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
@@ -1164,7 +1170,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
         })
     });
-    json!({
+    // `requested_base` appears only when the request named one, so a base-less
+    // refresh keeps the unchanged v1 shape.
+    let mut document = json!({
         "schema_version": REFRESH_SCHEMA_VERSION,
         "attempt": {
             "state": session.attempt_state(),
@@ -1174,7 +1182,6 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
                 .map(|failure| failure.value())
                 .unwrap_or(Value::Null),
         },
-        "requested_base": session.desired_base,
         "snapshot": snapshot,
         "scope": session
             .last_good
@@ -1190,7 +1197,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
             "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
-    })
+    });
+    if let Some(base) = &session.desired_base {
+        document["requested_base"] = json!(base);
+    }
+    document
 }
 
 /// The resolved analysis-configuration posture of the session (#6825): which

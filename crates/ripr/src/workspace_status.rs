@@ -42,12 +42,14 @@ pub(crate) struct RootStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) identity: Option<String>,
     pub(crate) repository_markers: Vec<String>,
-    /// Whether a Git work tree contains the root (a `.git` entry at the root
-    /// or an ancestor). A project marker alone makes the root `validated`,
-    /// but every diff-scoped analysis needs Git, so `ripr_refresh` fails
-    /// closed on a root where this is `not_detected`. Absent for an
-    /// unavailable root.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Git marker probe for the root, serialized only when it is a problem so
+    /// a root with a usable marker keeps the unchanged v1 shape: `not_detected`
+    /// (no `.git` entry at the root or an ancestor) or `marker_invalid` (the
+    /// nearest `.git` is neither a directory nor a gitfile whose first line is
+    /// `gitdir: <path>`). Either way every diff-scoped analysis fails closed in
+    /// `ripr_refresh`. Absence means a plausible marker exists, not that Git
+    /// accepted it. Absent for an unavailable root.
+    #[serde(skip_serializing_if = "git_work_tree_is_clean")]
     pub(crate) git_work_tree: Option<GitWorkTree>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error_code: Option<RootErrorCode>,
@@ -58,20 +60,53 @@ pub(crate) struct RootStatus {
 pub(crate) enum GitWorkTree {
     Detected,
     NotDetected,
+    MarkerInvalid,
 }
 
-/// A `.git` entry (directory, or gitfile for worktrees and submodules) at the
-/// root or any ancestor. A marker probe, not a Git invocation: it can only
-/// under-report exotic layouts (`GIT_DIR`), and refresh remains the authority.
+fn git_work_tree_is_clean(value: &Option<GitWorkTree>) -> bool {
+    matches!(value, None | Some(GitWorkTree::Detected))
+}
+
+/// Bounded read of a gitfile's first line.
+const GITFILE_PROBE_BYTES: u64 = 4096;
+
+/// Probe the nearest `.git` entry at the root or an ancestor. A directory is
+/// a marker; a gitfile (worktrees, submodules) must start with
+/// `gitdir: <path>`, otherwise Git itself refuses it, so it is
+/// `marker_invalid` rather than a work tree. A marker probe, not a Git
+/// invocation: it can only under-report exotic layouts (`GIT_DIR`), and
+/// refresh remains the authority.
 fn git_work_tree_for(root: &Path) -> GitWorkTree {
-    if root
-        .ancestors()
-        .any(|ancestor| ancestor.join(".git").exists())
-    {
-        GitWorkTree::Detected
-    } else {
-        GitWorkTree::NotDetected
+    use std::io::Read;
+    for ancestor in root.ancestors() {
+        let marker = ancestor.join(".git");
+        let Ok(metadata) = std::fs::metadata(&marker) else {
+            if std::fs::symlink_metadata(&marker).is_ok() {
+                return GitWorkTree::MarkerInvalid;
+            }
+            continue;
+        };
+        if metadata.is_dir() {
+            return GitWorkTree::Detected;
+        }
+        let mut head = Vec::new();
+        let read = std::fs::File::open(&marker)
+            .and_then(|file| file.take(GITFILE_PROBE_BYTES).read_to_end(&mut head));
+        if read.is_err() {
+            return GitWorkTree::MarkerInvalid;
+        }
+        let text = String::from_utf8_lossy(&head);
+        let first = text.lines().next().unwrap_or_default();
+        let valid = first
+            .strip_prefix("gitdir:")
+            .is_some_and(|path| !path.trim().is_empty());
+        return if valid {
+            GitWorkTree::Detected
+        } else {
+            GitWorkTree::MarkerInvalid
+        };
     }
+    GitWorkTree::NotDetected
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -247,10 +282,14 @@ fn limitations(
         limitations
             .push("project-local ripr.toml is detected but not loaded by workspace discovery");
     }
-    if git_work_tree == Some(GitWorkTree::NotDetected) {
-        limitations.push(
+    match git_work_tree {
+        Some(GitWorkTree::NotDetected) => limitations.push(
             "no Git work tree contains this root; ripr_refresh needs one to compute the diff and will fail closed until the root is inside a repository (git init, or restart with --root at a repository)",
-        );
+        ),
+        Some(GitWorkTree::MarkerInvalid) => limitations.push(
+            "the nearest .git entry is not a directory or a `gitdir: <path>` gitfile, so Git will not accept it as a work tree; ripr_refresh will fail closed until it is repaired",
+        ),
+        Some(GitWorkTree::Detected) | None => {}
     }
     limitations.extend([
         "client launch does not establish project-configuration trust",
@@ -462,6 +501,56 @@ mod tests {
             "ripr-mcp-workspace-status-{label}-{}-{counter}",
             std::process::id()
         ))
+    }
+
+    fn git_marker_probe(label: &str, setup: impl Fn(&Path)) -> Result<GitWorkTree, String> {
+        let root = temporary_root(label);
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        setup(&root);
+        let probed = git_work_tree_for(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(probed)
+    }
+
+    #[test]
+    fn git_marker_probe_accepts_directory_and_valid_gitfile_only() -> Result<(), String> {
+        let directory = git_marker_probe("git-dir", |root| {
+            let _ = std::fs::create_dir_all(root.join(".git"));
+        })?;
+        assert_eq!(directory, GitWorkTree::Detected);
+        let gitfile = git_marker_probe("gitfile-ok", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir: ../main/.git/worktrees/w\n");
+        })?;
+        assert_eq!(gitfile, GitWorkTree::Detected);
+        for (label, text) in [
+            ("gitfile-empty", ""),
+            ("gitfile-garbage", "not a gitfile\n"),
+            ("gitfile-nopath", "gitdir:   \n"),
+            ("gitfile-second-line", "\ngitdir: x\n"),
+        ] {
+            let probed = git_marker_probe(label, |root| {
+                let _ = std::fs::write(root.join(".git"), text);
+            })?;
+            assert_eq!(probed, GitWorkTree::MarkerInvalid, "{label}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_git_marker_is_serialized_and_limited_but_a_clean_one_is_absent()
+    -> Result<(), String> {
+        let invalid = serde_json::to_value(Some(GitWorkTree::MarkerInvalid))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(invalid, "marker_invalid");
+        assert!(git_work_tree_is_clean(&Some(GitWorkTree::Detected)));
+        assert!(!git_work_tree_is_clean(&Some(GitWorkTree::NotDetected)));
+        assert!(!git_work_tree_is_clean(&Some(GitWorkTree::MarkerInvalid)));
+        let limited = limitations(
+            ProjectConfigState::BuiltInDefaultsOnly,
+            Some(GitWorkTree::MarkerInvalid),
+        );
+        assert!(limited.iter().any(|text| text.contains("gitdir: <path>")));
+        Ok(())
     }
 
     #[test]

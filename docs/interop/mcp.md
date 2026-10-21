@@ -82,11 +82,19 @@ When the repository's default branch is not `main` or `master` (for example
 `ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
 the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
 flag. Each refresh states its own base, so omitting `base` returns to the
-default branch, and `ripr_workspace_status` reports the requested one under
-`session.current_desired_input`. A directory with a project marker but no Git
-work tree is a validated root, but refresh needs Git; status reports
-`workspace.root.git_work_tree: not_detected` with a limitation instead of
-leaving that to the first failed refresh.
+default branch. The additions are explicit-base-only so a base-less caller
+sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
+`ripr_workspace_status` reports `session.current_desired_input.base:
+explicit` with `base_revision` only after a refresh named a base, and the
+committed snapshot's `session.analysis_outcome.identity.base_revision` names
+the base it analyzed even when the worktree is clean and `scope` is null. A
+directory with a project marker but no usable Git work tree is a validated
+root, but refresh needs Git; status then adds `workspace.root.git_work_tree`
+(`not_detected`, or `marker_invalid` when the nearest `.git` is neither a
+directory nor a gitfile whose first line is `gitdir: <path>`) with a
+limitation instead of leaving that to the first failed refresh. The field is a
+bounded marker probe, not a Git invocation, and is absent when a plausible
+marker exists: absence does not mean Git accepted it.
 
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally

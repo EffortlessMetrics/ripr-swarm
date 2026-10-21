@@ -3535,8 +3535,8 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
             "recovery must name the reachable `base` argument route: {recovery}"
         ));
     }
-    if failed.get("requested_base") != Some(&Value::Null) {
-        return Err(format!("plain refresh requested no base: {failed}"));
+    if failed.get("requested_base").is_some() {
+        return Err(format!("plain refresh keeps the v1 shape: {failed}"));
     }
 
     // The named route works, and the session states what it analyzed.
@@ -3567,6 +3567,11 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
         || desired.get("base_revision") != Some(&json!("trunk"))
     {
         return Err(format!("status must name the explicit base: {desired}"));
+    }
+    // The committed snapshot itself names the base it analyzed, so a clean
+    // worktree (null scope disclosure) still leaves nothing implicit.
+    if status.pointer("/session/analysis_outcome/identity/base_revision") != Some(&json!("trunk")) {
+        return Err(format!("snapshot outcome must name its base: {status}"));
     }
 
     // An unresolvable base fails the attempt closed and keeps the snapshot.
@@ -3684,8 +3689,8 @@ fn status_reports_the_missing_git_work_tree_precondition() -> Result<(), String>
     inside.call("discover", "server/discover", json!({}), timeout)?;
     let status = inside.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
     let status = structured_tool_success(&status, "ripr_workspace_status")?;
-    if status.pointer("/workspace/root/git_work_tree") != Some(&json!("detected")) {
-        return Err(format!("a Git work tree must read detected: {status}"));
+    if status.pointer("/workspace/root/git_work_tree").is_some() {
+        return Err(format!("a Git work tree keeps the v1 shape: {status}"));
     }
     Ok(())
 }
