@@ -43,8 +43,17 @@ const ITEM_KEYWORDS: [&str; 8] = [
     "fn", "const", "static", "struct", "enum", "type", "trait", "mod",
 ];
 
+#[cfg(test)]
+thread_local! {
+    /// Scans performed on this thread (#9086 work-unit regression pin).
+    pub(in crate::analysis) static SCAN_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Whether the file's macro invocations may define an item named `name`.
 pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str) -> bool {
+    #[cfg(test)]
+    SCAN_COUNT.with(|count| count.set(count.get() + 1));
     let name = name.strip_prefix("r#").unwrap_or(name);
     if name.is_empty() {
         return false;
