@@ -662,7 +662,7 @@ fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Resul
     ))
 }
 
-fn diff_changed_rust_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_rust_line_limit() -> Result<usize, String> {
     diff_changed_rust_line_limit_from_env(std::env::var(DIFF_CHANGED_RUST_LINE_LIMIT_ENV))
 }
 

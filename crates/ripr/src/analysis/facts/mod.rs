@@ -103,6 +103,7 @@ pub fn build_index_with_test_harnesses(
     // authority.
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut index);
+        test_helpers::credit_same_file_assertion_macros(&mut index);
         Ok(())
     })?;
     index.finalize()?;
@@ -204,6 +205,7 @@ fn post_process_cached_index(
     // authority.
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
+        test_helpers::credit_same_file_assertion_macros(&mut cached.index);
         Ok(())
     })?;
     cached.index.finalize()?;

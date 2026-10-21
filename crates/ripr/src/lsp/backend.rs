@@ -57,8 +57,11 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
+    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
+    is_typescript_excluded_dir_everywhere, python_project_marker_name,
+    python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -3404,6 +3407,15 @@ impl Backend {
             };
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            // Source presence only matters when a file appears or disappears;
+            // an ordinary save of an existing TypeScript file is not an input.
+            kinds.typescript_input_changed |= match kind {
+                WorkspaceInputKind::TypescriptProjectMarker => true,
+                WorkspaceInputKind::TypescriptSourcePresence => {
+                    event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
+                }
+                _ => false,
+            };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
         kinds
@@ -4004,6 +4016,12 @@ impl Backend {
 pub(super) struct WatchedFileChanges {
     pub(super) config_changed: bool,
     pub(super) workspace_graph_changed: bool,
+    /// A TypeScript detection input (root `tsconfig.json`/`jsconfig.json` or
+    /// detectable TypeScript source) changed. The adapter reads `tsconfig`
+    /// path aliases and indexes sources even when it is already enabled, so
+    /// the analysis input is invalidated and refreshed even if the reloaded
+    /// configuration is unchanged.
+    pub(super) typescript_input_changed: bool,
     /// A non-buffer diagnostics input changed without changing configuration
     /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
     pub(super) diagnostics_input_changed: bool,
@@ -4030,6 +4048,11 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Canonical root `tsconfig.json`/`jsconfig.json`: the TypeScript
+    /// no-config detection marker class.
+    TypescriptProjectMarker,
+    /// Detectable TypeScript source below a root `src`/`tests` directory.
+    TypescriptSourcePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -4038,7 +4061,13 @@ enum WorkspaceInputKind {
 
 impl WorkspaceInputKind {
     fn reloads_repository_config(self) -> bool {
-        matches!(self, Self::PythonProjectMarker | Self::PythonSourcePresence)
+        matches!(
+            self,
+            Self::PythonProjectMarker
+                | Self::PythonSourcePresence
+                | Self::TypescriptProjectMarker
+                | Self::TypescriptSourcePresence
+        )
     }
 
     fn invalidates_workspace_graph(self) -> bool {
@@ -4083,8 +4112,38 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::PythonProjectMarker);
     }
-    path_is_detectable_source_dir_python(root, path)
-        .then_some(WorkspaceInputKind::PythonSourcePresence)
+    if let Some(marker) = typescript_project_marker_name(name)
+        && path_matches_root_file(root, path, marker)
+    {
+        return Some(WorkspaceInputKind::TypescriptProjectMarker);
+    }
+    if path_is_detectable_source_dir_python(root, path) {
+        return Some(WorkspaceInputKind::PythonSourcePresence);
+    }
+    path_is_detectable_source_dir_typescript(root, path)
+        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+}
+
+/// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
+/// TypeScript source file below a root `src`/`tests` directory, outside the
+/// excluded directories. Presence-only; the file is never read.
+fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((marker, below)) = relative.split_first() else {
+        return false;
+    };
+    if typescript_source_dir_marker_name(marker).is_none() {
+        return false;
+    }
+    let Some((file_name, directories)) = below.split_last() else {
+        return false;
+    };
+    directories
+        .iter()
+        .all(|dir| !is_typescript_excluded_dir_everywhere(dir))
+        && is_detectable_typescript_source_name(file_name)
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
@@ -4197,6 +4256,7 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
         .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
         .chain(PYTHON_SOURCE_DIR_MARKERS.iter().map(|dir| {
             // Root-scoped relative glob: relative patterns resolve against
@@ -4206,6 +4266,10 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // detectable-file events are the transport hint, and the reload
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .chain(TYPESCRIPT_SOURCE_DIR_MARKERS.iter().map(|dir| {
+            // Same root-scoped shape for the TypeScript detection extensions.
+            serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
         .collect()
 }
@@ -4318,6 +4382,55 @@ mod workspace_input_tests {
             ));
         }
         Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_detection_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in ["tsconfig.json", "jsconfig.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(marker)),
+                Some(WorkspaceInputKind::TypescriptProjectMarker),
+                "root marker {marker}"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("pkg").join(marker)),
+                None
+            );
+            assert_eq!(workspace_input_kind(&root, &outside.join(marker)), None);
+        }
+        for source in [
+            "src/app.ts",
+            "src/deep/view.tsx",
+            "tests/a.mts",
+            "tests/a.cts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::TypescriptSourcePresence),
+                "{source}"
+            );
+        }
+        for non_input in [
+            "src/app.js",
+            "src/api.generated.ts",
+            "src/types.d.ts",
+            "src/node_modules/p/i.ts",
+            "src/vendor/lib.ts",
+            "lib/app.ts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
+        assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
     }
 
     #[test]
@@ -4443,7 +4556,7 @@ mod workspace_input_tests {
     }
 
     #[test]
-    fn dynamic_watchers_cover_the_canonical_python_input_set() {
+    fn dynamic_watchers_cover_the_canonical_detection_input_set() {
         let actual = workspace_input_watchers()
             .into_iter()
             .filter_map(|watcher| {
@@ -4456,11 +4569,17 @@ mod workspace_input_tests {
         let expected = std::iter::once(CONFIG_FILE_NAME)
             .chain(["Cargo.toml", "Cargo.lock"])
             .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
             .map(|name| format!("**/{name}"))
             .chain(
                 PYTHON_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
+            )
+            .chain(
+                TYPESCRIPT_SOURCE_DIR_MARKERS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
             )
             .collect::<BTreeSet<_>>();
 
@@ -5764,11 +5883,14 @@ impl LanguageServer for Backend {
         if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if changes.workspace_graph_changed {
-            self.invalidate_analysis_input_and_end_queued_progress(
-                "workspace_manifest_or_lockfile_changed",
-            )
-            .await;
+        if changes.workspace_graph_changed || changes.typescript_input_changed {
+            let reason = if changes.workspace_graph_changed {
+                "workspace_manifest_or_lockfile_changed"
+            } else {
+                "typescript_project_input_changed"
+            };
+            self.invalidate_analysis_input_and_end_queued_progress(reason)
+                .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
                 .await;

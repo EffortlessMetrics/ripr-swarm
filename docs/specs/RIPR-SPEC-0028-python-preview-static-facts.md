@@ -340,7 +340,18 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. A dunder
+  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  exception is a builtin protocol entry applied to a sole argument bound to the
+  owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
+  `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
+  an oracle-eligible relation, and only when an assertion takes the entry as an
+  asserted operand (an unasserted entry elsewhere in the body does not relate).
+  The entry, the `list`/`tuple` wrapper and the receiver must keep their
+  bindings: a builtin shadowed by an import, a module or test-local binding
+  (including tuple and annotated targets), or a receiver rebound by a chained,
+  bracketed, loop, `with`, walrus or augmented target, or not the whole bound
+  value, is not credited. Extra, keyword, starred or trailing-comma
+  arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
   with the `dynamic_dispatch` limit instead of `no_static_path`: the adapter
@@ -589,6 +600,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_owner_protocol_entry` (`direct`) credits a dunder
+  method owner whose strong oracle takes the builtin protocol entry on a
+  receiver bound to its class as an asserted operand
+  (`list(reversed(Range(0))) == []`), directly or under `list`/`tuple` only.
+  `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
+  are not transparent here; any other wrapper may ignore the entry
+  (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
@@ -839,6 +857,15 @@ suggested test file when the repair route carries a bare test name.
 The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
+The pre-parse nesting budget (`parse_budget.rs`, #4109) counts brackets inside
+an open string literal so a deeply bracketed literal still declines, but a
+closed literal cannot leave a bracket open for the code after it. Unbalanced
+brackets in separate literals such as `"\x1b[31m"` therefore do not accumulate
+into file nesting (#8561): covered by
+`crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate`
+(including real nesting after the table still declining) and the CLI test
+`crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget`.
 
 Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls

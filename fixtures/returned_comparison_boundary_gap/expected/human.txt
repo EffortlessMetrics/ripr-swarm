@@ -1,0 +1,37 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/returned_comparison_boundary_gap/input
+
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:3
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10
+  Changed behavior: items >= 10
+  Missing discriminator: items == 10
+  Related test (1 of 2 matched rows): tests/orders.rs:4 big_order_ships_free (no test input reaches `items == 10`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 10 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/returned_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_comparison_boundary_gap/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
+  ripr context --root <cwd>/fixtures/returned_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_comparison_boundary_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:ca3e18b4 --root <cwd>/fixtures/returned_comparison_boundary_gap/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/returned_comparison_boundary_gap/input --at src/lib.rs:3 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:3 (weak)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

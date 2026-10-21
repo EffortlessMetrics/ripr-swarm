@@ -503,5 +503,8 @@ fn spans_overlap(helper: &FunctionFact, test: &TestFact) -> bool {
     helper.start_line <= test.end_line && test.start_line <= helper.end_line
 }
 
+mod assertion_macros;
+pub(super) use assertion_macros::credit_same_file_assertion_macros;
+
 #[cfg(test)]
 mod tests;

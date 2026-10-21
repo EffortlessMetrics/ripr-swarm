@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
+| TypeScript and JavaScript | preview | detected TypeScript projects (root `tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts; scoped repair routing is `usable alpha` | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
@@ -29,6 +29,11 @@ control:
 [languages]
 enabled = ["rust", "typescript", "python"]
 ```
+
+With no `ripr.toml`, Python and TypeScript projects are detected and enabled
+automatically; a `ripr.toml` with `enabled = ["rust"]` keeps both off. A
+binary without the matching Cargo feature errors for Python and ignores
+detection silently for TypeScript.
 
 This runtime opt-in is separate from build-time adapter availability. The
 default published `ripr` build includes the TypeScript/JavaScript and Python
@@ -79,7 +84,8 @@ enabled = ["rust"]
 ## Bun UB Advisory Profile
 
 Bun stable-byte review can opt into the calibrated TypeScript-family preview
-profile without making TypeScript or JavaScript default-on:
+profile with an explicit language list (detection does not turn on the
+profile):
 
 ```toml
 [languages]
