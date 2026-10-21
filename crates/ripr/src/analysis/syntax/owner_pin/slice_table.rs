@@ -196,7 +196,33 @@ pub(crate) fn direct_literal_call_column(
             .descendants()
             .find_map(ast::LetStmt::cast)?
             .initializer()?;
-        for node in initializer.syntax().descendants() {
+        // Only the compared operands run unconditionally; format arguments
+        // after them are evaluated only when the assertion fails.
+        let compared = match assertion
+            .path()
+            .map(|path| path.syntax().text().to_string())
+        {
+            Some(name) if name == "assert" => 1,
+            _ => 2,
+        };
+        let operands: Vec<ast::Expr> = match &initializer {
+            ast::Expr::TupleExpr(tuple) => tuple.fields().collect(),
+            other => vec![other.clone()],
+        };
+        if operands.iter().skip(compared).any(|operand| {
+            operand
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.text().trim_start_matches("r#") == owner)
+        }) {
+            return None;
+        }
+        for node in operands
+            .iter()
+            .take(compared)
+            .flat_map(|operand| operand.syntax().descendants())
+        {
             if let Some(call) = ast::CallExpr::cast(node.clone()) {
                 if !is_owner_call(&call, owner) {
                     return None;
@@ -223,6 +249,13 @@ pub(crate) fn direct_literal_call_column(
                 || ast::Item::can_cast(node.kind())
                 || ast::MethodCallExpr::can_cast(node.kind())
                 || ast::MacroCall::can_cast(node.kind())
+                // A branch or short-circuit operand may never run, so a call
+                // inside it cannot witness an input.
+                || ast::IfExpr::can_cast(node.kind())
+                || ast::MatchExpr::can_cast(node.kind())
+                || ast::BlockExpr::can_cast(node.kind())
+                || ast::BinExpr::cast(node.clone())
+                    .is_some_and(|bin| matches!(bin.op_kind(), Some(ast::BinaryOp::LogicOp(_))))
             {
                 return None;
             }

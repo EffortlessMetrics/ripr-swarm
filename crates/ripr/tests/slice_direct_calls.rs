@@ -31,6 +31,16 @@ const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
 ";
 
 fn finding(extra: &str, body: &str) -> Result<Finding, String> {
+    finding_with(PREFIX, DIFF, "xs.len() == 0", extra, body)
+}
+
+fn finding_with(
+    prefix: &str,
+    diff: &str,
+    expression: &str,
+    extra: &str,
+    body: &str,
+) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root: PathBuf = std::env::temp_dir().join(format!(
         "ripr-slice-direct-{}-{}",
@@ -45,7 +55,7 @@ fn finding(extra: &str, body: &str) -> Result<Finding, String> {
         )
         .map_err(|e| e.to_string())?;
         let source = format!(
-            "{PREFIX}{extra}
+            "{prefix}{extra}
 #[cfg(test)]
 mod tests {{
     use super::*;
@@ -58,7 +68,7 @@ mod tests {{
 "
         );
         std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
-        std::fs::write(root.join("diff.patch"), DIFF).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
         let output = check_workspace(CheckInput {
             root: root.clone(),
             base: None,
@@ -71,7 +81,7 @@ mod tests {{
         let mut found: Vec<_> = output
             .findings
             .into_iter()
-            .filter(|f| f.probe.expression == "xs.len() == 0")
+            .filter(|f| f.probe.expression == expression)
             .collect();
         if found.len() != 1 {
             return Err(format!(
@@ -166,7 +176,13 @@ fn hidden_or_conditional_arguments_cannot_supply_a_length() -> Result<(), String
         // A call that never runs cannot witness or exclude an input.
         "        if false {\n            assert_eq!(average(&[]), 0);\n        }\n        assert_eq!(average(&[2, 4]), 3);",
         // An earlier return skips the empty call.
-        "        assert_eq!(average(&[2, 4]), 3);\n        return;\n        #[allow(unreachable_code)]\n        assert_eq!(average(&[]), 0);",
+        "        assert_eq!(average(&[2, 4]), 3);\n        return;\n        assert_eq!(average(&[]), 0);",
+        // A format argument runs only when the assertion fails.
+        "        assert_eq!(1, 1, \"{}\", average(&[]));\n        assert_eq!(average(&[2, 4]), 3);",
+        // Operands that may not run: short-circuit, branch and match arms.
+        "        assert!(true || average(&[]) == 0);\n        assert_eq!(average(&[2, 4]), 3);",
+        "        assert_eq!(if false { average(&[]) } else { 0 }, 0);\n        assert_eq!(average(&[2, 4]), 3);",
+        "        assert_eq!(match 1 { 2 => average(&[]), _ => 0 }, 0);\n        assert_eq!(average(&[2, 4]), 3);",
     ] {
         let finding = finding("", body)?;
         assert!(
@@ -187,5 +203,48 @@ fn another_production_use_keeps_the_input_set_open() -> Result<(), String> {
     )?;
     assert!(!mentions_empty_length(&finding), "{:?}", finding.activation);
     assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_lone_empty_literal_call_credits_and_a_second_slice_does_not_pair() -> Result<(), String> {
+    let lone = finding("", "        assert_eq!(average(&[]), 0);")?;
+    assert_eq!(lone.class, ExposureClass::Exposed);
+
+    let prefix = "pub fn pick(a: &[u32], b: &[u32]) -> u32 {
+    if a.len() == 0 {
+        return 7;
+    }
+    b.len() as u32
+}
+";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn pick(a: &[u32], b: &[u32]) -> u32 {
+-    if a.is_empty() {
++    if a.len() == 0 {
+         return 7;
+     }
+     b.len() as u32
+";
+    let at_a = finding_with(
+        prefix,
+        diff,
+        "a.len() == 0",
+        "",
+        "        assert_eq!(pick(&[], &[1]), 7);",
+    )?;
+    assert_eq!(at_a.class, ExposureClass::Exposed);
+    // The empty literal is the other parameter: `a` is never empty here.
+    let at_b = finding_with(
+        prefix,
+        diff,
+        "a.len() == 0",
+        "",
+        "        assert_eq!(pick(&[1], &[]), 1);",
+    )?;
+    assert_ne!(at_b.class, ExposureClass::Exposed);
     Ok(())
 }

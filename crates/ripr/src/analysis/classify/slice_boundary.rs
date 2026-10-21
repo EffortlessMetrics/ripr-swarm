@@ -145,16 +145,16 @@ fn boundary_values(
         // direct calls whose slice argument is a literal in each assertion.
         // Additional, macro-hidden or helper calls must not disappear from the
         // absence proof.
-        let table = if calls.len() == 1 {
-            constant_table_call_column(&test.body, &owner.name, position)
-        } else {
-            None
+        let table = match calls.as_slice() {
+            [only] => constant_table_call_column(&test.body, &owner.name, position)
+                .map(|(column, text, macro_count)| (column, text, macro_count, only.line)),
+            _ => None,
         };
         let (rows, macro_count): (Vec<(String, usize, String)>, usize) = match table {
-            Some((column, text, macro_count)) => (
+            Some((column, text, macro_count, line)) => (
                 column
                     .into_iter()
-                    .map(|cell| (cell, calls[0].line, text.clone()))
+                    .map(|cell| (cell, line, text.clone()))
                     .collect(),
                 macro_count,
             ),
@@ -191,9 +191,6 @@ fn boundary_values(
                 .iter()
                 .any(|assertion| !syntax.admits(test, assertion, context.index))
         {
-            return Some(Err(unresolved()));
-        }
-        if rows.len() > 64 {
             return Some(Err(unresolved()));
         }
         for (cell, line, source) in rows {

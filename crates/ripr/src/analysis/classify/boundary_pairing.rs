@@ -1102,7 +1102,9 @@ fn owner_call_arguments_admit_activation_fallback(
         compared
     };
     // A `slice.len()` operand over a parameter reads the cardinality of a
-    // literal `&[..]` argument; its length is the activation row's value.
+    // literal `&[..]` argument. Other literal slices in the call carry no
+    // scalar for activation to mistake for the boundary, so they stay
+    // admissible; the witness row itself is keyed to the receiver's position.
     let slice_len_operand = [left.as_str(), right.as_str()].into_iter().any(|operand| {
         operand
             .strip_suffix(".len()")
