@@ -776,6 +776,11 @@ fn match_rows(
                         return None;
                     }
                     let tree = ast::TokenTree::cast(element.as_node()?.clone())?;
+                    // A group matcher has no trailing comma, so `(10,)` is
+                    // not `($v:expr)`; rustc would try a later arm.
+                    if invocation_ends_with_comma(&tree) {
+                        return None;
+                    }
                     let arguments = top_level_arguments(&tree)?;
                     if arguments.len() != variables.len() {
                         return None;
@@ -1174,6 +1179,24 @@ mod tests {
         assert!(expand_local_test_macros(table).is_empty());
         let plain = "macro_rules! c {\n    ($n:ident, $v:expr) => { #[test] fn $n() { assert!(f($v)); } };\n}\nc!(a, 1);\n";
         assert_eq!(expand_local_test_macros(plain).len(), 1, "premise");
+    }
+
+    #[test]
+    fn a_row_group_ending_in_a_comma_does_not_fit_a_group_without_one() {
+        let table = |row: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($n:ident($v:expr))*) => {{ $( #[test] fn $n() {{ assert!(gate($v)); }} )* }};\n    ($($tt:tt)*) => {{}};\n}}\nt! {{ {row} }}\n"
+            )
+        };
+        assert_eq!(
+            expand_local_test_macros(&table("edge(10)")).len(),
+            1,
+            "premise"
+        );
+        assert!(
+            expand_local_test_macros(&table("edge(10,)")).is_empty(),
+            "`(10,)` is not `($v:expr)`; the catch-all arm runs and defines no test"
+        );
     }
 
     #[test]
