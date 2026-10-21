@@ -3053,7 +3053,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("\u{2014} strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("\u{2014} strong exact value oracle: assert_eq!(total, expected)")
             );
             Ok(())
         }
@@ -8811,7 +8811,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
     assert_eq!(related[0].location.range.start.line, 11);
     assert_eq!(
         related[0].message,
-        "Fix site: related test `discount_boundary_is_exact` has strong exact_value oracle: assert_eq!(total, expected)"
+        "Fix site: related test `discount_boundary_is_exact` has strong exact value oracle: assert_eq!(total, expected)"
     );
     Ok(())
 }
@@ -12621,6 +12621,95 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
     })
 }
 
+/// A committed fixture whose working tree adds one Python file that the
+/// default configuration does not enable (#8585).
+fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = boundary_gap_git_fixture_root(name)?;
+    std::fs::create_dir_all(root.path().join("zpy"))
+        .map_err(|err| format!("create zpy failed: {err}"))?;
+    std::fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 1\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    Ok(root)
+}
+
+fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    shown
+        .iter()
+        .filter(|params| {
+            params["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("python") && text.contains("not enabled"))
+        })
+        .collect()
+}
+
+#[test]
+fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
+    // #8585: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so changed files of a language whose adapter is
+    // not enabled must reach it as one bounded notice per language, not
+    // silently read as a clean run. The VS Code integration renders the
+    // typed `unavailable_languages` status field instead.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("disabled-language-notice")?;
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 2).await?;
+        let rows = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .map(|status| status["unavailable_languages"].clone())
+            .collect::<Vec<_>>();
+        if rows.is_empty() || rows.iter().any(|row| row[0]["language"] != "python") {
+            return Err(format!(
+                "every succeeded status must carry the typed python row: {statuses:?}"
+            ));
+        }
+        let notices = unavailable_language_notices(&shown);
+        if notices.len() != 1 {
+            return Err(format!(
+                "one notice per language across repeated refreshes, got {shown:?}"
+            ));
+        }
+        let text = notices[0]["message"].as_str().unwrap_or_default();
+        if notices[0]["type"].as_u64() != Some(2)
+            || !text.contains("[languages] enabled")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the notice must be a bounded one-line warning naming recovery: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "HEAD",
+            1,
+        )
+        .await?;
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders this from its status: {shown:?}"
+            ));
+        }
+        if !statuses
+            .iter()
+            .any(|status| status["unavailable_languages"][0]["file_count"] == 1)
+        {
+            return Err(format!(
+                "the integration must still receive the typed row: {statuses:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
 -> Result<(), String> {
@@ -15181,7 +15270,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("strong exact value oracle: assert_eq!(total, expected)")
             );
             assert!(markup.value.contains("Add an exact boundary assertion."));
             Ok(())
@@ -27618,7 +27707,7 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     };
     assert_eq!(
         row("observes_score")?,
-        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); misses: assertion too weak to tell the old \
          behavior from the new"
     );
@@ -27636,10 +27725,200 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     // and keeps the oracle it could not confirm.
     assert_eq!(
         row("observer_unconfirmed")?,
-        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); unconfirmed: ripr could not confirm that this \
          assertion observes the changed behavior"
     );
+    Ok(())
+}
+
+fn oracle_wording_finding(kind: OracleKind, strength: OracleStrength) -> Finding {
+    let mut finding = sample_finding();
+    finding.class = ExposureClass::WeaklyExposed;
+    finding.related_tests = vec![RelatedTest {
+        name: "selected_observer".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq!(total, expected)".to_string()),
+        oracle_kind: kind,
+        oracle_strength: strength,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+    }];
+    finding
+}
+
+#[test]
+fn finding_hover_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            format!(
+                "- `tests/pricing.rs:12` `selected_observer` — {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn finding_diagnostic_oracle_wording_preserves_selected_row() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let witness = crate::domain::DiagnosticWitness::from_finding(&finding)
+            .ok_or_else(|| "expected witness".to_string())?;
+        let site = witness
+            .fix_site
+            .as_ref()
+            .ok_or_else(|| "expected selected fix site".to_string())?;
+        assert_eq!(
+            site.oracle_kind,
+            finding.related_tests[0].oracle_kind.as_str()
+        );
+        assert_eq!(
+            site.oracle_strength,
+            finding.related_tests[0].oracle_strength.as_str()
+        );
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected fix-site information".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.rs"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            format!(
+                "Fix site: related test `selected_observer` has {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn absent_assertion_oracle_wording_keeps_reason_only_hover() -> Result<(), String> {
+    for strength in [OracleStrength::None, OracleStrength::Unknown] {
+        let mut finding = oracle_wording_finding(OracleKind::Unknown, strength);
+        finding.related_tests[0].oracle = None;
+        finding.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoAssertion);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            "- `tests/pricing.rs:12` `selected_observer` misses: has no assertion"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_oracle_wording_follows_producer_selection_over_a_stronger_row() -> Result<(), String>
+{
+    let mut finding = oracle_wording_finding(OracleKind::Unknown, OracleStrength::Unknown);
+    finding.language = Some(LanguageId::Python);
+    finding.related_tests[0].file = PathBuf::from("tests/pricing.py");
+    finding.related_tests[0].oracle = Some("assert total == expected".to_string());
+    finding.evidence = vec![
+        "suggested_test_file: tests/pricing.py".to_string(),
+        "suggested_test_name: selected_observer".to_string(),
+        "suggested_test_line: 12".to_string(),
+    ];
+    let mut stronger = finding.related_tests[0].clone();
+    stronger.name = "another_observer".to_string();
+    stronger.file = PathBuf::from("tests/other.py");
+    stronger.line = 40;
+    stronger.oracle_kind = OracleKind::ExactValue;
+    stronger.oracle_strength = OracleStrength::Strong;
+    finding.related_tests.push(stronger);
+    for reverse in [false, true] {
+        if reverse {
+            finding.related_tests.reverse();
+        }
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected selected fix-site row".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.py"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            "Fix site: related test `selected_observer` has an unclassified oracle, not graded against this probe: assert total == expected"
+        );
+    }
     Ok(())
 }
 

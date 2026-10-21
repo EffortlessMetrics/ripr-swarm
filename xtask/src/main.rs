@@ -20851,13 +20851,13 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
         error.set_input(Some(&text));
         format!("{path}: invalid non-Rust allowlist TOML: {error}")
     })?;
-    let line_number = |offset| {
-        text.bytes()
-            .take(offset)
-            .filter(|byte| *byte == b'\n')
-            .count()
-            + 1
-    };
+    // Spans use byte offsets. Index line breaks once instead of rescanning
+    // every prefix for every entry and field in the allowlist.
+    let newline_offsets = text
+        .match_indices('\n')
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let line_number = |offset| newline_offsets.partition_point(|newline| *newline < offset) + 1;
     let mut entries = Vec::new();
     for (key, value) in document.get_ref().iter() {
         let key = key.get_ref().as_ref();

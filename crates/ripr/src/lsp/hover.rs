@@ -563,9 +563,12 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                 (Some(why), None) => format!(" {label}: {why}"),
                 (why, Some(oracle)) => {
                     let mut text = format!(
-                        " \u{2014} {} {} oracle: {}",
-                        test.oracle_strength.as_str(),
-                        test.oracle_kind.as_str(),
+                        " \u{2014} {}: {}",
+                        crate::output::related_test_miss::oracle_projection(
+                            &test.oracle_strength,
+                            &test.oracle_kind,
+                            true,
+                        ),
                         oracle
                     );
                     if let Some(why) = why {
