@@ -32,8 +32,8 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. The pilot's offered repair start route, first-pr start
-  command, and retry/snapshot command root are human copy/paste guidance; the
-  root rendering rule is internal command hygiene, not a new oracle kind,
+  command, and retry/snapshot/outcome paths are human copy/paste guidance; the
+  native path rendering rule is internal command hygiene, not a new oracle kind,
   strength, class, relation reason or limitation kind.
 - Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -42,8 +42,8 @@ Policy impact:
 
 - Register this spec in `.ripr/traceability.toml`.
 - No schema version bump. No new wire shape: the pilot summary JSON, Markdown
-  and terminal renderers emit the same fields; only the rendered root inside
-  the offered command strings changes, and only for roots containing a
+  and terminal renderers emit the same fields; only rendered roots or artifact
+  paths inside command strings change, and only for paths containing a
   literal backslash on a non-Windows host.
 
 ## Problem
@@ -96,8 +96,8 @@ screen that printed another.
 
 ### Rule 3: no behavior change for ordinary roots
 
-For every root without a literal backslash, and on Windows for every root,
-the rendered commands are unchanged: `root_path_display` equals
+For roots and artifact paths without a literal backslash, and on Windows for
+all paths, the rendered commands are unchanged: `root_path_display` equals
 `display_path` there. No golden, fixture pin, or human output moves.
 
 ### Rule 4: native artifact paths
@@ -145,8 +145,8 @@ leaving a separately existing slash-normalized sibling untouched.
 1. Pilot runs with root `/tmp/team\repo` on Unix and the top seam is
    route-ready: the terminal, Markdown, and JSON repair command all read
    `ripr agent repair --root '/tmp/team\repo' --seam-id <id> --phase before`.
-2. Same run with root `.`: the repair command reads
-   `ripr agent repair --root . --seam-id <id> --phase before`, unchanged.
+2. Same run with root `.`: the repair command uses the absolute producer-CWD
+   root, unchanged, with the existing shell quoting and seam ID.
 3. A Python repair card on the same literal-backslash root offers
    `ripr first-pr --root '/tmp/team\repo'`.
 4. The pilot retry suggestion on that root names the same literal root.
@@ -168,9 +168,12 @@ leaving a separately existing slash-normalized sibling untouched.
 
 - `crates/ripr/src/output/pilot/commands.rs`:
   `offered_repair_start_route`, `python_card_first_pr_command`,
-  `PilotCommands::new` (command root and artifact paths), rendering paths with
+  `PilotCommands::new` (command root), rendering the root with
   `crate::agent::loop_commands::root_path_display` before
   `crate::agent::loop_commands::bound_root`.
+- `PilotCommands::new` binds artifact `Path` values first with
+  `bound_root_path`, then renders them through `root_path_display` and the
+  existing command builders or `shell_arg`.
 - `crates/ripr/src/agent/loop_commands.rs`: `root_path_display`,
   `bound_root` (unchanged; the shared rule owner, #4287).
 
