@@ -369,7 +369,7 @@ fn measure_corpus_entry(
                 reply,
                 timeout,
             ) {
-                Ok(refresh) => sample(
+                Ok(Some(refresh)) => sample(
                     metric,
                     if refresh.complete() {
                         SampleOutcome::Value(refresh.ms)
@@ -380,6 +380,11 @@ fn measure_corpus_entry(
                         "edited save of `{}` against {editor_base}, terminal state `{}`",
                         refresh.file, refresh.state
                     ),
+                ),
+                Ok(None) => sample(
+                    metric,
+                    SampleOutcome::NotMeasured,
+                    format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
                 ),
                 Err(err) => sample(metric, SampleOutcome::Failed, err),
             },

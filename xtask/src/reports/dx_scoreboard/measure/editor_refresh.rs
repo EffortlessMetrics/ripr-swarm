@@ -27,6 +27,18 @@ const EDIT_MARKER: &str = "\n// ripr dx-scoreboard editor-refresh edit\n";
 /// Terminal `ripr/analysisStatus` states; every other state is in flight.
 const TERMINAL_STATES: [&str; 4] = ["succeeded", "failed", "cancelled", "superseded"];
 
+/// How long to wait for the opening refresh to start before concluding the
+/// server already held analysis state and scheduled none.
+const OPENING_GRACE: Duration = Duration::from_secs(10);
+
+enum Wait {
+    Terminal(String),
+    /// No attempt started within the grace period.
+    NoAttempt,
+    Deadline,
+    Closed,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ProgressReply {
     /// Answer `window/workDoneProgress/create` like an ordinary editor.
@@ -50,25 +62,31 @@ impl EditorRefresh {
     }
 }
 
+/// `Ok(None)` when the change holds no Rust file to open: a property of the
+/// corpus pin, not of ripr, so the caller reports it as not measured.
 pub(super) fn measure_editor_refresh(
     binary: &Path,
     checkout: &Path,
     base: &str,
     envs: &[(&str, &str)],
     reply: ProgressReply,
-    phase_timeout: Duration,
-) -> Result<EditorRefresh, String> {
-    let relative = changed_rust_file(checkout, base)?;
+    timeout: Duration,
+) -> Result<Option<EditorRefresh>, String> {
+    let Some(relative) = changed_rust_file(checkout, base)? else {
+        return Ok(None);
+    };
     let path = checkout.join(&relative);
     let original = fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    // One budget for the whole session, so slow phases cannot multiply it.
+    let deadline = Instant::now() + timeout;
     let mut session = Session::start(binary, checkout, envs, base, reply)?;
     // Restore the checkout even when the session fails half way.
     let _restore = RestoreFile {
         path: path.clone(),
         original: original.clone(),
     };
-    session.initialize(checkout, phase_timeout)?;
+    session.initialize(checkout, deadline)?;
     let uri = file_uri(&path);
     session.notify(
         "textDocument/didOpen",
@@ -76,7 +94,16 @@ pub(super) fn measure_editor_refresh(
             "uri": uri, "languageId": "rust", "version": 1, "text": original,
         }}),
     )?;
-    session.wait_terminal(phase_timeout, "opening refresh")?;
+    // A didOpen the server already holds state for schedules no refresh, so
+    // only wait for the opening refresh when one starts.
+    match session.wait_attempt(deadline, Some(OPENING_GRACE)) {
+        Wait::Terminal(state) if state != "succeeded" => {
+            return Err(format!("opening refresh ended `{state}`"));
+        }
+        Wait::Terminal(_) | Wait::NoAttempt => {}
+        Wait::Deadline => return Err("opening refresh did not finish before the deadline".into()),
+        Wait::Closed => return Err("lsp child closed its output during the opening refresh".into()),
+    }
 
     let edited = format!("{original}{EDIT_MARKER}");
     fs::write(&path, &edited)
@@ -93,33 +120,48 @@ pub(super) fn measure_editor_refresh(
         "textDocument/didSave",
         json!({"textDocument": {"uri": uri}}),
     )?;
-    let state = session.wait_terminal(phase_timeout, "edited-save refresh")?;
+    // From here a stall or a crash is the product's behavior, not the
+    // instrument's: report the elapsed time with a non-succeeded state.
+    let state = match session.wait_attempt(deadline, None) {
+        Wait::Terminal(state) => state,
+        Wait::NoAttempt | Wait::Deadline => "no_terminal_status".to_string(),
+        Wait::Closed => "lsp_closed".to_string(),
+    };
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     session.shutdown();
-    Ok(EditorRefresh {
+    Ok(Some(EditorRefresh {
         ms,
         state,
         file: relative.display().to_string(),
-    })
+    }))
 }
 
 /// First Rust file the base..HEAD change touches that still exists.
-fn changed_rust_file(checkout: &Path, base: &str) -> Result<PathBuf, String> {
+fn changed_rust_file(checkout: &Path, base: &str) -> Result<Option<PathBuf>, String> {
     let names = super::git(
         Some(checkout),
         &["diff", "--name-only", "--diff-filter=AM", base, "HEAD"],
     )?;
-    names
+    Ok(names
         .lines()
         .map(str::trim)
         .filter(|line| line.ends_with(".rs"))
         .map(PathBuf::from)
-        .find(|relative| checkout.join(relative).is_file())
-        .ok_or_else(|| format!("no changed Rust file on {base}..HEAD to open in the editor"))
+        .find(|relative| checkout.join(relative).is_file()))
 }
 
+/// `file://` URI with every byte outside the unreserved set (and `/`)
+/// percent-encoded, so a checkout path holding a space or `#` stays one URI.
 fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
+    let mut uri = String::from("file://");
+    for byte in path.display().to_string().bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
 }
 
 struct RestoreFile {
@@ -203,7 +245,7 @@ impl Session {
         self.send(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }
 
-    fn initialize(&mut self, checkout: &Path, timeout: Duration) -> Result<(), String> {
+    fn initialize(&mut self, checkout: &Path, deadline: Instant) -> Result<(), String> {
         self.next_id += 1;
         let id = self.next_id;
         let root = file_uri(checkout);
@@ -221,7 +263,6 @@ impl Session {
                 },
             },
         }))?;
-        let deadline = Instant::now() + timeout;
         loop {
             let message = self.next_message(deadline, "initialize")?;
             if message.get("id") == Some(&json!(id)) && message.get("method").is_none() {
@@ -231,35 +272,69 @@ impl Session {
         self.notify("initialized", json!({}))
     }
 
-    /// Wait for the next terminal analysis status and return its state.
-    fn wait_terminal(&mut self, timeout: Duration, what: &str) -> Result<String, String> {
-        let deadline = Instant::now() + timeout;
+    /// Wait for one refresh attempt to reach a terminal status. Only a
+    /// status that names the attempt this wait saw start counts, so a
+    /// terminal status re-published for an earlier attempt cannot end it.
+    /// An attempt that ends `superseded` hands over to the next one.
+    /// `start_grace` bounds how long to wait for any attempt to start.
+    fn wait_attempt(&mut self, deadline: Instant, start_grace: Option<Duration>) -> Wait {
+        let start_by = start_grace.map(|grace| Instant::now() + grace);
+        let mut current: Option<String> = None;
         loop {
-            let message = self.next_message(deadline, what)?;
-            if let Some(state) = terminal_state(&message) {
-                return Ok(state);
+            let limit = match (&current, start_by) {
+                (None, Some(start_by)) => start_by.min(deadline),
+                _ => deadline,
+            };
+            let message = match self.next_message_until(limit) {
+                Ok(Some(message)) => message,
+                Ok(None) if current.is_none() && start_by.is_some_and(|by| by <= deadline) => {
+                    return Wait::NoAttempt;
+                }
+                Ok(None) => return Wait::Deadline,
+                Err(()) => return Wait::Closed,
+            };
+            let Some((state, attempt)) = analysis_status(&message) else {
+                continue;
+            };
+            if !TERMINAL_STATES.contains(&state.as_str()) {
+                current = attempt;
+                continue;
+            }
+            if attempt.is_some() && attempt == current {
+                if state == "superseded" {
+                    current = None;
+                    continue;
+                }
+                return Wait::Terminal(state);
             }
         }
     }
 
-    /// Next message, answering server-to-client requests on the way.
-    fn next_message(&mut self, deadline: Instant, what: &str) -> Result<Value, String> {
+    /// Next message before `limit`, answering server-to-client requests on
+    /// the way. `Ok(None)` at the limit, `Err` when the child closed.
+    fn next_message_until(&mut self, limit: Instant) -> Result<Option<Value>, ()> {
         loop {
-            let left = deadline.saturating_duration_since(Instant::now());
+            let left = limit.saturating_duration_since(Instant::now());
             let message = match self.inbox.recv_timeout(left) {
                 Ok(message) => message,
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(format!("no terminal status for {what} before the deadline"));
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(format!("lsp child closed its output during {what}"));
-                }
+                Err(RecvTimeoutError::Timeout) => return Ok(None),
+                Err(RecvTimeoutError::Disconnected) => return Err(()),
             };
             if let Some(response) = server_request_reply(&message, &self.base, self.reply) {
-                self.send(&response)?;
+                self.send(&response).map_err(|_| ())?;
                 continue;
             }
-            return Ok(message);
+            return Ok(Some(message));
+        }
+    }
+
+    /// Next message before the session deadline; used where a timeout is an
+    /// instrument failure.
+    fn next_message(&mut self, deadline: Instant, what: &str) -> Result<Value, String> {
+        match self.next_message_until(deadline) {
+            Ok(Some(message)) => Ok(message),
+            Ok(None) => Err(format!("no reply during {what} before the deadline")),
+            Err(()) => Err(format!("lsp child closed its output during {what}")),
         }
     }
 
@@ -281,13 +356,18 @@ impl Drop for Session {
     }
 }
 
-/// `Some(state)` when the message is a terminal `ripr/analysisStatus`.
-fn terminal_state(message: &Value) -> Option<String> {
+/// `(state, attempt_id)` of a `ripr/analysisStatus` notification.
+fn analysis_status(message: &Value) -> Option<(String, Option<String>)> {
     if message.get("method").and_then(Value::as_str) != Some("ripr/analysisStatus") {
         return None;
     }
-    let state = message.get("params")?.get("state")?.as_str()?;
-    TERMINAL_STATES.contains(&state).then(|| state.to_string())
+    let params = message.get("params")?;
+    let state = params.get("state")?.as_str()?.to_string();
+    let attempt = params
+        .get("attempt_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some((state, attempt))
 }
 
 /// The reply a client owes a server-to-client request, or `None` when the
@@ -370,17 +450,23 @@ mod tests {
     }
 
     #[test]
-    fn only_terminal_analysis_statuses_end_a_wait() {
-        let status =
-            |state: &str| json!({"method": "ripr/analysisStatus", "params": {"state": state}});
-        for state in ["queued", "running"] {
-            assert_eq!(terminal_state(&status(state)), None, "{state}");
-        }
-        for state in ["succeeded", "failed", "cancelled", "superseded"] {
-            assert_eq!(terminal_state(&status(state)), Some(state.to_string()));
-        }
+    fn analysis_status_reads_state_and_attempt() {
+        let status = json!({"method": "ripr/analysisStatus",
+            "params": {"state": "running", "attempt_id": "4"}});
+        assert_eq!(
+            analysis_status(&status),
+            Some(("running".to_string(), Some("4".to_string())))
+        );
         let other = json!({"method": "$/progress", "params": {"state": "succeeded"}});
-        assert_eq!(terminal_state(&other), None);
+        assert_eq!(analysis_status(&other), None);
+    }
+
+    #[test]
+    fn file_uri_encodes_bytes_outside_the_unreserved_set() {
+        assert_eq!(
+            file_uri(Path::new("/tmp/a b#c/x_y-z.rs")),
+            "file:///tmp/a%20b%23c/x_y-z.rs"
+        );
     }
 
     #[test]
