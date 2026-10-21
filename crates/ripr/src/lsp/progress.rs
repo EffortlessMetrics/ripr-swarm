@@ -996,6 +996,22 @@ mod tests {
                     "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
                     _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
                 }
+                // A retained cleanup task may deliver End independently of
+                // the retried caller. Observe that delivery before challenging
+                // repeated cleanup; do not depend on which task runs first.
+                tokio::time::timeout(std::time::Duration::from_millis(200), async {
+                    loop {
+                        if recorder.events().iter().any(|event| matches!(event,
+                            ProgressEvent::End { token, .. } if token == &progress_token(41)
+                        )) {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                }).await.map_err(|_elapsed| format!(
+                    "{terminal}: canceled terminal owner lost custody; no End after retry: {:?}",
+                    recorder.events()
+                ))?;
                 tracker.end(41, AnalysisProgressEnd::Cancelled).await;
                 tracker.end_all(AnalysisProgressEnd::Cancelled).await;
                 let events = recorder.events();
