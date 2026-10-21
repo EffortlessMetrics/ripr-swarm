@@ -174,3 +174,28 @@ fn multiline_pattern_uses_its_start_line_and_unicode_columns() -> Result<(), Str
     assert_eq!(location(arm(&document, "\"é\" =>")?)?.end_column, Some(18));
     Ok(())
 }
+
+#[test]
+fn attributed_and_comma_less_arms_keep_complete_body_spans() -> Result<(), String> {
+    let workspace = Workspace::new(
+        "pub fn route(value: Option<u8>) -> u8 {\n    match value {\n        #[allow(unused_braces)]\n        Some(v) => { v }\n        _ => 0,\n    }\n}\n",
+    )?;
+    for format in [OutputFormat::RepoSeamsJson, OutputFormat::RepoExposureJson] {
+        let document = workspace.inventory(format)?;
+        let selected = arm(&document, "#[allow(unused_braces)] Some(v) =>")?;
+        // Geometry starts at the pattern, not its attribute or arrow token;
+        // a block arm needs no comma before the following wildcard arm.
+        assert_eq!(
+            location(selected)?,
+            CargoMutantsSeamLocation {
+                file: "src/lib.rs".into(),
+                line: 4,
+                column: Some(9),
+                end_line: Some(4),
+                end_column: Some(25),
+            }
+        );
+        assert_eq!(location(arm(&document, "_ =>")?)?.line, 5);
+    }
+    Ok(())
+}
