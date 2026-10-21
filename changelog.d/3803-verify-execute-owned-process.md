@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent verify-execute` spawns its child through the shared owned-process authority. On Windows a timeout, cancellation, output overflow or exit now ends the child's whole Job Object tree before the output is read, and `descendant_containment` reports `job_object` there (`owned_child_only` elsewhere). The xtask Windows timeout control now fails when a pipe-holding descendant survives the timeout (#3803).

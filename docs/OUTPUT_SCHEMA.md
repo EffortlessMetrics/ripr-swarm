@@ -8407,12 +8407,16 @@ tightening, not a current guarantee.
 
 ### Declared limitations
 
-- **Descendant containment.** Only the owned child is terminated. The workspace
-  forbids `unsafe_code` and the dependency policy admits neither `libc` nor
-  `windows-sys`, so no process-group or job-object substrate is available. The
-  authority boundary compensates structurally: the only executable route is one
-  leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
-  The posture is disclosed as `descendant_containment` in the response.
+- **Descendant containment.** The child is spawned through the shared owned
+  process authority (#3803). On Windows a Job Object owns the whole tree and
+  every terminal path (timeout, cancellation, output overflow, exit) ends it
+  before the output is read. On other platforms only the owned child is
+  terminated: the workspace forbids `unsafe_code` and the dependency policy
+  admits neither `libc` nor `windows-sys`, so no process-group substrate is
+  available. The authority boundary compensates structurally: the only
+  executable route is one leaf `ripr agent verify` invocation, which spawns no
+  long-lived descendants. The posture is disclosed as `descendant_containment`
+  in the response (`job_object` or `owned_child_only`).
 - **`verification_executed_fail`**, **`verification_timed_out`**, and
   **`verification_command_not_found`** are mapped and unit-tested but are not
   reachable end-to-end today. The only executable route is `ripr agent verify`
