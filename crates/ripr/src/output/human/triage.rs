@@ -610,11 +610,6 @@ pub(crate) fn canonical_next_action_for_triage(
     select_canonical_next_action(&input)
 }
 
-/// The probed `--base` candidate for an empty result whose analyzed base
-/// resolved to HEAD's own commit: the first other branch whose range
-/// against HEAD is non-empty, never the current `base`. `None` when the
-/// analyzed revisions do not establish base == HEAD, so the ordinary
-/// commit/`--worktree` action keeps owning those states.
 /// True when `HEAD` is the symbolic ref of local branch `base` (a detached
 /// HEAD or any other branch is not), so the empty comparison is the base
 /// compared with itself.
@@ -629,6 +624,11 @@ fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
     .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
 }
 
+/// The probed `--base` candidate for an empty result whose analyzed base
+/// resolved to HEAD's own commit: the first other branch whose range
+/// against HEAD is non-empty, never the current `base`. `None` when the
+/// analyzed revisions do not establish base == HEAD, so the ordinary
+/// commit/`--worktree` action keeps owning those states.
 fn empty_diff_base_candidate(output: &CheckOutput, base: &str) -> Option<String> {
     let revisions = output.analyzed_revisions.as_ref()?;
     match (

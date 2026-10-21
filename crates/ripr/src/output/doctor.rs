@@ -294,7 +294,7 @@ impl DoctorFirstCommand {
                         let mut lines = vec![format!(
                             "- Recommended first command: this repository has no commits yet, \
                              so `ripr check` has no base to diff; commit once first (then \
-                             `ripr check` analyzes uncommitted edits), \
+                             `ripr check` analyzes your branch and uncommitted edits), \
                              or explore the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
@@ -5692,7 +5692,7 @@ mod tests {
             "no commits yet",
             "has no base to diff",
             "commit once first",
-            "analyzes uncommitted edits",
+            "analyzes your branch and uncommitted edits",
             // Canonical whole-repo route (domain::next_action): pilot.
             "ripr pilot --root",
         ] {
