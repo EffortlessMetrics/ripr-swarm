@@ -1,4 +1,4 @@
-# RIPR-SPEC-0295: first-run over-budget steps count step occurrences
+# RIPR-SPEC-0296: first-run over-budget steps count step occurrences
 
 Status: proposed
 
