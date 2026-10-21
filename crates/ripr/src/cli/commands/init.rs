@@ -47,7 +47,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         if pinned != generator {
             let refresh = workflow_refresh_guidance(&options.root);
             eprintln!(
-                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, {refresh}"
+                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, upgrade ripr, then {refresh}"
             );
         }
     }

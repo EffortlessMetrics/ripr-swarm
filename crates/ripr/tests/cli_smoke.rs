@@ -14910,6 +14910,13 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let warned = stderr.contains("is a development version");
     if warned {
+        // The pin is compiled into the binary, so the note must say to
+        // upgrade ripr before refreshing (the same old binary re-pins).
+        let upgrade_at = stderr.find("upgrade ripr, then refresh");
+        assert!(
+            upgrade_at.is_some(),
+            "note must say to upgrade ripr first: {stderr}"
+        );
         // The warning names the fallback pin; both install routes must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
