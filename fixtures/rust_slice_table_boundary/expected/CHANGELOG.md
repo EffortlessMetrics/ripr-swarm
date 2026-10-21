@@ -64,3 +64,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (6)
+
+Reason:
+RIPR-SPEC-0001: diff-check reach evidence names only tests whose relation establishes reach (#9033)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (7)
+
+Reason:
+RIPR-SPEC-0224: human output words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (8)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (9)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

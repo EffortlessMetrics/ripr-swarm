@@ -60,6 +60,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -193,6 +194,11 @@ struct PythonOwner {
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
     dynamic_route_decorators: Vec<String>,
+    /// Decorator names whose binding is not the plain name they spell: a
+    /// decorator written as a call (`@final(wrapper)`) or one whose first
+    /// segment is redefined at module level. Transparent-decorator rules must
+    /// not trust the import for these.
+    unplain_decorators: Vec<String>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
@@ -687,6 +693,8 @@ impl PythonAdapter {
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+        // Conftests that install implicit setup around tests (#6657).
+        let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -725,6 +733,14 @@ impl PythonAdapter {
             if !facts.fixtures.is_empty() {
                 fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
             }
+            // A conftest with implicit setup, or one that only partly parsed,
+            // may assert around every test below it.
+            if facts.conftest_implicit_setup
+                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                    && !facts.limitations.is_empty())
+            {
+                implicit_conftests.insert(relative.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -732,6 +748,11 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
+        fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
+            // A chain conftest that exists but was never read (capped,
+            // excluded or unreadable) cannot be ruled out.
+            !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
+        });
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
@@ -1056,6 +1077,9 @@ impl PythonAdapter {
 
 #[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod conftest_admission_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;

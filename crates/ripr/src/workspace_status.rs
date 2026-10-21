@@ -42,8 +42,76 @@ pub(crate) struct RootStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) identity: Option<String>,
     pub(crate) repository_markers: Vec<String>,
+    /// Git marker probe for the root, serialized only when it is a problem so
+    /// a root with a usable marker keeps the unchanged v1 shape: `not_detected`
+    /// (no `.git` entry at the root or an ancestor) or `marker_invalid` (the
+    /// nearest `.git` is neither a directory nor a gitfile whose first line is
+    /// `gitdir: <path>`). Either way every diff-scoped analysis fails closed in
+    /// `ripr_refresh`. Absence means a plausible marker exists, not that Git
+    /// accepted it. Absent for an unavailable root.
+    #[serde(skip_serializing_if = "git_work_tree_is_clean")]
+    pub(crate) git_work_tree: Option<GitWorkTree>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error_code: Option<RootErrorCode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GitWorkTree {
+    Detected,
+    NotDetected,
+    MarkerInvalid,
+}
+
+fn git_work_tree_is_clean(value: &Option<GitWorkTree>) -> bool {
+    matches!(value, None | Some(GitWorkTree::Detected))
+}
+
+/// Bounded read of a gitfile's first line.
+const GITFILE_PROBE_BYTES: u64 = 4096;
+
+/// Probe the nearest `.git` entry at the root or an ancestor. A directory is
+/// a marker; a gitfile (worktrees, submodules) must start with
+/// `gitdir: <path>`, otherwise Git itself refuses it, so it is
+/// `marker_invalid` rather than a work tree. A marker probe, not a Git
+/// invocation: it can only under-report exotic layouts (`GIT_DIR`), and
+/// refresh remains the authority.
+fn git_work_tree_for(root: &Path) -> GitWorkTree {
+    use std::io::Read;
+    for ancestor in root.ancestors() {
+        let marker = ancestor.join(".git");
+        let Ok(metadata) = std::fs::metadata(&marker) else {
+            if std::fs::symlink_metadata(&marker).is_ok() {
+                return GitWorkTree::MarkerInvalid;
+            }
+            continue;
+        };
+        if metadata.is_dir() {
+            return GitWorkTree::Detected;
+        }
+        // Only a regular file can be a gitfile; opening a FIFO or device
+        // would block or misread, and Git refuses it either way.
+        if !metadata.is_file() {
+            return GitWorkTree::MarkerInvalid;
+        }
+        let mut head = Vec::new();
+        let read = std::fs::File::open(&marker)
+            .and_then(|file| file.take(GITFILE_PROBE_BYTES).read_to_end(&mut head));
+        if read.is_err() {
+            return GitWorkTree::MarkerInvalid;
+        }
+        let text = String::from_utf8_lossy(&head);
+        let first = text.lines().next().unwrap_or_default();
+        let valid = first
+            .strip_prefix("gitdir: ")
+            .is_some_and(|path| !path.trim().is_empty());
+        return if valid {
+            GitWorkTree::Detected
+        } else {
+            GitWorkTree::MarkerInvalid
+        };
+    }
+    GitWorkTree::NotDetected
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -174,6 +242,7 @@ impl WorkspaceStatus {
         } else {
             WorkspaceState::Unavailable
         };
+        let git_work_tree = resolved.root.git_work_tree;
         let configuration = ConfigurationStatus {
             project_config_state: resolved.project_config_state,
             project_config_identity: resolved.project_config_identity,
@@ -199,7 +268,7 @@ impl WorkspaceStatus {
                 "execute verification or mutation, load project-local provider configuration, ",
                 "or claim runtime correctness."
             ),
-            limitations: limitations(resolved.project_config_state),
+            limitations: limitations(resolved.project_config_state, git_work_tree),
         };
         (status, resolved.canonical_root)
     }
@@ -208,12 +277,24 @@ impl WorkspaceStatus {
 /// The `ripr.toml` line is a fact about this root, not a constant: a cold
 /// agent on a Python or TypeScript repository without `ripr.toml` read
 /// "ripr.toml is detected" and went looking for a file that was not there.
-fn limitations(project_config_state: ProjectConfigState) -> Vec<&'static str> {
+fn limitations(
+    project_config_state: ProjectConfigState,
+    git_work_tree: Option<GitWorkTree>,
+) -> Vec<&'static str> {
     let mut limitations =
         vec!["workspace identity is host-local and not a portable repository identifier"];
     if project_config_state == ProjectConfigState::DetectedNotLoaded {
         limitations
             .push("project-local ripr.toml is detected but not loaded by workspace discovery");
+    }
+    match git_work_tree {
+        Some(GitWorkTree::NotDetected) => limitations.push(
+            "no Git work tree contains this root; ripr_refresh needs one to compute the diff and will fail closed until the root is inside a repository (git init, or restart with --root at a repository)",
+        ),
+        Some(GitWorkTree::MarkerInvalid) => limitations.push(
+            "the nearest .git entry is not a directory or a `gitdir: <path>` gitfile, so Git will not accept it as a work tree; ripr_refresh will fail closed until it is repaired",
+        ),
+        Some(GitWorkTree::Detected) | None => {}
     }
     limitations.extend([
         "client launch does not establish project-configuration trust",
@@ -319,6 +400,7 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
             source,
             identity: Some(root_identity(&canonical)),
             repository_markers: markers,
+            git_work_tree: Some(git_work_tree_for(&canonical)),
             error_code: None,
         },
         project_config_state,
@@ -338,6 +420,7 @@ fn unavailable_root_with_source(source: RootSource, error_code: RootErrorCode) -
             source,
             identity: None,
             repository_markers: Vec::new(),
+            git_work_tree: None,
             error_code: Some(error_code),
         },
         project_config_state: ProjectConfigState::Unavailable,
@@ -423,6 +506,83 @@ mod tests {
             "ripr-mcp-workspace-status-{label}-{}-{counter}",
             std::process::id()
         ))
+    }
+
+    fn git_marker_probe(label: &str, setup: impl Fn(&Path)) -> Result<GitWorkTree, String> {
+        let root = temporary_root(label);
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        setup(&root);
+        let probed = git_work_tree_for(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(probed)
+    }
+
+    #[test]
+    fn git_marker_probe_accepts_directory_and_valid_gitfile_only() -> Result<(), String> {
+        let directory = git_marker_probe("git-dir", |root| {
+            let _ = std::fs::create_dir_all(root.join(".git"));
+        })?;
+        assert_eq!(directory, GitWorkTree::Detected);
+        let gitfile = git_marker_probe("gitfile-ok", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir: ../main/.git/worktrees/w\n");
+        })?;
+        assert_eq!(gitfile, GitWorkTree::Detected);
+        for (label, text) in [
+            ("gitfile-empty", ""),
+            ("gitfile-garbage", "not a gitfile\n"),
+            ("gitfile-nopath", "gitdir:   \n"),
+            ("gitfile-no-space", "gitdir:../main/.git/worktrees/w\n"),
+            ("gitfile-second-line", "\ngitdir: x\n"),
+        ] {
+            let probed = git_marker_probe(label, |root| {
+                let _ = std::fs::write(root.join(".git"), text);
+            })?;
+            assert_eq!(probed, GitWorkTree::MarkerInvalid, "{label}");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_marker_probe_rejects_a_non_regular_marker_without_opening_it() -> Result<(), String> {
+        // A FIFO `.git` would block File::open forever if it were opened.
+        let probed = git_marker_probe("gitfile-fifo", |root| {
+            let _ = std::process::Command::new("mkfifo")
+                .arg(root.join(".git"))
+                .status();
+        })?;
+        assert_eq!(probed, GitWorkTree::MarkerInvalid);
+        Ok(())
+    }
+
+    #[test]
+    fn git_marker_probe_requires_the_space_after_gitdir() -> Result<(), String> {
+        let no_space = git_marker_probe("gitfile-nospace-only", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir:/elsewhere\n");
+        })?;
+        assert_eq!(no_space, GitWorkTree::MarkerInvalid);
+        let spaced = git_marker_probe("gitfile-spaced", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir: /elsewhere\n");
+        })?;
+        assert_eq!(spaced, GitWorkTree::Detected);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_git_marker_is_serialized_and_limited_but_a_clean_one_is_absent()
+    -> Result<(), String> {
+        let invalid = serde_json::to_value(Some(GitWorkTree::MarkerInvalid))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(invalid, "marker_invalid");
+        assert!(git_work_tree_is_clean(&Some(GitWorkTree::Detected)));
+        assert!(!git_work_tree_is_clean(&Some(GitWorkTree::NotDetected)));
+        assert!(!git_work_tree_is_clean(&Some(GitWorkTree::MarkerInvalid)));
+        let limited = limitations(
+            ProjectConfigState::BuiltInDefaultsOnly,
+            Some(GitWorkTree::MarkerInvalid),
+        );
+        assert!(limited.iter().any(|text| text.contains("gitdir: <path>")));
+        Ok(())
     }
 
     #[test]
