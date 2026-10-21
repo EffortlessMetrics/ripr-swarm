@@ -19,7 +19,7 @@ Start here:
   Related test (1 of 2 matched rows): src/lib.rs:14 tax_is_owed (assertion too weak to tell the old behavior from the new)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
-    - reach yes: Related tests appear to reach tax: tax_is_owed, subtotal_multiplies
+    - reach yes: Related tests appear to reach tax: tax_is_owed
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 11 more detail line(s) in --format human-full
 

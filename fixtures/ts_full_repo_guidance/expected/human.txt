@@ -1,6 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/ts_full_repo_guidance/input
+config: <cwd>/fixtures/ts_full_repo_guidance/input/ripr.toml
 
 Summary: 0 probes analyzed; 0 findings unsuppressed
 

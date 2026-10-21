@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-net-change-imported.json",
-    "sha256": "435b232e73d434869a6e1a83bc35d1e1a73233df8f7e396c67e794b8bcabb0f5",
+    "sha256": "8f06413736003e230d747dd7345d577fab802bc8bf2f1faf6bd26849b13f1125",
     "provenance": "producer"
   }
 }

@@ -26,6 +26,14 @@ this locked fetch explicitly; production analyzer metadata stays offline.
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 ```
 
+The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
+expansion in `assertion_dependency.rs` requires and the workspace lock no longer
+carries. Prepare it the same way before the owner-pin JSON tests:
+
+```bash
+cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+```
+
 Use the same Cargo home for preparation and checks. A new Cargo home or an
 installed analyzer comparison needs its own preparation against the canonical
 fixture manifest. CI's Rust, coverage, analytics and advisory test paths run
@@ -96,6 +104,28 @@ Inspect the selected package instead with
 `cargo tree --locked -p ripr --no-default-features --features lang-rust -e normal,build`.
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
+
+### Bounded module-motion controls
+
+The #4680 controls implement the
+[bounded module-motion contract](specs/RIPR-SPEC-0005-repo-seam-inventory.md#bounded-rust-module-motion).
+They build real disk-backed indexes for parent, inline-child and file-child
+placements, pair accessible observers with wrong-owner, changed-value and private
+child negatives, and check descendant/helper preservation. They also exercise
+default-target authority, all five compact stage states, portable snapshot
+identity, and production repair-target selection through rendered card JSON.
+
+```bash
+cargo test --locked --offline -p ripr --lib module_extraction
+cargo test --locked --offline -p ripr --lib unit_target_discovery_flags_do_not_change_shared_root_authority
+```
+
+The aggregate `module_extraction_controls` reports every control family even when
+one fails; a failure still fails the test. These tests do not close the separate
+local binding/shadowing or duplicate-import residuals on #4680. Record the exact
+head, selected features and controls actually reached when reporting a hosted
+fail-fast run. Host restrictions take precedence over these local examples;
+use the existing permitted hosted qualification route when local builds are held.
 
 ### Measured example and limits
 

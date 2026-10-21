@@ -1,4 +1,4 @@
-//! Formatting dispatch (RIPR-SPEC-0293) as reach of a changed `Display::fmt` / `Debug::fmt`.
+//! Formatting dispatch (RIPR-SPEC-0297) as reach of a changed `Display::fmt` / `Debug::fmt`.
 //!
 //! A test never spells `fmt`: `format!("{:?}", err)`, `err.to_string()` and
 //! `write!(out, "{}", err)` run the owner's `fmt` through the formatting

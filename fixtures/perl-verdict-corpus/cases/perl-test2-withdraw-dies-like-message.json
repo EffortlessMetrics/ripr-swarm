@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-withdraw-dies-like-message.json",
-    "sha256": "0a34637a46215dbeabb5f6cf3f6515dd5dbe331de3bd085d91e13ff9aa55e65b",
+    "sha256": "4ee026d0aedf625debbf8e9c4b25e49140cf34d6df9d101b58a20dd51d62e05c",
     "provenance": "producer"
   }
 }

@@ -708,7 +708,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
         lines.push(format!(
-            "! Cache not writable: {}; results stay correct but every run recomputes. \
+            "~ Cache not writable: {}; results stay correct but every run recomputes. \
 Point RIPR_CACHE_DIR at a writable directory.",
             display_text(&reason)
         ));
@@ -2610,13 +2610,13 @@ fn ripr_artifact_ignore(
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
-            "! ripr artifacts under {} are not covered by git ignore rules; \
+            "~ ripr artifacts under {} are not covered by git ignore rules; \
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
             uncovered
                 .iter()
-                .map(|root| format!("/{root}/"))
+                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2699,7 +2699,7 @@ fn ripr_artifact_tracking(
     let untrack = untrack_artifacts_command(root, &tracked_roots);
     DoctorArtifactTracking::Tracked {
         warning: format!(
-            "! ripr artifacts under {} are tracked by git; `git add -A` keeps \
+            "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
              refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
             artifact_roots_display(
                 &tracked_roots
@@ -4203,6 +4203,8 @@ mod tests {
         match ripr_artifact_ignore(&root, &default_artifact_roots(&root)) {
             DoctorArtifactIgnore::Unignored { warning } => {
                 assert!(warning.contains("/target/ripr/"), "{warning}");
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
             }
             other => return Err(format!("expected Unignored, got {other:?}")),
         }
@@ -4406,6 +4408,60 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_ignore_advice_covers_only_the_literal_root() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("literal-ignore-advice");
+        std::fs::create_dir_all(root.join("build/cache*/nested"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("empty-excludes"), "").map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["init"]).map_err(|error| error.to_string())?;
+        // Use an absolute excludes path so neither the test host nor Git's
+        // relative config-path interpretation can supply the expected rule.
+        let excludes = root.join("empty-excludes");
+        crate::git::run_git(
+            &root,
+            &[
+                "config",
+                "core.excludesFile",
+                excludes.to_str().ok_or("non-UTF-8 path")?,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        let roots = [PathBuf::from("build/cache*")];
+        let DoctorArtifactIgnore::Unignored { warning } = ripr_artifact_ignore(&root, &roots)
+        else {
+            return Err("expected missing ignore rule".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, r"/build/cache\*/");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        for (path, expected) in [
+            ("build/cache*/nested/a.json", Some(0)),
+            ("build/cache1/user.rs", Some(1)),
+            ("build/cache-other/user.rs", Some(1)),
+        ] {
+            let probe = crate::git::run_git_output_with_deadline(
+                &root,
+                &["check-ignore", "--no-index", "-q", "--", path],
+                Some(std::time::Duration::from_secs(5)),
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(probe.status.code(), expected, "{path}: {probe:?}");
+        }
+        assert_eq!(
+            ripr_artifact_ignore(&root, &roots),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn ripr_artifact_tracking_treats_configured_roots_as_literal_paths() -> Result<(), String> {
         // Owner P1 (PR #8901): a configured root such as `build/cache*` is a
@@ -4540,6 +4596,8 @@ mod tests {
         ];
         match ripr_artifact_tracking(&root, &artifact_roots) {
             DoctorArtifactTracking::Tracked { warning } => {
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
                 assert!(
                     warning.contains("rm --cached -r -- .ripr-cache/repo-seam-facts"),
                     "{warning}"

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0293: Display and Debug fmt dispatch reach
+# RIPR-SPEC-0297: Display and Debug fmt dispatch reach
 
 Status: proposed
 
