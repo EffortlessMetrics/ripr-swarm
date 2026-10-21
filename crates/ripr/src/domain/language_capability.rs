@@ -436,6 +436,62 @@ mod tests {
         );
     }
 
+    /// Independent transcription of `docs/status/SUPPORT_TIERS.md` and
+    /// `docs/LANGUAGE_ADAPTER_PREVIEW.md`: widening any cell must fail here.
+    #[test]
+    fn table_matches_the_documented_support_statement() {
+        const FALLBACK: &str = "supported_with_required_fallback";
+        let expected: [(&str, &str, &str); 16] = [
+            ("rust/any/diff/static_facts", FALLBACK, "usable_alpha"),
+            ("rust/any/repo/static_facts", FALLBACK, "usable_alpha"),
+            ("rust/any/diff/repair_routing", FALLBACK, "usable_alpha"),
+            ("python/any/diff/static_facts", FALLBACK, "preview"),
+            ("python/any/repo/static_facts", FALLBACK, "preview"),
+            (
+                "python/pytest/diff/repair_routing",
+                FALLBACK,
+                "usable_alpha",
+            ),
+            (
+                "python/unittest/diff/repair_routing",
+                FALLBACK,
+                "usable_alpha",
+            ),
+            ("typescript/any/diff/static_facts", FALLBACK, "preview"),
+            ("typescript/any/repo/static_facts", FALLBACK, "preview"),
+            ("typescript/any/diff/repair_routing", FALLBACK, "preview"),
+            ("javascript/any/diff/static_facts", FALLBACK, "preview"),
+            ("javascript/any/repo/static_facts", FALLBACK, "preview"),
+            ("javascript/any/diff/repair_routing", FALLBACK, "preview"),
+            ("perl/any/diff/static_facts", "not_proven", "preview"),
+            ("perl/any/repo/static_facts", "not_proven", "preview"),
+            ("perl/any/diff/repair_routing", "not_proven", "preview"),
+        ];
+        let mut actual: Vec<(String, &str, &str)> = CAPABILITY_CELLS
+            .iter()
+            .map(|cell| {
+                (
+                    format!(
+                        "{}/{}/{}/{}",
+                        cell.language.as_str(),
+                        cell.framework,
+                        cell.mode.as_str(),
+                        cell.family.as_str()
+                    ),
+                    cell.state.as_str(),
+                    cell.tier_ceiling.as_str(),
+                )
+            })
+            .collect();
+        actual.sort();
+        let mut wanted: Vec<(String, &str, &str)> = expected
+            .iter()
+            .map(|(id, state, tier)| (id.to_string(), *state, *tier))
+            .collect();
+        wanted.sort();
+        assert_eq!(actual, wanted);
+    }
+
     #[test]
     fn every_routed_language_has_a_cell() {
         for language in LanguageId::ALL {
@@ -467,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_support_can_differ_from_diff_support() {
+    fn typescript_repo_cell_is_bounded_preview_with_partial_disclosure() {
         let state = |mode| {
             cells_for(LanguageId::TypeScript)
                 .find(|cell| cell.mode == mode && cell.family == CapabilityFamily::StaticFacts)

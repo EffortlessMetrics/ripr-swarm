@@ -434,7 +434,10 @@ A read-only, static registry of what this ripr build can establish, projected
 from one closed table (`domain::language_capability`). Top-level fields:
 `schema_version`, `kind` (`ripr_language_capabilities`), `semantic_digest`
 (`sha256:` over the cells, independent of row order, over the whole table even
-when `--language` narrows `cells`), `languages[]`, `support_state_vocabulary`,
+when `--language` narrows `cells`), `digest_scope` (always `whole_table`),
+`filtered_by` (`null`, or `{"language": ...}` when `--language` narrowed
+`languages[]` and `cells[]`), `availability_note`, `languages[]`,
+`support_state_vocabulary`,
 `absent_cell_meaning` (`not_proven`), `cells[]`, `non_claims`, and
 `claim_boundary`.
 
