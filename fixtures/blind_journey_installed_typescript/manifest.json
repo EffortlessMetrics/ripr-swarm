@@ -111,10 +111,10 @@
     }
    },
    "variant-reach-barrier": {
-    "commit": "9c553e0d2ad57c0dd217fe9a84eb87cc8f73ee58",
-    "tree": "3b3ae62869b666121e7eeaaace61e996a2a0db83",
+    "commit": "e83e1d380290dae6cac3a9d14b17fc0ea1bd0987",
+    "tree": "f8f3e9879a5bbcb76feea30b5284c015f0e85002",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "3670a98b9c8210f9fa522758786e6613591f13d4e2e7e8ee1f3add7314ffcc05",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
