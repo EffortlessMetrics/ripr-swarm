@@ -15271,7 +15271,7 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
         }
         words.into_iter().skip(1).collect()
     };
-    // A successful no-op would not establish that the printed --out survived.
+    // Replacing a sentinel proves the retry writes to the chosen output.
     std::fs::write(&out, "existing baseline must be replaced\n")
         .map_err(|e| format!("seed overwrite witness: {e}"))?;
     let retry_refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
