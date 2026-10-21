@@ -255,8 +255,9 @@ can only hint that a caller "may lead here" without changing anything.
   or comment on the line; a workspace member's entry; a
   `src/main.rs` entry, and an entry inside an inline `mod`. The edge
   carries relation only: argument rows and entry pairing still read a
-  direct call site, so a qualified call earns no value credit it cannot
-  read. (A path-form guard for absolute paths exists in code as defense in
+  direct call site, so the qualified spelling adds no new value-credit
+  path of its own (the argument reader may still read a qualified
+  literal on its own terms). (A path-form guard for absolute paths exists in code as defense in
   depth; no test exercises it.)
 - Every unsupported edge is named, never silently dropped: non-unique
   callee, incomplete workspace index, recursion, multiple callers,
