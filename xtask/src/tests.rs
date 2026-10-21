@@ -10732,6 +10732,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -10868,6 +10873,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -11378,6 +11388,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             Some("full-ci"),
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
         (
             "workflow_dispatch",
@@ -11453,6 +11475,93 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&missing_types)
     );
 
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+    );
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
+    );
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+    );
+
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     let cancellation_disabled = workflow.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
