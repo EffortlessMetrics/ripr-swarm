@@ -5,6 +5,7 @@
 use ripr::domain::{RelationReason, StageState};
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const SHADOW: &str = include_str!("fixtures/operand_callee_identity/let_shadow.rs");
@@ -159,5 +160,68 @@ fn a_genuine_primitive_call_retains_the_operand_pin_downgrade() -> Result<(), St
             .contains(OPERAND_PIN),
         "{finding:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn compiled_operator_removal_controls_match_observed_effects() -> Result<(), String> {
+    for (name, original, observes_effect) in [
+        ("local shadow", SHADOW, true),
+        ("method confusion", METHOD, true),
+        ("primitive control", PRIMITIVE, false),
+    ] {
+        for remove_operator in [false, true] {
+            let source = if remove_operator {
+                replace_once(original, INITIALIZER, "total_cents: subtotal")
+            } else {
+                original.to_string()
+            };
+            // Runtime variants have their own root, so neither can add facts
+            // to a project analyzed by the public-API cases above.
+            let (scratch, _) = TempRepo::create(original)?;
+            let source_path = scratch.root.join("src/lib.rs");
+            std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
+            let executable = scratch
+                .root
+                .join(format!("fixture{}", std::env::consts::EXE_SUFFIX));
+            let compilation = Command::new("rustc")
+                .args(["--edition=2024", "--crate-name=operand_fixture", "--test"])
+                .arg(&source_path)
+                .arg("-o")
+                .arg(&executable)
+                .output()
+                .map_err(|error| format!("{name}: invoke rustc: {error}"))?;
+            assert!(
+                compilation.status.success(),
+                "{name}, removal={remove_operator}: fixture must compile: {}",
+                String::from_utf8_lossy(&compilation.stderr)
+            );
+            let result = Command::new(&executable)
+                .arg("--test-threads=1")
+                .output()
+                .map_err(|error| format!("{name}: invoke fixture: {error}"))?;
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stdout.contains("running 1 test"),
+                "{name}: nonempty runtime subject: {stdout}; {stderr}"
+            );
+            let effect_must_fail = remove_operator && observes_effect;
+            assert_eq!(
+                result.status.success(),
+                !effect_must_fail,
+                "{name}, removal={remove_operator}: {stdout}; {stderr}"
+            );
+            if effect_must_fail {
+                let transcript = format!("{stdout}\n{stderr}");
+                assert!(
+                    transcript.contains("tests::observes_the_operator")
+                        && transcript.contains("left: 0")
+                        && transcript.contains("right: 1"),
+                    "{name}: removal must fail on the operator-effect count: {transcript}"
+                );
+            }
+        }
+    }
     Ok(())
 }

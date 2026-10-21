@@ -13009,6 +13009,7 @@ tests = [
   "crates/ripr/tests/operand_callee_identity.rs::a_shadowed_callee_cannot_erase_an_observed_operator_effect",
   "crates/ripr/tests/operand_callee_identity.rs::an_import_alias_cannot_borrow_a_method_return_type",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
+  "crates/ripr/tests/operand_callee_identity.rs::compiled_operator_removal_controls_match_observed_effects",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_for_loop_over_a_constant_row_table_runs_its_assertion",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_literal_matches_pattern_pins_the_owner_value",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_some_or_ok_return_is_pinned_beside_opposite_exits",
