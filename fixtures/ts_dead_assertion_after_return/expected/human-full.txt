@@ -46,7 +46,7 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `age == 18`
-  - related test tests/eligibility.test.ts:3 eligibility uses smoke smoke only oracle: expect(...).toBeTruthy(...)
+  - related test tests/eligibility.test.ts:3 eligibility uses smoke only oracle: expect(...).toBeTruthy(...)
 
 Weakness
   - Related test reaches `isEligible` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet
