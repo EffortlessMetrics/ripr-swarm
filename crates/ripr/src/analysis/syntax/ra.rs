@@ -1576,6 +1576,34 @@ fn match_arm_probe_text(text: &str, start: TextSize, arrow_start: TextSize) -> S
     normalize_probe_shape_text(&head)
 }
 
+/// Complete source ranges of actual match arms, keyed by their existing
+/// `=>` token identity. Geometry is independent of probe anchors and text.
+/// The range starts at the pattern and includes a trailing arm comma.
+/// Invalid/over-budget source and macro token-tree arrows supply no range.
+pub(crate) fn match_arm_source_ranges(text: &str) -> BTreeMap<usize, (usize, usize)> {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return BTreeMap::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+        .filter_map(|arm| {
+            let arrow = arm.fat_arrow_token()?;
+            let pattern = arm.pat()?;
+            arm.expr()?;
+            Some((
+                usize::from(arrow.text_range().start()),
+                (
+                    usize::from(pattern.syntax().text_range().start()),
+                    usize::from(arm.syntax().text_range().end()),
+                ),
+            ))
+        })
+        .collect()
+}
+
 fn normalize_probe_shape_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

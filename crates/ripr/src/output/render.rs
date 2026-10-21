@@ -855,7 +855,7 @@ mod tests {
         let sarif =
             render_check_with_config(&output, &OutputFormat::RepoSarif, &RiprConfig::default())?;
 
-        assert!(exposure_json.contains("\"schema_version\": \"0.4\""));
+        assert!(exposure_json.contains("\"schema_version\": \"0.5\""));
         assert!(exposure_json.contains("over_threshold"));
         let exposure_summary = render_check_with_config(
             &output,
