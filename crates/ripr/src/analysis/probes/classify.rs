@@ -541,8 +541,8 @@ fn is_visible_module_declaration(text: &str) -> bool {
         })
 }
 
-/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
-/// such as `trait` or `struct` are not covered) holds no expression:
+/// An `impl`, `struct`, `enum`, `union` or `trait` header (`impl Tr for K where
+/// Self: Sized {`, `enum Op<Q: Ord> {`) holds no expression:
 /// its `Self: Sized` text only looks like a field `name: Type`, so a
 /// constructed-field probe on it reports a gap that does not exist (#8389).
 /// The header itself stays probed as `static_unknown`, so a changed bound is
@@ -582,7 +582,23 @@ pub(crate) fn is_item_header(text: &str) -> bool {
     if text.contains('{') && !text.ends_with('{') {
         return false;
     }
-    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
+    if word_after("impl") && (text.ends_with('{') || text.contains(" where")) {
+        return true;
+    }
+    // #9170: a `struct`/`enum`/`union`/`trait` header declares generic bounds
+    // (`enum Op<Q: Ord + Copy> {`) and runs nothing; the bound only looks
+    // like a field `name: Type`. Only a header that opens its body on this
+    // line counts, so a one-line `struct A { x: u8 }` stays probed.
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    ["struct", "enum", "union", "trait"].iter().any(|word| {
+        declared.strip_prefix(word).is_some_and(|rest| {
+            rest.starts_with(char::is_whitespace) && text.ends_with('{') && !rest.contains("fn ")
+        })
+    })
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -624,6 +640,12 @@ mod tests {
             "unsafe\timpl Tr for K where [u8; 4]: Copy {",
             "unsafe impl Send for K {",
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+            // #9170: type declaration headers with generic bounds.
+            "enum Operator<P1, P2, Q: Ord + Copy> {",
+            "pub(crate) struct Wrapper<T: Clone + Send> {",
+            "pub struct Pair<A, B: Default> where A: Copy {",
+            "unsafe trait Marker<T: Sized>: Send {",
+            "union Bits<T: Copy> {",
         ] {
             assert!(is_item_header(header), "`{header}`");
             assert_eq!(
@@ -647,6 +669,13 @@ mod tests {
             "impl K where Self: Sized { const A: u32 = 1; }",
             "impl K where Self: Sized { Foo { a: 1 } }",
             "T: Debug + Clone,",
+            // #9170: one-line bodies, constructions and lookalike words.
+            "struct A { x: u8 }",
+            "enum E { A = 1 }",
+            "let enum_len: usize = 3;",
+            "structure.field: Foo {",
+            "traitor: Foo {",
+            "pub fn enum_of<T: Clone>(t: T) -> T {",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
         }

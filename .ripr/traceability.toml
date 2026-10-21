@@ -9,6 +9,7 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/classify.rs::tests::impl_headers_are_item_headers_but_behavior_is_not",
   "crates/ripr/src/analysis/classify/reach.rs::given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named",
   "crates/ripr/tests/finding_identity_contract.rs",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",
@@ -223,6 +224,7 @@ tests = [
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",
+  "fixtures/type_header_bound_not_field",
   "fixtures/rust_slice_table_boundary",
   "fixtures/rust_slice_table_zero_elements",
   "fixtures/rust_slice_table_try_exit",
