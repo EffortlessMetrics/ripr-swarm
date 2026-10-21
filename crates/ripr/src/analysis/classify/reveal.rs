@@ -325,6 +325,7 @@ pub(in crate::analysis) fn reveal_outcome(
             &analysis.strongest_kind,
             &probe.family,
             analysis.observation_unverified,
+            analysis.strongest_proximity_only,
         )
     };
 
@@ -351,6 +352,10 @@ struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
     strongest: OracleStrength,
     strongest_kind: OracleKind,
+    /// The assertion supplying `strongest_kind` sits in a test related only by
+    /// file or module proximity (#9122), so its kind is not a claim about the
+    /// assertion that observes the changed behavior.
+    strongest_proximity_only: bool,
     /// Confirmation belongs to the assertion supplying the selected oracle
     /// strength. A weaker token match must not upgrade an unrelated exact
     /// oracle, even when both assertions are in the same related test.
@@ -1857,6 +1862,7 @@ fn analyze_related_assertions(
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
+    let mut strongest_proximity_only = false;
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
@@ -2324,6 +2330,7 @@ fn analyze_related_assertions(
                 {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
+                    strongest_proximity_only = is_proximity_only(*reason);
                     strongest_observation_confirmed = observation_confirmed;
                 }
                 related.push(RelatedTest {
@@ -2373,6 +2380,7 @@ fn analyze_related_assertions(
         related,
         strongest,
         strongest_kind,
+        strongest_proximity_only,
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
@@ -4637,6 +4645,7 @@ fn build_discriminate_evidence(
     strongest_kind: &OracleKind,
     family: &ProbeFamily,
     observation_unverified: bool,
+    proximity_only: bool,
 ) -> StageEvidence {
     // For families that require token confirmation (MatchArm, ReturnValue,
     // FieldConstruction, SideEffect, CallDeletion), a family_match or
@@ -4649,6 +4658,34 @@ fn build_discriminate_evidence(
             StageState::Weak,
             Confidence::Medium,
             "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+        );
+    }
+    // #9122: an error-variant kind names the error the changed behavior
+    // returns. A test linked only by file or module location is credited for
+    // strength, but its `matches!(.., Err(..))` pins a variant on another
+    // function's result, which says nothing about a changed predicate, a
+    // call or a field. Name no kind rather than one the linked evidence does
+    // not show; grading is unchanged. Families whose change can itself be an
+    // error variant (`ErrorPath`, `MatchArm`, `ReturnValue`,
+    // `FieldConstruction`) keep the established wording.
+    if proximity_only
+        && matches!(strongest, OracleStrength::Strong)
+        && matches!(
+            strongest_kind,
+            OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+        )
+        && !matches!(
+            family,
+            ProbeFamily::ErrorPath
+                | ProbeFamily::MatchArm
+                | ProbeFamily::ReturnValue
+                | ProbeFamily::FieldConstruction
+        )
+    {
+        return StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
         );
     }
     match strongest {
@@ -7753,10 +7790,124 @@ return Err(\"typed pin\".into());
         ];
 
         for (strength, kind, family, state, summary) in cases {
-            let evidence = build_discriminate_evidence(&strength, &kind, &family, false);
+            let evidence = build_discriminate_evidence(&strength, &kind, &family, false, false);
             assert_eq!(evidence.state, state);
             assert_eq!(evidence.summary, summary);
         }
+    }
+
+    /// #9122 (an HTTP client dogfood case): an `assert!(matches!(.., Err(..)))` in a
+    /// test related to the owner only by file location supplied "exact error
+    /// variant assertion" as the oracle for a predicate it does not pin.
+    #[test]
+    fn proximity_only_error_variant_assertion_is_not_named_for_a_predicate() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert!(
+            !proximity.summary.contains("error variant"),
+            "proximity-linked assertion kind was named: {proximity:?}"
+        );
+        // Discriminating alternate: the same assertion reached by a call
+        // keeps its kind-specific wording.
+        let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            called.summary, "Strong oracle found: exact error variant assertion",
+            "{called:?}"
+        );
+    }
+
+    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
+    /// summary must not claim the test shares the file or module.
+    #[test]
+    fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(
+            proximity.summary,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "{proximity:?}"
+        );
+    }
+
+    #[test]
+    fn proximity_only_strong_oracle_names_no_kind() {
+        for kind in [
+            OracleKind::ExactErrorVariant,
+            OracleKind::GuardedResultMatch,
+        ] {
+            let evidence = build_discriminate_evidence(
+                &OracleStrength::Strong,
+                &kind,
+                &ProbeFamily::Predicate,
+                false,
+                true,
+            );
+            assert_eq!(evidence.state, StageState::Yes);
+            assert_eq!(
+                evidence.summary,
+                "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)"
+            );
+        }
+        // Discriminating negatives: an exact value keeps its wording under
+        // proximity, and an error-path probe keeps the error-variant wording.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactValue,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact value or pattern assertion"
+        );
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // A call-linked assertion keeps its kind.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            false,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // Weaker strengths are unchanged by proximity.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Weak,
+            &OracleKind::RelationalCheck,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert!(evidence.summary.starts_with("Only relational oracle found"));
     }
 
     #[test]
