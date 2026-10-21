@@ -8,6 +8,7 @@ Created: 2026-10-06
 
 Linked issues:
 
+- #8847 (retain producer matched totals in bounded gap evidence and identity)
 - #7767 (unknown-resource recovery remains useful to message-only clients)
 
 - #7314 (optional tool arguments reject explicit null consistently with
@@ -216,7 +217,8 @@ official SDK transport:
   identity/location, changed behavior (expression, before/after, delta
   kind, probe family), causal attribution (canonical gap owner, behavior
   kind, probe kind, normalized discriminator), discriminator availability,
-  related tests with oracle kind/strength, typed limitations for producer
+  related tests with oracle kind/strength, `related_tests_total` from the
+  shared Finding accessor before the producer's retained-row cap, typed limitations for producer
   fields that are not established, and resource links. This slice pinned
   readiness as a hard `repair_packet_ready: false` negative; RIPR-SPEC-0214
   (slice C, #3090) owns the committed producer repair-readiness evaluation
@@ -227,6 +229,13 @@ official SDK transport:
   from prose. `ripr://snapshot/{snapshot_id}` returns bounded snapshot
   evidence: identity, typed outcome, the full item index, and the stored
   selection summary.
+- `related_tests_total` is a required nonnegative integer in the gap item's
+  advertised output schema. Legacy omitted/null metadata falls back to the
+  retained row count, which is also the minimum for explicit metadata. The
+  total participates in the existing evidence digest before snapshot identity
+  is computed: identical eight-row windows with totals 12 and 13 must have
+  distinct evidence and snapshot identities. Retained rows and repair-readiness
+  decisions remain unchanged; one-row and empty findings disclose 1/1 and 0/0.
 - Reads may bind an explicit `snapshot_id`; a mismatch fails closed with
   `stale_snapshot` and the current identity. Snapshot-dependent reads on
   a root resolved unavailable at startup fail closed with
