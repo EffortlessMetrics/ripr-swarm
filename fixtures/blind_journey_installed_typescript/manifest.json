@@ -13,7 +13,7 @@
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
   "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "the base and head snapshots' package-lock.json are the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the variant snapshots still retain the root-entry skeleton until their own lockfiles land (#9104); the journey environment records the installed node/npm/vitest identities above"
+  "lockfile_note": "the base and head snapshots' package-lock.json are the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the variant snapshots are gaining their full lockfiles one per change (#9104); until all land, each variant's manifest hash says whether it holds the full lockfile or the root-entry skeleton; the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
@@ -40,10 +40,10 @@
     }
    },
    "variant-let-binding": {
-    "commit": "610741e9999f5fb229aa1289d0b7300046161631",
-    "tree": "30f83a8fc868a7bc2d91981fb14bb5a03a6b95b0",
+    "commit": "60f94a75f6f13ec3209b796da45bfb3459d8eee6",
+    "tree": "265a4ed34827fa561ba77c2e54251f68d1d2a534",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "bd018e6af9928204494165e91405d7bf4a6324e7a5645faae206c8fac8c5d17c",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
@@ -218,7 +218,7 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
-   "only the base and head snapshots retain a full npm lockfile so far; the variant snapshots retain the root-entry skeleton that backs the npm-runner selection until their lockfiles land (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
+   "the base and head snapshots retain a full npm lockfile; the variant snapshots are gaining their full lockfiles one per change (#9104); until all land, each variant's manifest hash says whether it holds the full lockfile or the root-entry skeleton, and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [
    "no installed usefulness, candidate qualification or blind acceptance is claimed",
