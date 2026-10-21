@@ -4685,7 +4685,7 @@ fn build_discriminate_evidence(
         return StageEvidence::new(
             StageState::Yes,
             Confidence::Medium,
-            "Strong oracle found: assertion kind not established (test linked by file or module location only)",
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
         );
     }
     match strongest {
@@ -7823,6 +7823,27 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
+    /// summary must not claim the test shares the file or module.
+    #[test]
+    fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(
+            proximity.summary,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "{proximity:?}"
+        );
+    }
+
     #[test]
     fn proximity_only_strong_oracle_names_no_kind() {
         for kind in [
@@ -7839,7 +7860,7 @@ return Err(\"typed pin\".into());
             assert_eq!(evidence.state, StageState::Yes);
             assert_eq!(
                 evidence.summary,
-                "Strong oracle found: assertion kind not established (test linked by file or module location only)"
+                "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)"
             );
         }
         // Discriminating negatives: an exact value keeps its wording under

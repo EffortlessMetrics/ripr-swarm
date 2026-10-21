@@ -8187,6 +8187,9 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_matches_variant_oracle_keeps_discriminate_yes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_is_not_effect_family",
   "crates/ripr/src/analysis/classifier.rs::tests::given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::proximity_only_error_variant_assertion_is_not_named_for_a_predicate",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_token_proximity_error_variant_assertion_names_no_kind_or_location",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::proximity_only_strong_oracle_names_no_kind",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -8194,6 +8197,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs::build_discriminate_evidence",
   "crates/ripr/src/analysis/classifier.rs",
 ]
 outputs = [
