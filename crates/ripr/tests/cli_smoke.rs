@@ -15275,17 +15275,12 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     std::fs::write(&out, "existing baseline must be replaced\n")
         .map_err(|e| format!("seed overwrite witness: {e}"))?;
     let retry_refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
-    let recovered = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&workspace),
-        &retry_refs,
-    )
-    .map_err(|e| format!("replay {retry}: {e}"))?;
+    let recovered = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &retry_refs)
+        .map_err(|e| format!("replay {retry}: {e}"))?;
     assert_success(&recovered);
-    let recovered_baseline = std::fs::read_to_string(&out)
-        .map_err(|e| format!("read recovered baseline: {e}"))?;
-    let original: serde_json::Value =
-        serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+    let recovered_baseline =
+        std::fs::read_to_string(&out).map_err(|e| format!("read recovered baseline: {e}"))?;
+    let original: serde_json::Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
     let recovered: serde_json::Value =
         serde_json::from_str(&recovered_baseline).map_err(|e| e.to_string())?;
     assert_eq!(recovered["source_report"], original["source_report"]);
