@@ -136,8 +136,11 @@ read-only and without execution authority (ADR 0022):
   seam inventory the CLI consults (`limit_info.analyzed < total`): when that
   inventory is truncated by the seam limit, or cannot be established, the CLI
   errors for every item, so the adapter refuses every item with
-  `seam_inventory_truncated` (#9108) and the validator's per-seam verdicts are
-  not consulted. The verdict is projected
+  `seam_inventory_truncated` (#9108), ahead of every finding-level gate, and
+  the validator's per-seam verdicts are not consulted. The fact comes from a
+  count-only seam walk over the index the diff-scoped inventory already built
+  (no repo-wide evidence or classification); only the no-impact fast path,
+  which builds no index, falls back to the repo-wide authority. The verdict is projected
   before the snapshot identity is computed, so the list summary, the
   `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
   identity carry one decision, and a finding-level refusal remains the first

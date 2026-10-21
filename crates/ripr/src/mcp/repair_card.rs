@@ -30,7 +30,6 @@ use super::workspace::{
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
     AgentCardError, SeamCardFacts, assemble_repair_card, card_packet_json, finding_for_seam,
@@ -170,18 +169,16 @@ pub(crate) fn gather_seam_inventory(
     if !findings.is_empty() {
         // The CLI resolves a repair item against the repo-wide inventory and
         // errors when the seam limit truncated it. The diff-scoped inventory
-        // below has no such fact, so read it from the same repo-wide
-        // authority (cache-backed) and carry it into the admission (#9108).
-        completeness = super::repair_admission::InventoryCompleteness::from_inventory_limit(
-            crate::analysis::inventory_classified_seams_at_with_config(root, config)
-                .map(|(_, limit_info)| limit_info),
-        );
+        // carries no such fact on its own, so it also derives the limit fact
+        // from the index it already built (a count-only seam walk, no
+        // repo-wide evidence or classification), keeping a small-diff refresh
+        // off a full-repo classification (#9108).
         let changed_files = inventory_changed_files(root, findings);
         let changed_owner_names = findings
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        candidate_seams = inventory_diff_scoped_classified_seams_at_with_config(
+        let scoped = crate::analysis::inventory_diff_scoped_with_seam_limit_at_with_config(
             root,
             config,
             &changed_files,
@@ -193,8 +190,19 @@ pub(crate) fn gather_seam_inventory(
                 format!("the seam inventory authority failed during refresh: {error}"),
                 "retry with ripr_refresh; if the failure persists, run `ripr agent packet` in the repository",
             )
-        })?
-        .classified;
+        })?;
+        completeness = match scoped.repo_seam_limit {
+            Some(limit) => {
+                super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+            }
+            // No index was built (the no-impact fast path), so the limit fact
+            // is unknown: fall back to the repo-wide authority, fail closed.
+            None => super::repair_admission::InventoryCompleteness::from_inventory_limit(
+                crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                    .map(|(_, limit_info)| limit_info),
+            ),
+        };
+        candidate_seams = scoped.classified;
     }
     Ok(SeamInventory {
         repository_head,

@@ -67,7 +67,7 @@ impl InventoryCompleteness {
     ) -> Self {
         match result {
             Err(error) => Self::Unverified(error),
-            Ok(Some(info)) if info.analyzed < info.total => Self::Truncated {
+            Ok(Some(info)) if info.is_truncated() => Self::Truncated {
                 analyzed: info.analyzed,
                 total: info.total,
             },

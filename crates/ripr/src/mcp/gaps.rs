@@ -66,11 +66,16 @@ pub(crate) struct RepairReadiness {
 
 impl RepairReadiness {
     /// Conjoin the shared seam-level repair validator's verdict (#8717).
-    /// A finding-level refusal stays the first failing gate; a finding-ready
-    /// item becomes not ready, keeping no fix site, when the validator that
-    /// backs `ripr repair` does not admit its seam.
+    /// A finding-level refusal stays the first failing gate, except that a
+    /// truncated inventory refuses first; a finding-ready item becomes not
+    /// ready, keeping no fix site, when the validator that backs `ripr repair`
+    /// does not admit its seam.
     pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        if let (true, Some(SeamVerdict::Refused { code, detail })) = (self.ready, verdict) {
+        // The CLI errors on a truncated inventory before it resolves any item
+        // (#9108), so that refusal outranks every finding-level gate.
+        if let Some(SeamVerdict::Refused { code, detail }) = verdict
+            && (self.ready || *code == crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        {
             self.ready = false;
             self.fix_site = None;
             self.ineligibility = Some(*code);
@@ -1270,6 +1275,28 @@ mod tests {
         {
             return Err(format!("truncation must block readiness: {blocked:?}"));
         }
+        // Precedence: a finding failing a finding-level gate still gets the
+        // inventory-level refusal, but keeps its own gate when the verdict is
+        // an ordinary seam refusal.
+        let unready = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("discriminator_not_populated_for_language"),
+            seam_detail: None,
+        };
+        let truncated = unready.clone().with_seam_verdict(Some(&refused));
+        if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || truncated.seam_detail.is_none()
+        {
+            return Err(format!("truncation must outrank the gate: {truncated:?}"));
+        }
+        let ordinary = SeamVerdict::Refused {
+            code: "seam_gate_refused",
+            detail: "gate".to_string(),
+        };
+        if unready.clone().with_seam_verdict(Some(&ordinary)) != unready {
+            return Err("an ordinary seam refusal must not outrank a finding gate".to_string());
+        }
         Ok(())
     }
 
@@ -1296,6 +1323,26 @@ mod tests {
         );
         assert_eq!(C::from_inventory_limit(info(7, 7)), C::Complete);
         assert_eq!(C::from_inventory_limit(Ok(None)), C::Complete);
+        // Parity with the shared predicate the CLI gates read: for every
+        // analyzed/total pair the MCP verdict is truncated iff the CLI's is.
+        for analyzed in 0..4usize {
+            for total in 0..4usize {
+                let limit = SeamLimitInfo {
+                    analyzed,
+                    total,
+                    source: SeamLimitSource::Default,
+                };
+                assert_eq!(
+                    matches!(
+                        C::from_inventory_limit(Ok(Some(limit.clone()))),
+                        C::Truncated { .. }
+                    ),
+                    analyzed < total,
+                    "analyzed {analyzed} total {total}"
+                );
+                assert_eq!(limit.is_truncated(), analyzed < total);
+            }
+        }
         assert_eq!(
             C::from_inventory_limit(Err("boom".to_string())),
             C::Unverified("boom".to_string())

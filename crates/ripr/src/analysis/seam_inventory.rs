@@ -125,6 +125,15 @@ pub(crate) struct SeamLimitInfo {
     pub(crate) source: SeamLimitSource,
 }
 
+impl SeamLimitInfo {
+    /// The one truncation predicate: the limit left seams unanalyzed. The CLI
+    /// repair gate and the MCP repair admission (#9108) both read it so the
+    /// two cannot drift.
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.analyzed < self.total
+    }
+}
+
 impl From<CachedSeamLimitInfo> for SeamLimitInfo {
     fn from(cached: CachedSeamLimitInfo) -> Self {
         Self {
@@ -874,6 +883,12 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// in the working tree (#4586). Empty when every changed source file
     /// is on disk.
     pub(crate) absent_changed_files: Vec<PathBuf>,
+    /// The repo-wide seam-limit fact, derived from the index this run already
+    /// built (a count-only seam walk, no evidence or classification), exactly
+    /// as the repo-wide inventory computes `limit_info`. `None` when this run
+    /// was not asked for it or took the no-impact fast path (no index built);
+    /// `Some(Err)` is an invalid seam-limit override.
+    pub(crate) repo_seam_limit: Option<Result<Option<SeamLimitInfo>, String>>,
 }
 
 /// Two-stage evidence for the diff-scoped inventory.
@@ -1329,6 +1344,7 @@ fn try_no_impact_fast_path(
             immediate_caller_files: Vec::new(),
             unevaluated_seams: 0,
             absent_changed_files: Vec::new(),
+            repo_seam_limit: None,
         },
     )))
 }
@@ -1473,6 +1489,29 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The diff-scoped inventory plus the repo-wide seam-limit fact (#9108), both
+/// from one index build.
+pub(crate) fn inventory_diff_scoped_with_seam_limit_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        DiffScopeInputs {
+            changed_files,
+            changed_owner_names,
+            generated_context: None,
+            with_repo_seam_limit: true,
+        },
+        !no_impact_fast_path_disabled(),
+        None,
+        None,
+    )
+}
+
 /// The current change's classified seams and canonical missing-file coverage.
 #[derive(Debug)]
 pub(crate) struct ClassifiedChangeReport {
@@ -1515,6 +1554,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
             changed_files,
             changed_owner_names: &[],
             generated_context: Some(changed_paths),
+            with_repo_seam_limit: false,
         },
         false,
         Some(&stages),
@@ -1717,6 +1757,8 @@ struct DiffScopeInputs<'a> {
     changed_files: &'a [PathBuf],
     changed_owner_names: &'a [String],
     generated_context: Option<&'a [PathBuf]>,
+    /// Also derive the repo-wide seam-limit fact from the built index.
+    with_repo_seam_limit: bool,
 }
 
 impl<'a> DiffScopeInputs<'a> {
@@ -1725,6 +1767,7 @@ impl<'a> DiffScopeInputs<'a> {
             changed_files,
             changed_owner_names,
             generated_context: None,
+            with_repo_seam_limit: false,
         }
     }
 }
@@ -1745,6 +1788,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         changed_files,
         changed_owner_names,
         generated_context,
+        with_repo_seam_limit,
     } = inputs;
     cancellation::checkpoint()?;
     let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
@@ -1818,6 +1862,9 @@ fn inventory_diff_scoped_classified_seams_inner(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
 
     cancellation::checkpoint()?;
+    let repo_seam_limit = with_repo_seam_limit
+        .then(|| repo_seam_limit_from_index(&production_files, &cached.index))
+        .transpose()?;
     let caller_file_set = immediate_caller_file_set(
         &cached.index,
         &production_file_set,
@@ -1876,7 +1923,31 @@ fn inventory_diff_scoped_classified_seams_inner(
         immediate_caller_files,
         unevaluated_seams,
         absent_changed_files,
+        repo_seam_limit,
     })
+}
+
+/// The repo-wide seam-limit fact without evidence or classification: the
+/// same bounded seam walk and `limit_info` rule the full classified inventory
+/// applies (`inventory_classified_seams_from_state_with_config`), over the
+/// already-built index. An invalid override is `Err`, as there.
+fn repo_seam_limit_from_index(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+) -> Result<Result<Option<SeamLimitInfo>, String>, String> {
+    let limit_and_source = match repo_exposure_seam_limit() {
+        Ok(limit) => limit,
+        Err(error) => return Ok(Err(error)),
+    };
+    let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
+    let bounded = inventory_seams_from_index_bounded(production_files, index, limit)?;
+    Ok(Ok(limit_and_source.and_then(|(limit, source)| {
+        (bounded.total_unique > limit).then_some(SeamLimitInfo {
+            analyzed: bounded.seams.len(),
+            total: bounded.total_unique,
+            source,
+        })
+    })))
 }
 
 /// Classify the scoped seams, first stage only when `stages` accepts it.
