@@ -12,8 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Released ripr version whose archive is installed
-        default: "0.10.0"
+        description: Published ripr version whose archive is installed, for example 0.11.0 (no default; an unpublished version fails the download)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -45,21 +46,23 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         env:
-          VERSION: ${{ inputs.version || '0.10.0' }}
+          VERSION: ${{ inputs.version }}
         run: |
           [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version: $VERSION"; exit 1; }
           mkdir bin-test && cd bin-test
-          time bash -c "$(sed "s/v=0.10.0/v=$VERSION/" ../snippet.sh)"$'\n'"ripr --version"
+          sed -E "s/^v=[0-9]+\.[0-9]+\.[0-9]+/v=$VERSION/" ../snippet.sh > snippet-version.sh
+          grep -q "^v=$VERSION" snippet-version.sh || { echo "snippet does not pin a version"; exit 1; }
+          time bash -c "$(cat snippet-version.sh)"$'\n'"ripr --version"
 
       - name: Install with the documented snippet (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          VERSION: ${{ inputs.version || '0.10.0' }}
+          VERSION: ${{ inputs.version }}
         run: |
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') { throw "bad version: $env:VERSION" }
           New-Item -ItemType Directory bin-test | Out-Null; Set-Location bin-test
-          $t = Measure-Command { Invoke-Expression ((Get-Content ../snippet.ps1 -Raw) -replace "v='0.10.0'", "v='$env:VERSION'"); ripr --version | Write-Host }
+          $t = Measure-Command { Invoke-Expression ((Get-Content ../snippet.ps1 -Raw) -replace "v='\d+\.\d+\.\d+'", "v='$env:VERSION'"); ripr --version | Write-Host }
           Write-Host "TotalSeconds: $($t.TotalSeconds)"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
@@ -68,7 +71,7 @@ jobs:
       - name: Walk the first-run path with the released archive
         shell: bash
         env:
-          VERSION: ${{ inputs.version || '0.10.0' }}
+          VERSION: ${{ inputs.version }}
         run: cargo xtask first-run --install-archive "$VERSION"
 
       - name: Upload first-run reports
