@@ -24,7 +24,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::evidence_lines::{
-    JsonPointerWording, evidence_path_lines, restates_no_static_path_evidence, weakness_lines,
+    JsonPointerWording, evidence_path_lines, weakness_lines, weakness_shows_missing_entry,
 };
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
@@ -135,10 +135,16 @@ pub(crate) fn render_finding_digest_with_config(
     // #9033: the digest names the first entry the full form's Weakness list
     // would also show, so a one-line pointer never names an entry that
     // `--format human-full` dropped as a restatement of its Evidence block.
+    let discriminator_values: Vec<&str> = finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .collect();
     let first_missing = finding
         .missing
         .iter()
-        .find(|missing| !restates_no_static_path_evidence(finding, missing));
+        .find(|missing| weakness_shows_missing_entry(finding, missing, &discriminator_values));
     if let Some(missing) = first_missing {
         // #2273: preview-language classifiers record an observation rationale
         // (not a missing discriminator) in this field for `exposed` findings;
