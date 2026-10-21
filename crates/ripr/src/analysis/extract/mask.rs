@@ -564,15 +564,15 @@ mod tests {
     }
 
     #[test]
-    fn raw_string_termination_keeps_surplus_hashes_as_code() {
+    fn raw_string_termination_keeps_surplus_hashes_as_code() -> Result<(), String> {
         for prefix in ["r", "br", "cr"] {
             for count in [0, 1, 3] {
                 for surplus in [1, 2] {
                     let hashes = "#".repeat(count);
                     let extra = "#".repeat(surplus);
                     let text = format!("{prefix}{hashes}\"a  b\"{hashes}{extra} + live()");
-                    let open = text.find('"').unwrap();
-                    let close = text.rfind('"').unwrap();
+                    let open = text.find('"').ok_or("raw fixture has no opening quote")?;
+                    let close = text.rfind('"').ok_or("raw fixture has no closing quote")?;
                     assert_eq!(
                         rust_identity_spans(&text).literal_ranges,
                         vec![(open, close)],
@@ -585,18 +585,21 @@ mod tests {
                 }
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn raw_string_termination_requires_the_opening_hash_count() {
+    fn raw_string_termination_requires_the_opening_hash_count() -> Result<(), String> {
         for prefix in ["r", "br", "cr"] {
             for count in [1, 3] {
                 let hashes = "#".repeat(count);
                 let short = "#".repeat(count - 1);
                 let text = format!("{prefix}{hashes}\"a \"{short} b\"{hashes}# + live()");
+                let open = text.find('"').ok_or("raw fixture has no opening quote")?;
+                let close = text.rfind('"').ok_or("raw fixture has no closing quote")?;
                 assert_eq!(
                     rust_identity_spans(&text).literal_ranges,
-                    vec![(text.find('"').unwrap(), text.rfind('"').unwrap())],
+                    vec![(open, close)],
                     "a shorter delimiter belongs to the raw contents: {text:?}"
                 );
                 assert!(mask_comments_and_strings(&text).ends_with("# + live()"));
@@ -606,6 +609,7 @@ mod tests {
                 assert!(!mask_comments_and_strings(&unclosed).contains("hidden"));
             }
         }
+        Ok(())
     }
 
     #[test]
