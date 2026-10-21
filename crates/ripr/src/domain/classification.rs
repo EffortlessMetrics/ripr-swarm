@@ -91,6 +91,18 @@ pub enum ExposureClass {
 }
 
 impl ExposureClass {
+    /// Every class in vocabulary order, for adapters that validate a class
+    /// wire token instead of re-spelling the vocabulary.
+    pub(crate) const ALL: [ExposureClass; 7] = [
+        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
+        ExposureClass::NoStaticPath,
+        ExposureClass::InfectionUnknown,
+        ExposureClass::PropagationUnknown,
+        ExposureClass::StaticUnknown,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         profile::for_class(self).label
     }
