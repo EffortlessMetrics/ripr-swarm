@@ -1,0 +1,10 @@
+text_only 0 complete_with_findings True {'changed_file_count': 1, 'changed_line_count': 2, 'candidate_line_count': 1, 'probe_count': 2, 'finding_count': 2}
+binary_only 2 unsupported_input False {'changed_file_count': 0, 'changed_line_count': 0, 'candidate_line_count': 0, 'probe_count': 0, 'finding_count': 0}
+mixed_behavior 0 complete_with_findings True {'changed_file_count': 1, 'changed_line_count': 2, 'candidate_line_count': 1, 'probe_count': 2, 'finding_count': 2}
+comment_only 0 no_behavioral_candidates True {'changed_file_count': 1, 'changed_line_count': 1, 'candidate_line_count': 0, 'probe_count': 0, 'finding_count': 0}
+mixed_comment 0 no_behavioral_candidates True {'changed_file_count': 1, 'changed_line_count': 1, 'candidate_line_count': 0, 'probe_count': 0, 'finding_count': 0}
+empty 0 no_scope True {'changed_file_count': 0, 'changed_line_count': 0, 'candidate_line_count': 0, 'probe_count': 0, 'finding_count': 0}
+FAIL: mixed_behavior/check-json: binary changes omitted from complete outcome
+FAIL: mixed_behavior/diff-json: binary changes omitted from complete outcome
+FAIL: mixed_comment/check-json: binary changes omitted from complete outcome
+FAIL: mixed_comment/diff-json: binary changes omitted from complete outcome

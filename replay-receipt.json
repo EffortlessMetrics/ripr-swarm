@@ -1,0 +1,7 @@
+{
+  "native_exit": 1,
+  "control_assertions": "pass",
+  "intended_mixed_assertion_failures": 4,
+  "binary_sha256": "d17728aa1a1d70604cd132b9cb2918866dbca5979b1250c2de7d3e2ed300f069",
+  "observed_binary_version": "ripr 0.11.0 (6be02b0bff14fe4729fdb6a39072d7ee4e9ee427)"
+}

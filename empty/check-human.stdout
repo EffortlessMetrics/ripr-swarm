@@ -1,0 +1,10 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: .
+
+Summary: 0 probes analyzed; 0 findings unsuppressed
+
+Analysis outcome: nothing was in scope (analysis complete)
+  Counts: 0 changed file(s), 0 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
+
+No diff-derived static exposure probes found.

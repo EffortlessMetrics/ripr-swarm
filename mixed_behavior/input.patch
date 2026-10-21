@@ -1,0 +1,10 @@
+diff --git a/payload.dat b/payload.dat
+index 2382365..27c16e5 100644
+Binary files a/payload.dat and b/payload.dat differ
+diff --git a/src/lib.rs b/src/lib.rs
+index 63a1b95..e7978e0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1 @@
+-pub fn threshold(x: i32) -> bool { x > 10 }
++pub fn threshold(x: i32) -> bool { x >= 10 }

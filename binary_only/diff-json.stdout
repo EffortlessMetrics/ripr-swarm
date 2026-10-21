@@ -1,0 +1,81 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_incomplete_full_repo_limited",
+  "root": ".",
+  "base": "de600e7c3f1f0673e488c374dd755899c1923310",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": "de600e7c3f1f0673e488c374dd755899c1923310",
+        "input_identity": "sha256:16aa344ca35835fe2c24446266c1cbf62901fee533d19203b78b8dff19da1249",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 0,
+        "changed_line_count": 0,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": null,
+          "affected_items": null,
+          "bounded_detail": "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_incomplete_full_repo_limited",
+    "diff": {
+      "state": "diff_incomplete",
+      "phase": "changed_surface_diff",
+      "changed_files": 0,
+      "changed_seams": 0,
+      "downstream_consumable": false
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-de600e7c3f1f0673e488c374dd755899c1923310-HEAD.json",
+    "outcome_hint": "diff_incomplete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 0,
+    "changed_seams": 0,
+    "probes": 0,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 0
+  },
+  "changed_files": [],
+  "changed_seams": []
+}

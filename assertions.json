@@ -1,0 +1,9 @@
+{
+  "control_assertions": "pass",
+  "mixed_honesty_failures": [
+    "mixed_behavior/check-json: binary changes omitted from complete outcome",
+    "mixed_behavior/diff-json: binary changes omitted from complete outcome",
+    "mixed_comment/check-json: binary changes omitted from complete outcome",
+    "mixed_comment/diff-json: binary changes omitted from complete outcome"
+  ]
+}

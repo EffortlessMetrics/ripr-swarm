@@ -1,0 +1,1 @@
+pub fn threshold(x: i32) -> bool { x >= 10 }

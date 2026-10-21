@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 63a1b95..8c8c9e2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,0 +2 @@ pub fn threshold(x: i32) -> bool { x > 10 }
++// documentation only

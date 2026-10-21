@@ -1,0 +1,123 @@
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_complete_full_repo_limited",
+  "root": ".",
+  "base": "de600e7c3f1f0673e488c374dd755899c1923310",
+  "head": "HEAD",
+  "mode": "draft",
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": "de600e7c3f1f0673e488c374dd755899c1923310",
+        "input_identity": "sha256:8879fe5021b3ed33d3585ce6cbb7518287465ba9ca22431c1608a5a051237658",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 2,
+        "finding_count": 2
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "runtime_status": {
+    "state": "diff_complete_full_repo_limited",
+    "diff": {
+      "state": "diff_complete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 2,
+      "downstream_consumable": true
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-de600e7c3f1f0673e488c374dd755899c1923310-HEAD.json",
+    "outcome_hint": "diff_complete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 2,
+    "probes": 2,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 2,
+    "unknown": 0
+  },
+  "changed_files": [
+    {
+      "path": "src/lib.rs",
+      "added_lines": [
+        1
+      ],
+      "removed_lines": [
+        1
+      ],
+      "added_count": 1,
+      "removed_count": 1
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src_lib.rs:predicate:3a6099c2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:threshold:predicate_boundary:predicate:x==10",
+      "file": "src/lib.rs",
+      "line": 1,
+      "classification": "no_static_path",
+      "evidence": [
+        "Changed behavior appears to influence returned value: x >= 10",
+        "No assertion can discriminate the changed behavior without a reachable test",
+        "No reachable test oracle found",
+        "No static test path found for the changed owner",
+        "No tests were found, so activation/infection cannot be estimated"
+      ],
+      "missing_discriminators": [
+        "No detected boundary input for the changed predicate",
+        "No relevant oracle was detected",
+        "No static test path reaches the changed owner",
+        "No strong discriminator was detected"
+      ],
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+    },
+    {
+      "seam_id": "probe:src_lib.rs:return_value:488f915a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:threshold:return_value:return_value:x>=10",
+      "file": "src/lib.rs",
+      "line": 1,
+      "classification": "no_static_path",
+      "evidence": [
+        "Complete propagation witness reaches returned value: x >= 10",
+        "No assertion can discriminate the changed behavior without a reachable test",
+        "No reachable test oracle found",
+        "No reachable tests were found, so infection cannot be established",
+        "No static test path found for the changed owner"
+      ],
+      "missing_discriminators": [
+        "No relevant oracle was detected",
+        "No static test path reaches the changed owner",
+        "No strong discriminator was detected"
+      ],
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists."
+    }
+  ]
+}

@@ -1,0 +1,561 @@
+{
+  "identity": {
+    "binary": "/workspace/unsupported-mixed-evidence/ripr-witness",
+    "binary_sha256": "d17728aa1a1d70604cd132b9cb2918866dbca5979b1250c2de7d3e2ed300f069",
+    "version": "ripr 0.11.0 (6be02b0bff14fe4729fdb6a39072d7ee4e9ee427)"
+  },
+  "cases": [
+    {
+      "case": "text_only",
+      "binary_changed": false,
+      "text_kind": "behavior",
+      "patch_sha256": "8879fe5021b3ed33d3585ce6cbb7518287465ba9ca22431c1608a5a051237658",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/text_only/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/text_only/repo",
+          "exit": 0,
+          "kind": "complete_with_findings",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 2,
+            "finding_count": 2
+          },
+          "limitations": []
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/text_only/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/text_only/repo",
+          "exit": 0
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/text_only/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/text_only/repo",
+          "exit": 0
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/text_only/repo",
+          "exit": 0,
+          "kind": "complete_with_findings",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 2,
+            "finding_count": 2
+          },
+          "limitations": []
+        }
+      }
+    },
+    {
+      "case": "binary_only",
+      "binary_changed": true,
+      "text_kind": null,
+      "patch_sha256": "16aa344ca35835fe2c24446266c1cbf62901fee533d19203b78b8dff19da1249",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/binary_only/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/binary_only/repo",
+          "exit": 2,
+          "kind": "unsupported_input",
+          "complete": false,
+          "counts": {
+            "changed_file_count": 0,
+            "changed_line_count": 0,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": [
+            {
+              "kind": "malformed_diff",
+              "producer_stage": "diff_parse",
+              "path": null,
+              "affected_items": null,
+              "bounded_detail": "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+              "recovery": {
+                "kind": "retry",
+                "detail": "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed."
+              }
+            }
+          ]
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/binary_only/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/binary_only/repo",
+          "exit": 2
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/binary_only/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/binary_only/repo",
+          "exit": 2
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/binary_only/repo",
+          "exit": 2,
+          "kind": "unsupported_input",
+          "complete": false,
+          "counts": {
+            "changed_file_count": 0,
+            "changed_line_count": 0,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": [
+            {
+              "kind": "malformed_diff",
+              "producer_stage": "diff_parse",
+              "path": null,
+              "affected_items": null,
+              "bounded_detail": "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+              "recovery": {
+                "kind": "retry",
+                "detail": "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "mixed_behavior",
+      "binary_changed": true,
+      "text_kind": "behavior",
+      "patch_sha256": "336754c281695b7f524ee803b224ead94ec1386ea24a262c944252238a38ba04",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_behavior/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_behavior/repo",
+          "exit": 0,
+          "kind": "complete_with_findings",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 2,
+            "finding_count": 2
+          },
+          "limitations": []
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_behavior/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_behavior/repo",
+          "exit": 0
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_behavior/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_behavior/repo",
+          "exit": 0
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_behavior/repo",
+          "exit": 0,
+          "kind": "complete_with_findings",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 2,
+            "finding_count": 2
+          },
+          "limitations": []
+        }
+      }
+    },
+    {
+      "case": "comment_only",
+      "binary_changed": false,
+      "text_kind": "comment",
+      "patch_sha256": "0557d7dbda7f7bbfda2494d75793731f9feef9069b7348b63d974852a15cea76",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/comment_only/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/comment_only/repo",
+          "exit": 0,
+          "kind": "no_behavioral_candidates",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 1,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/comment_only/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/comment_only/repo",
+          "exit": 0
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/comment_only/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/comment_only/repo",
+          "exit": 0
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/comment_only/repo",
+          "exit": 0,
+          "kind": "no_behavioral_candidates",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 1,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        }
+      }
+    },
+    {
+      "case": "mixed_comment",
+      "binary_changed": true,
+      "text_kind": "comment",
+      "patch_sha256": "f8293aa1db92476d22be2e35ea7fccfc8b28f142f2c5b4cbcced8c72023ba7b7",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_comment/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_comment/repo",
+          "exit": 0,
+          "kind": "no_behavioral_candidates",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 1,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_comment/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_comment/repo",
+          "exit": 0
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/mixed_comment/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_comment/repo",
+          "exit": 0
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/mixed_comment/repo",
+          "exit": 0,
+          "kind": "no_behavioral_candidates",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 1,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        }
+      }
+    },
+    {
+      "case": "empty",
+      "binary_changed": false,
+      "text_kind": null,
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "results": {
+        "check-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/empty/input.patch",
+            "--format",
+            "json",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/empty/repo",
+          "exit": 0,
+          "kind": "no_scope",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 0,
+            "changed_line_count": 0,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        },
+        "check-github": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/empty/input.patch",
+            "--format",
+            "github",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/empty/repo",
+          "exit": 0
+        },
+        "check-human": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "/workspace/unsupported-mixed-evidence/empty/input.patch",
+            "--format",
+            "human",
+            "--quiet"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/empty/repo",
+          "exit": 0
+        },
+        "diff-json": {
+          "argv": [
+            "/workspace/unsupported-mixed-evidence/ripr-witness",
+            "diff",
+            "--root",
+            ".",
+            "--base",
+            "de600e7c3f1f0673e488c374dd755899c1923310",
+            "--head",
+            "HEAD",
+            "--json"
+          ],
+          "cwd": "/workspace/unsupported-mixed-evidence/empty/repo",
+          "exit": 0,
+          "kind": "no_scope",
+          "complete": true,
+          "counts": {
+            "changed_file_count": 0,
+            "changed_line_count": 0,
+            "candidate_line_count": 0,
+            "probe_count": 0,
+            "finding_count": 0
+          },
+          "limitations": []
+        }
+      }
+    }
+  ]
+}
