@@ -392,10 +392,20 @@ impl McpSession {
                             String::from_utf8_lossy(&stderr)
                         ));
                     }
-                    if !stderr.is_empty() {
+                    // The one documented operator-visible startup line for an
+                    // unusable `--root` (docs/interop/mcp.md) is not
+                    // contamination; anything else on stderr still is.
+                    let stderr_text = String::from_utf8_lossy(&stderr);
+                    let stray: Vec<&str> = stderr_text
+                        .lines()
+                        .filter(|line| {
+                            !line.starts_with("ripr mcp: warning: workspace root unavailable")
+                        })
+                        .collect();
+                    if !stray.is_empty() {
                         return Err(format!(
                             "successful MCP session contaminated stderr: {}",
-                            String::from_utf8_lossy(&stderr)
+                            stray.join("\n")
                         ));
                     }
                     let mut max_frame_bytes = 0_usize;
