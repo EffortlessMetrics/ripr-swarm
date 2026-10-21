@@ -671,7 +671,7 @@ impl WorkspaceSession {
                 "repair_packet_ready": false,
                 "ineligibility": {
                     "reason": reason,
-                    "detail": readiness.reason(),
+                    "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
                 "recovery": "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field",

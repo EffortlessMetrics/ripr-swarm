@@ -493,6 +493,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
         Ok(RepairSubjectOutcome::Ineligible {
             seam_id: resolved,
             reason,
+            ..
         }) => {
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
