@@ -283,7 +283,9 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
-    let (related, related_tests_total) = finalize_related_tests(analysis.related, diff_touched);
+    let owner_calls = owner_call_demoted_rows(probe, related_tests);
+    let (related, related_tests_total) =
+        finalize_related_tests_with_owner_calls(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -4462,9 +4464,76 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 /// of untouched tests in the same confidence tier, so the primary related
 /// test and the repair target can change by design. No row is added or
 /// lifted a tier.
+#[cfg(test)]
 fn finalize_related_tests(
+    related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+) -> (Vec<RelatedTest>, usize) {
+    finalize_related_tests_with_owner_calls(
+        related,
+        diff_touched,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+/// Identity of a related-test row for the owner-call ranking signal.
+type OwnerCallKey = (std::path::PathBuf, usize);
+
+/// #9175: tests whose relation was demoted to `weak_token_substring` (the
+/// receiver type is unresolved among same-named owners) but whose captured
+/// calls include the owner's bare name. The demotion stays: the row keeps
+/// its `weak_token_substring`/`low` disclosure and credits no oracle. The
+/// signal only lets the row outrank rows linked by file location alone,
+/// which never call the owner, when the render cap picks what to keep.
+fn owner_call_demoted_rows(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> std::collections::BTreeSet<OwnerCallKey> {
+    let Some(owner) = probe
+        .owner
+        .as_ref()
+        .and_then(|symbol| symbol.0.rsplit("::").next())
+        .filter(|name| !name.is_empty())
+    else {
+        return std::collections::BTreeSet::new();
+    };
+    related_tests
+        .iter()
+        .filter(|(test, reason)| {
+            *reason == RelationReason::WeakTokenSubstring
+                && test.calls.iter().any(|call| call.name == owner)
+        })
+        .map(|(test, _)| (test.file.clone(), test.start_line))
+        .collect()
+}
+
+/// Cap-selection rank. Without an owner-call signal this is
+/// `related_test_rank`. With one, a demoted row that calls the owner sits
+/// between the other medium relations and the medium rows linked by file
+/// location only; no emitted tier or reason changes.
+fn retention_rank(
+    test: &RelatedTest,
+    owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
+) -> u8 {
+    let rank = related_test_rank(test);
+    if owner_calls.is_empty() {
+        return rank * 4;
+    }
+    match test.relation_reason {
+        Some(RelationReason::WeakTokenSubstring)
+            if owner_calls.contains(&(test.file.clone(), test.line)) =>
+        {
+            7
+        }
+        Some(RelationReason::SameTestFile | RelationReason::SameModule) if rank == 2 => 6,
+        _ => rank * 4,
+    }
+}
+
+fn finalize_related_tests_with_owner_calls(
     mut related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
+    owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
@@ -4480,7 +4549,12 @@ fn finalize_related_tests(
     let touched = |test: &RelatedTest| {
         diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
     };
-    related.sort_by_key(|test| (std::cmp::Reverse(related_test_rank(test)), !touched(test)));
+    related.sort_by_key(|test| {
+        (
+            std::cmp::Reverse(retention_rank(test, owner_calls)),
+            !touched(test),
+        )
+    });
     // #5344: tests listed only as examined misses are packed separately and
     // only into slots the oracle rows leave free, so the oracle rows, their
     // order and their packing are exactly what they were before misses were
@@ -6028,6 +6102,120 @@ mod tests {
         assert_eq!(total, 11);
         assert_eq!(names[0], "strong_direct_call", "a higher tier still leads");
         assert_eq!(names[1], "case_09", "the touched test leads its tier");
+    }
+
+    fn nine_file_location_rows_and_one_demoted_row() -> Vec<RelatedTest> {
+        let mut input: Vec<_> = (0..9)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        input.push(RelatedTest {
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..related(
+                "truncate_to_zero",
+                40,
+                Some(RelationReason::WeakTokenSubstring),
+            )
+        });
+        input
+    }
+
+    fn owner_call_rows(lines: &[usize]) -> std::collections::BTreeSet<OwnerCallKey> {
+        lines
+            .iter()
+            .map(|line| (PathBuf::from("tests/lib.rs"), *line))
+            .collect()
+    }
+
+    /// #9175: a demoted row whose test calls the owner is kept ahead of rows
+    /// linked by file location only, and still discloses its demotion.
+    #[test]
+    fn owner_calling_demoted_row_outranks_file_location_only_rows_under_the_cap() {
+        let input = nine_file_location_rows_and_one_demoted_row();
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().all(|test| test.name != "truncate_to_zero"),
+            "setup: without the owner-call signal the cap drops the demoted row: {plain:?}"
+        );
+
+        let calls = owner_call_rows(&[40]);
+        let (ranked, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(total, 10);
+        assert_eq!(ranked.len(), RELATED_TESTS_RENDER_CAP);
+        assert_eq!(ranked[0].name, "truncate_to_zero");
+        assert_eq!(
+            ranked[0].relation_reason,
+            Some(RelationReason::WeakTokenSubstring)
+        );
+        assert_eq!(ranked[0].relation_confidence, Some(RelationConfidence::Low));
+        assert_eq!(ranked[0].miss, Some(RelatedTestMiss::NoCallPath));
+    }
+
+    /// #9175 negative: the signal is per row. A demoted row with no owner
+    /// call stays below file-location rows, and a higher tier or another
+    /// medium relation still leads the lifted row.
+    #[test]
+    fn owner_call_signal_does_not_lift_other_rows_or_pass_higher_tiers() {
+        let mut input = nine_file_location_rows_and_one_demoted_row();
+        input.push(related("direct", 1, Some(RelationReason::DirectOwnerCall)));
+        input.push(related("named", 2, Some(RelationReason::OwnerNamedTest)));
+        let calls = owner_call_rows(&[99]);
+        let (ranked, _) = finalize_related_tests_with_owner_calls(input.clone(), None, &calls);
+        assert!(
+            ranked.iter().all(|test| test.name != "truncate_to_zero"),
+            "an unsignalled demoted row stays dropped: {ranked:?}"
+        );
+
+        let calls = owner_call_rows(&[40]);
+        let (ranked, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        let names: Vec<&str> = ranked.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(&names[..3], ["direct", "named", "truncate_to_zero"]);
+    }
+
+    /// #9175: only a captured call to the owner's bare name on a demoted
+    /// relation raises the signal.
+    #[test]
+    fn owner_call_signal_needs_a_captured_owner_call_on_a_demoted_relation() {
+        let call = |name: &str| crate::analysis::rust_index::CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: format!("x.{name}(0)").into(),
+        };
+        let test = |name: &str, line: usize, calls: Vec<_>| TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from("tests/lib.rs"),
+            start_line: line,
+            end_line: line + 3,
+            body: Default::default(),
+            calls,
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+        let calling = test("calls_owner", 1, vec![call("truncate")]);
+        let other_call = test("calls_other", 5, vec![call("clear")]);
+        let direct = test("direct", 9, vec![call("truncate")]);
+        let mut probe = probe(ProbeFamily::Predicate, "len == 0");
+        probe.owner = Some(SymbolId("src/bytes.rs::impl Bytes::truncate".to_string()));
+        let related_tests = [
+            (&calling, RelationReason::WeakTokenSubstring),
+            (&other_call, RelationReason::WeakTokenSubstring),
+            (&direct, RelationReason::DirectOwnerCall),
+        ];
+        assert_eq!(
+            owner_call_demoted_rows(&probe, &related_tests),
+            owner_call_rows(&[1])
+        );
+        probe.owner = None;
+        assert!(owner_call_demoted_rows(&probe, &related_tests).is_empty());
     }
 
     #[test]
