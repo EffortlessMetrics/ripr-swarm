@@ -542,12 +542,8 @@ pub(super) fn related_test_relation(
 /// name, a test with no import of the name, a star import, and the owner's own
 /// file all keep the name-based relation.
 fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bool {
-    if owner.is_module_owner()
+    if owner.owner_kind != Some(OwnerKind::Function)
         || owner.qualified_name != owner.name
-        || matches!(
-            owner.owner_kind,
-            Some(OwnerKind::Method | OwnerKind::ClassMethod)
-        )
         || owner.rival_definition_modules.is_empty()
         || test.file == owner.file
     {
@@ -599,13 +595,7 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
 pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
     let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
     for owner in owners.iter() {
-        if owner.is_module_owner()
-            || owner.qualified_name != owner.name
-            || matches!(
-                owner.owner_kind,
-                Some(OwnerKind::Method | OwnerKind::ClassMethod)
-            )
-        {
+        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
             continue;
         }
         let defs = modules_by_name.entry(owner.name.clone()).or_default();
@@ -617,7 +607,7 @@ pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
         let Some(defs) = modules_by_name.get(&owner.name) else {
             continue;
         };
-        if owner.qualified_name != owner.name {
+        if owner.owner_kind != Some(OwnerKind::Function) || owner.qualified_name != owner.name {
             continue;
         }
         owner.rival_definition_modules = defs

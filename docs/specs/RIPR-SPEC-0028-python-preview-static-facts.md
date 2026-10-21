@@ -250,6 +250,9 @@ or package re-export, an unresolved or third-party source, a source the owner's
 path could also be spelled as under an import root the adapter cannot see, an
 ambiguous src-layout name, a test with no import of the name, a star import, and
 a test in the owner's own file keep the name-based relation.
+Only top-level free functions are gated, and only top-level imports are read: a
+same-named wrapper that delegates to the owner, or an import under `try`/`if`,
+is not modeled, so such a test can read as unrelated.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import

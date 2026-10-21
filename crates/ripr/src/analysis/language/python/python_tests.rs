@@ -4335,8 +4335,13 @@ fn same_named_function_in_unimported_module_is_not_related() -> Result<(), Strin
         )?,
         1
     );
-    // The independently established fixture relation does not depend on the
-    // imported name.
+    // Calling the owner through other module spellings keeps the relation.
+    for reaches in [
+        "from pkg.a import quote\nfrom pkg import b\n\ndef test_a():\n    assert quote(1.0) == b.quote(1.0)\n",
+        "from pkg.a import quote\nimport pkg.b as m\n\ndef test_a():\n    assert quote(1.0) == m.quote(1.0)\n",
+    ] {
+        assert_eq!(related(owner_b, reaches)?, 1, "{reaches}");
+    }
     // A package or facade that is not itself a defining module cannot be told
     // from the owner's module: the relation stays.
     assert_eq!(
@@ -4350,7 +4355,7 @@ fn same_named_function_in_unimported_module_is_not_related() -> Result<(), Strin
 
     // An import root the adapter cannot see (`app/` on sys.path) spells the
     // owner `pricing.discounts`; that is not a different module.
-    let owners = owners_for(&["app/pricing/discounts.py", "other/lib/quote_rival.py"])?;
+    let owners = owners_for(&["app/pricing/discounts.py", "pricing/discounts.py"])?;
     let [rooted, _] = owners.as_slice() else {
         return Err("expected two owners".to_string());
     };
@@ -4463,5 +4468,24 @@ fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String
         .first()
         .map(|candidate| candidate.relation);
     assert_eq!(relation, Some(PythonRelationKind::ApiClientRouteCall));
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
+    // Only free functions are gated: a subclass can run the other module's
+    // class under the same name.
+    let source = "class Base:\n    pass\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("pkg/b.py"), source)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), source))
+        .filter(|owner| owner.name == "Base")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("pkg/b.py"))
+        .ok_or_else(|| "expected class owner".to_string())?;
+    assert!(owner.rival_definition_modules.is_empty());
     Ok(())
 }
