@@ -30,8 +30,9 @@ fn skip_ws(bytes: &[u8], mut at: usize) -> usize {
 
 /// Every `macro_rules! name { .. }` definition in `source`, read from the
 /// comment/string-masked text so a mention in prose does not count. A
-/// definition that never closes runs to the end of the file (fail-closed:
-/// more lines are treated as macro text, never fewer).
+/// definition that never closes runs to the end of the file, so every later
+/// line counts as macro text (typically an edit in progress); it is not
+/// evidence that those lines are macro text.
 pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
     let masked = mask_comments_and_strings(source);
     let bytes = masked.as_bytes();
@@ -62,26 +63,36 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
             continue;
         }
         let mut depth = 0usize;
-        let mut end = bytes.len().saturating_sub(1);
+        let mut end = None;
         for (offset, byte) in bytes[open..].iter().enumerate() {
             match byte {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
-                        end = open + offset;
+                        end = Some(open + offset);
                         break;
                     }
                 }
                 _ => {}
             }
         }
+        let name = masked[name_start..name_end].to_string();
+        let Some(end) = end else {
+            // Unclosed: runs to the end of the file; nothing left to scan.
+            found.push(MacroDefinition {
+                name,
+                start_line: line_of(at),
+                end_line: line_of(bytes.len()),
+            });
+            break;
+        };
         found.push(MacroDefinition {
-            name: masked[name_start..name_end].to_string(),
+            name,
             start_line: line_of(at),
             end_line: line_of(end),
         });
-        cursor = end.max(after);
+        cursor = end + 1;
     }
     found
 }
@@ -122,6 +133,57 @@ mod tests {
     fn an_unclosed_definition_runs_to_the_end_of_the_file() {
         let defs = macro_definitions("macro_rules! m {\n    () => {\n");
         assert_eq!(defs.len(), 1);
-        assert!(defs[0].end_line >= 2);
+        assert_eq!(defs[0].end_line, 3);
+    }
+
+    #[test]
+    fn an_unclosed_definition_with_trailing_non_ascii_does_not_panic() {
+        let defs = macro_definitions("macro_rules! m {\n    () => { é");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].end_line, 2);
+        let defs = macro_definitions("macro_rules! m (\n    é");
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn paren_and_bracket_delimiters_are_definitions() {
+        let defs = macro_definitions(
+            "macro_rules! p (\n    () => {};\n);\nmacro_rules! b [\n    () => {};\n];\n",
+        );
+        assert_eq!(defs.len(), 2);
+        assert_eq!((defs[0].start_line, defs[0].end_line), (1, 3));
+        assert_eq!((defs[1].start_line, defs[1].end_line), (4, 6));
+    }
+
+    #[test]
+    fn nested_braces_and_repetitions_close_at_the_outer_delimiter() {
+        let source = "macro_rules! m {\n    ($($x:expr),*) => {\n        $( { $x } )*\n    };\n}\nfn after() {}\n";
+        let defs = macro_definitions(source);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].end_line, 5);
+    }
+
+    #[test]
+    fn a_brace_char_literal_does_not_unbalance_the_extent() {
+        let source = "macro_rules! m {\n    () => { '{' };\n}\nfn after() {}\n";
+        let defs = macro_definitions(source);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].end_line, 3);
+    }
+
+    #[test]
+    fn spacing_around_the_bang_is_accepted() {
+        let defs = macro_definitions("macro_rules !  spaced {\n}\nmacro_rules\n!\nsecond {\n}\n");
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0].name, "spaced");
+        assert_eq!(defs[1].name, "second");
+    }
+
+    #[test]
+    fn two_same_named_definitions_are_both_found() {
+        let defs = macro_definitions("macro_rules! m {\n}\nmacro_rules! m {\n}\n");
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0].start_line, 1);
+        assert_eq!(defs[1].start_line, 3);
     }
 }

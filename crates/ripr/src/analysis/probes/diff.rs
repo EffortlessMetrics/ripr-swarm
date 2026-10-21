@@ -187,7 +187,10 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| macro_definitions(&facts.source))
         .unwrap_or_default();
     let removed_macros = old_source.map(macro_definitions).unwrap_or_default();
-    let mut macro_unknown_seeded = std::collections::BTreeSet::<String>::new();
+    // One probe per definition per diff side, keyed by (name, start line) so
+    // same-named definitions (for example cfg-exclusive pairs) stay distinct.
+    let mut added_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
+    let mut removed_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
 
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
@@ -198,7 +201,7 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         if let Some(definition) = definition_at(&added_macros, added.new_side_line) {
-            if macro_unknown_seeded.insert(definition.name.clone()) {
+            if added_macro_seeded.insert((definition.name.clone(), definition.start_line)) {
                 let before = removed_before(added.new_side_line, text, changed, &added_run_starts);
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
@@ -514,7 +517,7 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         if let Some(definition) = definition_at(&removed_macros, removed.line) {
-            if macro_unknown_seeded.insert(definition.name.clone()) {
+            if removed_macro_seeded.insert((definition.name.clone(), definition.start_line)) {
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     removed,
@@ -5092,11 +5095,37 @@ mod source_currentness_tests {
         };
         let index = macro_source_index(&path, source);
         let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert_eq!(probes[0].before.as_deref(), Some("$name { field: $ty }"));
+    }
+    /// Same-named definitions (cfg-exclusive pair) each keep their own probe.
+    #[test]
+    fn same_named_macro_definitions_each_seed_their_own_unknown() {
+        let source = "#[cfg(unix)]\nmacro_rules! m {\n    () => { 1 };\n}\n#[cfg(not(unix))]\nmacro_rules! m {\n    () => { 2 };\n}\n";
+        let path = PathBuf::from("src/macros.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![line(3, "() => { 1 };"), line(7, "() => { 2 };")],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let mut lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        lines.sort_unstable();
+        assert_eq!(lines, vec![3, 7], "{probes:?}");
         assert!(
             probes
                 .iter()
-                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
-            "{probes:?}"
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown)
         );
     }
 }
