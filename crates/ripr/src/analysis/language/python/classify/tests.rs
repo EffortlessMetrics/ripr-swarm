@@ -2371,6 +2371,8 @@ fn opaque_wrapper_around_owner_call_does_not_credit_exposed() -> Result<(), Stri
         "assert always_true(parse('1')) == True",
         "assert bool(parse('1')) == True",
         "self.assertTrue(always_true(parse('1')))",
+        "assert (always_true)(parse('1')) == True",
+        "assert always_true(parse('1')) == other.parse('2')",
     ] {
         let finding = classify_case(
             PARSE_SOURCE,
@@ -2390,6 +2392,7 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
         "assert parse('1') == 2",
         "assert str(parse('1')) == '2'",
         "assert round(parse('1'), 2) == 2",
+        "assert (parse('1')) == 2",
     ] {
         let finding = classify_case(
             PARSE_SOURCE,

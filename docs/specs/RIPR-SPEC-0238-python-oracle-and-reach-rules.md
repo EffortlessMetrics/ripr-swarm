@@ -412,6 +412,18 @@ This reverses the legacy no-token observing exception (#7526), which could
 credit an unrelated strong assertion. Ordinary module-import links retain their
 heuristic relation and do not gain oracle eligibility from this change.
 
+A name, alias or changed-sink credit also requires that the asserted value can
+depend on the owner's result (#6585). When every call of the owner in the
+assertion sits inside a call that is not a known value-preserving wrapper
+(`bool(...)`, `isinstance(...)`, a user helper such as `always_true(...)`, or an
+expression callee such as `(f)(...)` or `fns[0](...)`), the finding is not
+`exposed`. Value-preserving builtins (`str`, `len`, `sorted`, `round`, ...) and
+grouping parentheses stay transparent. A receiver-qualified call (`other.parse(...)`)
+is not counted as an owner call unless it is itself wrapped, so a foreign
+same-named call neither supplies nor cancels the refusal. Pinned by the
+`opaque_wrapper_*` and `value_preserving_wrapper_*` classify tests and the
+`wrapped_call` unit table.
+
 9. **A method owner's class token is not identity alone.** For a method
    or class-method owner, the class name in the assertion does not
    credit the identity branch. Such an owner credits `direct` only

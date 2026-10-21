@@ -94,12 +94,19 @@ pub(super) fn owner_call_only_inside_opaque_wrapper(text: &str, names: &[String]
                 stack.pop();
             }
             _ if is_call_of(text, idx, names) => {
-                calls += 1;
-                if stack
+                let wrapped = stack
                     .iter()
                     .skip(operand_depth)
-                    .any(|callee| callee.is_some_and(|name| !is_transparent(name)))
-                {
+                    .any(|callee| callee.is_some_and(|name| !is_transparent(name)));
+                // `other.parse(...)` may be a foreign receiver the bare owner
+                // token cannot tell from the owner. Unwrapped, it neither
+                // counts as an owner call nor lifts the guard; wrapped, it
+                // is refused with the rest.
+                let receiver_qualified = text[..idx].ends_with('.');
+                if wrapped || !receiver_qualified {
+                    calls += 1;
+                }
+                if wrapped {
                     opaque += 1;
                 }
             }
@@ -114,9 +121,25 @@ fn is_transparent(callee: &str) -> bool {
     TRANSPARENT_WRAPPERS.contains(&last)
 }
 
-/// The dotted identifier immediately before the `(` at `open`, if any.
+/// Python keywords that may precede a grouping `(`. They are not callees.
+const GROUPING_KEYWORDS: &[&str] = &[
+    "assert", "not", "and", "or", "in", "is", "if", "else", "elif", "return", "yield", "await",
+    "lambda", "for", "while", "with", "del", "print",
+];
+
+/// Stack marker for a call whose callee is an expression, not a name:
+/// `(always_true)(...)`, `table[0](...)`, `make()(...)`. It cannot be shown
+/// to preserve its argument, so it counts as opaque.
+const EXPRESSION_CALLEE: &str = "<expression>";
+
+/// The callee of the `(` at `open`: the dotted identifier before it, the
+/// expression marker when a `)` or `]` precedes it, and `None` for a grouping
+/// paren (start of text, an operator, a comma, or a keyword such as `assert`).
 fn callee_before(text: &str, open: usize) -> Option<&str> {
     let head = text[..open].trim_end();
+    if head.ends_with(')') || head.ends_with(']') {
+        return Some(EXPRESSION_CALLEE);
+    }
     let start = head
         .char_indices()
         .rev()
@@ -124,7 +147,7 @@ fn callee_before(text: &str, open: usize) -> Option<&str> {
         .last()
         .map(|(start, _)| start)?;
     let callee = &head[start..];
-    (!callee.is_empty()).then_some(callee)
+    (!callee.is_empty() && !GROUPING_KEYWORDS.contains(&callee)).then_some(callee)
 }
 
 /// Whether one of `names` starts at `idx` as a call (`name(`), not as the
@@ -171,6 +194,16 @@ mod tests {
             ("self.assertEqual(round(parse('1'), 2), 2)", false),
             // One direct call is enough to keep the verdict.
             ("assert parse('1') == bool(parse('2'))", false),
+            // Grouping parens, including after `assert`, are not wrappers.
+            ("assert (parse('1')) == 2", false),
+            ("assert not (parse('1')) == 2", false),
+            // A parenthesized or subscripted callee cannot be shown transparent.
+            ("assert (always_true)(parse('1')) == True", true),
+            ("assert fns[0](parse('1')) == True", true),
+            // A receiver-qualified call may be foreign: it does not lift the
+            // guard for a wrapped bare call, nor count when unwrapped.
+            ("assert always_true(parse('1')) == other.parse('2')", true),
+            ("assert other.parse('2') == 2", false),
             // No call of the owner in the assertion: nothing to refuse.
             ("assert always_true(other('1')) == True", false),
             ("assert always_true('parse(1)') == True", false),
