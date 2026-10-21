@@ -748,8 +748,16 @@ rule only for an assertion whose context was admitted.
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
    and `as` casts to primitives, or a call whose every same-named
-   function in the index declares one bare primitive return (optionally
-   behind one reference). Anything else — a string, char literal or block
+   function in the index is a free function without a self parameter and
+   declares one bare primitive return (optionally behind one reference).
+   For an unqualified call, an owner-local binding of the callee name
+   refuses this proof: parameters, destructured or raw-identifier bindings,
+   declaration-only lets and local items can replace the indexed function.
+   A qualified call such as `crate::shipping_cents(..)` is not shadowed by a
+   local value named `shipping_cents`. Same-named associated functions and
+   methods refuse proof even when their returns are primitive. This bounded
+   check does not resolve arbitrary import aliases, module paths or opaque
+   macro expansion. Anything else - a string, char literal or block
    comment anywhere in the owner body, a callee missing from or ambiguous
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded

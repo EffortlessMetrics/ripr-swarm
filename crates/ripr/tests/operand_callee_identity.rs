@@ -112,24 +112,32 @@ fn assert_operator_credit(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn replace_once(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(source.matches(from).count(), 1, "fixture edit: {from}");
+    source.replacen(from, to, 1)
+}
+
 #[test]
 fn a_shadowed_callee_cannot_erase_an_observed_operator_effect() -> Result<(), String> {
     assert_operator_credit(SHADOW)?;
     // An irrelevant same-name definition must not change the verdict.
-    assert_operator_credit(
-        &SHADOW.replace("pub fn shipping_cents(_: u64) -> u64 {\n    0\n}\n", ""),
-    )
+    assert_operator_credit(&replace_once(
+        SHADOW,
+        "pub fn shipping_cents(_: u64) -> u64 {\n    0\n}\n",
+        "",
+    ))
 }
 
 #[test]
 fn an_import_alias_cannot_borrow_a_method_return_type() -> Result<(), String> {
     assert_operator_credit(METHOD)?;
-    assert_operator_credit(&METHOD.replace(
+    assert_operator_credit(&replace_once(
+        METHOD,
         "impl Rates {\n    pub fn shipping_cents(&self, _: u64) -> u64 {\n        0\n    }\n}\n",
         "",
     ))?;
     // Associated functions without a receiver are not free calls either.
-    assert_operator_credit(&METHOD.replace("&self, _: u64", "_: u64"))
+    assert_operator_credit(&replace_once(METHOD, "&self, _: u64", "_: u64"))
 }
 
 #[test]

@@ -12,6 +12,9 @@
 //! change.
 
 use super::super::rust_index::{RustIndex, TestSummary};
+use crate::analysis::extract::test_body_let_shadow_line;
+use crate::analysis::facts::FunctionContainer;
+use crate::analysis::syntax::fn_name_binding_count;
 use crate::domain::{OracleKind, RelationReason};
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
@@ -188,9 +191,10 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
 /// primitive keeps the finding. Proof runs through the owner's own text: a
 /// parameter of a primitive type, or a `let` bound to a numeric or bool
 /// literal, to another established name, to an arithmetic combination of those,
-/// or to a call whose every same-named function in the index declares one
-/// bare primitive return. A string, char literal or block comment anywhere
-/// in the owner body, or anything else unreadable, proves nothing.
+/// or to an unshadowed call whose every same-named function in the index is
+/// free and declares one bare primitive return. A string, char literal or
+/// block comment anywhere in the owner body, or anything else unreadable,
+/// proves nothing.
 fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIndex) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
@@ -234,7 +238,7 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
             let all = bindings.iter().filter(|(bound, _, _)| bound == name).all(
                 |(_, bound_expr, annotation)| match annotation {
                     Some(ty) => primitive_type_token(ty),
-                    None => expression_established(bound_expr, &basis, index),
+                    None => expression_established(bound_expr, &basis, &text, index),
                 },
             );
             if all {
@@ -251,22 +255,32 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
 /// Whether one binding initializer proves its name primitive. A typed
 /// binding with a primitive annotation proves it outright; the value forms
 /// are read by [`expression_established`].
-fn expression_established(expr: &str, established: &[String], index: &RustIndex) -> bool {
+fn expression_established(
+    expr: &str,
+    established: &[String],
+    owner_body: &str,
+    index: &RustIndex,
+) -> bool {
     let expr = expr.trim();
     if is_identifier(expr) {
         return expr == "true" || expr == "false" || established.iter().any(|name| name == expr);
     }
     if let Some(callee) = call_callee(expr) {
-        return call_established_primitive(callee, index);
+        return call_established_primitive(callee, owner_body, index);
     }
     arithmetic_established(expr, established)
 }
 
-/// The last segment of a plain free call (`name(..)`, `a::b::name(..)`),
+struct CallCallee<'a> {
+    name: &'a str,
+    qualified: bool,
+}
+
+/// The last segment and qualification of a plain free call (`name(..)`, `a::b::name(..)`),
 /// when the whole expression is exactly that call. A method call, a
 /// turbofish, a chained transform or a type segment in the path (`Other::
 /// quote`) is not read.
-fn call_callee(expr: &str) -> Option<&str> {
+fn call_callee(expr: &str) -> Option<CallCallee<'_>> {
     let expr = expr.trim();
     if expr.contains("::<") {
         return None;
@@ -289,19 +303,39 @@ fn call_callee(expr: &str) -> Option<&str> {
         Some(_) => return None,
         None => callee,
     };
-    is_identifier(name).then_some(name)
+    is_identifier(name).then_some(CallCallee {
+        name,
+        qualified: callee.contains("::"),
+    })
 }
 
-/// Whether every function named `callee` in the index declares one bare
-/// primitive return (optionally behind one reference). No such function,
+/// Whether every indexed declaration named `callee` is a free function with
+/// one bare primitive return (optionally behind one reference), and a bare
+/// call is not intercepted by an owner-local binding. This is not general
+/// import/module resolution. No such function, an associated item,
 /// disagreeing returns, or any non-primitive return proves nothing: a call
 /// to a function outside the index (another crate) could return a type
 /// that overloads the operator.
-fn call_established_primitive(callee: &str, index: &RustIndex) -> bool {
+fn call_established_primitive(callee: CallCallee<'_>, owner_body: &str, index: &RustIndex) -> bool {
+    // Keep the spelled qualification: a value named `fee` cannot shadow
+    // `crate::fee(..)`. For a bare call, use the shared parser authority for
+    // parameters, patterns, declaration-only lets and nested items. The
+    // lexical supplement also sees explicit lets inside macro token trees.
+    // The caller already rejected quoted text and stripped line comments.
+    if !callee.qualified
+        && (fn_name_binding_count(owner_body, callee.name) != Some(0)
+            || fn_name_binding_count(owner_body, &format!("r#{}", callee.name)) != Some(0)
+            || test_body_let_shadow_line(owner_body, callee.name).is_some())
+    {
+        return false;
+    }
     let mut seen: Option<String> = None;
     for function in index.functions().iter() {
-        if function.name != callee {
+        if function.name != callee.name {
             continue;
+        }
+        if function.item.container != FunctionContainer::Free || function.item.has_self_param {
+            return false;
         }
         let Some(returns) = declared_return_type(function.body.as_str()) else {
             return false;
