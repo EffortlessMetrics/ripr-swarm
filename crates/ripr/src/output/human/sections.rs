@@ -28,6 +28,8 @@ use super::evidence_lines::{
 };
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
+const TYPED_STATIC_LIMITATION_PREFIX: &str = "Typed static limitation (";
+
 /// #7756: trailing-period rule for the human render — a labelled field line
 /// (`  Label: value`) or a list-item value carries no trailing period;
 /// free-standing prose sentences keep theirs. Applied at the emit boundary so
@@ -150,8 +152,12 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator label whenever one exists.
         // #7071: a weak finding whose reach witness ripr could not trace
         // carries the limit's prose here, not a discriminator.
+        // A typed static limitation is the analyzer naming what it could not
+        // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
+        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX) {
+            "Analyzer limit"
         } else if (matches!(
             finding.class,
             ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown

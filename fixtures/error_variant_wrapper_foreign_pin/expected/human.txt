@@ -15,7 +15,7 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
-  Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+  Analyzer limit: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
   Related test (1 of 2 matched rows): tests/errors.rs:4 try_parse_summary_with_foreign_pin (no call to the changed code found; linked by name only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
