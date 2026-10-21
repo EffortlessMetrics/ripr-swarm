@@ -15593,9 +15593,11 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam",
   "crates/ripr/src/output/outcome/mod.rs::producer_contradiction_count_holds_the_gap_open_without_a_named_entry",
   "crates/ripr/src/output/outcome/mod.rs::a_new_seam_with_a_contradicted_test_surfaces_in_the_weak_section",
+  "crates/ripr/src/analysis/seam_cache/related_test_table.rs::tests::statically_contradicted_count_survives_the_cache_round_trip",
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/seam_cache/related_test_table.rs",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/output/outcome/mod.rs",
