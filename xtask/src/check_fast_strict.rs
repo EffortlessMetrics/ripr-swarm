@@ -711,6 +711,8 @@ mod tests {
             "crates/ripr/examples/check_diff.rs",
             "xtask/tests/spec_format_determinism.rs",
             "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
         ] {
             require_rust_receipts(&[path])?;
         }

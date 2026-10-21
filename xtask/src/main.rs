@@ -1162,6 +1162,8 @@ mod check_fast_selector_tests {
             "xtask/examples/mandatory_partitions.rs",
             "tools/repo-policy/src/lib.rs",
             "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
             "Cargo.toml",
             "Cargo.lock",
             "crates/ripr/Cargo.toml",
