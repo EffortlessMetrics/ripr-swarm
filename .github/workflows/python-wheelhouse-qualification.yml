@@ -139,7 +139,7 @@ jobs:
       - name: Install with the network namespace removed
         run: |
           set -euo pipefail
-          stage="${RUNNER_TEMP}/stage"; state="${RUNNER_TEMP}/state"; me="$(id -un)"
+          state="${RUNNER_TEMP}/state"; me="$(id -un)"
           source "${state}/flags.env"
           if [ "${CLIENT}" = pip ]; then
             consumer_path="${RUNNER_TEMP}/pip-consumer/bin:${RUNNER_TEMP}/decoy:/usr/bin:/bin"
