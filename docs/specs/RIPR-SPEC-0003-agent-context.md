@@ -20,7 +20,10 @@ Syntax guidance follows unsuccessful selection; it must preserve exact-ID
 matching and location matching. A well-formed missing ID or
 location remains a lookup miss. Fresh-analysis recovery must list findings
 with the requested root and diff scope so a corrected selector can be retried
-from another working directory. Misses remain exit 2 with no machine stdout.
+from another working directory. Committed-history recovery explicitly selects
+`check --committed`, including when tracked worktree edits would change the
+check default. Explicit `--worktree` and supplied `--diff` recovery retain their
+own input sources. Misses remain exit 2 with no machine stdout.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently
@@ -42,6 +45,7 @@ The packet should include:
 - owner symbol
 - recommended test location
 - related existing tests
+- the matched related-test row count before the packet's display window
 - fixture or builder hints
 - missing input values
 - missing oracle shape
@@ -50,6 +54,16 @@ The packet should include:
 - stop reasons
 
 ## Required Evidence
+
+### Bounded related-test totals (#8952)
+
+The shared packet DTO and JSON renderer retain `Finding::related_tests_total()`
+as `related_tests_total` beside the bounded `related_tests` window. Identical
+eight-row windows with matched totals of 12 and 13 remain distinguishable.
+The count uses the existing retained-count fallback and floor for legacy or
+underspecified metadata, before applying the packet's display limit. A zero
+display limit preserves the total. Rendering preserves producer evidence,
+witnesses, selection and identity algorithms.
 
 ### Unknown finding guidance (#7477)
 
