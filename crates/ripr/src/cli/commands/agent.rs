@@ -24,6 +24,7 @@ use crate::cli::commands_agent_support::{
 };
 use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+    refuse_json_envelope_checked,
 };
 use crate::config::{RiprConfig, load_for_root};
 use crate::core_error::CoreError;
@@ -400,9 +401,8 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
     // envelope instead of exiting 2 with empty stdout.
     if let Err(err) = ensure_command_root(&options.root, "agent packet") {
         let error = CoreError::repository_root_unusable(err);
-        return Err(CommandError::Failure(refuse_agent_packet(
-            &options, error, json,
-        )));
+        let message = refuse_agent_packet(&options, error, json).unwrap_or_else(|failure| failure);
+        return Err(CommandError::Failure(message));
     }
     match render_agent_packet(&options) {
         Ok(rendered) => {
@@ -421,11 +421,9 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
         Err(error) => {
             let unknown_seam = error.check_failure_kind()
                 == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
-            let message = refuse_agent_packet(&options, error, json);
-            if unknown_seam {
-                Err(CommandError::Decision(message))
-            } else {
-                Err(CommandError::Failure(message))
+            match refuse_agent_packet(&options, error, json) {
+                Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
+                Ok(message) | Err(message) => Err(CommandError::Failure(message)),
             }
         }
     }
@@ -433,11 +431,19 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
 
 /// The refusal envelope context for `agent packet --json` (#7331): the
 /// packet schema version and repo scope.
-fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+///
+/// `Err` means the envelope could not be rendered or written to stdout, so no
+/// machine answer was delivered (an operational failure even for an unknown
+/// seam); `Ok` is the prose error for stderr.
+fn refuse_agent_packet(
+    options: &AgentPacketOptions,
+    error: CoreError,
+    json: bool,
+) -> Result<String, String> {
     if !json {
-        return error.to_string();
+        return Ok(error.to_string());
     }
-    refuse_json_envelope(
+    refuse_json_envelope_checked(
         app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
         "repo",
         None,

@@ -273,6 +273,23 @@ pub(super) fn refuse_json_envelope(
     base: Option<&str>,
     error: impl Into<crate::core_error::CoreError>,
 ) -> String {
+    refuse_json_envelope_checked(schema_version, scope, mode, root, base, error)
+        .unwrap_or_else(|failure| failure)
+}
+
+/// [`refuse_json_envelope`] that keeps delivery failure distinct: `Ok` is the
+/// prose error after the envelope reached stdout; `Err` is a render or stdout
+/// write/flush failure, meaning no machine answer was delivered. A caller that
+/// maps a refusal to the decision exit (3) must map `Err` to an operational
+/// failure (2) instead.
+pub(super) fn refuse_json_envelope_checked(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+) -> Result<String, String> {
     let error = error.into();
     let rendered = crate::output::limited_check::render_refusal_envelope(
         &crate::output::limited_check::RefusalEnvelopeContext {
@@ -285,14 +302,10 @@ pub(super) fn refuse_json_envelope(
         &error,
     );
     match rendered {
-        Ok(document) => {
-            if let Err(write) = write_stdout_chunked(&document) {
-                return write;
-            }
-        }
-        Err(render) => return render,
+        Ok(document) => write_stdout_chunked(&document)?,
+        Err(render) => return Err(render),
     }
-    error.to_string()
+    Ok(error.to_string())
 }
 
 #[cfg(test)]

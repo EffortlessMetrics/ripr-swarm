@@ -340,3 +340,58 @@ fn unknown_card_and_stub_json_refusal_exit_two_with_closed_stdout() -> TestResul
     }
     Ok(())
 }
+
+/// `agent packet --json` with an unknown seam id refuses with exit 3, but a
+/// closed stdout reader means the envelope was not delivered: exit 2.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn unknown_packet_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-unknown-packet");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let args = [
+        "agent",
+        "packet",
+        "--root",
+        ".",
+        "--seam-id",
+        "missing-stdout-seam",
+        "--json",
+    ];
+    let normal = run(&root, &args, false)?;
+    assert_eq!(normal.status.code(), Some(3), "{args:?}: {normal:?}");
+    assert!(!normal.stdout.is_empty(), "{args:?}: {normal:?}");
+    let closed = run_closed_stdout(&root, &args)?;
+    assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+    assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    Ok(())
+}
+
+/// The post-resolution stub refusal (`owner_async`) also exits 2 when its
+/// document cannot reach stdout, and writes nothing.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn resolved_stub_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-resolved-stub");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let source = "pub async fn value(n: i32) -> bool {\n    n > 3\n}\n";
+    std::fs::write(root.join("src/lib.rs"), source)?;
+    let args = [
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+        "--write",
+        "--json",
+    ];
+    let closed = run_closed_stdout(&root, &args)?;
+    assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+    assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    assert_eq!(std::fs::read_to_string(root.join("src/lib.rs"))?, source);
+    Ok(())
+}

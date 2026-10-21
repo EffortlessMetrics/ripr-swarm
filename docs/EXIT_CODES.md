@@ -54,6 +54,11 @@ terminates with `2`; reporting it must not cause a recursive panic or abort.
 Once `agent card` or `agent stub` reaches a named refusal, its stdout JSON
 document is written first and the stderr prose is best effort: a closed
 stderr reader keeps the stdout document and preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+The refusal exit `3` also requires that the machine answer was delivered: for
+`agent card`, `agent stub` and an unknown-seam `agent packet` under `--json`, a
+refusal document that cannot be rendered or cannot be written to stdout (for
+example a closed stdout reader) exits `2` instead, since no typed answer
+reached the caller.
 
 ## When you see exit code 2
 

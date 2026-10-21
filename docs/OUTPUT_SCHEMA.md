@@ -289,7 +289,9 @@ On a refusal under `--json` stdout carries this envelope (the same stream
 and stderr the prose; on success the envelope never appears. An unknown
 `--seam-id` exits `3` on `agent card`, `agent stub` and `agent packet`. Operational could-not-complete failures of
 `agent card` (an unreadable config, a failed git probe, a detail-source
-serialization failure) still exit `2` with human prose only. The refusal
+serialization failure) still exit `2` with human prose only, as does a refusal
+whose envelope cannot be rendered or written to stdout (no typed answer was
+delivered; also for `agent stub` and an unknown-seam `agent packet`). The refusal
 kinds never claim more than they enforce: each names a producer-owned
 fail-closed decision, not a severity and not an analysis verdict. A seam with
 no witness-producing finding still renders its card with the `unavailable`

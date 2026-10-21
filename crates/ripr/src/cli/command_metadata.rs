@@ -206,7 +206,8 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // Unknown-seam and the other named refusals exit 3; under `--json`
-        // the refusal document is on stdout, prose on stderr.
+        // the refusal document is on stdout, prose on stderr. If that
+        // document cannot be rendered or written, the exit is 2, not 3.
         "cmd:agent.card" | "cmd:agent.stub" | "cmd:agent.packet" => {
             Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }

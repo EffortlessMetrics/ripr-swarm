@@ -54,7 +54,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                     Ok(rendered) => {
                         write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
                     }
-                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                    // No envelope could be produced, so no machine answer
+                    // exists: the typed render failure is exit 2, not decision 3.
+                    Err(render_error) => return Err(render_error),
                 }
             }
             return Err(CommandError::Decision(format!(

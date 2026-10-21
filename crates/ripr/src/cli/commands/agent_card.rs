@@ -66,7 +66,9 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
                     Ok(rendered) => {
                         write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
                     }
-                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                    // No envelope could be produced, so no machine answer
+                    // exists: an operational failure (exit 2), not decision 3.
+                    Err(render_error) => return Err(CommandError::Failure(render_error)),
                 }
             }
             return Err(CommandError::Decision(message));
