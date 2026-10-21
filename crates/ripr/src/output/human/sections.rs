@@ -156,13 +156,12 @@ pub(crate) fn render_finding_digest_with_config(
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX) {
-            "Analyzer limit"
-        } else if (matches!(
-            finding.class,
-            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) || untraced_reach_weak_finding(finding))
-            && finding.activation.missing_discriminators.is_empty()
+        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
+            || ((matches!(
+                finding.class,
+                ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
+            ) || untraced_reach_weak_finding(finding))
+                && finding.activation.missing_discriminators.is_empty())
         {
             "Analyzer limit"
         } else {
