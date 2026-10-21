@@ -105,6 +105,10 @@ fn given_ambiguous_patch_shapes_then_limit_stays() -> Result<(), String> {
         "def test_total(monkeypatch):\n    monkeypatch.setattr(os, \"getcwd\", lambda: \"/\")\n    assert total([1]) == 1\n",
         // bare decorator whose arguments are not readable
         "@patch\ndef test_total(m):\n    assert total([1]) == 1\n",
+        // patch.dict beside a readable disjoint patch is an unreadable substitution site
+        "@patch(\"os.getcwd\")\n@patch.dict(\"sys.modules\", {\"x\": None})\ndef test_total(m):\n    assert total([1]) == 1\n",
+        "@patch(\"os.getcwd\")\n@mock.patch.dict(\"sys.modules\", {\"x\": None})\ndef test_total(m):\n    assert total([1]) == 1\n",
+        "@patch(\"os.getcwd\")\ndef test_total(m):\n    with patch.dict(\"sys.modules\", {\"x\": None}):\n        assert total([1]) == 1\n",
         // a readable disjoint patch does not hide an unreadable sibling
         "@patch(\"os.getcwd\")\n@patch(OTHER)\ndef test_total(a, b):\n    assert total([1]) == 1\n",
     ];

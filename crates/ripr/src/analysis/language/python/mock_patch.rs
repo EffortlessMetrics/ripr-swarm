@@ -34,9 +34,10 @@ use std::collections::BTreeSet;
 /// Call spellings that substitute names at runtime. The first group has a
 /// readable string target; the second never does and always keeps the limit.
 const LITERAL_TARGET_FORMS: [&str; 2] = ["patch(", "monkeypatch.setattr("];
-const OPAQUE_FORMS: [&str; 4] = [
+const OPAQUE_FORMS: [&str; 5] = [
     "patch.object(",
     "patch.multiple(",
+    "patch.dict(",
     "monkeypatch.setitem(",
     "monkeypatch.delattr(",
 ];
@@ -99,7 +100,7 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
 }
 
 fn is_patch_decorator_name(name: &str) -> bool {
-    ["patch", "patch.object", "patch.multiple"]
+    ["patch", "patch.object", "patch.multiple", "patch.dict"]
         .iter()
         .any(|form| name == *form || name.ends_with(&format!(".{form}")))
 }
