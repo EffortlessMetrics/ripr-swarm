@@ -54677,52 +54677,74 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]
