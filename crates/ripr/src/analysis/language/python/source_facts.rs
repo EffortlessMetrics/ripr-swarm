@@ -1872,9 +1872,7 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
     let mut in_typing_block = false;
     for line in source.lines() {
         let trimmed = line.trim_start();
-        let allowed = if in_typing_block {
-            true
-        } else if is_typing_import_line(trimmed) {
+        let allowed = if in_typing_block || is_typing_import_line(trimmed) {
             true
         } else if let Some(rest) = trimmed.strip_prefix('@') {
             let head = rest.split('(').next().unwrap_or_default();
