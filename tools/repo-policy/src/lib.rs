@@ -624,9 +624,18 @@ fn scan_review_thread_windows(text: &str, join_literals: bool) -> bool {
         (start + 1..=end).any(|stop| {
             let window = lines[start..stop].join("\n");
             review_thread_mutation_line(&window)
-                || (join_literals && review_thread_mutation_line(&quoted_literals(&window)))
+                || (join_literals
+                    && is_graphql_call(&window)
+                    && review_thread_mutation_line(&quoted_literals(&window)))
         })
     })
+}
+
+/// A split token only matters when the same window issues a GraphQL call, so
+/// unrelated adjacent quoted strings (two `echo` lines) stay allowed.
+fn is_graphql_call(window: &str) -> bool {
+    let lowered = window.to_ascii_lowercase();
+    lowered.contains("graphql") || lowered.contains("mutation")
 }
 
 /// Concatenates only the quoted string literals of `text`, so a token assigned

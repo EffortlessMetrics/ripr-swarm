@@ -348,6 +348,25 @@ jobs:
 }
 
 #[test]
+fn workflow_review_thread_mutation_policy_accepts_unrelated_adjacent_strings() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          echo '__head__'
+          echo '__tail__'
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    assert!(
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow)
+            .is_empty()
+    );
+}
+
+#[test]
 fn workflow_review_thread_mutation_policy_accepts_adjudication_guidance() {
     let workflow = r#"
 name: Review guidance

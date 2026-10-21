@@ -12,6 +12,10 @@ on:
       manifest_sha256:
         description: "Raw-byte SHA-256 of ripr-server-manifest-v<version>.json from the release transaction receipt"
         required: true
+      vsix_sha256:
+        description: "SHA-256 of the VSIX the first channel dispatch attached to the Release (its package job summary); required for the second dispatch, empty for the first"
+        required: false
+        default: ""
       publish_vs_marketplace:
         description: "Publish to VS Marketplace"
         required: false
@@ -27,12 +31,6 @@ on:
 
 permissions:
   contents: read
-
-# Both channel dispatches for a version serialize, so the second always finds
-# (and reuses) the VSIX the first attached instead of building its own.
-concurrency:
-  group: publish-extension-${{ github.event.inputs.version }}
-  cancel-in-progress: false
 
 jobs:
   admit-dispatch:
@@ -58,7 +56,12 @@ jobs:
           RAW_VERSION: ${{ github.event.inputs.version }}
           SOURCE_SHA: ${{ github.event.inputs.source_sha }}
           MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+          VSIX_SHA256: ${{ github.event.inputs.vsix_sha256 }}
         run: |
+          if ! [[ -z "$VSIX_SHA256" || "$VSIX_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::vsix_sha256 must be empty or 64 lowercase hex"
+            exit 1
+          fi
           if ! [[ "${RAW_VERSION#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version must be a stable MAJOR.MINOR.PATCH release such as 0.11.0 (got $RAW_VERSION)"
             exit 1
@@ -155,6 +158,7 @@ jobs:
     env:
       RAW_VERSION: ${{ github.event.inputs.version }}
       MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+      EXPECTED_VSIX_SHA256: ${{ github.event.inputs.vsix_sha256 }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
@@ -178,14 +182,22 @@ jobs:
         id: existing
         run: |
           # One VSIX per release: the other channel's dispatch promotes the
-          # bytes the first dispatch attached instead of rebuilding them.
+          # bytes the first dispatch attached. A name on the Release proves
+          # nothing, so the operator carries the first run's digest in
+          # `vsix_sha256` and the downloaded bytes must match it.
           version="${RAW_VERSION#v}"
+          vsix="dist/ripr-${version}.vsix"
           mkdir -p dist
           if gh release view "v${version}" --json assets --jq '.assets[].name' \
               | grep -Fxq "ripr-${version}.vsix"; then
+            [ -n "$EXPECTED_VSIX_SHA256" ] \
+              || { echo "::error::a VSIX is already attached; pass its digest as vsix_sha256"; exit 1; }
             gh release download "v${version}" --pattern "ripr-${version}.vsix" --dir dist
+            echo "${EXPECTED_VSIX_SHA256}  ${vsix}" | sha256sum -c -
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
+            [ -z "$EXPECTED_VSIX_SHA256" ] \
+              || { echo "::error::vsix_sha256 given but no VSIX is attached to the Release"; exit 1; }
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -277,6 +289,20 @@ jobs:
           # Through env, not template expansion, so the input is data; its
           # format is checked in admit-dispatch.
           RAW_VERSION: ${{ github.event.inputs.version }}
+          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+
+      - name: Require the Release to hold exactly this run's VSIX
+        run: |
+          # Catches an overlapping dispatch that attached different bytes first.
+          version="${RAW_VERSION#v}"
+          mkdir -p attached
+          gh release download "v${version}" --pattern "ripr-${version}.vsix" --dir attached
+          echo "${EXPECTED_VSIX_SHA256}  attached/ripr-${version}.vsix" | sha256sum -c -
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RAW_VERSION: ${{ github.event.inputs.version }}
+          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
 
   publish-vs-marketplace:
     needs: [package, attach-release-asset]
