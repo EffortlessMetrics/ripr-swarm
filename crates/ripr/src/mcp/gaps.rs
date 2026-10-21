@@ -7,6 +7,7 @@
 //! the complete bounded evidence document is served lazily by
 //! `ripr_get_gap` / `ripr://gap/{canonical_id}`.
 
+use super::repair_admission::{SeamAdmission, SeamVerdict};
 use crate::domain::Finding;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -58,15 +59,42 @@ pub(crate) struct RepairReadiness {
     /// `fix_site_not_established`, `fix_site_not_test_surface`); `None` only
     /// when every gate is established.
     pub(crate) ineligibility: Option<&'static str>,
+    /// The shared repair validator's own explanation when the seam-level
+    /// admission refused an otherwise finding-ready item (#8717).
+    pub(crate) seam_detail: Option<String>,
 }
 
 impl RepairReadiness {
+    /// Conjoin the shared seam-level repair validator's verdict (#8717).
+    /// A finding-level refusal stays the first failing gate; a finding-ready
+    /// item becomes not ready, keeping no fix site, when the validator that
+    /// backs `ripr repair` does not admit its seam.
+    pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
+        if let (true, Some(SeamVerdict::Refused { code, detail })) = (self.ready, verdict) {
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some(*code);
+            self.seam_detail = Some(detail.clone());
+        }
+        self
+    }
+
+    /// The human sentence for this readiness: the shared validator's own
+    /// explanation when it refused, else the finding-level gate sentence.
+    pub(crate) fn detail(&self) -> String {
+        match &self.seam_detail {
+            Some(detail) => detail.clone(),
+            None => self.reason().to_string(),
+        }
+    }
+
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Self {
         if !finding.is_candidate_actionable() {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
+                seam_detail: None,
             };
         }
         let producer_named_missing_discriminator =
@@ -79,6 +107,7 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
+                seam_detail: None,
             };
         }
         let discriminator_unpopulated = finding
@@ -101,6 +130,7 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some(ineligibility),
+                seam_detail: None,
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
@@ -127,6 +157,7 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
+                seam_detail: None,
             };
         };
         let Some(fix_site) = candidates
@@ -137,12 +168,14 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
+                seam_detail: None,
             };
         };
         Self {
             ready: true,
             fix_site: Some(fix_site),
             ineligibility: None,
+            seam_detail: None,
         }
     }
 
@@ -165,6 +198,14 @@ impl RepairReadiness {
             }
             Some("fix_site_not_test_surface") => {
                 "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
+            }
+            Some(
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
+                | crate::mcp::repair_admission::SEAM_GATE_REFUSED
+                | crate::mcp::repair_admission::SEAM_AMBIGUOUS
+                | crate::mcp::repair_admission::SEAM_NOT_FOUND,
+            ) => {
+                "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
             None => {
@@ -218,7 +259,20 @@ impl GapItem {
     /// context and LSP surfaces emit. Related-test and fix-site files keep
     /// the repository-relative renderer (#5254 item 6), which additionally
     /// tolerates verbatim/UNC/case spelling drift.
+    #[cfg(test)]
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
+        Self::from_finding_admitted(finding, root, &SeamAdmission::unevaluated())
+    }
+
+    /// [`Self::from_finding`] with the shared seam-level repair validator's
+    /// verdict conjoined into the readiness projection (#8717), so the
+    /// list summary, the evidence document, the snapshot identity and
+    /// `ripr_prepare_repair` all carry the one admission decision.
+    pub(crate) fn from_finding_admitted(
+        finding: &Finding,
+        root: &Path,
+        admission: &SeamAdmission,
+    ) -> Result<Self, String> {
         let canonical_id = finding
             .canonical_gap
             .as_ref()
@@ -232,7 +286,8 @@ impl GapItem {
             .map(|language| language.as_str().to_string());
         let line = finding.probe.location.line;
 
-        let repair_readiness = RepairReadiness::from_finding(finding, root);
+        let repair_readiness = RepairReadiness::from_finding(finding, root)
+            .with_seam_verdict(admission.verdict(&finding.id).as_ref());
         let list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -244,7 +299,7 @@ impl GapItem {
         });
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
-        let evidence_core = gap_evidence_core(finding, &canonical_id, root)?;
+        let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         Ok(Self {
             canonical_id,
@@ -317,8 +372,12 @@ impl GapItem {
 /// Producer-owned evidence fields, projected once per finding. Fields the
 /// producer does not populate stay typed `null`/`absent` states in the
 /// serialized finding values rather than being back-filled here.
-fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Result<Value, String> {
-    let readiness = RepairReadiness::from_finding(finding, root);
+fn gap_evidence_core(
+    finding: &Finding,
+    canonical_id: &str,
+    root: &Path,
+    readiness: &RepairReadiness,
+) -> Result<Value, String> {
     let activation = serde_json::to_value(&finding.activation)
         .map_err(|error| format!("serialize activation evidence: {error}"))?;
     let related_tests = finding
@@ -394,9 +453,9 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Resu
         "recommended_next_step": finding.recommended_next_step,
         "readiness": {
             "repair_packet_ready": readiness.ready,
-            "reason": readiness.reason(),
+            "reason": readiness.detail(),
             "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator with no producer-named missing discriminator, and the strongest directly-related related-test grip",
+            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator with no producer-named missing discriminator, and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
@@ -1081,6 +1140,84 @@ mod tests {
         Ok(())
     }
 
+    fn ready_readiness() -> RepairReadiness {
+        RepairReadiness {
+            ready: true,
+            fix_site: Some(RepairFixSite {
+                test_name: "a".to_string(),
+                file: "tests/t.rs".to_string(),
+                line: 2,
+                oracle: Some("assert_eq!(f(), 1);".to_string()),
+                oracle_kind: "exact_value",
+            }),
+            ineligibility: None,
+            seam_detail: None,
+        }
+    }
+
+    /// #8717: the shared seam validator's refusal is a conjunct of
+    /// readiness. A finding-ready item it refuses is not ready, drops its fix
+    /// site, and keeps the validator's own typed code and explanation; an
+    /// admitted or unevaluated verdict changes nothing, and a finding-level
+    /// refusal stays the first failing gate.
+    #[test]
+    fn seam_verdict_is_a_conjunct_of_repair_readiness() -> Result<(), String> {
+        let refused = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "the shared repair gate refuses: already grip".to_string(),
+        };
+        let blocked = ready_readiness().with_seam_verdict(Some(&refused));
+        if blocked.ready
+            || blocked.fix_site.is_some()
+            || blocked.ineligibility != Some("seam_already_gripped")
+            || !blocked.detail().contains("already grip")
+        {
+            return Err(format!("refused verdict must block readiness: {blocked:?}"));
+        }
+        for verdict in [Some(&SeamVerdict::Admitted), None] {
+            let kept = ready_readiness().with_seam_verdict(verdict);
+            if !kept.ready || kept.ineligibility.is_some() || kept.fix_site.is_none() {
+                return Err(format!("admitted/unevaluated must keep ready: {kept:?}"));
+            }
+        }
+        let finding_level = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("missing_discriminator"),
+            seam_detail: None,
+        }
+        .with_seam_verdict(Some(&refused));
+        if finding_level.ineligibility != Some("missing_discriminator")
+            || finding_level.seam_detail.is_some()
+        {
+            return Err(format!(
+                "the finding-level refusal must stay first: {finding_level:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The evaluated-admission default is fail-closed: a finding the shared
+    /// validator did not cover is refused, never admitted.
+    #[test]
+    fn evaluated_admission_refuses_an_uncovered_finding() -> Result<(), String> {
+        let evaluated = SeamAdmission::evaluate(
+            &[],
+            &[],
+            crate::app::agent_brief::AgentBriefPolicy::from_config(
+                &crate::config::RiprConfig::default(),
+            ),
+        );
+        match evaluated.verdict("probe:uncovered") {
+            Some(SeamVerdict::Refused { code, .. })
+                if code == crate::mcp::repair_admission::SEAM_NOT_FOUND =>
+            {
+                Ok(())
+            }
+            other => Err(format!("uncovered finding must be refused: {other:?}")),
+        }
+    }
+
     /// #5210: the non-surface refusal names the inline-test boundary, so
     /// an MCP caller learns the permanent scope from the refusal itself.
     #[test]
@@ -1089,6 +1226,7 @@ mod tests {
             ready: false,
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
+            seam_detail: None,
         };
         let reason = readiness.reason();
         for needle in [
