@@ -775,7 +775,9 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
             if !token.starts_with(|c: char| c.is_alphabetic() || c == '_') {
                 return false;
             }
-            imports.iter().any(|import| import.alias == *token)
+            imports
+                .iter()
+                .any(|import| import.alias.split('.').next() == Some(token.as_str()))
                 || previous.is_some_and(|p| p == ".")
                 || next.is_some_and(|n| n == "=")
         })
@@ -1411,6 +1413,64 @@ mod tests {
                 "else",
                 "'it\\'s'"
             ]
+        );
+    }
+
+    #[test]
+    fn dotted_alias_root_in_changed_span_keeps_the_limit() {
+        let owner = owner_with(
+            &[],
+            vec![PythonImport {
+                imported: "os.path".to_string(),
+                alias: "os.path".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        let old = "    x = os.path.join(a)";
+        let new = "    x = posixpath.path.join(a)";
+        let focus = PythonAssertionFocus::for_change(
+            super::super::probe_shape::classify_probe_shape(new).0,
+            new,
+            Some(old),
+        );
+        let swapped = "    x = os.path.join(b) if os.sep else os.path.join(a)";
+        assert!(line_uses_imported_symbol(old.trim(), &owner.imports));
+        assert!(!edit_leaves_imported_symbols_untouched(
+            old.trim(),
+            swapped.trim(),
+            &owner.imports
+        ));
+        assert_eq!(
+            static_limit_for_focused_change(swapped, &focus, Some(old), &owner, &[])
+                .map(|limit| limit.kind),
+            Some(StaticLimitKind::MissingImportGraph)
+        );
+    }
+
+    #[test]
+    fn fstring_and_bare_alias_edits_keep_the_limit() {
+        let limited = Some(StaticLimitKind::MissingImportGraph);
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(f\"{a}\", 0)"),
+                "    return itertools.islice(f\"{b}\", 0)"
+            ),
+            limited
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, 0)"),
+                "    return itertools.islice(seq, itertools)"
+            ),
+            limited
+        );
+        // Duplicate tokens at the prefix/suffix overlap still diff correctly.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(a, a)"),
+                "    return itertools.islice(a)"
+            ),
+            None
         );
     }
 }
