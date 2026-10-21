@@ -2648,6 +2648,20 @@ is never complete:
   budget (...)`, naming the applied setting and the `=0` full-set repair.
 - `repair_route` — always `"output/check-findings-budget"`.
 
+When the budget engages, `analysis_outcome` also carries the additive
+members `document_complete: false`, `findings_rendered` and `findings_total`
+(#9010). They are emitted only when the findings array is a strict prefix;
+unbounded runs and all existing goldens omit them. `analysis_complete` remains
+the analysis verdict derived from `outcome.kind` and no `outcome.kind` variant
+is added: the enum describes analysis, not the rendered document. The shared
+incomplete-analysis predicate (`discloses_incomplete_analysis_outcome`) treats
+`document_complete: false` as incomplete, so the gate, baseline and ledger
+inputs, `baseline-delta`, RIPR Zero, and `pr-evidence` summary (which reports
+`analysis_complete: false` and `run_status: incomplete` for such a document)
+refuse it even when `run_limitations[]` is absent. A non-boolean
+`document_complete` is a malformed disclosure that RIPR Zero reports as
+unknown.
+
 `summary` keeps full analysis counts (`summary.findings` is the analyzed
 total, `rendered + omitted == total`); `finding_alignment` covers the rendered
 prefix only, so alignment rows always resolve inside the document; per-finding

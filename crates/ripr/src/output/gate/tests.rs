@@ -828,6 +828,101 @@ fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     })));
 }
 
+/// #9010: `document_complete: false` is the only-when-bounded disclosure inside
+/// `analysis_outcome`; `analysis_complete` keeps the analysis verdict.
+#[test]
+fn bounded_analysis_document_is_incomplete_but_unbounded_control_is_not() {
+    let bounded = json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}
+        }
+    });
+    assert!(discloses_incomplete_analysis_outcome(&bounded));
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&bounded),
+        "findings_document_bounded"
+    );
+    let unbounded = json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }
+    });
+    assert!(!discloses_incomplete_analysis_outcome(&unbounded));
+    // A corrupt (non-boolean) member never reads as a bound by itself here;
+    // `ripr_zero_status` rejects the malformed shape separately.
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {"analysis_complete": true, "document_complete": "false"}
+    })));
+}
+
+#[test]
+fn gate_inputs_refuse_bounded_analysis_document_without_run_limitations() -> Result<(), String> {
+    let dir = temp_dir("gate-bounded-document-outcome")?;
+    // Deliberately omits `run_limitations[]`: only the analysis_outcome
+    // disclosure is present, so the shared predicate is the sole refusal.
+    let bounded = r#"{
+      "findings": [],
+      "analysis_outcome": {
+        "analysis_complete": true,
+        "document_complete": false,
+        "findings_rendered": 1,
+        "findings_total": 3,
+        "outcome": {"kind": "complete_with_findings"}
+      }
+    }"#;
+    let control = r#"{
+      "findings": [],
+      "analysis_outcome": {
+        "analysis_complete": true,
+        "outcome": {"kind": "complete_with_findings"}
+      }
+    }"#;
+
+    for (name, document, refused) in [("bounded", bounded, true), ("control", control, false)] {
+        let ledger = write_temp_json(&dir, &format!("ledger-{name}.json"), document)?;
+        let (_gap_fixture, mut gap_input) = fixture_input(GateMode::VisibleOnly)?;
+        gap_input.pr_guidance = None;
+        gap_input.gap_ledger = Some(ledger);
+        let gap_report = build_gate_decision_report(&gap_input)?;
+        let gap_refused = gap_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("findings_document_bounded"));
+        assert_eq!(
+            gap_refused, refused,
+            "gap-ledger {name}: {:?}",
+            gap_report.config_errors
+        );
+
+        let baseline = write_temp_json(&dir, &format!("baseline-{name}.json"), document)?;
+        let (_base_fixture, mut base_input) = fixture_input(GateMode::CalibratedGate)?;
+        base_input.pr_guidance = None;
+        base_input.baseline = Some(baseline);
+        let base_report = build_gate_decision_report(&base_input)?;
+        let base_refused = base_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("findings_document_bounded"));
+        assert_eq!(
+            base_refused, refused,
+            "baseline {name}: {:?}",
+            base_report.config_errors
+        );
+        if refused {
+            assert_eq!(gap_report.status, "config_error");
+            assert_eq!(base_report.status, "config_error");
+        }
+    }
+
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_blocks_new_supported_candidate() -> Result<(), String> {
     let dir = temp_dir("gate-calibrated")?;

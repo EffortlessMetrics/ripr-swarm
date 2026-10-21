@@ -78,10 +78,24 @@ fn build_summary(
     let analysis_outcome = diff_report_value
         .and_then(|value| value.get("analysis_outcome"))
         .cloned();
-    let analysis_complete = analysis_outcome
+    // #9010: a budget-bounded check document carries
+    // `analysis_outcome.document_complete: false` while `analysis_complete`
+    // stays the analysis verdict. The summary's completeness is a consumer
+    // claim about the evidence it was built from, so the bounded document
+    // fails closed to `false` rather than reading as a complete run.
+    let document_bounded = analysis_outcome
         .as_ref()
-        .and_then(|value| value.get("analysis_complete"))
-        .and_then(Value::as_bool);
+        .and_then(|value| value.get("document_complete"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    let analysis_complete = if document_bounded {
+        Some(false)
+    } else {
+        analysis_outcome
+            .as_ref()
+            .and_then(|value| value.get("analysis_complete"))
+            .and_then(Value::as_bool)
+    };
     let run_status = derive_run_status(diff_report_value, analysis_complete);
     let changed_surfaces = derive_changed_surfaces(diff_report_value);
     let gaps = derive_gaps(gap_ledger_value, baseline_value);
@@ -1264,6 +1278,48 @@ mod tests {
             "bash form must be presented before the disclosure"
         );
         Ok(())
+    }
+
+    #[test]
+    fn bounded_findings_document_is_not_reported_complete_but_control_is() {
+        // #9010: `analysis_complete` stays true in the producer envelope; the
+        // additive `document_complete: false` must still fail the summary closed.
+        let bounded = serde_json::json!({
+            "run_status": "complete",
+            "summary": {"changed_files": 2},
+            "analysis_outcome": {
+                "analysis_complete": true,
+                "document_complete": false,
+                "findings_rendered": 1,
+                "findings_total": 3,
+                "outcome": {"kind": "complete_with_findings"}
+            }
+        });
+        let summary = build_pr_evidence_summary(None, None, None, Some(&bounded), None, None);
+        assert_eq!(summary.run_status, "incomplete");
+        assert_eq!(summary.analysis_complete, Some(false));
+        assert_eq!(
+            summary
+                .analysis_outcome
+                .as_ref()
+                .and_then(|value| value["document_complete"].as_bool()),
+            Some(false),
+            "the disclosure is propagated, not dropped"
+        );
+        let markdown = super::super::render_evidence_summary_md(&summary);
+        assert!(markdown.contains("**Analysis Complete**: `false`"));
+
+        let control = serde_json::json!({
+            "run_status": "complete",
+            "summary": {"changed_files": 2},
+            "analysis_outcome": {
+                "analysis_complete": true,
+                "outcome": {"kind": "complete_with_findings"}
+            }
+        });
+        let summary = build_pr_evidence_summary(None, None, None, Some(&control), None, None);
+        assert_eq!(summary.run_status, "complete");
+        assert_eq!(summary.analysis_complete, Some(true));
     }
 
     #[test]

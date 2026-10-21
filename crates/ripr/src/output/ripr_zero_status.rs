@@ -665,6 +665,13 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
     {
         malformed_disclosures.push("analysis_outcome.analysis_complete");
     }
+    if let Some(outcome) = value.get("analysis_outcome")
+        && let Some(document_complete) = outcome.get("document_complete")
+        && !document_complete.is_null()
+        && !document_complete.is_boolean()
+    {
+        malformed_disclosures.push("analysis_outcome.document_complete");
+    }
     if let Some(scope) = value.get("analysis_scope")
         && let Some(run_status) = scope.get("run_status")
         && !run_status.is_null()
@@ -3074,6 +3081,70 @@ mod tests {
         assert!(rendered.contains("malformed counts"), "{rendered}");
         assert!(rendered.contains("still_present"), "{rendered}");
         assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_refuses_a_bounded_analysis_document_but_not_the_control()
+    -> Result<(), String> {
+        // #9010: `document_complete: false` alone (no run_limitations[]) must
+        // never yield achieved; the unbounded control with the same counts
+        // does. A non-boolean member is a malformed disclosure.
+        let render = |outcome: &str| -> Result<String, String> {
+            let delta = format!(
+                r#"{{
+              "schema_version": "0.1",
+              "kind": "baseline_debt_delta",
+              "delta": {{
+                "still_present": 0,
+                "resolved": 0,
+                "new_policy_eligible": 0,
+                "acknowledged": 0,
+                "suppressed": 0,
+                "stale_baseline_entry": 0,
+                "invalid_baseline_entry": 0,
+                "missing_current_input": 0
+              }},
+              "items": [],
+              "analysis_outcome": {outcome}
+            }}"#
+            );
+            let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+                root: ".".to_string(),
+                generated_at: "unix_ms:100000000".to_string(),
+                baseline_path: None,
+                delta_path: "delta.json".to_string(),
+                gap_ledger_path: None,
+                gate_path: None,
+                pr_guidance_path: None,
+                recommendation_calibration_path: None,
+                baseline_json: None,
+                delta_json: Ok(delta),
+                gap_ledger_json: None,
+                gate_json: None,
+                pr_guidance_json: None,
+                recommendation_calibration_json: None,
+            });
+            render_ripr_zero_status_json(&report)
+        };
+        let bounded = render(
+            r#"{"analysis_complete": true, "document_complete": false, "outcome": {"kind": "complete_with_findings"}}"#,
+        )?;
+        assert!(!bounded.contains("\"state\": \"achieved\""), "{bounded}");
+        assert!(bounded.contains("findings_document_bounded"), "{bounded}");
+        let control = render(
+            r#"{"analysis_complete": true, "outcome": {"kind": "complete_with_findings"}}"#,
+        )?;
+        assert!(control.contains("\"state\": \"achieved\""), "{control}");
+        let malformed = render(r#"{"analysis_complete": true, "document_complete": "false"}"#)?;
+        assert!(
+            malformed.contains("analysis_outcome.document_complete"),
+            "{malformed}"
+        );
+        assert!(
+            !malformed.contains("\"state\": \"achieved\""),
+            "{malformed}"
+        );
         Ok(())
     }
 

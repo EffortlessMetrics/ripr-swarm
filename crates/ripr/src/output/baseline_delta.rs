@@ -612,6 +612,12 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         out.push_str(&format!(
             "Analysis complete: `{complete}`; analysis outcome: `{kind}`\n"
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n",
+            );
+        }
     }
     if let Some(scope) = report
         .analysis_scope

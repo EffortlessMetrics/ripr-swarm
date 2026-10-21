@@ -1565,9 +1565,24 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
 /// This is intentionally separate from the older run-state vocabulary: an
 /// unsupported input or another typed limitation is still an incomplete
 /// denominator even when it does not use `limited_partial_scope`.
+///
+/// It also fails closed on `analysis_outcome.document_complete: false` (#9010):
+/// the producer emits that additive member only when the findings array was
+/// cut by the byte budget, so the analysis verdict can read complete while the
+/// document holds just a prefix of the findings.
 pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
     value
         .pointer("/analysis_outcome/analysis_complete")
+        .and_then(Value::as_bool)
+        == Some(false)
+        || discloses_bounded_analysis_document(value)
+}
+
+/// Whether the check document discloses `analysis_outcome.document_complete:
+/// false` (#9010): the rendered findings are a budget-bounded prefix.
+pub(crate) fn discloses_bounded_analysis_document(value: &Value) -> bool {
+    value
+        .pointer("/analysis_outcome/document_complete")
         .and_then(Value::as_bool)
         == Some(false)
 }
@@ -1605,6 +1620,14 @@ pub(crate) fn blocked_producer_warnings(value: &Value) -> Vec<String> {
 /// Return the producer-owned typed outcome kind for an incomplete envelope.
 /// Consumers use this only for fail-closed diagnostics.
 pub(crate) fn incomplete_analysis_outcome_kind(value: &Value) -> &str {
+    if discloses_bounded_analysis_document(value)
+        && value
+            .pointer("/analysis_outcome/analysis_complete")
+            .and_then(Value::as_bool)
+            != Some(false)
+    {
+        return "findings_document_bounded";
+    }
     value
         .pointer("/analysis_outcome/outcome/kind")
         .and_then(Value::as_str)

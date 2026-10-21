@@ -762,6 +762,12 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
             md_inline(&complete),
             md_inline(kind)
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
+            );
+        }
     }
     // #5203: a ledger derived from a bounded run says so in the human
     // surface too, naming each propagated run state.
