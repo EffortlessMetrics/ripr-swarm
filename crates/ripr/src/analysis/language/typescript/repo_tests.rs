@@ -301,7 +301,10 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     let reason = result
         .partial_reason
         .ok_or("skipped links must keep the run partial")?;
-    assert!(reason.contains("typescript_repo_links_skipped:"), "{reason}");
+    assert!(
+        reason.contains("typescript_repo_links_skipped:"),
+        "{reason}"
+    );
     let _ = linked;
     Ok(())
 }
