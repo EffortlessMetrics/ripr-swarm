@@ -1039,7 +1039,20 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
-        return function.source_role.is_evidence_role();
+        // Ownership is line-granular: a production fn and a `#[test]` fn
+        // opening on one physical line both own it, and the later-listed
+        // one wins `find_owner_function`. Without columns the line cannot be
+        // attributed to the test, so it stays production-eligible (fail
+        // closed) rather than silently dropping the production candidate.
+        let shares_line_with_production = find_file_facts(index, path).is_some_and(|facts| {
+            facts.functions.iter().any(|other| {
+                other.start_line == function.start_line
+                    && other.start_line <= line
+                    && line <= other.end_line
+                    && !other.source_role.is_evidence_role()
+            })
+        });
+        return function.source_role.is_evidence_role() && !shares_line_with_production;
     }
     // Lines outside functions but inside an inline `#[cfg(test)]` module
     // (fixture constants, raw-string data) are test evidence even when the
@@ -4904,6 +4917,35 @@ mod source_currentness_tests {
             resolve_probe_source_currentness(&changed, &bare),
             SourceCurrentness::UnresolvedSubject
         );
+    }
+
+    /// A production fn and a `#[test]` fn opening on one physical line must
+    /// not turn the production candidate into test evidence; a line owned
+    /// only by the test fn still is evidence.
+    #[test]
+    fn same_line_production_and_test_fn_keeps_production_eligible() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn g(x: i32) -> bool { x > 2 } #[test] fn t() { assert!(true); }\n\
+                      #[test]\n\
+                      fn only_test() { assert!(true); }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let test_fn = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "t")
+            .ok_or("fn t not indexed")?;
+        assert!(
+            test_fn.source_role.is_evidence_role(),
+            "fixture: t is a test"
+        );
+        assert!(!changed_line_is_test_evidence(&index, &path, 1, &[]));
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
     }
 
     /// #3718: lines inside an inline `#[cfg(test)]` module are test
