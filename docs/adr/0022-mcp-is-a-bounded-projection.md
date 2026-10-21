@@ -119,8 +119,10 @@ completed after resolving the new graph.
 Compatibility follows the SDK: unsupported or discovery-only initialize
 versions negotiate `2025-11-25`; syntax-invalid JSON is ignored, invalid typed
 shapes recover with Invalid Request, and unknown error IDs may be omitted.
-Readable IDs are never silently replaced: a response/fallback that cannot fit
-the 128-KiB output cap terminates with a bounded operational error. The raw
+Readable IDs are never silently replaced, but a request ID whose serialized
+form exceeds 16 KiB is rejected at receive with `-32600` and `id: null` (the
+ID is never echoed) and the session continues; a response/fallback that still
+cannot fit the 128-KiB output cap terminates with a bounded operational error. The raw
 client harness waits for correlated replies before EOF, rather than assuming
 prewritten requests remain active after SDK shutdown.
 
