@@ -18,7 +18,7 @@ probes.
 Neither effect probe may be credited from the assertion that never runs:
 classification stays `reachable_unrevealed`, observe and discriminate are `no`,
 and the oracle is `unknown`/`none`. The reachable live-assertion controls land
-in a follow-up PR (#8927); the execution tests cover them here.
+in follow-up #9118; the execution tests cover them here.
 
 ## Must Not
 

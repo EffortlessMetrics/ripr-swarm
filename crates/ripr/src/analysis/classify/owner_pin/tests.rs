@@ -4379,6 +4379,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
+        // A leading prefix token is not part of the macro path (#8927).
+        "if matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "if !cfg!(test) { assert_eq!(weight(input), 12); }",
+        "if cfg!(any()) { assert_eq!(weight(input), 12); }",
+        "if!cfg!(test) { assert_eq!(weight(input), 12); }",
     ] {
         assert_ne!(
             OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),

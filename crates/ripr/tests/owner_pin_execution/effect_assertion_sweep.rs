@@ -86,6 +86,22 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 format!("::std::process::exit(1);\n{a}"),
             ),
             ("after_empty_loop", format!("loop {{}}\n{a}")),
+            // One-line `if <macro-cond> { A }`: the oracle text starts with the
+            // prefix token, so it must take the context gate, not read as a
+            // plain `ifmatches!`/`if!`/`ifcfg!` macro path.
+            ("oneline_if_cfg_any", format!("if cfg!(any()) {{ {a} }}")),
+            (
+                "oneline_if_not_cfg_test",
+                format!("if !cfg!(test) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_matches_false",
+                format!("if matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_vec_empty",
+                format!("if vec![1].is_empty() {{ {a} }}"),
+            ),
         ]
     };
     let live = |a: &str| -> Vec<(&'static str, String)> {

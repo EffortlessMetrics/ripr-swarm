@@ -105,7 +105,11 @@ identity, propagation or observer matching.
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
 body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
-assertion macro it contains and refused. A root `loop` with no `break` and a root
+assertion macro it contains and refused. The oracle's macro path must be the
+start of its text (optionally `std::` / `::core::` qualified); a one-line
+`if <macro-cond> { assert_eq!(..); }` (`if matches!(..)`, `if !cfg!(test)`,
+`if cfg!(any())`, `if vec![..].is_empty()`) begins with a prefix token, so it is
+compound and takes the same gate rather than reading as a plain macro path. A root `loop` with no `break` and a root
 `std::process::exit` / `abort` call end the test like an earlier `return`, for every
 family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
 (#8983), and `process::exit` reached through a `use` alias.
