@@ -17079,6 +17079,11 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0286-mutation-calibration-clarity.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
 [[behavior]]
 id = "RIPR-SPEC-0292"
 name = "Mutation spot check calibration-schema admission"
