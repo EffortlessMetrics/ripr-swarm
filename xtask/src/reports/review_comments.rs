@@ -719,9 +719,7 @@ fn error_review_comments_packet(
         "warnings": [
             {
                 "kind": "tool_error",
-                "message": named_guard_line(error)
-                    .or_else(|| bounded_check_document_line(error))
-                    .unwrap_or_else(|| first_line(error)),
+                "message": error_warning_message(repo, options, error),
                 "path": null
             }
         ],
@@ -796,6 +794,55 @@ fn producer_root_matches(repo: &Path, options: &ReviewCommentsOptions, producer:
     };
     root == options.root
         || normalize_path_text(root) == normalize_path_text(&command_root_arg(repo, &options.root))
+}
+
+/// The error packet's warning text. The producer's named guard or findings-bound
+/// refusal line wins when its stderr carried one. A failure before the producer
+/// ran (for example an unusable `RIPR_BIN`) carries no such line, so the
+/// bound the check artifact itself discloses in `run_limitations` is named
+/// independently (#9010).
+fn error_warning_message(repo: &Path, options: &ReviewCommentsOptions, error: &str) -> String {
+    let message = named_guard_line(error)
+        .or_else(|| bounded_check_document_line(error))
+        .unwrap_or_else(|| first_line(error));
+    if message.contains("findings-bounded check document")
+        || !producer_discloses_legacy_findings_bound(repo, options)
+    {
+        return message;
+    }
+    format!(
+        "{message}; the check artifact is a findings-bounded check document ({}); re-run `ripr check` with RIPR_CHECK_FINDINGS_BYTES=0",
+        crate::CHECK_FINDINGS_BOUND_RUN_STATUS
+    )
+}
+
+fn producer_discloses_legacy_findings_bound(repo: &Path, options: &ReviewCommentsOptions) -> bool {
+    let Some(check_output) = options.check_output.as_deref() else {
+        return false;
+    };
+    let path = Path::new(check_output);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    };
+    let Some(producer) = fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    else {
+        return false;
+    };
+    producer
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|limitations| {
+            limitations.iter().any(|entry| {
+                ["run_status", "category"].iter().any(|key| {
+                    entry.get(key).and_then(Value::as_str)
+                        == Some(crate::CHECK_FINDINGS_BOUND_RUN_STATUS)
+                })
+            })
+        })
 }
 
 fn producer_analysis_outcome(repo: &Path, options: &ReviewCommentsOptions) -> Option<Value> {
@@ -1058,13 +1105,16 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
             .unwrap_or(DEFAULT_HEAD)
     );
     let bounded_document = packet_discloses_bounded_document(packet);
+    let bounded_established = bounded_document_established(packet);
     if bounded_document {
         markdown.push_str(&bounded_document_markdown(packet));
     }
     if let Some(fallback) = packet.get("static_gap_fallback") {
         markdown.push_str("\n## Static seam fallback\n\n");
-        markdown.push_str(if bounded_document {
+        markdown.push_str(if bounded_established {
             "Review guidance was refused for a findings-bounded check document, but the static check artifact still identified these gap locations:\n\n"
+        } else if bounded_document {
+            "Review guidance was not generated and document completeness is unknown, but the static check artifact still identified these gap locations:\n\n"
         } else {
             "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n"
         });
@@ -1127,7 +1177,23 @@ fn packet_discloses_bounded_document(packet: &Value) -> bool {
         .get("analysis_outcome")
         .and_then(|outcome| outcome.get("document_complete"))
         .is_some_and(|complete| complete != &Value::Bool(true));
-    let refused = packet
+    let refused = packet_warns_findings_bound(packet);
+    flagged || refused
+}
+
+/// True when the bound is established: an explicit `document_complete:false`
+/// or the producer's own refusal/limitation line. A flag that is present but
+/// not a boolean is an unknown, never an established cut.
+fn bounded_document_established(packet: &Value) -> bool {
+    let flag_false = packet
+        .get("analysis_outcome")
+        .and_then(|outcome| outcome.get("document_complete"))
+        .is_some_and(|complete| complete == &Value::Bool(false));
+    flag_false || packet_warns_findings_bound(packet)
+}
+
+fn packet_warns_findings_bound(packet: &Value) -> bool {
+    packet
         .get("warnings")
         .and_then(Value::as_array)
         .is_some_and(|warnings| {
@@ -1137,8 +1203,7 @@ fn packet_discloses_bounded_document(packet: &Value) -> bool {
                     .and_then(Value::as_str)
                     .is_some_and(|message| message.contains("findings-bounded check document"))
             })
-        });
-    flagged || refused
+        })
 }
 
 /// #9010: the producer's bounded-document disclosure, kept visible on the
@@ -1170,12 +1235,15 @@ fn bounded_document_markdown(packet: &Value) -> String {
         .unwrap_or("unavailable");
     // A present flag that is not a boolean has no independent legacy
     // evidence behind it, so it reads unknown rather than an invented false.
-    let completeness = match outcome.and_then(|outcome| outcome.get("document_complete")) {
-        Some(Value::Bool(false)) | None => "false",
-        Some(_) => "unknown",
+    let established = bounded_document_established(packet);
+    let completeness = if established { "false" } else { "unknown" };
+    let cut_note = if established {
+        "The check document was cut by the findings byte budget, so it is a prefix and no review guidance was derived from it."
+    } else {
+        "Document completeness could not be established from the producer flag; do not treat this check document as complete, and no review guidance was derived from it."
     };
     format!(
-        "\n## Document completeness\n\n- Document Complete: {completeness} ({counts})\n- Producer analysis_complete: {verdict}; outcome kind: {}\n- The check document was cut by the findings byte budget, so it is a prefix and no review guidance was derived from it.\n- recovery: re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` (or a larger byte budget) for the complete document.\n",
+        "\n## Document completeness\n\n- Document Complete: {completeness} ({counts})\n- Producer analysis_complete: {verdict}; outcome kind: {}\n- {cut_note}\n- recovery: re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` (or a larger byte budget) for the complete document.\n",
         md_escape(kind)
     )
 }
@@ -2374,6 +2442,42 @@ mod tests {
             return Err(format!(
                 "a non-boolean flag must read unknown:\n{unknown_markdown}"
             ));
+        }
+        if unknown_markdown.contains("cut by the findings byte budget")
+            || unknown_markdown.contains("refused for a findings-bounded")
+        {
+            return Err(format!(
+                "an unknown completeness must not read as an established cut:\n{unknown_markdown}"
+            ));
+        }
+        // A failure before the producer ran carries no stderr refusal line; the
+        // check artifact's own legacy limitation must still reach the packet.
+        let mut legacy_producer: Value = serde_json::from_str(
+            &fs::read_to_string(repo.join("target/check-output.json"))
+                .map_err(|err| format!("read producer: {err}"))?,
+        )
+        .map_err(|err| format!("parse producer: {err}"))?;
+        legacy_producer["run_limitations"] = json!([
+            {"category": "limited_findings_bound", "run_status": "limited_findings_bound"}
+        ]);
+        fs::write(
+            repo.join("target/check-output.json"),
+            serde_json::to_string(&legacy_producer).map_err(|err| format!("serialize: {err}"))?,
+        )
+        .map_err(|err| format!("write producer: {err}"))?;
+        let pre_child =
+            error_review_comments_packet(&repo, &options, "RIPR_BIN is set but empty", &receipt);
+        let pre_child_markdown = render_error_review_comments_markdown(&pre_child);
+        for needle in [
+            "RIPR_BIN is set but empty",
+            "Document Complete: false (finding counts unavailable)",
+            "RIPR_CHECK_FINDINGS_BYTES=0",
+        ] {
+            if !pre_child_markdown.contains(needle) {
+                return Err(format!(
+                    "pre-child legacy Markdown lacks {needle:?}:\n{pre_child_markdown}"
+                ));
+            }
         }
         let control_markdown =
             render_error_review_comments_markdown(&packet_with(outcome(json!({})))?);

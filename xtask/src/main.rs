@@ -22333,7 +22333,7 @@ mod sorted_allowlist_content_tests;
 
 /// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`
 /// (as `bench_agent_surfaces` and the DX scoreboard admission do).
-const CHECK_FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
+pub(crate) const CHECK_FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
 
 /// Whether a `ripr check --format json` document reports a complete analysis
 /// (#9010). `analysis_outcome.analysis_complete` is the analysis verdict, but a
