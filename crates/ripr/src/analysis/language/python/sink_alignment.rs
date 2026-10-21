@@ -9,6 +9,7 @@ use super::related_tests::{
     oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
 };
 use super::source_facts::parse_module_result;
+use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
 use super::{
     PythonOwner, PythonTest, assertion_calls_method_only_on_foreign_receiver,
     has_identifier_boundary, import_source_module_matches_owner, parse_attribute_assignment,
@@ -900,6 +901,7 @@ pub(super) fn classify_sink_alignment_with_old(
         field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
+            && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
             && !assertion_calls_stand_in(unit, owner)
     };
     // A mock assertion credits only through the effect branch, where it pins
