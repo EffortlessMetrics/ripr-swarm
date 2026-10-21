@@ -200,6 +200,10 @@ fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String>
         "def test_dunder_call():\n    assert score.__call__(0) == 8\n",
         "def test_wrapped():\n    assert score.__wrapped__(0) == 8\n",
         "def test_nested():\n    assert callable(score(0))\n",
+        "def test_kw_spaced():\n    assert run(\n        cb = score\n    ) == 8\n",
+        "def test_kw_tight():\n    assert run(\n        cb=score\n    ) == 8\n",
+        "def test_kw_assigned():\n    r = run(\n        cb = score\n    )\n    assert r == 8\n",
+        "def test_kw_sorted():\n    assert sorted([0],\n        key = score\n    )\n",
     ] {
         let finding = score_case(body)?;
         assert!(!finding.related_tests.is_empty(), "{body}");
@@ -212,6 +216,12 @@ fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String>
             misses(&finding)
         );
     }
+    // Positive control: the same alias statement at bracket depth 0.
+    let finding = score_case("def test_depth_zero():\n    cb = score\n    assert 8 == 8\n")?;
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::NoCallPath)
+    );
     // Positive controls: trivial forms still carry no_call_path.
     for body in [
         "from src.subject import score as s\n\ndef test_alias_callable():\n    assert callable(s)\n",

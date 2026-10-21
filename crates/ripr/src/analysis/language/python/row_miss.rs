@@ -208,6 +208,11 @@ fn trivial_alias_statement(body: &str, start: usize, end: usize, name: &str) -> 
     let line_start = body[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = body[end..].find('\n').map_or(body.len(), |i| end + i);
     let line = body[line_start..line_end].trim();
+    if !starts_top_level_statement(&body[..line_start])
+        || line.ends_with(['\\', '(', '[', '{', ','])
+    {
+        return false;
+    }
     let Some((lhs, rhs)) = line.split_once('=') else {
         return false;
     };
@@ -229,4 +234,52 @@ fn word_count(body: &str, word: &str) -> usize {
             (*i == 0 || !is_ident(bytes[i - 1])) && (end >= bytes.len() || !is_ident(bytes[end]))
         })
         .count()
+}
+
+/// True only when `prefix` (everything before a line) leaves bracket depth 0
+/// and its last non-blank line does not continue onto the next one. Strings
+/// and comments are skipped; triple quotes or an unterminated string are
+/// unsure and read as "not top level".
+fn starts_top_level_statement(prefix: &str) -> bool {
+    let mut depth = 0i32;
+    let mut chars = prefix.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '#' => {
+                for n in chars.by_ref() {
+                    if n == '\n' {
+                        break;
+                    }
+                }
+            }
+            '\'' | '"' => {
+                let mut probe = chars.clone();
+                if probe.next() == Some(c) && probe.next() == Some(c) {
+                    return false;
+                }
+                let mut closed = false;
+                while let Some(n) = chars.next() {
+                    if n == '\\' {
+                        chars.next();
+                    } else if n == c {
+                        closed = true;
+                        break;
+                    } else if n == '\n' {
+                        break;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    let last = prefix.lines().rev().find(|l| !l.trim().is_empty());
+    depth == 0 && last.is_none_or(|l| !l.trim_end().ends_with(['\\', ',', '(', '[', '{']))
 }
