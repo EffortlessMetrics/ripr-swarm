@@ -316,6 +316,74 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
     if admitted.revalidate().is_ok() {
         return Err("undocumented origin transport admitted".to_string());
     }
+    // A repository-local rewrite must not launder a foreign origin into an
+    // approved one: admission judges the configured URL, not Git's rewrite.
+    git(
+        &source.0,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://example.invalid/foreign.git",
+        ],
+    )?;
+    git(
+        &source.0,
+        &[
+            "config",
+            "--local",
+            "url.https://github.com/EffortlessMetrics/ripr-swarm.git.insteadOf",
+            "https://example.invalid/foreign.git",
+        ],
+    )?;
+    if admitted.revalidate().is_ok() {
+        return Err("rewritten foreign origin admitted".to_string());
+    }
+    git(
+        &source.0,
+        &[
+            "config",
+            "--local",
+            "--unset",
+            "url.https://github.com/EffortlessMetrics/ripr-swarm.git.insteadOf",
+        ],
+    )?;
+    // A second origin value is ambiguous even when the first is approved.
+    git(
+        &source.0,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/EffortlessMetrics/ripr-swarm.git",
+        ],
+    )?;
+    git(
+        &source.0,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "remote.origin.url",
+            "https://example.invalid/second.git",
+        ],
+    )?;
+    if admitted.revalidate().is_ok() {
+        return Err("multi-valued source origin admitted".to_string());
+    }
+    git(
+        &source.0,
+        &["config", "--local", "--unset-all", "remote.origin.url"],
+    )?;
+    git(
+        &source.0,
+        &[
+            "config",
+            "--local",
+            "remote.origin.url",
+            "https://github.com/EffortlessMetrics/ripr-swarm.git",
+        ],
+    )?;
     git(
         &source.0,
         &[
