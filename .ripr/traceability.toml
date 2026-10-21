@@ -6514,6 +6514,7 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_all_drain_retains_retry_custody",

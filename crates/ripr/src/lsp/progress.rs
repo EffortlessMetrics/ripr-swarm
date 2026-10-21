@@ -208,7 +208,7 @@ pub(super) struct AnalysisProgressTracker {
     client: Client,
     sink: Mutex<Arc<dyn ProgressSink>>,
     supported: AtomicBool,
-    tokens: Mutex<BTreeMap<u64, TokenRecord>>,
+    tokens: Arc<Mutex<BTreeMap<u64, TokenRecord>>>,
     /// Liveness bound for the `window/workDoneProgress/create` round trip
     /// (#5278). Announcement is detached from refresh (#9149); the bound
     /// also limits how long that best-effort task waits for the client.
@@ -229,7 +229,7 @@ impl AnalysisProgressTracker {
             client,
             sink: Mutex::new(sink),
             supported: AtomicBool::new(false),
-            tokens: Mutex::new(BTreeMap::new()),
+            tokens: Arc::new(Mutex::new(BTreeMap::new())),
             client_request_timeout,
         }
     }
@@ -543,7 +543,7 @@ impl AnalysisProgressTracker {
         generation: u64,
         notifications: Arc<tokio::sync::Mutex<TokenNotifications>>,
     ) {
-        let notifications = notifications.lock().await;
+        let notifications = notifications.lock_owned().await;
         let (token, end) = {
             let Ok(tokens) = self.tokens.lock() else {
                 return;
@@ -556,20 +556,29 @@ impl AnalysisProgressTracker {
             };
             (record.token.clone(), end.clone())
         };
-        // #1971: never send End for a token whose Begin was not sent. Keep
-        // registry custody across awaited sends as well as lock acquisition.
+        // #1971: never send End for a token whose Begin was not sent.
         if notifications.started
             && let Some(sink) = self.sink()
         {
-            sink.notify(
-                token,
-                ProgressNotificationValue::End {
-                    message: end.message(),
-                },
-            )
-            .await;
-        }
-        if let Ok(mut tokens) = self.tokens.lock() {
+            // A transport can enqueue End before its send future completes.
+            // Keep that one send and its lock alive even if the awaiting
+            // caller is canceled; a retry must not send a second End.
+            let tokens = Arc::clone(&self.tokens);
+            let delivery = tokio::spawn(async move {
+                sink.notify(
+                    token,
+                    ProgressNotificationValue::End {
+                        message: end.message(),
+                    },
+                )
+                .await;
+                if let Ok(mut tokens) = tokens.lock() {
+                    tokens.remove(&generation);
+                }
+                drop(notifications);
+            });
+            let _ = delivery.await;
+        } else if let Ok(mut tokens) = self.tokens.lock() {
             tokens.remove(&generation);
         }
     }
@@ -1094,6 +1103,78 @@ mod tests {
     #[test]
     fn terminal_cancellation_all_drain_retains_retry_custody() -> Result<(), String> {
         terminal_cancellation_preserves_custody("end_all")
+    }
+
+    #[test]
+    fn terminal_cancellation_after_end_delivery_does_not_duplicate() -> Result<(), String> {
+        use std::future::Future;
+
+        struct DeliveredEndSink {
+            recorder: Arc<RecordingSink>,
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+        impl ProgressSink for DeliveredEndSink {
+            fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+                self.recorder.create(token)
+            }
+            fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+                Box::pin(async move {
+                    let is_end = matches!(value, ProgressNotificationValue::End { .. });
+                    self.recorder.notify(token, value).await;
+                    if is_end {
+                        self.entered.notify_one();
+                        self.release.notified().await;
+                    }
+                })
+            }
+        }
+        runtime()?.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                for terminal in ["end", "end_queued", "end_all"] {
+                    let (tracker, recorder) = tracker_with_recorder();
+                    let sink = Arc::new(DeliveredEndSink {
+                        recorder: Arc::clone(&recorder),
+                        entered: tokio::sync::Notify::new(),
+                        release: tokio::sync::Notify::new(),
+                    });
+                    tracker.install_test_sink(sink.clone());
+                    tracker.begin(&test_request(51), AnalysisProgressPhase::Queued).await;
+                    let mut ending = Box::pin(async {
+                        match terminal {
+                            "end" => tracker.end(51, AnalysisProgressEnd::Cancelled).await,
+                            "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                            _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                        }
+                    });
+                    let pending = std::future::poll_fn(|cx| {
+                        std::task::Poll::Ready(ending.as_mut().poll(cx).is_pending())
+                    }).await;
+                    if !pending {
+                        return Err(format!("SETUP: {terminal} did not await End delivery"));
+                    }
+                    sink.entered.notified().await;
+                    drop(ending);
+                    let mut retry = Box::pin(tracker.end_all(AnalysisProgressEnd::Cancelled));
+                    let retry_pending = std::future::poll_fn(|cx| {
+                        std::task::Poll::Ready(retry.as_mut().poll(cx).is_pending())
+                    }).await;
+                    let before_release = recorder.events();
+                    sink.release.notify_one();
+                    retry.await;
+                    tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+                    let events = recorder.events();
+                    if !retry_pending || !matches!(events.as_slice(), [
+                        ProgressEvent::Create { token: create },
+                        ProgressEvent::Begin { token: begin, .. },
+                        ProgressEvent::End { token: end, .. },
+                    ] if create == &progress_token(51) && begin == create && end == create) {
+                        return Err(format!("{terminal}: cancellation duplicated or lost End: before={before_release:?}; final={events:?}"));
+                    }
+                }
+                Ok(())
+            }).await.map_err(|_elapsed| "partial-End cancellation exchange exceeded 5 seconds".to_string())?
+        })
     }
 
     #[test]

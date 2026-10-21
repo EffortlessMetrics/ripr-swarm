@@ -62,7 +62,10 @@ hold another token's report or terminal removal. An already-started token
 ends once, after its Begin. Terminal intent stays in the registry until
 cleanup completes, so cancellation while waiting cannot drop the current or
 unvisited drain records; retried cleanup retains custody. Late announcements
-and reports check that intent before sending.
+and reports check that intent before sending. Once a started token's End
+send begins, an owned task retains its token lock and registry custody through
+send completion even if its awaiting caller is canceled; retries wait for that
+same send rather than enqueueing another End.
 The full `end_all` drain still awaits in-flight notifications on the drained
 tokens; this isolation does not establish a total shutdown latency bound.
 Capability negotiation remains owned by
