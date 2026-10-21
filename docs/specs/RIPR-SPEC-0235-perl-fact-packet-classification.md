@@ -327,7 +327,9 @@ For each change, the first match wins:
     argument list. The producer fix is to grade `isnt` weak at the source;
     this keeps older packets from earning `weakly_exposed` meanwhile
     (corpus: `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt` were
-    credited, truth not discriminated).
+    credited, truth not discriminated; since the producer pin moved to
+    07320a4 their packets arrive `weak_smoke`, and the edited `perl-0235-*`
+    packets that keep an old-style `strong_exact` `isnt` exercise this rule).
 
 ### Decisions
 
