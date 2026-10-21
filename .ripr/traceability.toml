@@ -9248,6 +9248,21 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::wire_message_contains_honest_may_language_and_no_coverage_claim",
   "crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_uncalled_owner_in_manifest_proc_macro_crate_without_markers_when_classified_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_non_library_target_of_proc_macro_package_when_classified_then_still_no_static_path",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_proc_macro_marker_only_in_comment_or_string_of_ordinary_crate_when_classified_then_still_no_static_path",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_dirty_manifest_does_not_flip_the_committed_answer",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::proc_macro_library_reads_static_unknown_in_findings_json_and_human",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_library_with_the_same_source_keeps_no_static_path",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::a_transitive_witness_survives_the_proc_macro_withhold",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::build_script_of_a_proc_macro_package_is_not_proc_macro_library_code",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_proc_macro_underscore_spelling_when_classified_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_nested_workspace_member_proc_macro_crate_when_classified_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_uncalled_owner_in_ordinary_lib_when_classified_then_still_no_static_path",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::only_proc_macro_library_modules_are_proc_macro_library_files",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_package_root_lib_path_still_excludes_target_directories",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::underscore_spelling_and_explicit_targets_are_read",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_virtual_workspace_manifest_alone_is_not_a_proc_macro_package",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9261,6 +9276,8 @@ code = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs",
   "crates/ripr/src/analysis/classify/mod.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
   "crates/ripr/src/output/human/sections.rs",
 ]
 outputs = [
@@ -17422,6 +17439,28 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0296"
+name = "First-run over-budget steps count step occurrences"
+spec = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
+tests = [
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_count_a_dual_budget_breach_once_per_step_occurrence",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_count_repeated_step_occurrences_separately",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_single_budget_and_missing_rows_have_no_phantom_count",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_missing_first_stdout_row_does_not_merge_occurrences",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_over_budget_baseline_from_breached_row_grain_is_not_compared",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/dx_scoreboard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md",
 ]
 metrics = [
   "unit_test_pass_rate",
