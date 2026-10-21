@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_mixed_direct_macro_reach (6)
+
+Reason:
+RIPR-SPEC-0240: a same-file test that cannot reach the owner is labeled no_call_path instead of an input/observation miss beside a reaching test (#9167)
+
+Command:
+`cargo xtask goldens bless rust_mixed_direct_macro_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

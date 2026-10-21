@@ -192,6 +192,45 @@ fn reveal_evidence_with_exit(
     (discriminate, strength)
 }
 
+/// [`reveal_evidence`] with the production `proximity_may_reach_owner`
+/// answer under the test's control (#9167).
+#[cfg(test)]
+fn reveal_evidence_proximity_reach(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+    proximity_may_reach_owner: &dyn Fn(&TestSummary) -> bool,
+) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+    let (observe, discriminate, related, _) = reveal_evidence_with_expression(
+        probe,
+        &probe.expression,
+        related_tests,
+        &[],
+        &|_, _| false,
+        &|_, _| false,
+        &ReturnOracleAdmission {
+            owner_return_pin: &|_, _| false,
+            assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
+            proximity_may_reach_owner,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
+            expected_operand_value: &|_, _| None,
+            effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
+            getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| None,
+            owner_argument_names: &[],
+            owner_returns_value: true,
+            owner_may_exit_before_probe: false,
+            constructor_starts_empty: &|_, _, _| false,
+            call_cannot_store: &|_, _, _, _| None,
+        },
+        None,
+    );
+    (observe, discriminate, related)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
@@ -1909,22 +1948,24 @@ fn analyze_related_assertions(
             // expression (#7094 review).
             || error_construction_path.is_some()));
 
-    // #7763: a reason string also occurs in unrelated plan/gate values.
-    // When another test reaches the owner, proximity alone cannot make that
-    // shared literal an oracle for its predicate. Preserve possible opaque or
-    // transitive owner calls, and retain the uncredited row for explanation.
-    let shared_string_predicate = matches!(probe.family, ProbeFamily::Predicate)
-        && !rust_string_literals(&probe.expression).is_empty();
-
+    // #7763, #9167: a same-file/module test that calls nothing reaching the
+    // owner cannot supply an oracle while another related test reaches the
+    // owner. Its assertion (a shared reason string, or any value) belongs to
+    // some other function; crediting it flipped `reachable_unrevealed` to
+    // `weakly_exposed` on an edit to a test that never runs the owner.
+    // Possible opaque macros or transitive owner calls keep the established
+    // allowance, and the uncredited row stays listed as `no_call_path`.
+    // Shared-variant probes (match arms, exact error variants) keep their
+    // dedicated confirmation-withheld path above (#6297, #7063).
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = credits(*reason)
-            && !(shared_string_predicate
-                && owner_reaching_related
-                && is_proximity_only(*reason)
-                && !invokes_opaque_macro(&test.body)
-                && !(return_admission.proximity_may_reach_owner)(test));
+        let unrelated_proximity = owner_reaching_related
+            && !names_shared_variant
+            && is_proximity_only(*reason)
+            && !invokes_opaque_macro(&test.body)
+            && !(return_admission.proximity_may_reach_owner)(test);
+        let credits_oracle = credits(*reason) && !unrelated_proximity;
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -6768,14 +6809,16 @@ mod tests {
             }
         }
         // A same-file or same-module test commonly reaches a private helper
-        // through the module's entry point, so it keeps crediting.
+        // through the module's entry point, so it keeps crediting when it may
+        // reach the owner (#9167: one that cannot, no longer does).
         for proximity in [RelationReason::SameTestFile, RelationReason::SameModule] {
-            let (_, discriminate, _) = reveal_evidence(
+            let (_, discriminate, _) = reveal_evidence_proximity_reach(
                 &probe,
                 &[
                     (&proximity_test, proximity),
                     (&owner_test, RelationReason::DirectOwnerCall),
                 ],
+                &|_| true,
             );
             if discriminate.state != StageState::Yes {
                 return Err(format!(
@@ -10258,15 +10301,62 @@ return Err(\"typed pin\".into());
                 OracleStrength::Strong,
             )],
         );
-        let (_, ok_beside, _) = reveal_evidence(
+        let (_, ok_beside, _) = reveal_evidence_proximity_reach(
             &ok_probe,
             &[
                 (&reaching, RelationReason::DirectOwnerCall),
                 (&same_file_ok, RelationReason::SameTestFile),
             ],
+            &|_| true,
         );
         assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
         assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
+    }
+
+    /// #9167: beside a test that calls the owner, a same-file test that cannot
+    /// reach the owner supplies no observation or oracle for any value
+    /// family; one that may reach it, or an opaque-macro body, keeps crediting.
+    #[test]
+    fn unrelated_proximity_test_supplies_no_oracle_beside_a_reaching_test() {
+        let reaching = test_with_assertions("make_smoke", Vec::new());
+        let unrelated = test_with_assertions(
+            "other_test",
+            vec![oracle(
+                "assert_eq!(other(1), 2);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [
+            ProbeFamily::ReturnValue,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::Predicate,
+        ] {
+            let probe = probe(family, "input + 2");
+            let related = [
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&unrelated, RelationReason::SameTestFile),
+            ];
+            let (observe, discriminate, rows) =
+                reveal_evidence_proximity_reach(&probe, &related, &|_| false);
+            assert_eq!(observe.state, StageState::No, "{}", observe.summary);
+            assert_ne!(discriminate.state, StageState::Yes);
+            assert!(
+                rows.iter()
+                    .any(|row| row.name == "other_test"
+                        && row.miss == Some(RelatedTestMiss::NoCallPath)),
+                "the unrelated assertion stays visible and uncredited: {rows:?}"
+            );
+            let (observe, _, _) = reveal_evidence_proximity_reach(&probe, &related, &|_| true);
+            assert_eq!(observe.state, StageState::Yes, "{}", observe.summary);
+            // Without a reaching test the proximity oracle keeps its reading.
+            let (observe, _, _) = reveal_evidence_proximity_reach(
+                &probe,
+                &[(&unrelated, RelationReason::SameTestFile)],
+                &|_| false,
+            );
+            assert_eq!(observe.state, StageState::Yes, "{}", observe.summary);
+        }
     }
 
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.

@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing discriminator: samples.len() == 0
-  Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no test input reaches `samples.len() == 0`)
+  Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no call to the changed code found; linked by file location only)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max

@@ -133,6 +133,13 @@ an actual owner-reaching test exists (#7763). Keep that assertion visible with
 allowance. This does not resolve formatted/local input activation or turn a
 runtime validation bypass rejection into static exposure.
 
+The same scope applies to every value family (#9167): a same-file/module test
+that calls nothing reaching the owner, with no opaque macro, supplies no
+observation or discrimination while another related test reaches the owner. A
+reaching test with no assertion therefore yields `reachable_unrevealed`, and the
+unrelated assertion stays visible as `no_call_path`. A test that reaches the
+owner through a helper keeps its credit.
+
 The classifier marks a `reachable_unrevealed` finding whose observe summary is
 `rust_assertion_context_unestablished` when it has at least one refused related
 `assert_eq!` and every one is an analyzer limit.

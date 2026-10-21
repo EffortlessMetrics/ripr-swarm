@@ -16540,6 +16540,8 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
+  "crates/ripr/tests/proximity_oracle_credit.rs::same_file_test_that_reaches_the_owner_through_a_helper_keeps_credit",
   "crates/ripr/tests/parser_assertion_provenance.rs::unrelated_reason_literal_cannot_supply_parser_discrimination",
   "crates/ripr/tests/parser_assertion_provenance.rs::direct_reason_oracle_keeps_credit_beside_the_decoy",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
@@ -16612,6 +16614,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
 ]
 fixtures = [
+  "fixtures/proximity_unrelated_oracle_not_credited",
   "fixtures/parser_formatted_input_provenance",
   "fixtures/gap_withheld_feature_gated_test",
   "fixtures/gap_kept_ignored_test",

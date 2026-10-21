@@ -30,7 +30,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: 3 * x (line 14)
   - related test src/lib.rs:27 inner_is_positive uses weak relational check oracle: assert!(inner(2) > 0); misses: assertion too weak to tell the old behavior from the new
-  - related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12); misses: no call to the changed code found; linked by file location only
   - source assertion argument value 12 at line 23
   - source assertion argument value 4 at line 23
   - source function argument value x = 2 at line 28

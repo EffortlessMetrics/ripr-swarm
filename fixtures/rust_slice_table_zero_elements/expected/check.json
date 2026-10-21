@@ -227,8 +227,8 @@
           "oracle": "assert_eq!(average(&[]), 0);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "missing_input",
-          "why": "no test input reaches `samples.len() == 0`"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "average_of_nothing_is_zero",
@@ -239,8 +239,8 @@
           "oracle": "assert_eq!(average(&[2, 4]), 3);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "missing_input",
-          "why": "no test input reaches `samples.len() == 0`"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "initial_table",
@@ -251,8 +251,8 @@
           "oracle": "assert_eq!(initial(name), want, \"{name:?}\");",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "missing_input",
-          "why": "no test input reaches `samples.len() == 0`"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         },
         {
           "name": "ratio_smoke",

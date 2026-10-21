@@ -102,8 +102,8 @@
           "oracle": "assert_eq!(outer(4), 12);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
         }
       ],
       "stop_reasons": ["macro_reach_unresolved"],
