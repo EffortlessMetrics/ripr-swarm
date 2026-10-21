@@ -9996,6 +9996,8 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
             || !candidate.contains("candidate_sha: ${{ github.sha }}")
             || !candidate.contains("version: ${{ inputs.version }}")
+            || !candidate.contains("candidate_ref: ${{ inputs.candidate_ref }}")
+            || candidate.contains("candidate_tag")
             || candidate.contains("contents: write")
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
@@ -10018,6 +10020,7 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
         ),
+        workflow.replace("candidate_ref: ${{ inputs.candidate_ref }}", "candidate_ref: \"\""),
     ] {
         if validate(&broken).is_ok() {
             return Err("rehearsal publication negative control was accepted".to_string());
