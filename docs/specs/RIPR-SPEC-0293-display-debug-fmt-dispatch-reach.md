@@ -72,10 +72,12 @@ link is established from syntax:
    Path prefixes before the type must be lowercase module segments, so a
    variant named like the type (`Error::DecodeError(..)`,
    `crate::Error::DecodeError(..)`) is not the type.
-6. A named operand is typed only when the test body binds that name exactly
-   once (the typed `let`). Any other binder (`if let`, `while let`, `for`,
-   closure or `fn` parameter, `match` arm, another `let`), even one opening
-   the macro's own scope, leaves it untyped.
+6. A named operand is typed only when its identifier appears in the test
+   body solely at the single typed `let [mut] name` and as an argument of a
+   formatting macro or the receiver of `.to_string()`. Any other whole-word
+   occurrence (a pattern, closure or `fn` parameter, struct shorthand, match
+   arm, another expression or call) leaves it untyped. This is a closed list
+   of allowed shapes, not an enumeration of binders.
 
 Existing shadow checks for the owner's type and trait still apply. Derived
 `Debug` has no indexed `fmt` owner and is out of scope.

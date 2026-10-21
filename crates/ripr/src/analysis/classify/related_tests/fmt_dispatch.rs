@@ -536,14 +536,17 @@ struct Scope<'a> {
     body: &'a str,
 }
 
-/// Occurrences of `binding` in a binding position anywhere in the masked
-/// test body: `let` / `if let` / `while let` patterns, `for` patterns,
-/// closure parameters, `fn` parameters and `match` arm patterns. Exactly
-/// one (the typed `let`) keeps the name typed; any other binder, even one
-/// opening the macro's own scope, may shadow it, so the name stays untyped.
-fn binder_count(body: &str, binding: &str) -> usize {
+/// Whether `binding` is confined to the shapes that keep its type known:
+/// every whole-word occurrence in the masked test body is either the single
+/// typed `let [mut] binding`, an argument of a formatting macro, or the
+/// receiver of `.to_string()`. Any other occurrence (a pattern, closure or
+/// `fn` parameter, struct shorthand, match arm, another expression) may bind
+/// or move the name, so it stays untyped. This is a closed list of allowed
+/// shapes rather than an enumeration of binders.
+fn binding_confined(body: &str, binding: &str) -> bool {
     let bytes = body.as_bytes();
-    let mut count = 0usize;
+    let ranges = format_macro_ranges(body);
+    let mut typed_lets = 0usize;
     let mut search = 0usize;
     while let Some(at) = body[search..].find(binding).map(|at| search + at) {
         search = at + binding.len();
@@ -553,29 +556,56 @@ fn binder_count(body: &str, binding: &str) -> usize {
         if !whole {
             continue;
         }
-        let segment_start = body[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-        let before = &body[segment_start..at];
-        let rest = body[after..].split([';', '{', '}']).next().unwrap_or("");
-        let pattern_of = |keyword: &str, stop: &str| {
-            before
-                .rfind(keyword)
-                .is_some_and(|keyword_at| !before[keyword_at..].contains(stop))
-        };
-        let is_binder = pattern_of("let ", "=")
-            || pattern_of("for ", " in ")
-            || before.contains("fn ")
-            || before.matches('|').count() % 2 == 1
-            || (rest.contains("=>") && !before.contains("=>"));
-        if is_binder {
-            count += 1;
+        let before = body[..at].trim_end();
+        let in_macro = ranges
+            .iter()
+            .any(|&(start, end)| start <= at && at < end && !body[start..end].contains('|'));
+        let to_string_receiver = body[after..]
+            .trim_start()
+            .strip_prefix(".to_string")
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+        let typed_let = before
+            .strip_suffix("let")
+            .or_else(|| before.strip_suffix("let mut"))
+            .is_some_and(|prefix| !prefix.bytes().next_back().is_some_and(is_ident_byte));
+        if typed_let {
+            typed_lets += 1;
+        } else if !(in_macro || to_string_receiver) {
+            return false;
         }
     }
-    count
+    typed_lets == 1
+}
+
+/// Byte ranges of the arguments of every standard formatting macro call.
+fn format_macro_ranges(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    let mut search = 0usize;
+    while let Some(bang) = masked[search..].find('!').map(|at| search + at) {
+        search = bang + 1;
+        let name_start = masked[..bang]
+            .bytes()
+            .rposition(|byte| !is_ident_byte(byte))
+            .map_or(0, |at| at + 1);
+        let name = masked.get(name_start..bang).unwrap_or("");
+        if !FORMAT_MACROS.iter().any(|(known, _)| *known == name) {
+            continue;
+        }
+        let open = masked.len() - masked[bang + 1..].trim_start().len();
+        if bytes.get(open) != Some(&b'(') {
+            continue;
+        }
+        if let Some(close) = matching_close(bytes, open) {
+            ranges.push((open + 1, close));
+        }
+    }
+    ranges
 }
 
 fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
     let lets = scope.lets;
-    if binder_count(scope.body, binding) != 1 {
+    if !binding_confined(scope.body, binding) {
         return false;
     }
     let Some(statement) = last_let_statement(lets, binding) else {
@@ -1057,6 +1087,9 @@ mod tests {
             format!("let f = |e| {{ {fmt} }};"),
             format!("match found {{ Some(e) => {fmt}, None => String::new() }};"),
             format!("let e = other();\n{fmt};"),
+            format!("match found {{ None => 0, Some(e) => {fmt} }};"),
+            format!("let W {{ e, .. }} = w;\n{fmt};"),
+            format!("consume(e);\n{fmt};"),
             format!("fn inner(e: u8) {{ {fmt}; }}"),
         ] {
             let body = format!("{typed}{scoped}");
