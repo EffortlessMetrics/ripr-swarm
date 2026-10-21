@@ -127,6 +127,15 @@ fn owner_from_function(
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
+    // Only bare `classmethod` / `staticmethod` / `property` names are known
+    // not to wrap the call; any other decorator (unreadable, call form,
+    // attribute) may not call the function, so it yields no helper edges.
+    let transparent_decorators = decorators.iter().all(|decorator| {
+        matches!(decorator, Expr::Name(_))
+            && expr_full_name(decorator).is_some_and(|name| {
+                matches!(name.as_str(), "classmethod" | "staticmethod" | "property")
+            })
+    });
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -149,6 +158,7 @@ fn owner_from_function(
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
+    let unplain_decorators = called_decorator_names(decorators);
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -166,8 +176,11 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees =
-        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters);
+    let module_callees = if transparent_decorators {
+        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
+    } else {
+        Vec::new()
+    };
     PythonOwner {
         name: name.to_string(),
         qualified_name,
@@ -180,6 +193,7 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         dynamic_route_decorators,
+        unplain_decorators,
         parameters,
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -243,6 +257,7 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
+        unplain_decorators: called_decorator_names(decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -272,6 +287,7 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -327,6 +343,11 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let direct_parametrized = if framework == "pytest" {
+                    super::parametrize::direct_argnames(&function.decorator_list)
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -380,6 +401,7 @@ pub(super) fn collect_tests_from_statements(
                     ),
                     fixtures,
                     fixture_defs: Vec::new(),
+                    direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
@@ -405,6 +427,11 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let direct_parametrized = if framework == "pytest" {
+                    super::parametrize::direct_argnames(&function.decorator_list)
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -450,6 +477,7 @@ pub(super) fn collect_tests_from_statements(
                     ),
                     fixtures,
                     fixture_defs: Vec::new(),
+                    direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
@@ -533,6 +561,14 @@ pub(super) fn collect_tests_from_statements(
                         test.activation_controls.extend(
                             local_classes
                                 .class_activation_controls
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
+                        test.direct_parametrized.extend(
+                            local_classes
+                                .class_direct_parametrized
                                 .get(class_name)
                                 .into_iter()
                                 .flatten()
@@ -740,6 +776,8 @@ struct LocalTestClasses<'a> {
     last_definitions: BTreeSet<*const ast::StmtClassDef>,
     /// Marks on known local ancestors can control an overridden test too.
     class_decorators: BTreeMap<&'a str, Vec<String>>,
+    /// Argnames a class-level (or ancestor) pytest parametrize supplies.
+    class_direct_parametrized: BTreeMap<&'a str, Vec<String>>,
     class_activation_controls:
         BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
     definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
@@ -806,6 +844,15 @@ impl<'a> LocalTestClasses<'a> {
                 .flat_map(|(_, class)| decorator_names(&class.decorator_list))
                 .collect();
             found.class_decorators.insert(name, decorators);
+            let direct_parametrized = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| scope.defs.get(ancestor))
+                .flat_map(|(_, class)| super::parametrize::direct_argnames(&class.decorator_list))
+                .collect();
+            found
+                .class_direct_parametrized
+                .insert(name, direct_parametrized);
             let controls = scope
                 .ancestors_or_self(name)
                 .iter()
@@ -1051,6 +1098,16 @@ fn test_member_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
     }
     names.retain(|name| name.starts_with("test"));
     names
+}
+
+/// Names of decorators written as a call, whose result (not the named
+/// function) wraps the owner.
+fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter(|decorator| matches!(decorator, Expr::Call(_)))
+        .filter_map(expr_full_name)
+        .collect()
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

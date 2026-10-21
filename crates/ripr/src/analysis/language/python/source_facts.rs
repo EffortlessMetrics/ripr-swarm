@@ -29,6 +29,10 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// The file is a `conftest.py` that installs implicit setup around the
+    /// tests in its scope (#6657). A conftest that failed to parse is not
+    /// flagged here; the workspace pass treats any limitation as unreadable.
+    pub(super) conftest_implicit_setup: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -126,8 +130,9 @@ pub(super) struct PythonSourceLimitation {
 /// siblings enter the scan on the same terms the adapter's test index uses
 /// (#7385), and discovery descends one level into immediate app directories
 /// (the `django-admin startapp` layout keeps unittest tests in
-/// `<app>/tests.py`). Every scan stays bounded: 64 entries per directory,
-/// a 4096-byte prefix read per file.
+/// `<app>/tests.py`). Every scan stays bounded: 64 admitted `.py` test
+/// candidates per directory, sorted by file name before the cap so the
+/// bounded answer is deterministic, and a 4096-byte prefix read per file.
 ///
 /// Config-file pytest markers add pytest; they do not skip the unittest
 /// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
@@ -147,29 +152,55 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten().take(64) {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            // #7706: admit the same Python test paths `is_test_file`
-            // recognizes (`tests.py` / `test.py` / `*_test.py` and files
-            // under a `tests`/`test` directory), still restricted to `.py`
-            // sources so foreign-language `test_*.rs` files never enter.
-            if !name.ends_with(".py") || !is_test_file(&entry.path()) {
-                continue;
-            }
+        // #8706: sort by file name and count only admitted `.py` test file
+        // candidates toward the per-directory cap. The #8257 review applied
+        // the same discipline to the app-directory list; capping the raw
+        // entry stream here let 64 non-test entries starve the scan of every
+        // test file and made the surviving set depend on unspecified
+        // `read_dir` enumeration order, so the same repository could report
+        // a different framework set between runs and machines. The
+        // `is_file` gate extends the same discipline to test-named
+        // directories: a directory named `test_*.py` cannot be read for
+        // evidence, so admitting it toward the cap would starve real test
+        // files behind it (review of #8706, PR #8901). The cheap name filter
+        // runs before the `is_file` stat so a huge directory costs one stat
+        // per test-looking name, not per entry (PR #8901 review, graphite
+        // finding); sorting after the filters keeps the capped answer
+        // deterministic without ordering every unrelated entry.
+        let mut candidates: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".py") && is_test_file(path))
+            })
+            .filter(|path| {
+                // Only regular files count toward the cap (RIPR-SPEC-0285):
+                // `is_file` follows symlinks, and a symlinked `.py` entry
+                // would consume one of the 64 candidate slots before the
+                // evidence read rejects it, starving a real test file
+                // (PR #8901 review, coderabbit). `symlink_metadata` never
+                // follows the final component.
+                std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+            })
+            .collect();
+        candidates.sort();
+        for path in candidates.iter().take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP) {
             // Bounded evidence read: the import line is at the top of the
             // file, so a small prefix suffices. Read at most that prefix so a
             // large test file cannot exhaust memory when config markers keep
             // the unittest scan running (#7664 review).
-            let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
+            let Some(text) = read_framework_evidence_prefix(path) else {
                 continue;
             };
-            if !saw_pytest && text.lines().any(is_pytest_import_line) {
+            // #8707: docstrings and usage-example strings that merely SHOW an
+            // import are not framework evidence; only code lines count.
+            let code = code_lines_outside_triple_quoted_strings(&text);
+            if !saw_pytest && code.lines().any(is_pytest_import_line) {
                 saw_pytest = true;
             }
-            if !saw_unittest && text_has_unittest_framework_import(&text) {
+            if !saw_unittest && text_has_unittest_framework_import(&code) {
                 saw_unittest = true;
             }
             if saw_pytest && saw_unittest {
@@ -231,6 +262,125 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
 /// Bytes inspected for framework import evidence. The read consumes at most
 /// one extra byte so a cut final line can be dropped instead of classified.
 const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
+
+/// Admitted `.py` test file candidates inspected per scanned directory. The
+/// cap counts candidates after the file / `.py` / test-path admission
+/// filters, never raw directory entries, so non-test files and test-named
+/// directories cannot starve the scan (#8706, PR #8901 review).
+const PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP: usize = 64;
+
+/// Lines of `text` that are code — every line that does not fall inside a
+/// triple-quoted string literal. Docstrings and usage-example strings that
+/// merely SHOW an `import unittest` / `import pytest` line are not framework
+/// evidence (#8707); a `tests.py` / `test.py` module is admitted by file name
+/// alone (#7706), so string awareness is what keeps a helper module's
+/// example text from reporting a confirmed framework. The scanner tracks
+/// the dominant triple-quote state: it stops scanning a line at an
+/// unquoted `#` and skips ordinary single-line string contents before
+/// looking for triple-quote delimiters, so a comment like
+/// `# use """ for docstrings` or a literal like `x = "'''"` cannot open a
+/// phantom string that swallows later real imports (review of #8707,
+/// PR #8901). This remains a bounded heuristic, not a full tokenization:
+/// single-line strings cannot place an import at line start, and the
+/// import matchers already reject lookalike tokens.
+fn code_lines_outside_triple_quoted_strings(text: &str) -> String {
+    let mut out = String::new();
+    let mut open: Option<char> = None;
+    for line in text.lines() {
+        if open.is_none() {
+            out.push_str(line);
+        }
+        out.push('\n');
+        update_triple_quote_state(line, &mut open);
+    }
+    out
+}
+
+/// Advance the triple-quote state across one line. Outside a string, an
+/// unquoted `#` ends the scannable line and an ordinary single-line string
+/// is skipped to its matching unescaped quote, so delimiters inside
+/// comments and string literals never toggle the state (review of #8707,
+/// PR #8901). Inside a triple-quoted string only the matching closing
+/// delimiter matters; `#` and quotes of the other delimiter are content.
+fn update_triple_quote_state(line: &str, open: &mut Option<char>) {
+    let mut rest = line;
+    loop {
+        if let Some(delimiter) = *open {
+            match find_closing_triple(rest, delimiter) {
+                Some(end) => {
+                    *open = None;
+                    rest = &rest[end..];
+                }
+                None => return,
+            }
+            continue;
+        }
+        match find_triple_open(rest) {
+            Some((delimiter, after)) => {
+                *open = Some(delimiter);
+                rest = &rest[after..];
+            }
+            None => return,
+        }
+    }
+}
+
+/// End (exclusive) of the first unescaped closing triple delimiter in
+/// `text`, or `None` when the string continues past this line.
+fn find_closing_triple(text: &str, delimiter: char) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let quote = delimiter as u8;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            // A backslash escapes the next character.
+            index += 2;
+            continue;
+        }
+        if bytes[index] == quote && bytes[index..].starts_with(&[quote, quote, quote]) {
+            return Some(index + 3);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Scan code outside any string for the first triple-quote delimiter.
+/// Returns the delimiter and the index just past the opening triple quote
+/// when one starts on this line. An unquoted `#` ends the scan (the rest is
+/// a comment) and an ordinary single-line string is skipped to its
+/// matching unescaped closing quote, so neither can contribute a phantom
+/// delimiter.
+fn find_triple_open(code: &str) -> Option<(char, usize)> {
+    let bytes = code.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            // The rest of the line is a comment.
+            b'#' => return None,
+            quote @ (b'"' | b'\'') => {
+                if bytes[index..].starts_with(&[quote, quote, quote]) {
+                    return Some((quote as char, index + 3));
+                }
+                // Ordinary single-line string: skip to its matching
+                // unescaped closing quote on the same line.
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index += 2;
+                    } else if bytes[index] == quote {
+                        index += 1;
+                        break;
+                    } else {
+                        index += 1;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
 
 fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
@@ -468,6 +618,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        conftest_implicit_setup: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -521,6 +672,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -543,6 +695,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
+        == Some("conftest.py")
+        && super::admission::conftest_installs_implicit_setup(&module.body);
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
@@ -1661,4 +1816,173 @@ fn dotted_dir(file: &Path) -> String {
                 .join(".")
         })
         .unwrap_or_default()
+}
+
+/// Records, per owner, the decorators whose first name segment the file binds
+/// anywhere other than the one typing import, so an import match is not
+/// trusted for them (`def final`, `final = ...`, a nested or class-scope
+/// rebind, a tuple or loop target, a `try`/`except` import fallback).
+///
+/// This is deliberately a lexical, fail-closed screen rather than a scope
+/// analysis: the name must occur only on `@name...` decorator lines and on
+/// `typing`/`typing_extensions` import statements. A star import from another
+/// module, or any decorator the screen cannot read as a plain dotted name
+/// (`@registry["x"]`, `@(lambda f: g)`), withholds trust for the whole file.
+fn mark_rebound_decorators(source: &str, owners: &mut [PythonOwner]) {
+    let distrust_all = typing_markers_distrusted(source);
+    for owner in owners {
+        let rebound: Vec<String> = owner
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                let first = decorator.split('.').next().unwrap_or_default();
+                distrust_all || name_bound_outside_typing_import(source, first)
+            })
+            .cloned()
+            .collect();
+        owner.unplain_decorators.extend(rebound);
+    }
+}
+
+/// Whether a decorator line or star import makes any marker unprovable.
+fn typing_markers_distrusted(source: &str) -> bool {
+    // A lone carriage return is a Python line break `str::lines` does not see.
+    if source
+        .match_indices('\r')
+        .any(|(at, _)| source.as_bytes().get(at + 1) != Some(&b'\n'))
+    {
+        return true;
+    }
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('@') {
+            return !is_plain_decorator(rest.split('#').next().unwrap_or_default().trim());
+        }
+        // A star import anywhere on the line (`import os; from m import *`,
+        // `if x: from m import *`) may shadow a marker; so may one split by a
+        // backslash continuation.
+        (contains_word(line, "import")
+            && (line.contains('*') || line.trim_end().ends_with('\\'))
+            && !is_typing_import_line(line))
+            || line.starts_with('*')
+    })
+}
+
+/// A decorator that is a dotted name, optionally followed by one call whose
+/// parentheses close at the end of the line (`name`, `a.b`, `name(...)`).
+/// Anything else (`name(x)[0]`, `name(x) if c else y`, a multi-line call, a
+/// subscript, a lambda) cannot be read, so the file is not trusted.
+fn is_plain_decorator(text: &str) -> bool {
+    let head_end = text.find('(').unwrap_or(text.len());
+    let head = &text[..head_end];
+    let plain_head = !head.is_empty()
+        && !head.starts_with('.')
+        && !head.ends_with('.')
+        && head
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    if !plain_head {
+        return false;
+    }
+    let call = &text[head_end..];
+    if call.is_empty() {
+        return true;
+    }
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<(usize, char)> = call.char_indices().collect();
+    for (at, &(index, c)) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            // Triple-quoted strings are not parsed: the line is unreadable.
+            '\'' | '"' => {
+                if chars.get(at + 1).is_some_and(|&(_, next)| next == c)
+                    && chars.get(at + 2).is_some_and(|&(_, next)| next == c)
+                {
+                    return false;
+                }
+                quote = Some(c);
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 && index + 1 != call.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0 && quote.is_none()
+}
+
+fn is_typing_import_line(line: &str) -> bool {
+    let module_import = ["import typing", "import typing_extensions"]
+        .iter()
+        .any(|prefix| {
+            line.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        });
+    (line.starts_with("from typing import")
+        || line.starts_with("from typing_extensions import")
+        || module_import)
+        && !line.contains(';')
+}
+
+fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
+    let mut in_typing_block = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        // Parentheses in a trailing comment must not open or close the block.
+        let code = trimmed.split('#').next().unwrap_or_default();
+        let mut scanned = line;
+        let allowed = if in_typing_block {
+            if let Some(close) = code.find(')') {
+                // Only text before the closing parenthesis belongs to the import.
+                in_typing_block = false;
+                scanned = &code[close + 1..];
+                false
+            } else {
+                true
+            }
+        } else if is_typing_import_line(trimmed) {
+            if code.contains('(') && !code.contains(')') {
+                in_typing_block = true;
+            }
+            true
+        } else if let Some(rest) = trimmed.strip_prefix('@') {
+            let head = rest.split('(').next().unwrap_or_default();
+            // The call arguments are scanned too: `@final(final := wrapper)`
+            // rebinds the name on its own decorator line.
+            head.split('.').next() == Some(name) && !contains_word(&rest[head.len()..], name)
+        } else {
+            false
+        };
+        if !allowed && contains_word(scanned, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + word.len()..].chars().next();
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
 }

@@ -12,6 +12,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
+/// or commit id approaches it, and it keeps a hostile argument out of Git.
+const MAX_BASE_REVISION_BYTES: usize = 256;
+
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
 /// handshake-shaped keepalive is not classified as a 2026-07-28 request
@@ -103,7 +107,21 @@ impl McpServer {
         )
     }
 
-    async fn refresh_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
+    async fn refresh_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["base"])?;
+        let base = optional_nonempty_string_argument(&arguments, "base")?;
+        if let Some(base) = &base
+            && base.len() > MAX_BASE_REVISION_BYTES
+        {
+            return Err(ErrorData::invalid_params(
+                format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
+                None,
+            ));
+        }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
             Ok(root) => root.to_path_buf(),
             Err(failure) => {
@@ -123,10 +141,11 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            session.desired_base = base.clone();
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -185,6 +204,22 @@ impl McpServer {
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         let language = optional_nonempty_string_argument(&arguments, "language")?;
+        if let Some(language) = language.as_deref()
+            && crate::domain::LanguageId::display_name_for_wire(language).is_none()
+        {
+            // A typo would otherwise read as "no gaps in that language".
+            let allowed: Vec<&str> = crate::domain::LanguageId::ALL
+                .iter()
+                .map(crate::domain::LanguageId::as_str)
+                .collect();
+            // Echo only a short value: a huge one would push the error past
+            // the response cap and replace -32602 with a generic -32603.
+            let shown: String = language.chars().take(32).collect();
+            return Err(ErrorData::invalid_params(
+                format!("unknown language {shown:?}; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "allowed": allowed })),
+            ));
+        }
         let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
@@ -266,7 +301,11 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "inventory_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            super::attempt_inventory::MAX_PAGE_ITEMS,
+        )?;
         // `max_envelope_bytes` reserves the JSON-escaped request ID plus the
         // fixed outer overhead (#7768): the pinned rmcp adds the JSON-RPC
         // fields and the modern resultType after the tool envelope is
@@ -578,6 +617,68 @@ fn optional_positive_argument(
     }
 }
 
+/// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
+/// A request above the cap stays invalid params at the dispatch edge instead
+/// of being silently clamped, so the typed `page.limit` echo always names a
+/// limit the server actually honors (#8735).
+fn optional_capped_page_limit(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    max: usize,
+) -> Result<Option<usize>, ErrorData> {
+    match optional_positive_argument(arguments, name)? {
+        Some(value) if value > max => Err(ErrorData::invalid_params(
+            format!("{name} must be at most {max}"),
+            None,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// Resolve one captured resource-id segment through an exact-id lookup with
+/// the #8736 URI-decoding rules and the collision fail-closed follow-up:
+///
+/// - the raw capture is tried first (legacy raw URI support);
+/// - when the raw capture misses with `item_not_found`, the segment decodes
+///   once and the decoded form is tried instead;
+/// - when the raw capture succeeds *and* the segment also decodes to a
+///   different existing id, both spellings name two distinct items (for
+///   example `a%20b.py` raw versus `a b.py` decoded), so the route fails
+///   closed with `id_ambiguous` instead of silently picking one — the wire
+///   form cannot say which file the client meant.
+///
+/// Recovery for every ambiguous or unresolved read names the equivalent
+/// tool route, which takes the canonical id as a plain JSON string with no
+/// URI encoding.
+fn resource_id_document(
+    captured: &str,
+    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
+) -> Result<Value, workspace::AttemptFailure> {
+    match lookup(captured) {
+        Ok(document) => {
+            if let Some(decoded) = gaps::percent_decode_resource_id(captured)
+                && lookup(&decoded).is_ok()
+            {
+                return Err(workspace::AttemptFailure::new(
+                    workspace::CODE_ID_AMBIGUOUS,
+                    format!(
+                        "the resource id is ambiguous: the captured segment resolves both as sent ({captured}) and as its percent-decoded form ({decoded}), which name two distinct canonical items"
+                    ),
+                    "read the item through the equivalent tool (ripr_get_gap or ripr_get_repair_card) with the canonical_id as a plain JSON string, which carries no URI encoding",
+                ));
+            }
+            Ok(document)
+        }
+        Err(failure) if failure.code == workspace::CODE_ITEM_NOT_FOUND => {
+            match gaps::percent_decode_resource_id(captured) {
+                Some(decoded) => lookup(&decoded),
+                None => Err(failure),
+            }
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -665,13 +766,16 @@ impl ServerHandler for McpServer {
     /// custom request and the default answers `-32601` with only the method
     /// name. A method this server serves is not missing: report the shape
     /// violation as `-32602` so a client can tell a bad call from a bad
-    /// method (#8504).
+    /// method (#8504). `initialize` is served too: a repeated `initialize`
+    /// without its required params is a params error, not a missing method.
+    /// A method that is missing says so conventionally (`Method not found:`).
     async fn on_custom_request(
         &self,
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
-        const SERVED_METHODS: [&str; 8] = [
+        const SERVED_METHODS: [&str; 9] = [
+            "initialize",
             "server/discover",
             "completion/complete",
             "tools/call",
@@ -682,14 +786,17 @@ impl ServerHandler for McpServer {
             "prompts/list",
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
-            return Err(ErrorData::invalid_params(
-                format!("invalid params for `{}`", request.method),
-                None,
-            ));
+            let message = if request.method == "initialize" {
+                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                    .to_owned()
+            } else {
+                format!("invalid params for `{}`", request.method)
+            };
+            return Err(ErrorData::invalid_params(message, None));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
-            request.method,
+            format!("Method not found: {}", request.method),
             None,
         ))
     }
@@ -738,17 +845,8 @@ impl ServerHandler for McpServer {
                 self.status_tool(max_envelope_bytes).await
             }
             protocol::REFRESH_TOOL_NAME => {
-                if request
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|arguments| !arguments.is_empty())
-                {
-                    return Err(ErrorData::invalid_params(
-                        "ripr_refresh does not accept arguments",
-                        None,
-                    ));
-                }
-                self.refresh_tool(max_envelope_bytes).await
+                self.refresh_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             protocol::LIST_GAPS_TOOL_NAME => {
                 self.list_gaps_tool(request.arguments, max_envelope_bytes)
@@ -778,8 +876,10 @@ impl ServerHandler for McpServer {
                 self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            // MCP: an unknown tool is a protocol error with Invalid Params
+            // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
-                ErrorCode::METHOD_NOT_FOUND,
+                ErrorCode::INVALID_PARAMS,
                 "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
@@ -852,7 +952,8 @@ impl ServerHandler for McpServer {
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.get_gap(canonical_id, None) {
+            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -886,8 +987,11 @@ impl ServerHandler for McpServer {
         }
         if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
-            {
+            let root = self.analysis_root.clone();
+            let result = resource_id_document(item_id, |id| {
+                session.repair_card_document(id, None, root.as_deref())
+            });
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,

@@ -99,8 +99,9 @@ read-only and without execution authority (ADR 0022):
   facts on one canonical item of the current completed snapshot. The
   evaluation is a fail-closed conjunction computed at snapshot commit time:
   candidate actionability (`#3281` predicate), an established discriminator
-  (non-empty normalized discriminator, no producer-named missing
-  discriminator), and an established fix site (a strong-oracle,
+  (non-empty normalized discriminator; a producer-named missing
+  discriminator is accepted only on a `weakly_exposed` finding, where the
+  named value is the repair target), and an established fix site (a strong-oracle,
   high-confidence directly-related test on a shared edit-cage test-surface
   path). The first failing gate is the typed reason (`not_candidate_actionable`,
   `missing_discriminator`,
@@ -108,8 +109,12 @@ read-only and without execution authority (ADR 0022):
   `fix_site_not_established`,
   `fix_site_not_test_surface`). A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
-  `Missing discriminator value:` entry in `missing`) refuses as
-  `missing_discriminator`. A finding whose canonical gap the producer
+  `Missing discriminator value:` entry in `missing`) on any class other
+  than `weakly_exposed` refuses as `missing_discriminator`; on a
+  `weakly_exposed` finding with a populated canonical gap the named value
+  is the discriminator the repair adds to the existing weak test, so the
+  discriminator gate passes (#8717) and the fix-site gate and the shared
+  seam validator below still decide, never the missing value alone. A finding whose canonical gap the producer
   withheld behind the finding's own typed static limitation refuses as
   `static_limitation` — the per-finding limitation, not the language,
   explains the missing fact (Python omits the canonical gap exactly when a
@@ -120,6 +125,33 @@ read-only and without execution authority (ADR 0022):
   producer condition so one document cannot contradict its own
   `discriminator_availability` block (#5268); the readiness reason and the
   `ripr_prepare_repair` ineligibility are the same evaluation.
+- The conjunction ends with the shared seam-level repair validator (#8717).
+  During `ripr_refresh` the adapter resolves every committed finding id
+  through the same resolver `ripr repair <finding-id>` uses
+  (`app::task_first::resolve_repair_subject_in`) over the refresh's
+  diff-scoped classified seam inventory, and the item is repair-ready only
+  when exactly one seam is named and the shared repair-admission gate admits
+  it. A finding-ready item the validator refuses is not ready and keeps the
+  validator's own explanation: `seam_already_gripped` (the seam's existing
+  tests already grip it), `seam_gate_refused` (route not ready, unresolved
+  cross-language visibility or target, policy omission), `seam_ambiguous`
+  (several seams name the finding; the resolver never picks) or
+  `seam_not_found` (no classified seam names it). Before any item is
+  resolved, the refresh also reads the truncation fact from the same repo-wide
+  seam inventory the CLI consults (`limit_info.analyzed < total`): when that
+  inventory is truncated by the seam limit, or cannot be established, the CLI
+  errors for every item, so the adapter refuses every item with
+  `seam_inventory_truncated` (#9108), ahead of every finding-level gate, and
+  the validator's per-seam verdicts are not consulted. The fact comes from a
+  count-only seam walk over the index the diff-scoped inventory already built
+  (no repo-wide evidence or classification); only the no-impact fast path,
+  which builds no index, falls back to the repo-wide authority. The verdict is projected
+  before the snapshot identity is computed, so the list summary, the
+  `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
+  identity carry one decision, and a finding-level refusal remains the first
+  failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
+  no parallel validator: `ripr_prepare_repair` cannot return a ready packet
+  or an `awaiting_edit` attempt for an item `ripr repair` refuses.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,
@@ -217,11 +249,21 @@ read-only and without execution authority (ADR 0022):
   `discriminator_not_populated_for_language` in both the gap document's
   readiness block (which agrees with its own `discriminator_availability`
   block) and the negative `ripr_prepare_repair` document, while a
-  producer-named missing discriminator keeps the `missing_discriminator`
-  refusal and a finding whose gap the producer withheld behind its own
+  producer-named missing discriminator on a non-weak class keeps the
+  `missing_discriminator` refusal and a finding whose gap the producer withheld behind its own
   typed static limitation refuses as `static_limitation`, never as a
   language-wide gap. Flipping a refusal back to a contradiction or a
   misattribution must fail these controls.
+- #8717 weak-discriminator controls: a `weakly_exposed` finding that names
+  its missing discriminator with a populated canonical gap and a directly
+  related fix site is finding-level ready, while the same named value on
+  every non-weak class, a weak finding without a canonical gap, and a weak
+  finding without a fix site stay refused with their typed reasons. The
+  real stdio control on the `is_adult` weak-boundary fixture asserts the
+  boundary item is repair-ready only when `ripr repair` admits its seam,
+  never an item the CLI refuses. Restoring the blanket
+  `missing_discriminator` refusal or dropping the class condition must fail
+  these controls.
 - Vocabulary and projection controls: the receipt-status mapping over the
   shared receipt reading and subordinate presence lifecycle. Producer-backed
   controls cover complete improved, changed, regressed and unchanged, typed
@@ -334,6 +376,11 @@ read-only and without execution authority (ADR 0022):
   authenticity for those compatibility inputs.
 - `crates/ripr/src/mcp/gaps.rs::tests` — the committed producer
   repair-readiness evaluation and its fail-closed gates.
+- `crates/ripr/tests/mcp_stdio.rs`
+  `mcp_readiness_never_exceeds_the_cli_repair_gate` and
+  `mcp_ready_item_is_the_item_the_cli_repair_gate_admits` — real-stdio
+  parity of list, get_gap and prepare readiness against `ripr repair`
+  (#8717).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, vocabulary, instructions, dispatch-edge rejections, and
   pre-refresh typed failures.
@@ -348,6 +395,7 @@ read-only and without execution authority (ADR 0022):
 | Surface | Responsibility |
 | --- | --- |
 | `crates/ripr/src/mcp/repair.rs` | readiness-gated session transactions, deterministic root-bound attempt identity, durable attempt/receipt projection, `CommandSpec` document projection, receipt-status vocabulary mapping |
+| `crates/ripr/src/mcp/repair_admission.rs` | per-finding verdicts from the shared seam-level repair validator over the refresh's seam inventory, with typed seam refusal codes (#8717) |
 | `crates/ripr/src/mcp/gaps.rs` | producer repair-readiness evaluation at snapshot commit time; readiness block and live repair-attempt link in the evidence document |
 | `crates/ripr/src/mcp/workspace.rs` | session repairs map (in-memory, restart-drops), shared `AttemptFailure::with_data`, link injection in `get_gap` |
 | `crates/ripr/src/mcp/protocol.rs` | tool/resource-template descriptors, output schemas, instructions, status surface lists, failure vocabulary |

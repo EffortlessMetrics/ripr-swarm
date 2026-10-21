@@ -236,8 +236,9 @@ Review the generated files before committing them. The workflow installs the
 ripr version that generated it. An unreleased development build instead pins
 the latest release and says so in a warning; after
 upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
-files first with `--dry-run`. On a PR, read the job summary
-first, then open the linked artifacts for the evidence and suggested test.
+files first with `--dry-run`. On a PR, read the summary comment it posts on the
+conversation (one comment, updated on every push; same-repository PRs only), then the job summary
+and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
@@ -350,7 +351,8 @@ unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 
-TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+TypeScript is enabled automatically for TypeScript-shaped repositories without a
+`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

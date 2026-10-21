@@ -1,0 +1,11 @@
+diff --git a/src/identityExtend.ts b/src/identityExtend.ts
+index 0000000..1111111 100644
+--- a/src/identityExtend.ts
++++ b/src/identityExtend.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function ready(cfg: Cfg): Cfg {
+-  return cfg;
++  return { ...cfg };
+ }

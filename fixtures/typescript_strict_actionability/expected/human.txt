@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_strict_actionability/input --diff <cwd>/fixtures/typescript_strict_actionability/diff.patch --mode fast probe:src_observed.ts:typescript_preview:d09a8abb
   ripr context --root <cwd>/fixtures/typescript_strict_actionability/input --diff <cwd>/fixtures/typescript_strict_actionability/diff.patch --mode fast --at probe:src_observed.ts:typescript_preview:d09a8abb
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_observed.ts:typescript_preview:d09a8abb --root <cwd>/fixtures/typescript_strict_actionability/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

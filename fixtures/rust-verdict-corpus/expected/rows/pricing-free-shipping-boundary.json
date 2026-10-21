@@ -10,9 +10,8 @@
   "ideal_verdict": "gap",
   "observed_verdict": "gap",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "exposed",
     "weakly_exposed"
   ],
   "outcome": "ideal",

@@ -15,6 +15,7 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
+pub(crate) mod language_capability;
 mod next_action;
 mod probe;
 mod repair_card;
