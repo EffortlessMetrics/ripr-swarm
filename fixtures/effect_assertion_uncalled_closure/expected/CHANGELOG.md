@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_uncalled_closure (4)
+
+Reason:
+RIPR-SPEC-0197: human-full related-test line adopts main #8747 no-oracle wording (merge of main into #8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
