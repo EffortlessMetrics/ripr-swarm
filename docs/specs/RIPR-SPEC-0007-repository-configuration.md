@@ -153,6 +153,13 @@ Repository configuration evidence should cover:
   validation with a key-named diagnostic that does not echo the path; omitted
   values keep the default and valid paths retain exact spelling and the existing
   user opt-in boundary, without existence or execution probes;
+- `ripr doctor` never executing a Perl exporter PATH hit whose canonical
+  path lies under the analyzed root unless
+  `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1` is set (#5349): the hit is reported as
+  refused (not run) with the resolved path inside the checkout as the reason
+  and the opt-in / move-outside-the-repo next step; a symlink or relative
+  PATH entry pointing into the root is refused by canonicalization, while a
+  relative PATH entry resolving outside the root still probes as before;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -413,6 +420,21 @@ prints each advisory starting with `~ ` and exits with the status of its core
 checks alone; only a failed core check or required runtime probe prints `!`
 and exits 3.
 
+### Doctor refuses a checkout-local Perl exporter on PATH (#5349)
+
+```text
+Given a Perl checkout with `bin/perllsp` on a relative or checkout-local PATH,
+when ripr doctor runs without RIPR_ALLOW_REPO_PERL_EXECUTABLE=1,
+then doctor reports the exporter as refused (not run), states that the
+resolved path is inside the analyzed checkout, and names the opt-in or
+moving the exporter outside the repo as the next step;
+and the exporter is never executed.
+Given the same checkout with RIPR_ALLOW_REPO_PERL_EXECUTABLE=1, or an
+exporter outside the root reached through a relative PATH entry,
+when ripr doctor runs,
+then the exporter is probed as before.
+```
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
@@ -534,6 +556,20 @@ Current tests:
 - `crates/ripr/src/cli/commands/doctor.rs::tests::required_runtime_failure_gets_a_fix_line`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::cargo_toml_failure_suppresses_check`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_discloses_ignored_perl_executable`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_only_inside_root_without_opt_in`
+  pins canonical-inside refusal, the opt-in boundary, and outside-root allowance (#5349).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_follows_symlink_into_root`
+  pins symlink-into-root refusal by canonicalization (#5349, Unix).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_exporter_lines_report_refused_hit_with_next_step`
+  pins the refused report wording and next step (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_repo_local_perl_exporter_on_relative_path`
+  proves a checkout-local exporter on a relative PATH is not executed (no marker) (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_runs_repo_local_perl_exporter_with_opt_in`
+  proves the opt-in executes the same exporter as before (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_runs_perl_exporter_outside_root_via_relative_path`
+  proves a relative PATH entry outside the root still probes (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_perl_exporter_symlinked_into_root`
+  proves a PATH symlink into the root is refused and not executed (#5349, Unix).
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_newline_root_stays_one_physical_line_per_entry`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::verbose_invalid_config_keeps_parser_reasons_without_source`
 - `crates/ripr/src/config.rs::tests::config_error_display_keeps_misplaced_mode_hint_without_source`

@@ -13836,7 +13836,9 @@ fn perl_doctor_workspace_with_exporter_stub(
         "#!/bin/sh\necho 'cwd-hijack 0.0.0'\nexit 0\n",
         "@echo off\r\necho cwd-hijack 0.0.0\r\nexit /b 0\r\n",
     )?;
-    let shim_dir = root.join("exporter-shims");
+    // #5349: the shim dir must live outside the analyzed root, or doctor
+    // rightly refuses to execute a PATH hit inside the checkout.
+    let shim_dir = unique_temp_workspace(&format!("{label}-shims"));
     std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
     write_probe_stub(
         &shim_dir.join("perl-ripr-facts"),
@@ -13984,6 +13986,7 @@ fn doctor_reports_version_only_perl_exporter_as_incompatible() -> Result<(), Str
         "doctor must not recommend installing perllsp:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
     Ok(())
 }
 
@@ -14007,7 +14010,7 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
     assert!(
         exporter_line.contains("exporter: compatible")
             && exporter_line.contains("perllsp 9.9.9")
-            && exporter_line.contains("exporter-shims/perllsp"),
+            && exporter_line.contains(&shim_dir.join("perllsp").display().to_string()),
         "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
     );
     assert!(
@@ -14019,6 +14022,172 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
         "compatible control must not be reported incompatible:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #5349: a marker-writing `perllsp` exporter. Every invocation creates
+/// `marker`, so a test can prove doctor did (or did not) execute it.
+fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    let name = if cfg!(windows) {
+        "perllsp.bat"
+    } else {
+        "perllsp"
+    };
+    let marker_text = marker.display().to_string();
+    let unix = format!(
+        "#!/bin/sh\ntouch '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 9.9.9'; exit 0; fi\necho 'Usage: perllsp ripr-facts --schema X'\nexit 0\n"
+    );
+    let windows = format!(
+        "@echo off\r\necho ran> \"{marker_text}\"\r\nif \"%1\"==\"--version\" echo perllsp 9.9.9\r\nif \"%1\"==\"ripr-facts\" echo Usage: perllsp ripr-facts --schema X\r\nexit /b 0\r\n"
+    );
+    write_probe_stub(&dir.join(name), &unix, &windows)
+}
+
+fn perl_hostile_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
+        .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+        .map_err(|err| err.to_string())?;
+    Ok(root)
+}
+
+fn doctor_stdout_with_path_env(
+    cwd: &Path,
+    root: &Path,
+    path: &str,
+    extra: &[(&str, &str)],
+) -> Result<String, String> {
+    let root_str = root.display().to_string();
+    let mut env: Vec<(&str, &str)> = vec![("PATH", path)];
+    env.extend_from_slice(extra);
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        cwd,
+        &["--verbose", "doctor", "--root", &root_str],
+        &env,
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[test]
+fn doctor_refuses_repo_local_perl_exporter_on_relative_path() -> Result<(), String> {
+    // #5349 (a): PATH=bin hits a checkout-controlled exporter; doctor must
+    // report it refused and never execute it (no marker file).
+    let root = perl_hostile_root("doctor-perl-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused") && stdout.contains("inside the analyzed checkout"),
+        "repo-local exporter must be reported refused:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1") && stdout.contains("outside the repo"),
+        "refusal must name the next step:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_runs_repo_local_perl_exporter_with_opt_in() -> Result<(), String> {
+    // #5349 (b): the same setup with the opt-in executes as before.
+    let root = perl_hostile_root("doctor-perl-opt-in")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "1")],
+    )?;
+    assert!(
+        marker.exists(),
+        "opted-in exporter must execute (no marker)"
+    );
+    assert!(
+        stdout.contains("exporter: compatible") && stdout.contains("perllsp 9.9.9"),
+        "opted-in exporter must be probed compatible:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("exporter: refused"),
+        "opted-in exporter must not be refused:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_runs_perl_exporter_outside_root_via_relative_path() -> Result<(), String> {
+    // #5349 (c): a relative PATH entry resolving outside the analyzed root
+    // keeps working (deliberate `PATH=bin:$PATH` behavior for real tools).
+    let parent = unique_temp_workspace("doctor-perl-outside-parent");
+    let root = parent.join("repo");
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
+        .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+        .map_err(|err| err.to_string())?;
+    let marker = parent.join("PWNED");
+    write_marker_perl_exporter(&parent.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &parent,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(marker.exists(), "outside exporter must execute (no marker)");
+    assert!(
+        stdout.contains("exporter: compatible"),
+        "outside exporter via relative PATH must be compatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&parent);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_refuses_perl_exporter_symlinked_into_root() -> Result<(), String> {
+    // #5349 (d): a symlink under PATH pointing into the root is refused by
+    // canonicalization, not textual prefix.
+    let root = perl_hostile_root("doctor-perl-symlink")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let outside = unique_temp_workspace("doctor-perl-symlink-bin");
+    std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+    std::os::unix::fs::symlink(root.join("bin/perllsp"), outside.join("perllsp"))
+        .map_err(|err| err.to_string())?;
+    let outside_str = outside.display().to_string();
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        &outside_str,
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused"),
+        "symlinked-into-root exporter must be refused:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "symlinked refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
     Ok(())
 }
 

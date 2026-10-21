@@ -2201,7 +2201,7 @@ fn probe_perl_preview(
     let producer_configured = perl_producer_configured(config);
     let refused_executable =
         config.and_then(|config| config.perl().refused_executable().map(Path::to_path_buf));
-    let exporter = probe_perl_exporter(config);
+    let exporter = probe_perl_exporter(root, config);
     let adapter_compiled = cfg!(feature = "lang-perl");
     Some(output::doctor::DoctorPerlPreview {
         pm_files: pm_count,
@@ -2239,6 +2239,9 @@ fn exporter_typed(exporter: &PerlExporterProbe) -> output::doctor::DoctorPerlExp
             (Some(bin.clone()), Some(version.clone())),
         ),
         PerlExporterProbe::NotFound => (DoctorPerlExporterState::NotFound, (None, None)),
+        PerlExporterProbe::Refused { bin } => {
+            (DoctorPerlExporterState::Refused, (Some(bin.clone()), None))
+        }
     };
     DoctorPerlExporter {
         state,
@@ -2281,6 +2284,9 @@ enum PerlExporterProbe {
     Incompatible { bin: String, version: String },
     /// No candidate answered `--version`.
     NotFound,
+    /// A PATH hit canonicalized inside the analyzed root and was not run
+    /// (#5349). Carries the resolved program path for the report.
+    Refused { bin: String },
 }
 
 impl PerlExporterProbe {
@@ -2309,13 +2315,36 @@ const PERL_EXPORTER_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 /// run under the configured `[perl].timeout_ms` deadline with bounded
 /// capture and a null stdin, so an LSP server that waits on stdin cannot
 /// hang the doctor. Packet validity is still only checked by `ripr check`.
-fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
+/// Whether `candidate` canonicalizes to a path under `root` (both
+/// canonicalized, so a symlink or relative PATH entry pointing into the
+/// checkout counts, #5349). Unresolvable paths are not under the root.
+fn path_lies_under_root(candidate: &Path, root: &Path) -> bool {
+    let (Ok(candidate), Ok(root)) = (
+        std::fs::canonicalize(candidate),
+        std::fs::canonicalize(root),
+    ) else {
+        return false;
+    };
+    candidate.starts_with(&root)
+}
+
+/// Whether doctor must refuse to execute this PATH hit: its canonical path
+/// lies under the analyzed root and the user did not opt in (#5349). The
+/// analyzed checkout is hostile input to a read-only diagnosis. Relative
+/// PATH entries keep working for exporters outside the root because only
+/// the canonical destination is judged, not the PATH spelling.
+fn perl_path_exporter_refused(candidate: &Path, root: &Path, opt_in: bool) -> bool {
+    !opt_in && path_lies_under_root(candidate, root)
+}
+
+fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporterProbe {
     let timeout =
         std::time::Duration::from_millis(config.map_or(30_000, |c| c.perl().timeout_ms()));
     // `[perl].executable` from ripr.toml is only probed when the user opts
     // in (see `PerlConfig::executable`); doctor is usually the first command
     // run in a fresh clone and must not execute a repository-chosen program.
     let explicit = config.and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
+    let has_explicit = explicit.is_some();
     let candidates: Vec<String> = match explicit {
         Some(path) => vec![path],
         None => vec![
@@ -2323,11 +2352,23 @@ fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
             "perllsp".to_string(),
         ],
     };
+    let opt_in = crate::config::perl_executable_opt_in();
     let mut first_incompatible = None;
+    let mut first_refused = None;
     for candidate in &candidates {
         let Some(program) = doctor_program(candidate) else {
             continue;
         };
+        // #5349: never execute a PATH hit whose canonical path lies under
+        // the analyzed root unless the user opted in. The explicit
+        // `[perl].executable` branch only reaches here when opted in, so
+        // its existing gating is unchanged.
+        if !has_explicit && perl_path_exporter_refused(&program, root, opt_in) {
+            first_refused.get_or_insert(PerlExporterProbe::Refused {
+                bin: program.display().to_string(),
+            });
+            continue;
+        }
         let bin = program.display().to_string();
         let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
@@ -2352,7 +2393,9 @@ fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
         }
         first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
     }
-    first_incompatible.unwrap_or(PerlExporterProbe::NotFound)
+    first_incompatible
+        .or(first_refused)
+        .unwrap_or(PerlExporterProbe::NotFound)
 }
 
 /// Whether `candidate ripr-facts --help` succeeds and documents `--schema`.
@@ -2412,6 +2455,16 @@ fn perl_exporter_lines(exporter: &output::doctor::DoctorPerlExporter) -> Vec<Str
             crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
             crate::domain::PERL_FACT_EXPORTER
         )],
+        DoctorPerlExporterState::Refused => vec![
+            format!(
+                "exporter: refused `{}` (not run): resolved path is inside the analyzed checkout, so doctor does not execute it",
+                display_text(exporter.executable.as_deref().unwrap_or_default())
+            ),
+            format!(
+                "note: set {}=1 to trust it, or put the exporter outside the repo and on PATH",
+                crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+            ),
+        ],
     }
 }
 
@@ -5340,6 +5393,69 @@ mod tests {
             "Unix PATH prove must resolve: {from_prove:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn perl_path_exporter_refused_only_inside_root_without_opt_in() -> Result<(), String> {
+        // #5349: canonical location decides, not the PATH spelling.
+        let root = unique_command_test_dir("doctor-perl-refused-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let inside_bin = inside.join("perllsp");
+        std::fs::write(&inside_bin, "x").map_err(|e| format!("write inside: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-outside");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let outside_bin = outside.join("perllsp");
+        std::fs::write(&outside_bin, "x").map_err(|e| format!("write outside: {e}"))?;
+        assert!(perl_path_exporter_refused(&inside_bin, &root, false));
+        assert!(!perl_path_exporter_refused(&inside_bin, &root, true));
+        assert!(!perl_path_exporter_refused(&outside_bin, &root, false));
+        assert!(!perl_path_exporter_refused(
+            &root.join("missing").join("perllsp"),
+            &root,
+            false
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn perl_path_exporter_refused_follows_symlink_into_root() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-perl-symlink-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let target = inside.join("perllsp");
+        std::fs::write(&target, "x").map_err(|e| format!("write target: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-symlink-out");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let link = outside.join("perllsp");
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| format!("symlink: {e}"))?;
+        assert!(perl_path_exporter_refused(&link, &root, false));
+        assert!(!perl_path_exporter_refused(&link, &root, true));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[test]
+    fn perl_exporter_lines_report_refused_hit_with_next_step() {
+        let lines = perl_exporter_lines(&exporter_typed(&PerlExporterProbe::Refused {
+            bin: "/repo/bin/perllsp".to_string(),
+        }));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].contains("refused")
+                && lines[0].contains("(not run)")
+                && lines[0].contains("inside the analyzed checkout"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1")
+                && lines[1].contains("outside the repo"),
+            "{lines:?}"
+        );
     }
 
     #[test]
