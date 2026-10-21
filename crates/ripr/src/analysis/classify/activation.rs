@@ -4773,11 +4773,14 @@ mod tests {
     }
 
     /// The equality / helper / constant rows are pushed before the shared
-    /// `sort_value_facts` in `activation_evidence`, so two test files calling
-    /// the owner at the same line with the same arguments still yield exactly
-    /// one equality fact (the first path), in either input order.
+    /// `sort_value_facts` in `activation_evidence`, so they follow the same
+    /// identity rule as every other value fact: file is part of the source
+    /// location. Two test files calling the owner at the same line with the
+    /// same arguments keep two distinct facts (one per file, deterministic
+    /// path order, either input order); only exact same-file duplicates
+    /// collapse.
     #[test]
-    fn same_line_equality_from_two_files_collapses_through_activation_evidence() {
+    fn same_line_equality_from_two_files_keeps_one_fact_per_file_through_activation_evidence() {
         let owner = function(
             "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
         );
@@ -4807,10 +4810,17 @@ mod tests {
                 .iter()
                 .filter(|fact| fact.value == "amount == threshold")
                 .collect::<Vec<_>>();
-            assert_eq!(equalities.len(), 1, "{equalities:?}");
+            let files = equalities
+                .iter()
+                .map(|fact| fact.file.as_deref())
+                .collect::<Vec<_>>();
             assert_eq!(
-                equalities[0].file.as_deref(),
-                Some(std::path::Path::new("tests/a.rs"))
+                files,
+                vec![
+                    Some(std::path::Path::new("tests/a.rs")),
+                    Some(std::path::Path::new("tests/b.rs")),
+                ],
+                "{equalities:?}"
             );
         }
     }
