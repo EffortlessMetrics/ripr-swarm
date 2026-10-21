@@ -877,6 +877,15 @@ the owner but those tests were not extracted), the Rust adapter emits one
 same crate do not make the run partial. Changed files that fall back lexically
 are a separate `producer_failure` lane (#4722), not this limitation.
 
+A Rust file outside the diff that a typed parse limit declined
+(`rust_nesting_budget`, or a source that is not UTF-8) makes the run partial
+whether or not it is a related test file: one aggregate `producer_failure`
+limitation names up to three files with their limit token and counts the rest in
+`affected_items`, so a declined file is never complete by omission (#9308,
+#4511). Plain syntax errors in unchanged files stay on the narrower
+`rust_lexical_test_index_partial` rule above. Changed declined files keep their
+own per-file #4722 limitation.
+
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is
 omitted when no supported alignment item is present, so existing consumers can
@@ -4173,10 +4182,15 @@ Field contract:
   `helper_owner_call` extends the existing relation taxonomy without
   changing the field shape.
 - `scope` — always `"repo"`.
-- `run_status` — always present; one of `"complete"` or
-  `"seam_limit_applied"`. `"complete"` means the run analyzed all
-  seams. `"seam_limit_applied"` means the inventory cap or pilot artifact
-  budget truncated the reported population. Consumers must read `run_status` before
+- `run_status` — always present; one of `"complete"`,
+  `"seam_limit_applied"` or `"limited_declined_files"`. `"complete"` means the
+  run analyzed all seams. `"seam_limit_applied"` means the inventory cap or
+  pilot artifact budget truncated the reported population.
+  `"limited_declined_files"` means a parse limit declined one or more Rust
+  files (`rust_nesting_budget`, or a source that is not UTF-8), which were read
+  lexically and emit no probe shapes, so their seams are under-credited; a seam
+  cut keeps `"seam_limit_applied"` and still lists the declined files in
+  `limitations[]` (#9308). Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
 - `limitations[]` — present when repo exposure has a named run limitation or
@@ -4188,6 +4202,10 @@ Field contract:
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
     `control` and `repair_route` name that inventory control.
+  - `category: "rust_files_declined"` names the declined Rust files:
+    `declined_file_count`, up to three `declined_files[]` entries of
+    `{path, reason}` (the typed static-limit reason), `declined_files_omitted`
+    when more exist, `repair_route` and `detail` (#9308).
   - `category: "pilot_seam_budget_applied"` identifies a pilot artifact
     budget cut, with the same count/source fields and `control:
     "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
@@ -16743,6 +16761,11 @@ Field contract:
   file_count, enabled: false, guidance}`; pilot bypasses the Rust inventory
   in that state, so the empty ranking discloses the exclusion rather than a
   clean result, on the terminal and Markdown as well as here.
+  `declined_rust_files` is a separate top-level field next to `seam_limit`,
+  additive and present only when a parse limit declined Rust files (#9308): it
+  carries `{file_count, files[] of {path, reason}, files_omitted, guidance}`.
+  `status` stays `"complete"` (the run finished and ranked); the matching
+  `repo-exposure.json` reports `run_status: "limited_declined_files"`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam

@@ -187,6 +187,9 @@ pub(crate) struct ClassifiedSeamsReport {
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
+    /// Rust files a parse limit declined (#9308). Their seams are
+    /// under-credited, so a consumer must not read the run as complete.
+    pub(crate) declined_rust_files: Vec<rust_index::DeclinedRustFile>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
@@ -280,6 +283,10 @@ fn inventory_classified_seams_report_inner(
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
+                    declined_rust_files: rust_index::declined_rust_files_at(
+                        root,
+                        &lexical_fallback_files,
+                    ),
                 });
             }
             CacheLoad::Miss => {
@@ -338,6 +345,10 @@ fn inventory_classified_seams_report_inner(
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
+                declined_rust_files: rust_index::declined_rust_files_at(
+                    root,
+                    &lexical_fallback_files,
+                ),
             });
         }
         CacheLoad::Miss => {
@@ -405,6 +416,7 @@ fn inventory_classified_seams_report_inner(
         limit_info,
         skipped_generated,
         naming_only_skips,
+        declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
     })
 }
 

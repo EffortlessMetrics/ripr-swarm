@@ -863,9 +863,10 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
         crate::output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         crate::output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
-    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_paths(
+    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),
