@@ -1016,11 +1016,29 @@ fn observed_input_separates_threshold_move(
     {
         return false;
     }
-    call_values_for_owner(owner, &parameters, related_tests, helper_chain, index)
-        .iter()
-        .filter_map(|row| parameter_value(row, &new_left))
-        .filter_map(|cell| plain_integer(&cell.value))
-        .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
+    // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
+    // may be another function, so a qualified call is never a separating
+    // input. Helper-transferred rows are not read either (fail-closed).
+    let _ = (helper_chain, index);
+    let call_pattern = format!("{}(", owner.name);
+    owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |_, call| {
+            call.text.match_indices(&call_pattern).all(|(start, _)| {
+                !call.text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == ':' || ch == '.')
+            })
+        },
+    )
+    .iter()
+    .filter_map(|row| parameter_value(row, &new_left))
+    .filter_map(|cell| plain_integer(&cell.value))
+    .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
 }
 
 #[allow(

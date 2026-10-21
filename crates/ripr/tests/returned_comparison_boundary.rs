@@ -413,3 +413,42 @@ fn a_mutated_parameter_does_not_take_the_intermediate_input() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn an_equality_literal_move_is_separated_only_by_an_input_equal_to_one_literal()
+-> Result<(), String> {
+    // `x == 100` to `x == 102`: `thr(100)` is true before and false after, so
+    // it separates the versions; 101 equals neither literal and does not.
+    let separating = findings(
+        "    x == 102",
+        "    x == 100",
+        "use thr::thr;\n\n#[test]\nfn old() {\n    assert!(!thr(100));\n}\n",
+    )?;
+    let separating = family(&separating, "return_value")?;
+    assert_eq!(separating.class, ExposureClass::Exposed, "{separating:?}");
+    let between = findings(
+        "    x == 102",
+        "    x == 100",
+        "use thr::thr;\n\n#[test]\nfn neither() {\n    assert!(!thr(101));\n}\n",
+    )?;
+    let between = family(&between, "return_value")?;
+    assert_ne!(between.class, ExposureClass::Exposed, "{between:?}");
+    Ok(())
+}
+
+#[test]
+fn a_qualified_rival_call_is_not_a_separating_input() -> Result<(), String> {
+    // `rival::thr(101)` is not the owner's `thr`; only 50 and 500 reach it.
+    let rival = findings(
+        "    x > 102",
+        OLD,
+        "use thr::thr;\n\nmod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n\n#[test]\nfn other() {\n    assert!(rival::thr(101));\n}\n",
+    )?;
+    assert_gap_named(&rival, true)?;
+    let owner = family(&rival, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // Positive control: a plain `thr(101)` does separate.
+    let plain = findings("    x > 102", OLD, INTERMEDIATE_INPUT)?;
+    assert_gap_named(&plain, false)?;
+    Ok(())
+}
