@@ -96,8 +96,8 @@ fn selector_recovery_replays_committed_worktree_and_supplied_diff_scopes() -> Re
         (
             "dirty default",
             vec!["--base", "HEAD~1"],
-            &worktree,
             &committed,
+            &worktree,
         ),
         (
             "committed",
@@ -364,4 +364,114 @@ fn committed_context_from_nested_cwd_selects_the_check_finding() -> Result<(), S
     assert!(missed.stdout.is_empty());
     ignore_remove_dir_all(&fixture.root);
     Ok(())
+}
+
+fn composed_recovery_choices(staged: bool) -> Result<(), String> {
+    let fixture = selector_scope_fixture()?;
+    if staged {
+        run_git(&fixture.root, &["add", "src"])?;
+    }
+    let nested = fixture.root.join("src");
+    let run = |args: &[&str]| {
+        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&nested), args)
+            .map_err(|err| format!("nested recovery CLI: {err}"))
+    };
+    for command in ["explain", "context"] {
+        // Recovery preference must not change the dirty-default analysis.
+        let mut hit = vec![command, "--base", "HEAD~1"];
+        if command == "context" {
+            hit.push("--at");
+        }
+        hit.push(&fixture.worktree);
+        let selected = run(&hit)?;
+        assert_success(&selected);
+        assert!(String::from_utf8_lossy(&selected.stdout).contains(&fixture.worktree));
+
+        for (label, scope, missing, expected, excluded, listings) in [
+            (
+                "dirty default",
+                vec!["--base", "HEAD~1"],
+                &fixture.committed,
+                &fixture.committed,
+                &fixture.worktree,
+                2,
+            ),
+            (
+                "explicit worktree",
+                vec!["--base", "HEAD~1", "--worktree"],
+                &fixture.committed,
+                &fixture.worktree,
+                &fixture.committed,
+                1,
+            ),
+            (
+                "explicit committed",
+                vec!["--base", "HEAD~1", "--committed"],
+                &fixture.worktree,
+                &fixture.committed,
+                &fixture.worktree,
+                2,
+            ),
+            (
+                "supplied diff",
+                vec!["--diff", &fixture.patch],
+                &fixture.worktree,
+                &fixture.committed,
+                &fixture.worktree,
+                1,
+            ),
+        ] {
+            let mut args = vec![command];
+            args.extend_from_slice(&scope);
+            if command == "context" {
+                args.push("--at");
+            }
+            args.push(missing);
+            let miss = run(&args)?;
+            assert_eq!(miss.status.code(), Some(2), "{label}: {miss:?}");
+            assert!(miss.stdout.is_empty(), "{label}: {miss:?}");
+            let stderr = String::from_utf8_lossy(&miss.stderr);
+            let emitted: Vec<_> = stderr
+                .split('`')
+                .filter(|text| text.starts_with("ripr check "))
+                .collect();
+            assert_eq!(emitted.len(), listings, "{label}: {stderr}");
+            if label == "dirty default" {
+                assert!(stderr.contains("working-tree scope was analyzed and also missed"));
+            }
+            for (index, printed) in emitted.iter().enumerate() {
+                let args = printed_ripr_args(printed)?;
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let replay = run(&args)?;
+                assert_success(&replay);
+                let (expected, excluded) = if index == 0 {
+                    (expected, excluded)
+                } else {
+                    (&fixture.worktree, &fixture.committed)
+                };
+                let report: serde_json::Value = serde_json::from_slice(&replay.stdout)
+                    .map_err(|err| format!("recovery listing JSON: {err}"))?;
+                let findings = report["findings"].as_array().ok_or("missing findings")?;
+                assert!(findings.iter().any(|f| f["id"] == expected.as_str()));
+                assert!(!findings.iter().any(|f| f["id"] == excluded.as_str()));
+                if label != "supplied diff" {
+                    let worktree = index > 0 || label == "explicit worktree";
+                    assert_eq!(args.contains(&"--worktree"), worktree);
+                    assert_eq!(args.contains(&"--committed"), !worktree);
+                }
+            }
+        }
+    }
+    ignore_remove_dir_all(&fixture.root);
+    Ok(())
+}
+
+#[test]
+fn composed_recovery_preserves_unstaged_analysis_and_explicit_sources() -> Result<(), String> {
+    composed_recovery_choices(false)
+}
+
+#[test]
+fn composed_recovery_preserves_staged_analysis_and_explicit_sources() -> Result<(), String> {
+    composed_recovery_choices(true)
 }
