@@ -403,6 +403,7 @@ tests = [
   "crates/ripr/src/app/context.rs::tests::context_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
   "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::selector_recovery_replays_committed_worktree_and_supplied_diff_scopes",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]
@@ -984,6 +985,9 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
+  "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters",
   "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
   "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
   "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
@@ -1127,6 +1131,8 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/diff/path.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/workspace_status.rs",
   "crates/ripr/src/app/python_repair_binding.rs",
@@ -12914,6 +12920,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_admission_preserves_binding_and_operand_refusals",
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_namespace_in_another_source_file_stays_uncredited",
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_configuration_and_lock_changes_revoke_cached_identity",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::a_test_file_that_is_also_a_module_parent_is_read_the_same_in_either_order",
   "crates/ripr/tests/owner_pin_execution.rs::literal_json_constructor_matches_real_callback_and_runtime_controls",
 
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
@@ -13837,6 +13844,10 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::gap_details_disclose_pre_cap_related_test_totals_across_refreshes",
+  "crates/ripr/src/mcp/gaps.rs::tests::related_test_totals_bind_equal_windows_to_distinct_evidence",
+  "crates/ripr/src/mcp/gaps.rs::tests::legacy_serialized_findings_project_retained_totals_without_digest_drift",
+  "crates/ripr/src/mcp/workspace.rs::tests::related_test_totals_change_snapshot_identity_without_changing_rows",
   "crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_discovery_client_lists_calls_and_reads_status",

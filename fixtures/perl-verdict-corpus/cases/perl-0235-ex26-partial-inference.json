@@ -52,7 +52,7 @@
     "packet": "packets/perl-0235-ex26-partial-inference.json",
     "sha256": "641ff403e6617153f2e065011bab35684aa7bbabae9e6a8f7e174c395d6538e3",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#26"
