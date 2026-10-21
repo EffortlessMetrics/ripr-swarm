@@ -239,3 +239,217 @@ fn boundary_input_row_makes_the_finding_exposed_with_no_row_miss() -> Result<(),
     );
     Ok(())
 }
+
+#[test]
+fn helper_owner_call_row_keeps_no_miss_inside_a_weak_finding() -> Result<(), String> {
+    // The test reaches the helper through its same-module caller: a path
+    // exists, and the row has no oracle, so no reason is established.
+    let finding = classify(
+        "def _validate_epoch(epoch):\n    if epoch >= 0:\n        return epoch\n    raise ValueError('bad')\n\n\nclass Version:\n    def __init__(self, text):\n        self.epoch = _validate_epoch(int(text))\n",
+        "from src.subject import Version\n\n\ndef test_epoch_zero():\n    assert Version('0').epoch == 0\n",
+        2,
+        "    if epoch > 0:",
+        "    if epoch >= 0:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(finding.related_tests[0].miss, None);
+    Ok(())
+}
+
+// Direct reads of the pass, so a gate is exercised independently of the class
+// the classifier would have chosen.
+mod direct {
+    use super::super::assertion_selection::PythonAssertionFocus;
+    use super::super::boundary::python_row_boundary_omission;
+    use super::super::owners_tests::{extract_owners, extract_tests};
+    use super::super::probe_shape::classify_probe_shape;
+    use super::super::related_tests::{
+        PythonRelationKind, related_test_candidates, related_tests_for_candidates,
+    };
+    use super::super::row_miss::{RowMissChange, annotate_row_misses};
+    use super::super::{PythonOwner, PythonTest, owner_for_changed_line};
+    use crate::domain::{ExposureClass, RelatedTestMiss};
+    use std::path::Path;
+
+    struct Case {
+        owner: PythonOwner,
+        tests: Vec<PythonTest>,
+        before: String,
+        after: String,
+    }
+
+    fn case(
+        source: &str,
+        tests: &str,
+        line: usize,
+        before: &str,
+        after: &str,
+    ) -> Result<Case, String> {
+        case_in(
+            "src/subject.py",
+            "tests/test_subject.py",
+            source,
+            tests,
+            line,
+            before,
+            after,
+        )
+    }
+
+    fn case_in(
+        owner_file: &str,
+        test_file: &str,
+        source: &str,
+        tests: &str,
+        line: usize,
+        before: &str,
+        after: &str,
+    ) -> Result<Case, String> {
+        let file = Path::new(owner_file);
+        let owners = extract_owners(file, source);
+        let owner = owner_for_changed_line(file, line, &owners)
+            .cloned()
+            .ok_or_else(|| "changed line must have an owner".to_string())?;
+        Ok(Case {
+            owner,
+            tests: extract_tests(Path::new(test_file), tests),
+            before: before.to_string(),
+            after: after.to_string(),
+        })
+    }
+
+    /// The relation of each candidate and the miss the pass assigns under
+    /// `class` and `has_static_limit`.
+    fn run(
+        case: &Case,
+        class: &ExposureClass,
+        has_static_limit: bool,
+    ) -> Vec<(PythonRelationKind, Option<RelatedTestMiss>)> {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        let mut rows = related_tests_for_candidates(&candidates, Some(&focus));
+        annotate_row_misses(
+            &mut rows,
+            &candidates,
+            class,
+            has_static_limit,
+            &RowMissChange {
+                owner: &case.owner,
+                line_text: &case.after,
+                old_line_text: Some(&case.before),
+                focus: &focus,
+            },
+            &case.tests,
+        );
+        candidates
+            .iter()
+            .zip(&rows)
+            .map(|(candidate, row)| (candidate.relation, row.miss))
+            .collect()
+    }
+
+    fn score_case() -> Result<Case, String> {
+        case(
+            "def score(value):\n    return 8\n",
+            "from src.subject import score\n\ndef test_score():\n    assert score(0)\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )
+    }
+
+    #[test]
+    fn a_static_limit_keeps_every_row_none_even_when_the_class_says_weak() -> Result<(), String> {
+        let case = score_case()?;
+        // Positive control: without a static limit the same row has its miss.
+        assert_eq!(
+            run(&case, &ExposureClass::WeaklyExposed, false),
+            vec![(
+                PythonRelationKind::SyntacticCall,
+                Some(RelatedTestMiss::WeakAssertion)
+            )]
+        );
+        let rows = run(&case, &ExposureClass::WeaklyExposed, true);
+        assert_eq!(rows.len(), 1);
+        assert!(rows.iter().all(|(_, miss)| miss.is_none()), "{rows:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn dunder_protocol_row_is_not_a_no_call_path_and_fixture_name_row_is() -> Result<(), String> {
+        let dunder = case(
+            "class Box:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, other):\n        return self.v == other.v\n",
+            "from src.subject import Box\n\ndef test_box():\n    assert Box(1) == Box(1)\n",
+            5,
+            "        return self.v != other.v",
+            "        return self.v == other.v",
+        )?;
+        let rows = run(&dunder, &ExposureClass::WeaklyExposed, false);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, PythonRelationKind::DunderProtocol);
+        assert_eq!(rows[0].1, None);
+
+        let fixture = case_in(
+            "src/pricing.py",
+            "tests/test_checkout.py",
+            "def calculate_fee(amount):\n    return amount + 2\n",
+            "from src.pricing import calculate_fee\n\n\ndef test_checkout_total(pricing):\n    fee = calculate_fee\n    assert 102 == 102\n",
+            2,
+            "    return amount + 1",
+            "    return amount + 2",
+        )?;
+        let rows = run(&fixture, &ExposureClass::WeaklyExposed, false);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
+        assert_eq!(rows[0].1, Some(RelatedTestMiss::NoCallPath));
+        Ok(())
+    }
+
+    fn omission(case: &Case, index: usize) -> bool {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        python_row_boundary_omission(
+            &case.after,
+            Some(&case.before),
+            &case.owner,
+            &candidates[index],
+            &candidates,
+            &focus,
+        )
+    }
+
+    #[test]
+    fn old_equality_operands_count_as_the_boundary() -> Result<(), String> {
+        // `level == 2` -> `level == 3`: a call at 2 or 3 separates old from new.
+        let case = case(
+            "def is_pro(level):\n    if level == 3:\n        return True\n    return False\n",
+            "from src.subject import is_pro\n\ndef test_a_off_both():\n    assert is_pro(1) == False\n\ndef test_b_on_old():\n    assert is_pro(2) == False\n\ndef test_c_on_new():\n    assert is_pro(3) == True\n",
+            2,
+            "    if level == 2:",
+            "    if level == 3:",
+        )?;
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        let mut names: Vec<_> = candidates.iter().map(|c| c.test.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["test_a_off_both", "test_b_on_old", "test_c_on_new"],
+            "fixture rows must parse"
+        );
+        let index = |name: &str| candidates.iter().position(|c| c.test.name == name);
+        let at = |name: &str| index(name).ok_or_else(|| format!("missing {name}"));
+        assert!(omission(&case, at("test_a_off_both")?), "off both pairs");
+        assert!(
+            !omission(&case, at("test_b_on_old")?),
+            "a call on the OLD pair separates old from new"
+        );
+        assert!(
+            !omission(&case, at("test_c_on_new")?),
+            "a call on the NEW pair"
+        );
+        Ok(())
+    }
+}

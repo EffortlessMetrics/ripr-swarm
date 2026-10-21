@@ -9,8 +9,10 @@
 //! Emitted (only on a `weakly_exposed` finding, and only from facts the row
 //! owns; a finding-wide fact never lends a row its reason):
 //!
-//! - `no_call_path`: a heuristic-only relation (`dunder_protocol`,
-//!   `same_stem`, `test_name_similarity`, `fixture_name`).
+//! - `no_call_path`: a name-or-location-only relation (`same_stem`,
+//!   `test_name_similarity`, `fixture_name`). `dunder_protocol` is excluded:
+//!   the test builds the owner's class and reaches the method through an
+//!   implicit protocol call, so "no call to the changed code" would be false.
 //! - `weak_assertion`: the family-selected assertion (#5572) is weak or smoke.
 //! - `missing_input`: a strong family-selected assertion on a predicate change
 //!   whose own owner calls all resolve both compared operands off the boundary.
@@ -31,6 +33,9 @@
 //!   (`oracle_related_tests`) read, so emitting it would move decisions.
 //! - `assertion_not_credited`: no typed established refusal exists (#5446);
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
+//! - a local stand-in row (`fee = Mock(...)` shadowing the imported owner) keeps
+//!   its `observation_unconfirmed`: stand-in detection is textual and errs
+//!   toward withholding credit, so it cannot support an affirmative no-call claim.
 //! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;
 //!   `missing_discriminators` is finding-wide.
 
@@ -76,12 +81,12 @@ fn row_miss(
 ) -> Option<RelatedTestMiss> {
     if !candidate.relation.uses_oracle() {
         return match candidate.relation {
-            PythonRelationKind::DunderProtocol
-            | PythonRelationKind::SameStem
+            PythonRelationKind::SameStem
             | PythonRelationKind::TestNameSimilarity
             | PythonRelationKind::FixtureName => Some(RelatedTestMiss::NoCallPath),
-            // A fixture or same-module caller does call the owner, and a
-            // skip / xfail row is `activation_limited`: no path claim.
+            // A fixture or same-module caller does call the owner, a dunder
+            // protocol row reaches it implicitly, and a skip / xfail row is
+            // `activation_limited`: no path claim.
             _ => None,
         };
     }
