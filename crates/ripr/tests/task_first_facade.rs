@@ -2360,6 +2360,143 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #8726: once an attempt spent its after-phase retry budget it refuses its
+/// after phase, so a repeated `ripr repair` must start a fresh attempt (the
+/// shared repair-start gate still admits the seam) instead of resuming the
+/// dead one.
+#[test]
+fn repair_after_a_spent_retry_budget_starts_a_fresh_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-spent-budget")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &ids[0],
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    assert_eq!(read_manifest(root, &ids[0])?["after_refusal_count"], 5);
+
+    let second = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&second, 0, "repair after the budget is spent");
+    let after = attempt_ids(root);
+    assert_eq!(
+        after.len(),
+        2,
+        "a fresh attempt must be prepared: {after:?}"
+    );
+    assert!(after.contains(&ids[0]), "the spent attempt stays on disk");
+    // The spent attempt is not a continue candidate: a bare continue picks the
+    // fresh attempt instead of reporting two awaiting attempts.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 0, "bare continue after the spent attempt");
+    let fresh = after
+        .iter()
+        .find(|id| **id != ids[0])
+        .ok_or("no fresh attempt")?;
+    assert_eq!(read_manifest(root, fresh)?["state"], "ready_to_finish");
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "awaiting_edit");
+    Ok(())
+}
+
+/// #8726: a spent retry budget dominates a moved HEAD. The diverged-head
+/// recovery would otherwise offer "reset, then rerun the after phase", a command
+/// the spent attempt refuses without running.
+#[test]
+fn spent_retry_budget_withholds_the_diverged_head_after_recipe() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-spent-budget-diverged")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+    let attempt_id = ids[0].clone();
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &attempt_id,
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_OFF_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write edit: {error}"))?;
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-a",
+            "--amend",
+            "--allow-empty",
+            "--no-edit",
+        ],
+    )?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+    assert!(
+        doc["attempt"]["diverged_recovery"].is_null(),
+        "a spent attempt offers no reset-then-after recipe: {doc}"
+    );
+    assert_eq!(doc["attempt"]["last_after_refusal"]["refusal_count"], 5);
+    let offered = doc["next_action"]["command"].as_str().unwrap_or_default();
+    assert!(
+        !offered.contains(&attempt_id) && !offered.contains("--phase after"),
+        "status offered the spent attempt's after phase: {doc}"
+    );
+    Ok(())
+}
+
 /// #8742: a repeated `ripr repair` for the seam that already has an attempt
 /// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
 /// the printed `continue` command names the existing attempt, and a bare
@@ -3337,6 +3474,528 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     Ok(())
 }
 
+/// A test that does not touch the boundary input, so the seam stays open.
+const FIXTURE_OFF_BOUNDARY_TEST: &str = "\n#[test]\nfn above_threshold_by_a_little() {\n    assert_eq!(discounted_total(150, 100), 140);\n}\n";
+
+/// Run the advanced before phase, append `test` to the focused test file,
+/// run the after phase, and return the attempt ID and root argument.
+fn attempt_with_focused_edit(fixture: &Fixture, test: &str) -> Result<(String, String), String> {
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+        .map_err(|error| format!("write focused edit: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_exit(&after, 0, "advanced after phase");
+    Ok((attempt_id, root_arg))
+}
+
+/// #8766: once the build's own repair gate refuses a new start, `status` and
+/// `continue` must say the remaining work is by hand instead of printing the
+/// refused start. The refusal is first shown through the real `ripr repair`
+/// surface so the test cannot pass on a gate that never refused.
+#[test]
+fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-withheld-restart")?;
+    let (attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    patch_manifest(root, &attempt_id, &serde_json::json!({ "state": "failed" }))?;
+
+    let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
+    assert!(
+        stderr_text(&refused).contains("already grip it (exposed)"),
+        "precondition: the gate refuses the start and says why:\n{}",
+        stderr_text(&refused)
+    );
+
+    // The witness seam is already gripped: the note must say so as a
+    // static reading and must not tell the reader to strengthen a test.
+    let withheld = |label: &str, text: &str| {
+        assert!(
+            !text.contains("--phase before")
+                && !text.contains("start a new attempt")
+                && !text.contains("start fresh")
+                && !text.contains("start with `ripr repair"),
+            "{label} printed a start the same build refuses:\n{text}"
+        );
+        assert!(
+            text.contains("already grip it (exposed)")
+                && text.contains("not a runtime-verified result")
+                && !text.contains("by hand"),
+            "{label} must say the seam is already gripped on static evidence:\n{text}"
+        );
+    };
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    withheld("status", &stdout_text(&status));
+    let attempt_status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    withheld("attempt status", &stdout_text(&attempt_status));
+    let status_json = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout_text(&status_json)).map_err(|e| e.to_string())?;
+    assert!(
+        doc["next_action"].is_null(),
+        "attempt status JSON must carry no restart: {doc}"
+    );
+    assert!(
+        !stdout_text(&status_json).contains("--phase before"),
+        "attempt status JSON printed a start the same build refuses: {doc}"
+    );
+    // The inventory JSON carries each attempt's `command`; a restart the
+    // gate refuses is `null` there too.
+    let inventory_json = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let inventory: serde_json::Value =
+        serde_json::from_str(&stdout_text(&inventory_json)).map_err(|e| e.to_string())?;
+    let attempts = inventory["repair_attempts"]
+        .as_array()
+        .ok_or_else(|| format!("repair_attempts missing: {inventory}"))?;
+    assert!(!attempts.is_empty(), "precondition: the attempt is listed");
+    for attempt in attempts {
+        assert!(
+            attempt["command"].is_null(),
+            "repair_attempts[].command printed a refused start: {attempt}"
+        );
+    }
+    assert!(
+        !stdout_text(&inventory_json).contains("--phase before"),
+        "inventory JSON printed a start the same build refuses: {inventory}"
+    );
+    let cont = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&cont, 3, "continue on the failed attempt");
+    withheld("continue --attempt", &stderr_text(&cont));
+    let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
+    let bare_text = stderr_text(&bare);
+    assert!(
+        !bare_text.contains("start with `ripr repair --root")
+            && bare_text.contains("starts nothing right now"),
+        "bare continue offered `ripr repair`, which refuses:\n{bare_text}"
+    );
+    Ok(())
+}
+
+/// #8766: a seam id the current inventory no longer names (ids move with
+/// byte offsets) cannot be verified, so `status` and `continue` print no
+/// start for it and say it could not be verified.
+#[test]
+fn status_and_continue_do_not_offer_a_start_for_a_stale_seam_id() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-stale-seam")?;
+    let (attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    patch_manifest(root, &attempt_id, &serde_json::json!({ "state": "failed" }))?;
+    // Shift the production code so the seam's id (which moves with its byte
+    // offset) no longer matches the id the attempt recorded.
+    let lib_path = root.join("src/lib.rs");
+    let lib = std::fs::read_to_string(&lib_path).map_err(|error| format!("read lib: {error}"))?;
+    std::fs::write(&lib_path, format!("// shifted\n\n{lib}"))
+        .map_err(|error| format!("shift lib: {error}"))?;
+    let moved = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert!(
+        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no seam"),
+        "precondition: the recorded seam id no longer resolves:\n{}",
+        stderr_text(&moved)
+    );
+
+    let unverified = |label: &str, text: &str| {
+        assert!(
+            !text.contains("--phase before")
+                && !text.contains("start a new attempt")
+                && !text.contains("start fresh")
+                && text.contains("could not verify"),
+            "{label} must withhold the start and say it could not verify:\n{text}"
+        );
+    };
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    unverified("status", &stdout_text(&status));
+    let attempt_status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    unverified("attempt status", &stdout_text(&attempt_status));
+    let cont = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&cont, 3, "continue on the failed attempt");
+    unverified("continue --attempt", &stderr_text(&cont));
+    Ok(())
+}
+
+/// #8766: the start `ripr pilot` recorded for its top seam is repeated by
+/// `ripr status` only while the repair gate still admits that seam. After
+/// the exact boundary assertion lands, `ripr repair <seam>` refuses (the seam
+/// is already gripped on static evidence), so `status` must stop advertising
+/// the recorded `agent repair --phase before` start. The first half is the
+/// admitted-start control on the same workspace.
+#[test]
+fn status_drops_the_pilot_recorded_start_once_the_seam_is_gripped() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-pilot-then-strengthen")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+    assert_exit(&pilot, 0, "ripr pilot");
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.json"))
+            .map_err(|error| format!("read pilot summary: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"][0]["seam_id"], FIXTURE_SEAM,
+        "precondition: pilot ranked the fixture seam: {summary}"
+    );
+    assert!(
+        summary["next"]["repair_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("--phase before")),
+        "precondition: pilot recorded a repair start: {summary}"
+    );
+
+    // Control: the seam is still admitted, so status repeats the start.
+    let before = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let before_text = stdout_text(&before);
+    assert!(
+        before_text.contains("--phase before") && !before_text.contains("repair_start_withheld"),
+        "an admitted pilot start is kept:\n{before_text}"
+    );
+
+    // Strengthen the test with the exact boundary assertion.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write boundary test: {error}"))?;
+    let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
+
+    let after = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let after_text = stdout_text(&after);
+    assert!(
+        !after_text.contains("--phase before")
+            && after_text.contains("repair_start_withheld")
+            && after_text.contains("already grip it (exposed)"),
+        "status advertised a pilot start the same build refuses:\n{after_text}"
+    );
+    Ok(())
+}
+
+/// Run the advanced before phase, append `test` to the focused test file, add
+/// a stray file outside the edit cage, and run the after phase, which the
+/// cage refuses. Returns the attempt ID and root argument.
+fn attempt_refused_by_stray_file(
+    fixture: &Fixture,
+    test: &str,
+) -> Result<(String, String), String> {
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+        .map_err(|error| format!("write focused edit: {error}"))?;
+    std::fs::write(root.join("stray.txt"), "outside the edit cage\n")
+        .map_err(|error| format!("write stray file: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert!(
+        !after.status.success(),
+        "precondition: the stray file must violate the edit cage"
+    );
+    Ok((attempt_id, root_arg))
+}
+
+/// #8766: the refusal an attempt recorded embeds a `--phase before` recipe.
+/// When the repair gate refuses a new start, status projects the refusal
+/// without that recipe (control: with the gap still open it keeps it).
+#[test]
+fn recorded_refusal_text_drops_the_start_recipe_when_the_gate_refuses() -> Result<(), String> {
+    let refusal_reason = |fixture: &Fixture, root_arg: &str| -> Result<String, String> {
+        let status = run_ripr(&fixture.root, &["status", "--root", root_arg, "--json"])?;
+        let doc: serde_json::Value =
+            serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+        doc["repair_attempts"][0]["last_after_refusal"]["reason"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("no recorded refusal reason: {doc}"))
+    };
+
+    let open = Fixture::boundary("facade-refusal-open")?;
+    let (_, open_arg) = attempt_refused_by_stray_file(&open, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let open_reason = refusal_reason(&open, &open_arg)?;
+    assert!(
+        open_reason.contains("--phase before"),
+        "control: an admitted seam keeps the recorded recipe: {open_reason}"
+    );
+
+    let gripped = Fixture::boundary("facade-refusal-gripped")?;
+    let (_, gripped_arg) = attempt_refused_by_stray_file(&gripped, FIXTURE_BOUNDARY_TEST)?;
+    let gripped_reason = refusal_reason(&gripped, &gripped_arg)?;
+    assert!(
+        !gripped_reason.contains("--phase before")
+            && gripped_reason.contains("a new attempt is not offered"),
+        "a refused seam must not keep the recorded start recipe: {gripped_reason}"
+    );
+    Ok(())
+}
+
+/// #8766: the diverged-head recovery keeps its reset route and drops the
+/// new-attempt route when the repair gate refuses a new start; the status
+/// next command keeps the recovery (reset, then the after phase).
+#[test]
+fn diverged_head_recovery_drops_only_the_restart_when_the_gate_refuses() -> Result<(), String> {
+    let amended_status =
+        |fixture: &Fixture, test: &str| -> Result<(String, serde_json::Value), String> {
+            let root = &fixture.root;
+            let root_arg = root.to_string_lossy().into_owned();
+            let before = run_ripr(
+                root,
+                &[
+                    "agent",
+                    "repair",
+                    "--root",
+                    &root_arg,
+                    "--seam-id",
+                    FIXTURE_SEAM,
+                    "--phase",
+                    "before",
+                ],
+            )?;
+            assert_exit(&before, 0, "advanced before phase");
+            let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+            let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+                .map_err(|error| format!("read pricing tests: {error}"))?;
+            std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+                .map_err(|error| format!("write focused edit: {error}"))?;
+            run_git(
+                root,
+                &[
+                    "-c",
+                    "user.name=RIPR test",
+                    "-c",
+                    "user.email=ripr@example.invalid",
+                    "commit",
+                    "-a",
+                    "--amend",
+                    "--allow-empty",
+                    "--no-edit",
+                ],
+            )?;
+            let status = run_ripr(
+                root,
+                &[
+                    "status",
+                    "--root",
+                    &root_arg,
+                    "--attempt",
+                    &attempt_id,
+                    "--json",
+                ],
+            )?;
+            let doc: serde_json::Value =
+                serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+            Ok((attempt_id, doc))
+        };
+
+    let open = Fixture::boundary("facade-diverged-open")?;
+    let (_, doc) = amended_status(&open, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let recovery = &doc["attempt"]["diverged_recovery"];
+    assert!(
+        recovery["reset"].is_string()
+            && recovery["restart"]
+                .as_str()
+                .is_some_and(|restart| restart.contains("--phase before")),
+        "control: an admitted seam keeps both recovery routes: {doc}"
+    );
+
+    let gripped = Fixture::boundary("facade-diverged-gripped")?;
+    let (attempt_id, doc) = amended_status(&gripped, FIXTURE_BOUNDARY_TEST)?;
+    let recovery = &doc["attempt"]["diverged_recovery"];
+    assert!(
+        recovery["reset"].as_str().is_some_and(
+            |reset| reset.contains("git reset --soft") && reset.contains("--phase after")
+        ),
+        "the reset route is kept: {doc}"
+    );
+    assert!(
+        recovery["restart"].is_null(),
+        "the new-attempt route is withheld: {doc}"
+    );
+    assert!(
+        !doc.to_string().contains("--phase before"),
+        "no start is printed anywhere in the attempt status: {doc}"
+    );
+    let next = &doc["next_action"];
+    assert!(
+        next["command"].as_str().is_some_and(
+            |command| command.contains(&attempt_id) && command.contains("--phase after")
+        ),
+        "the recovery route stays the next action: {doc}"
+    );
+    Ok(())
+}
+
+/// #8766: `ripr continue` runs the after phase in process, and the recovery
+/// narration of a refused after phase names a `--phase before` attempt. When
+/// the repair gate refuses a new start, that recipe is not printed (control:
+/// with the gap still open the narration keeps it).
+#[test]
+fn continue_after_phase_narration_drops_the_start_recipe_when_the_gate_refuses()
+-> Result<(), String> {
+    let narration = |label: &str, test: &str| -> Result<String, String> {
+        let fixture = Fixture::boundary(label)?;
+        let root = &fixture.root;
+        let root_arg = root.to_string_lossy().into_owned();
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+        let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+        let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read pricing tests: {error}"))?;
+        std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+            .map_err(|error| format!("write focused edit: {error}"))?;
+        std::fs::write(root.join("stray.txt"), "outside the edit cage\n")
+            .map_err(|error| format!("write stray file: {error}"))?;
+        let cont = run_ripr(
+            root,
+            &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+        )?;
+        assert!(
+            !cont.status.success(),
+            "precondition: the stray file must violate the edit cage"
+        );
+        Ok(stderr_text(&cont))
+    };
+
+    let open = narration("facade-continue-open", FIXTURE_OFF_BOUNDARY_TEST)?;
+    assert!(
+        open.contains("--phase before"),
+        "control: an admitted seam keeps the recovery recipe:\n{open}"
+    );
+    let gripped = narration("facade-continue-gripped", FIXTURE_BOUNDARY_TEST)?;
+    assert!(
+        !gripped.contains("--phase before") && gripped.contains("a new attempt is not offered"),
+        "continue printed a start the same build refuses:\n{gripped}"
+    );
+    Ok(())
+}
+
+/// #8766 control: with no attempt at all and an eligible seam the auto
+/// selector picks, the picked seam passes the shared gate and bare `continue`
+/// still offers `ripr repair`.
+#[test]
+fn bare_continue_still_offers_ripr_repair_for_an_admitted_picked_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-picked")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
+    let text = stderr_text(&bare);
+    assert!(
+        text.contains("start with `ripr repair --root"),
+        "an admitted picked seam keeps the `ripr repair` start:\n{text}"
+    );
+    Ok(())
+}
+
+/// Negative control for #8766: while the repair gate still admits the seam
+/// (the focused edit missed the boundary, so the gap stays open), `status`
+/// keeps its restart command and prints no by-hand note.
+#[test]
+fn status_keeps_the_restart_when_the_repair_gate_admits_the_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-kept-restart")?;
+    let (_attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    let text = stdout_text(&status);
+    assert!(
+        text.contains("--phase before") && !text.contains("by hand"),
+        "an admitted seam keeps its restart command:\n{text}"
+    );
+    Ok(())
+}
+
 // Trust-bound exclusion is demonstrated beside the selector
 // (`app::task_first::tests::implicit_continue_skips_trust_bound_attempts`),
 // not here: the attempt commitment forbids staging a binding by editing
@@ -3738,3 +4397,6 @@ fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Res
     );
     Ok(())
 }
+
+#[path = "task_first_facade/brief_diff_status.rs"]
+mod brief_diff_status;

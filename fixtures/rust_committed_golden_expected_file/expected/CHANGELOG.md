@@ -1,5 +1,4 @@
 # Golden Output Changes
-
 ## Pending — rust_committed_golden_expected_file (1)
 
 Reason:
@@ -35,59 +34,9 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
 
 ## Pending — rust_committed_golden_expected_file (4)
-
-Reason:
-RIPR-SPEC-0197: test-written expected file lends no owner pin (#8097)
-
-Command:
-`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — rust_committed_golden_expected_file (5)
-
-Reason:
-RIPR-SPEC-0197: test-written expected file lends no owner pin (#8097)
-
-Command:
-`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_committed_golden_expected_file (6)
-
-Reason:
-RIPR-SPEC-0197: test-written expected file lends no owner pin (#8097)
-
-Command:
-`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_committed_golden_expected_file (7)
-
-Reason:
-RIPR-SPEC-0197: test-written expected file lends no owner pin (#8097)
-
-Command:
-`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_committed_golden_expected_file (8)
 
 Reason:
 RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
@@ -100,7 +49,31 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_committed_golden_expected_file (9)
+## Pending — rust_committed_golden_expected_file (5)
+
+Reason:
+RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — rust_committed_golden_expected_file (6)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — rust_committed_golden_expected_file (7)
 
 Reason:
 RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
@@ -117,6 +90,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_committed_golden_expected_file (8)
+
+Reason:
+RIPR-SPEC-0284: unknown-sink row gloss from the context-packet clarity lane lands on this golden after merging main
 
 Command:
 `cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`

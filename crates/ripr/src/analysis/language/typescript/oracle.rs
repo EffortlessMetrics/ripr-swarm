@@ -2686,6 +2686,7 @@ pub(crate) fn is_execution_context_assertion_matcher(matcher: &str) -> bool {
 pub(crate) fn oracle_metadata_evidence_lines(
     assertion: &TypeScriptAssertion,
     test_file: &Path,
+    evidence_line: usize,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(observed) = &assertion.observed_expression {
@@ -2701,7 +2702,7 @@ pub(crate) fn oracle_metadata_evidence_lines(
     lines.push(format!(
         "typescript_oracle_evidence_ref: {}:{}",
         normalized_path(test_file),
-        assertion.line
+        evidence_line
     ));
     lines
 }
@@ -2741,12 +2742,14 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
         .filter_map(|candidate| {
             select_family_relevant_assertion(&candidate.test.assertions, Some(probe_family))
                 .assertion()
-                .map(|assertion| (assertion, &candidate.test.file))
+                .map(|assertion| (assertion, candidate.test))
         })
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {
-        Some((assertion, file)) => oracle_metadata_evidence_lines(assertion, file),
+        Some((assertion, test)) => {
+            oracle_metadata_evidence_lines(assertion, &test.file, test.evidence_line(assertion))
+        }
         None => Vec::new(),
     }
 }

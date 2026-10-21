@@ -42,6 +42,8 @@ mod value_resolution;
 mod witness;
 mod workspace;
 
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -52,11 +54,11 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, another_base_candidate, load_diff, load_diff_core,
+    AnalyzedRevisions, another_base_candidate, artifact_root_pathspec, load_diff, load_diff_core,
     load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    resolve_effective_base_core, working_tree_has_tracked_changes,
+    resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
@@ -1032,6 +1034,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    perl_cache_dir: Option<&std::path::Path>,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
@@ -1039,6 +1042,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
+        perl_cache_dir,
     )
 }
 
@@ -1048,6 +1052,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    perl_cache_dir: Option<&std::path::Path>,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -1056,6 +1061,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
+        perl_cache_dir,
         disclosure_probes,
     )
 }

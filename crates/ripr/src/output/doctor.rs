@@ -711,8 +711,9 @@ pub(crate) struct DoctorCacheStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DoctorArtifactIgnore {
-    /// `target/ripr` does not exist under the root: there is nothing to
-    /// cover yet.
+    /// None of ripr's artifact roots (the default `target/ripr` or a
+    /// relocated in-repository base) exists under the root: there is
+    /// nothing to cover yet.
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
@@ -728,8 +729,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NotChecked,
 }
 
-/// Whether git's index tracks files under ripr's artifact root
-/// (`target/ripr`) (#8276).
+/// Whether git's index tracks files under ripr's artifact roots — the
+/// default `target/ripr` plus any in-repository relocated writer base
+/// (`RIPR_CACHE_DIR`, `[perl].cache_dir`) (#7663 / #8276, relocated bases
+/// #8751).
 ///
 /// Orthogonal to [`DoctorArtifactIgnore`]: a repository can ignore
 /// `/target/ripr/` while earlier reports stay tracked, so the reports keep
@@ -3450,6 +3453,23 @@ mod tests {
                 .map_err(|err| format!("restore parent mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&child)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
+        if crate::testing::access_denial::skip_unless_denied(
+            "an_unreadable_root_is_not_reported_as_missing",
+            denied,
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&child);
         let (report, probed) = evaluate_without_rust_toolchain(&child, &[LanguageId::Rust]);
         restore(0o755)?;
@@ -3487,6 +3507,23 @@ mod tests {
                 .map_err(|err| format!("restore jail mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&link)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
+        if crate::testing::access_denial::skip_unless_denied(
+            "a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file",
+            denied,
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&link);
         let (report, probed) = evaluate_without_rust_toolchain(&link, &[LanguageId::Rust]);
         restore(0o755)?;

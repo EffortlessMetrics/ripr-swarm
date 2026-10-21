@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-54 bars. ripr meets 24, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+54 bars. ripr meets 24, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
 
 By board, so the weak areas show before the full table:
 
@@ -681,7 +681,7 @@ What the corpus does not claim:
 
 ## Speed and memory
 
-Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
+Measured on the 4 repositories named in this table, pinned in `benchmarks/dx_scoreboard/scoreboards.toml` at the revisions in the receipt, with a release build, on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`. This is a different population from the 34-repository corpus manifest below: 0 of these repositories appear there at the same revision; the rest were measured at a different revision or are not in that manifest. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
 
 | Repository | Cold `ripr pilot` to first useful result | Cold `ripr pilot` peak memory | Warm `ripr check` on the last commit | Warm `ripr check` peak memory |
 | --- | --- | --- | --- | --- |
@@ -770,11 +770,31 @@ Repositories the speed scoreboard ran on:
 
 ## Reproduce and refresh
 
+These commands regenerate the measured receipts; a fresh local measurement is only promoted into `metrics/public-proof/` by the `cp` steps, and `--refresh-receipts` then re-copies the canonical sources and re-renders this page.
+
 ```bash
-cargo xtask dx-scoreboard --clone            # speed, memory, CI size, pasted commands
-cargo xtask first-run                        # the new-developer walk
+cargo build --release                          # the walks below measure this binary
+cargo xtask dx-scoreboard --clone --include-heavy  # writes target/ripr/reports/dx-scoreboard.json (all four pinned repos)
+cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline
+cargo xtask first-run --ripr target/release/ripr  # writes target/ripr/first-run/first-run.json
+cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt
 cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render
 cargo xtask public-proof --check             # fail if this page is stale
 ```
+
+A local rerun lands in the same receipt shape but will not reproduce the committed dx-scoreboard numbers: they were measured on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, and wall-time and memory bars compare only against a baseline from the same runner class.
+
+Per-receipt regeneration:
+
+| Receipt | Produced by | Harness output |
+| --- | --- | --- |
+| `dx-scoreboard.json` | `cargo xtask dx-scoreboard --clone --include-heavy`, promoted as above | `target/ripr/reports/dx-scoreboard.json` |
+| `verdict-corpus.json` | the report `fixtures/rust-verdict-corpus/expected/rows/` describes | summarized from the row files |
+| `corpus-manifest.json` | the corpus pin list itself | `benchmarks/rust_corpus/manifest.json` |
+| `mutation-spot-check.json` | `cargo xtask mutation-spot-check` | `target/ripr/reports/mutation-spot-check.json` |
+| `first-run-current.json` / `first-run-previous.json` | `cargo xtask first-run --ripr target/release/ripr`, promoted as above | `target/ripr/first-run/first-run.json` |
+| `agent-as-user.json` | no in-repo command; committed harness output, the runs `docs/AGENT_AS_USER_RUNS.md` documents | none |
+| `install.json` | no in-repo command; committed manual measurement in a cloud container | none |
+
 
 Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.

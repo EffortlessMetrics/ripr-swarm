@@ -266,7 +266,11 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "inventory_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            super::attempt_inventory::MAX_PAGE_ITEMS,
+        )?;
         // `max_envelope_bytes` reserves the JSON-escaped request ID plus the
         // fixed outer overhead (#7768): the pinned rmcp adds the JSON-RPC
         // fields and the modern resultType after the tool envelope is
@@ -578,6 +582,68 @@ fn optional_positive_argument(
     }
 }
 
+/// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
+/// A request above the cap stays invalid params at the dispatch edge instead
+/// of being silently clamped, so the typed `page.limit` echo always names a
+/// limit the server actually honors (#8735).
+fn optional_capped_page_limit(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    max: usize,
+) -> Result<Option<usize>, ErrorData> {
+    match optional_positive_argument(arguments, name)? {
+        Some(value) if value > max => Err(ErrorData::invalid_params(
+            format!("{name} must be at most {max}"),
+            None,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// Resolve one captured resource-id segment through an exact-id lookup with
+/// the #8736 URI-decoding rules and the collision fail-closed follow-up:
+///
+/// - the raw capture is tried first (legacy raw URI support);
+/// - when the raw capture misses with `item_not_found`, the segment decodes
+///   once and the decoded form is tried instead;
+/// - when the raw capture succeeds *and* the segment also decodes to a
+///   different existing id, both spellings name two distinct items (for
+///   example `a%20b.py` raw versus `a b.py` decoded), so the route fails
+///   closed with `id_ambiguous` instead of silently picking one — the wire
+///   form cannot say which file the client meant.
+///
+/// Recovery for every ambiguous or unresolved read names the equivalent
+/// tool route, which takes the canonical id as a plain JSON string with no
+/// URI encoding.
+fn resource_id_document(
+    captured: &str,
+    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
+) -> Result<Value, workspace::AttemptFailure> {
+    match lookup(captured) {
+        Ok(document) => {
+            if let Some(decoded) = gaps::percent_decode_resource_id(captured)
+                && lookup(&decoded).is_ok()
+            {
+                return Err(workspace::AttemptFailure::new(
+                    workspace::CODE_ID_AMBIGUOUS,
+                    format!(
+                        "the resource id is ambiguous: the captured segment resolves both as sent ({captured}) and as its percent-decoded form ({decoded}), which name two distinct canonical items"
+                    ),
+                    "read the item through the equivalent tool (ripr_get_gap or ripr_get_repair_card) with the canonical_id as a plain JSON string, which carries no URI encoding",
+                ));
+            }
+            Ok(document)
+        }
+        Err(failure) if failure.code == workspace::CODE_ITEM_NOT_FOUND => {
+            match gaps::percent_decode_resource_id(captured) {
+                Some(decoded) => lookup(&decoded),
+                None => Err(failure),
+            }
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -852,7 +918,8 @@ impl ServerHandler for McpServer {
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.get_gap(canonical_id, None) {
+            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -886,8 +953,11 @@ impl ServerHandler for McpServer {
         }
         if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
-            {
+            let root = self.analysis_root.clone();
+            let result = resource_id_document(item_id, |id| {
+                session.repair_card_document(id, None, root.as_deref())
+            });
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
