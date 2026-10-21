@@ -215,6 +215,28 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
 }
 
 #[test]
+fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
+    let detail = "missing or placeholder PR body line(s): Governing issue or accepted claim:, Acceptance delta (one sentence):";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "refused",
+        &[
+            ("ADMISSION_REASON", "claim_identity_missing"),
+            ("ADMISSION_DETAIL", detail),
+        ],
+    )?;
+    assert!(!success, "refused admission must fail the result: {report}");
+    assert!(
+        report.contains("claim_identity_missing") && report.contains(detail),
+        "result summary must name the single concrete refusal reason, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
 fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
     let scratch = Scratch::new()?;
     let action = root().join(".github/actions/pr-candidate-admission");
