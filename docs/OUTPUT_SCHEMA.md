@@ -14965,6 +14965,12 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 `first-parent digest: \`...\`` lines. A `final` ledger rejects any
 `blocking_unresolved` row and requires an audit digest.
 
+`release-ledger capture` writes a `release_ledger_git_facts` document with the
+same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
+`blamed_paths` and one `commits` entry per reachable commit (`paths`,
+`final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
+first-parent subject, `issue_refs` for other `#N` mentions).
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into
