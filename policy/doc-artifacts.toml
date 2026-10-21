@@ -1730,6 +1730,10 @@ path = "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the Display/Debug fmt dispatch contract: a test that formats a value built as the impl's self type through a matching placeholder or to_string is related to the changed fmt as a direct owner call, fail-closed on ambiguity."
+
+[[artifact]]
+id = "RIPR-SPEC-0293"
+kind = "spec"
 path = "docs/specs/RIPR-SPEC-0293-partialeq-assert-dispatch.md"
 status = "proposed"
 owner = "product-analysis"
