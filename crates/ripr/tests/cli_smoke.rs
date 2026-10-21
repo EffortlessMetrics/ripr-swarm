@@ -22745,7 +22745,92 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
         !stdout.contains("no analysis scope was provided"),
         "check --base HEAD must NOT show no-scope disclosure; got stdout:\n{stdout}"
     );
+    // #9033: the empty range is still explained, naming the compared base.
+    assert!(
+        stdout.contains("`HEAD...HEAD` has no analyzable changed files"),
+        "check --base HEAD on an empty range must name the range as having no analyzable changed files; got stdout:\n{stdout}"
+    );
     ignore_remove_dir_all(&root);
+}
+
+/// #9033: a range that only deletes a file lands in `no_scope` with zero changed
+/// files, so the note must not assure the reader that no behavior changed.
+#[test]
+fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() -> Result<(), String>
+{
+    let root = unique_temp_workspace("base-deletion-only");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(root.join("src/old.rs"), "pub fn two() -> i32 { 2 }\n")
+        .map_err(|e| format!("write old: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"deletion-only\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    run_git(&root, &["rm", "src/old.rs"])?;
+    run_git(&root, &["commit", "-m", "delete"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("`HEAD~1...HEAD` has no analyzable changed files") {
+        return Err(format!("expected the range note:\n{stdout}"));
+    }
+    if !stdout.contains("does NOT mean no behavior changed")
+        || stdout.contains("means no behavior changed against it")
+    {
+        return Err(format!(
+            "a deletion-only range must not claim no behavior changed:\n{stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #9033: `--diff <file>` wins over `--base`; the retained base must not be
+/// reported as an analyzed Git range in either human format.
+#[test]
+fn check_diff_file_with_base_does_not_report_a_git_range_note() -> Result<(), String> {
+    let root = unique_temp_workspace("diff-file-with-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"diff-file-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let patch = root.join("empty.patch");
+    std::fs::write(&patch, "").map_err(|e| format!("write patch: {e}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+    for format in ["human", "human-full"] {
+        let output = run_ripr(&[
+            "check", "--root", &root_str, "--diff", &patch_str, "--base", "HEAD", "--format",
+            format,
+        ]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains("HEAD...HEAD") || stdout.contains("has no analyzable changed files") {
+            return Err(format!(
+                "{format}: a supplied diff file must not be reported as a Git range:\n{stdout}"
+            ));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
