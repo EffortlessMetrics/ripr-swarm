@@ -437,10 +437,12 @@ fn full_and_compact_reporting_agree_on_grip_counts() -> Result<(), String> {
         let rows = seam["related_tests"]
             .as_array()
             .ok_or("full seam without related_tests")?;
-        if declared != rows.len() as u64 {
+        let listed = rows.len() as u64;
+        // The full report caps listed rows at eight but keeps the uncapped
+        // total, so equality only holds below the cap.
+        if declared != listed && listed < 8 {
             return Err(format!(
-                "seam {owner} declares {declared} grip rows but lists {}",
-                rows.len()
+                "seam {owner} declares {declared} grip rows but lists {listed}"
             ));
         }
     }
@@ -518,6 +520,10 @@ fn perf_probe_wall_time_samples() -> Result<(), String> {
         for format in ["repo-exposure-json", "repo-exposure-summary-json"] {
             let mut elapsed = Vec::new();
             for _ in 0..samples {
+                // Every sample starts cold: ripr persists classified seams
+                // under target/, so without this reset samples after the
+                // first would measure cache reads, not receiver parsing.
+                let _ = std::fs::remove_dir_all(root.join("target"));
                 let start = std::time::Instant::now();
                 probe.run(format)?;
                 elapsed.push(start.elapsed().as_secs_f64() * 1_000.0);
