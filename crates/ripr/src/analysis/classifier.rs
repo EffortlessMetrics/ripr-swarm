@@ -139,6 +139,26 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     // ruled out, which is now unknown; replace those stages and their
     // copied evidence lines. A negative the stage established on its own
     // evidence keeps its state.
+    // The infection summary of a finding with no reached test says no tests
+    // were found; for proc-macro code that is the expansion boundary, not an
+    // absence of tests.
+    let mut stale: Vec<String> = Vec::new();
+    if finding
+        .ripr
+        .infect
+        .summary
+        .starts_with("No tests were found")
+        || finding
+            .ripr
+            .infect
+            .summary
+            .starts_with("No statically reachable test path was found")
+    {
+        stale.push(finding.ripr.infect.summary.clone());
+        finding.ripr.infect = unknown(
+            "Not established: tests may exercise this proc-macro code through derive or attribute expansion, which ripr does not follow",
+        );
+    }
     let ruled_out = |stage: &StageEvidence| {
         stage.state == StageState::No
             && (stage
@@ -147,15 +167,16 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
                 || stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
                 || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY)
     };
-    let stale: Vec<String> = [
-        &finding.ripr.infect,
-        &finding.ripr.reveal.observe,
-        &finding.ripr.reveal.discriminate,
-    ]
-    .into_iter()
-    .filter(|stage| ruled_out(stage))
-    .map(|stage| stage.summary.clone())
-    .collect();
+    stale.extend(
+        [
+            &finding.ripr.infect,
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ]
+        .into_iter()
+        .filter(|stage| ruled_out(stage))
+        .map(|stage| stage.summary.clone()),
+    );
     for (stage, summary) in [
         (
             &mut finding.ripr.infect,

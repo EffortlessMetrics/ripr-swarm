@@ -42,6 +42,30 @@ impl TempRepo {
         Ok(Self { root })
     }
 
+    /// A package with extra files and a one-line edit of `file` at `line`.
+    fn create_with_files(
+        manifest: &str,
+        files: &[(&str, &str)],
+        file: &str,
+        line: usize,
+        before: &str,
+        after: &str,
+    ) -> Result<Self, String> {
+        let repo = Self::create(manifest, "src/lib.rs")?;
+        for (path, content) in files {
+            let target = repo.root.join(path);
+            let parent = target.parent().ok_or("file has no parent")?;
+            std::fs::create_dir_all(parent).map_err(|error| format!("create dir: {error}"))?;
+            std::fs::write(&target, content).map_err(|error| format!("write {path}: {error}"))?;
+        }
+        let diff = format!(
+            "diff --git a/{file} b/{file}\nindex 1111111..2222222 100644\n--- a/{file}\n+++ b/{file}\n@@ -{line},1 +{line},1 @@\n-{before}\n+{after}\n"
+        );
+        std::fs::write(repo.root.join("diff.patch"), diff)
+            .map_err(|error| format!("write diff: {error}"))?;
+        Ok(repo)
+    }
+
     fn input(&self, format: OutputFormat) -> CheckInput {
         CheckInput {
             root: self.root.clone(),
@@ -122,6 +146,8 @@ fn proc_macro_library_reads_static_unknown_in_findings_json_and_human() -> Resul
     let human = repo.rendered(OutputFormat::HumanFull)?;
     assert!(human.contains("static_unknown (note"), "{human}");
     assert!(!human.contains("No reachable test oracle"), "{human}");
+    assert!(!human.contains("No tests were found"), "{human}");
+    assert!(!json.contains("No tests were found"), "{json}");
     assert!(!human.contains("no test can "), "{human}");
     assert!(human.contains("derive or attribute expansion"), "{human}");
     Ok(())
@@ -152,5 +178,79 @@ fn build_script_of_a_proc_macro_package_is_not_proc_macro_library_code() -> Resu
     repo.findings()?;
     let json = repo.rendered(OutputFormat::Json)?;
     assert!(!json.contains("proc_macro_expansion:"), "{json}");
+    Ok(())
+}
+
+const CHAIN_LIB: &str = "mod internal;\n\npub fn outer(a: i32, b: i32) -> i32 {\n    internal::inner(a, b)\n}\n// A second `inner` makes the callee name non-unique, so only the lexical\n// walk (RIPR-SPEC-0114) can name the path.\npub fn inner(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+const CHAIN_INTERNAL: &str = "pub(crate) fn inner(a: i32, b: i32) -> i32 {\n    if a > b {\n        a - b\n    } else {\n        b\n    }\n}\n";
+const CHAIN_TEST: &str = "use derive_demo::outer;\n\n#[test]\nfn test_outer_returns_difference() {\n    let result = outer(10, 3);\n    assert_eq!(result, 7);\n}\n";
+
+// A witness the transitive walk finds is a concrete pointer. The withhold runs
+// after that search, so the limit kind and the pointer survive, the class is
+// the non-actionable unknown, and the stop reason that says the class stays
+// `no_static_path` is gone.
+#[test]
+fn a_transitive_witness_survives_the_proc_macro_withhold() -> Result<(), String> {
+    let make = |manifest: &str| {
+        TempRepo::create_with_files(
+            manifest,
+            &[
+                ("src/lib.rs", CHAIN_LIB),
+                ("src/internal.rs", CHAIN_INTERNAL),
+                ("tests/it.rs", CHAIN_TEST),
+            ],
+            "src/internal.rs",
+            2,
+            "    if a >= b {",
+            "    if a > b {",
+        )
+    };
+    // Control: an ordinary package keeps `no_static_path` beside the same
+    // witness, so the pointer is the walk's, not the withhold's.
+    let control = make(ORDINARY)?;
+    let control_findings = control.findings()?;
+    let control_kind = control_findings
+        .iter()
+        .find(|finding| finding.class == ExposureClass::NoStaticPath)
+        .and_then(|finding| finding.static_limit_kind)
+        .ok_or("premise: the ordinary package keeps no_static_path with a witness limit")?;
+
+    let repo = make(PROC_MACRO)?;
+    let findings = repo.findings()?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::StaticUnknown),
+        "{:?}",
+        findings
+            .iter()
+            .map(|f| f.class.as_str())
+            .collect::<Vec<_>>()
+    );
+    for finding in &findings {
+        assert_eq!(finding.static_limit_kind, Some(control_kind));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("tests/it.rs")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("proc_macro_expansion:"))
+        );
+        assert!(
+            !finding
+                .stop_reasons
+                .iter()
+                .any(|reason| reason.as_str() == "transitive_reach_unresolved"),
+            "{:?}",
+            finding.stop_reasons
+        );
+    }
     Ok(())
 }

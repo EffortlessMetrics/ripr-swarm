@@ -137,6 +137,10 @@ which ripr does not follow.
   explicit `[[bin]]`/`[[example]]`/`[[test]]`/`[[bench]]` targets, and
   `tests/`, `benches/`, `examples/` are not library code and keep
   `no_static_path`. A missing or unreadable manifest keeps `no_static_path`.
+- A file under the library source directory that only a bin consumes (a
+  module `main.rs` declares) still counts as library code. That direction is
+  safe: the result is `static_unknown`, an abstention, never a promotion or a
+  gap claim.
 - There is no source-text fallback: a `#[proc_macro_derive]` spelled in a
   comment or string changes nothing.
 - The rewrite runs after the transitive and macro witness searches, so a
@@ -270,6 +274,10 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — JSON and human output
 - `crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_library_with_the_same_source_keeps_no_static_path`
   — discriminating negative
+- `crates/ripr/tests/proc_macro_no_static_path.rs::a_transitive_witness_survives_the_proc_macro_withhold`
+  — witness limit kind and pointer kept, transitive stop reason dropped
+- `crates/ripr/tests/proc_macro_no_static_path.rs::build_script_of_a_proc_macro_package_is_not_proc_macro_library_code`
+  — diff-path negative for a build script
 
 ## Implementation Mapping
 
