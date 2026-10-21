@@ -1,0 +1,103 @@
+# RIPR-SPEC-0286: A wrapped function signature seeds one probe, not one per physical line
+
+Status: proposed
+
+Owner: product / analysis
+
+Created: 2026-10-21
+
+Linked proposal:
+
+- None yet
+
+Linked ADRs:
+
+- None yet
+
+Linked plan:
+
+- None yet
+
+Linked issues:
+
+- #8999 (round two: one probe per physical signature line)
+
+Linked PRs:
+
+- #9133
+
+Support-tier impact:
+
+- No tier change. This is probe-seeding hygiene: no new class, oracle kind,
+  relation reason or limitation kind.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
+
+Policy impact:
+
+- Register this spec in `.ripr/traceability.toml`.
+- No schema version bump. No new wire shape.
+
+## Problem
+
+A function header wrapped over several physical lines (parameters, return
+type, `where`, opening brace) produced one `static_unknown` probe per line, for
+example 47 probes for one new function. A signature has no runtime behavior of
+its own, so the per-line probes only repeated the body findings or split one
+declaration change into several.
+
+## Behavior
+
+The signature extent is the physical lines from the `fn` line through the
+single line whose masked text ends in the body-opening `{`. It is claimed only
+when unambiguous: a body-less declaration (`;`), a one-line body, or a header
+with any other `{` yields no extent and every line keeps its own probe.
+Comment and string text is masked before this reading.
+
+1. New function: when the `fn` line is an added line, no removed line lies in
+   the function or declares the same name, and an added body line exists, the
+   signature lines seed no probe.
+2. Changed signature: when several added lines of one signature change, the
+   first emitted probe stays on the first changed line (its id and span are
+   unchanged); later added lines of that signature seed none. Grouping reads a
+   probe actually emitted for an earlier line, never an assumed one.
+3. Generic and `where` type-bound declaration lines are exempt from both rules
+   and keep their own `static_unknown` probe.
+4. A parameter inserted into an existing wrapped signature (the `fn` line is
+   not added) is a changed signature and keeps its probe.
+
+## Required Evidence
+
+- New wrapped function: no probe on parameter, return or brace lines; the
+  bound and body probes remain.
+- Two changed parameter lines: one probe, on the first.
+- Changed signature line plus changed body line: both probes remain.
+- Inserted parameter, dropped carrier line, one-line body, trait declaration,
+  braces in the header and trailing comments fail closed as above.
+
+## Non-Goals
+
+- Grouping removed-only signature lines.
+- Changing type-bound declaration probes.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/probes/diff.rs` tests:
+  `probes_for_file_skips_wrapped_signature_lines_of_new_function_but_keeps_bound`,
+  `probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe`,
+  `probes_for_file_keeps_body_probe_beside_changed_wrapped_signature`,
+  `probes_for_file_keeps_parameter_inserted_into_existing_wrapped_signature`,
+  `probes_for_file_keeps_probe_when_earlier_signature_line_emitted_none`,
+  `signature_open_line_fails_closed_on_ambiguous_headers`.
+- `crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs`:
+  `new_function_diff_keeps_bounds_unknown_and_body_executable`.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/probes/diff.rs`: `signature_open_line`,
+  `opens_new_function_with_added_body`, `continues_changed_signature`,
+  `is_signature_type_bound`.
+
+## Metrics
+
+- `unit_test_pass_rate`: the tests above are required Rust tests.

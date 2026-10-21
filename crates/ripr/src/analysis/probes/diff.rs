@@ -200,13 +200,7 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         if opens_new_function_with_added_body(index, changed, added_index, &signature_bounds)
-            || continues_changed_signature(
-                index,
-                changed,
-                added_index,
-                &skip_added,
-                &signature_bounds,
-            )
+            || continues_changed_signature(index, changed, added_index, &probes, &signature_bounds)
         {
             continue;
         }
@@ -1002,8 +996,10 @@ fn signature_open_line(
     const MAX_SIGNATURE_LINES: usize = 64;
     let facts = find_file_facts(index, path)?;
     let count = function.end_line.checked_sub(function.start_line)?;
-    for (offset, raw) in facts
-        .source
+    // Comment and string text is masked (length and lines preserved), so a
+    // trailing `// note {` or a brace in a literal cannot move the extent.
+    let masked = mask_comments_and_strings(&facts.source);
+    for (offset, raw) in masked
         .lines()
         .skip(function.start_line.checked_sub(1)?)
         .take(count.min(MAX_SIGNATURE_LINES) + 1)
@@ -1047,6 +1043,10 @@ fn opens_new_function_with_added_body(
     line <= open_line
         && function.end_line > open_line
         && !is_signature_type_bound(index, changed, added_index, signature_bounds)
+        && changed
+            .added_lines
+            .iter()
+            .any(|added| added.new_side_line == function.start_line)
         && !changed.removed_lines.iter().any(|removed| {
             (function.start_line..=function.end_line).contains(&removed.new_side_line)
                 || declares_fn_named(&removed.text, &function.name)
@@ -1067,7 +1067,7 @@ fn continues_changed_signature(
     index: &RustIndex,
     changed: &ChangedFile,
     added_index: usize,
-    skip_added: &[bool],
+    emitted: &[SeededProbe],
     signature_bounds: &std::cell::OnceCell<Vec<bool>>,
 ) -> bool {
     let line = changed.added_lines[added_index].new_side_line;
@@ -1083,16 +1083,21 @@ fn continues_changed_signature(
     {
         return false;
     }
-    changed.added_lines[..added_index]
-        .iter()
-        .enumerate()
-        .any(|(earlier, other)| {
-            other.new_side_line >= function.start_line
-                && other.new_side_line < line
-                && !skip_added[earlier]
-                && !should_ignore_changed_line(other.text.trim())
-                && !is_signature_type_bound(index, changed, earlier, signature_bounds)
-        })
+    // Group only into a probe that was actually emitted: a carrier line that
+    // a later filter dropped (block comment, ignored text) must not leave the
+    // signature with no probe at all.
+    emitted.iter().any(|seeded| {
+        let carried = seeded.probe.location.line;
+        carried >= function.start_line
+            && carried < line
+            && changed
+                .added_lines
+                .iter()
+                .position(|other| other.new_side_line == carried)
+                .is_some_and(|earlier| {
+                    !is_signature_type_bound(index, changed, earlier, signature_bounds)
+                })
+    })
 }
 
 /// Whether added line `added_index` is a generic or `where` type-bound
@@ -4174,6 +4179,115 @@ mod tests {
         lines.sort_unstable();
         lines.dedup();
         assert_eq!(lines, vec![3, 8], "{probes:?}");
+    }
+
+    /// #8999 review: the grouping skip needs the `fn` line itself to be an
+    /// added line. A parameter inserted into an existing wrapped signature
+    /// is a changed signature, not part of a new function, and keeps its probe.
+    #[test]
+    fn probes_for_file_keeps_parameter_inserted_into_existing_wrapped_signature() {
+        let (index, changed) = wrapped_signature_change(&[3], &[]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec![3], "{probes:?}");
+    }
+
+    /// #8999 review: grouping reads an emitted probe, never assumes one. A
+    /// carrier line that was dropped (a block-comment line inside the header)
+    /// leaves the next changed line to keep its own probe.
+    #[test]
+    fn probes_for_file_keeps_probe_when_earlier_signature_line_emitted_none() {
+        let source = "pub fn price(\n    /* a */\n    amount: u32,\n) -> u64 {\n    amount\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let changed = ChangedFile {
+            path,
+            added_lines: vec![
+                ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "    /* a */".to_string(),
+                },
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 3,
+                    text: "    amount: u32,".to_string(),
+                },
+            ],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "    amount: u64,".to_string(),
+            }],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 3),
+            "{probes:?}"
+        );
+    }
+
+    fn signature_open_line_of(source: &str, line: usize) -> Option<usize> {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let function = find_owner_function(&index, &path, line)?;
+        signature_open_line(&index, &path, function)
+    }
+
+    /// #8999 review: the signature extent is claimed only when unambiguous.
+    #[test]
+    fn signature_open_line_fails_closed_on_ambiguous_headers() {
+        // Positive control: plain wrapped header.
+        assert_eq!(
+            signature_open_line_of(
+                "fn f<const N: usize>(\n    a: [u8; N],\n) -> u8 {\n    a[0]\n}\n",
+                1
+            ),
+            Some(3)
+        );
+        // One-line body.
+        assert_eq!(
+            signature_open_line_of("pub fn f(a: u8) -> u8 { a + 1 }\n", 1),
+            None
+        );
+        // Body-less trait declaration.
+        assert_eq!(
+            signature_open_line_of("trait T {\n    fn f(\n        a: u8,\n    ) -> u8;\n}\n", 2),
+            None
+        );
+        // Braces inside the header (array length expression).
+        assert_eq!(
+            signature_open_line_of("fn f(\n    a: [u8; { 3 }],\n) -> u8 {\n    a[0]\n}\n", 1),
+            None
+        );
+        // Comments are masked: a trailing comment, with or without a brace,
+        // neither hides nor fakes the body-opening brace.
+        assert_eq!(
+            signature_open_line_of("fn f(\n    a: u8,\n) -> u8 { // {\n    a\n}\n", 1),
+            Some(3)
+        );
+        assert_eq!(
+            signature_open_line_of(
+                "fn f(\n    a: u8, // note\n) -> u8 { // note\n    a\n}\n",
+                1
+            ),
+            Some(3)
+        );
     }
 
     #[test]

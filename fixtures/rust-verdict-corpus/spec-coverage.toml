@@ -783,3 +783,7 @@ reason = "acceptance examples are bullet prose, not numbered; no corpus case cit
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0286"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"

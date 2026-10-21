@@ -16886,6 +16886,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0286"
+name = "A wrapped function signature seeds one probe, not one per physical line"
+spec = "docs/specs/RIPR-SPEC-0286-wrapped-signature-one-probe.md"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_skips_wrapped_signature_lines_of_new_function_but_keeps_bound",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_body_probe_beside_changed_wrapped_signature",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_parameter_inserted_into_existing_wrapped_signature",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_probe_when_earlier_signature_line_emitted_none",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::signature_open_line_fails_closed_on_ambiguous_headers",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::new_function_diff_keeps_bounds_unknown_and_body_executable",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/probes/diff.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-wrapped-signature-one-probe.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0285"
 name = "Python framework scan is bounded, deterministic, and string-aware"
 spec = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
