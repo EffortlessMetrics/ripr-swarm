@@ -1771,6 +1771,7 @@ status = "proposed"
 owner = "product-xtask"
 standalone_reason = "Issue #8921 records the first-run over-budget step-occurrence contract: dx-scoreboard ingestion counts first_run.over_budget_steps per step occurrence instead of per breached metric row, aligning with the public-proof renderer and the declared steps unit, retaining both evidence entries per occurrence and keeping workflow_lines breaches separate."
 
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
