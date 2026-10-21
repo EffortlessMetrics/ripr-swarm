@@ -1161,10 +1161,12 @@ mod tests {
                     }).await;
                     let before_release = recorder.events();
                     sink.release.notify_one();
-                    retry.await;
+                    if retry_pending {
+                        retry.await;
+                    }
                     tracker.end_all(AnalysisProgressEnd::Cancelled).await;
                     let events = recorder.events();
-                    if !retry_pending || !matches!(events.as_slice(), [
+                    if !matches!(events.as_slice(), [
                         ProgressEvent::Create { token: create },
                         ProgressEvent::Begin { token: begin, .. },
                         ProgressEvent::End { token: end, .. },
