@@ -10461,7 +10461,7 @@ tests = [
   "crates/ripr/src/app/check_artifact/tests.rs::concurrent_writers_never_leave_a_torn_artifact",
   "crates/ripr/src/config/tests.rs::check_artifact_identity_fields_classify_every_config_field",
   "crates/ripr/src/config/tests.rs::check_artifact_config_identity_hash_tracks_finding_affecting_fields_only",
-  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical",
+  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation",
   "crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity",
   "crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_unsupported_run_shapes",
   "crates/ripr/tests/cli_smoke.rs::explain_from_consumes_artifact_written_with_non_default_mode",

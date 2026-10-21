@@ -389,8 +389,9 @@ even though the `check --json` render caps related tests at 8.
   — the closed field-enumeration contract.
 - `crates/ripr/src/config/tests.rs::check_artifact_config_identity_hash_tracks_finding_affecting_fields_only`
   — finding-affecting changes invalidate; render-only changes do not.
-- `crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical`
-  — end-to-end three-step flow with byte-identical reuse.
+- `crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation`
+  — end-to-end three-step flow preserving finding detail and source-specific
+  navigation, with a recorded-discriminator mutation rejected by the detail oracle.
 - `crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity`
   and `check_write_artifact_rejects_unsupported_run_shapes` — CLI-level
   fail-closed paths.
