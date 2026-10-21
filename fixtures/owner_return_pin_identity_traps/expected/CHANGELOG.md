@@ -275,3 +275,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (24)
+
+Reason:
+RIPR-SPEC-0259 and RIPR-SPEC-0094 #8954: condition return advice on return sensitivity; preserve actual effect versus return evidence and authentic standalone call identity.
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

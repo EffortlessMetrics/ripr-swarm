@@ -17,9 +17,10 @@ Start here:
   Changed behavior: x * 3
   Missing discriminator: No strong discriminator was detected
   Related test: tests/render.rs:2 renders (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `renders` already asserts an exact value; the gap is not the assertion
-    shape. Add a test input where the changed branch behaves differently and keep the exact
-    assertion
+  Next step: The related test `renders` already has an exact assertion; this does not establish
+    observation of the returned value. Check whether the change can affect the returned value. If it
+    can, add a separating input and assert the exact returned value. If it cannot, test the changed
+    effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach render: renders
     - infection yes: Reachable tests can plausibly activate this changed behavior

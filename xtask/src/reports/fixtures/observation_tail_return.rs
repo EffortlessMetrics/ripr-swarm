@@ -120,7 +120,70 @@ mod tests {
                 );
             } else {
                 assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+                let step = finding.recommended_next_step.as_deref().unwrap_or("");
+                assert!(
+                    step.contains("Check whether the change can affect the returned value"),
+                    "{step}"
+                );
+                assert!(step.contains("If it can"), "{step}");
+                assert!(step.contains("If it cannot"), "{step}");
+                assert!(!step.contains("gap is not the assertion shape"), "{step}");
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semicolon_effect_has_genuine_line18_call_deletion() -> Result<(), String> {
+        let fixture = fixture().with_file_name("observation_verified_semicolon_effect");
+        let source = crate::read_text_lossy(&fixture.join("input/src/lib.rs"))?;
+        let diff = crate::read_text_lossy(&fixture.join("diff.patch"))?;
+        assert_eq!(source.lines().nth(17), Some("    notifier.send(order_id);"));
+        assert_eq!(source.lines().nth(18), Some("    true"));
+        let parsed = parse_unified_diff(&diff)?;
+        let [section] = parsed.sections.as_slice() else {
+            return Err("expected one file".into());
+        };
+        let [hunk] = section.hunks.as_slice() else {
+            return Err("expected one hunk".into());
+        };
+        assert_eq!((hunk.old_start, hunk.new_start), (16, 16));
+        let mut coordinate = hunk.new_start as usize;
+        for line in &hunk.lines {
+            if matches!(line.kind, DiffLineKind::Deleted) {
+                continue;
+            }
+            assert_eq!(source.lines().nth(coordinate - 1), Some(line.text.as_str()));
+            if matches!(line.kind, DiffLineKind::Added) {
+                assert_eq!(coordinate, 18);
+            }
+            coordinate += 1;
+        }
+        let report = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&ripr::render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(report.findings.len(), 2, "{:#?}", report.findings);
+        assert_eq!(
+            report
+                .findings
+                .iter()
+                .map(|f| f.probe.family.as_str())
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["call_deletion", "side_effect"])
+        );
+        for finding in &report.findings {
+            assert_eq!(finding.probe.location.line, 18);
+            assert_eq!(finding.probe.expression.trim(), "notifier.send(order_id)");
+            assert_eq!(finding.class, ExposureClass::Exposed);
+            assert!(!finding.related_tests.is_empty());
         }
         Ok(())
     }

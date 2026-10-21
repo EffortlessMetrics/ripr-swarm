@@ -10233,6 +10233,50 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
-    }
+    },
+      {
+        "id": "rust_semicolon_effect_line18_side_effect",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "side_effect",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      },
+      {
+        "id": "rust_semicolon_effect_line18_call_deletion",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "call_deletion",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      }
   ]
 }

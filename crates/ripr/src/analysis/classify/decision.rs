@@ -287,9 +287,9 @@ pub(in crate::analysis) fn recommended_next_step(
 /// may not have — "instead of only is_err()" when no `is_err()` exists, or
 /// "replace broad assertions" when the related test already is an
 /// `assert_eq!`. When the strongest reach-establishing related oracle is
-/// already exact, name what is actually missing (a boundary input, an
-/// error-arm input), the way the predicate probe's missing-discriminator
-/// evidence does.
+/// already exact, avoid presuming a broad assertion. Error-path advice names
+/// the missing arm input; return-value advice first asks whether the change
+/// can affect the return, since an exact effect assertion cannot establish it.
 ///
 /// The caller annotates each row's miss reason first, so this selection
 /// reads the same final rows the JSON/human projections render. A row is
@@ -298,8 +298,7 @@ pub(in crate::analysis) fn recommended_next_step(
 /// token-coincidence row never dictates the owner finding's advice) and its
 /// annotated miss is not `missing_exact_assertion` (there the assertion
 /// shape IS the gap). An observation-unconfirmed row stays eligible: the
-/// suite's exact assertion exists and the step names the input, which is
-/// honester than presuming a broad assertion. The oracle must also be
+/// suite's exact assertion exists, but it may observe a different sink. The oracle must also be
 /// admitted as strong: a syntactic `assert_eq!` the classifier downgraded
 /// (for example a self-computed expected value) does not establish an
 /// independent exact discriminator, so "keep the exact assertion" would be
@@ -350,7 +349,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
             "Add a test input that executes the changed error arm and assert the exact variant or payload it produces"
         }
         ProbeFamily::ReturnValue => {
-            "Add a test input where the changed branch behaves differently and keep the exact assertion"
+            "Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
         }
         _ => return None,
     };
@@ -358,8 +357,13 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         .first()
         .map(|fact| format!(" Missing discriminator: `{}`.", fact.value))
         .unwrap_or_default();
+    let oracle_context = if probe.family == ProbeFamily::ReturnValue {
+        "already has an exact assertion; this does not establish observation of the returned value"
+    } else {
+        "already asserts an exact value; the gap is not the assertion shape"
+    };
     Some(format!(
-        "The related test `{}` already asserts an exact value; the gap is not the assertion shape. {family_gap}.{missing_value}",
+        "The related test `{}` {oracle_context}. {family_gap}.{missing_value}",
         strongest.name,
     ))
 }
@@ -1001,8 +1005,8 @@ mod tests {
     }
 
     // #7393: the return_value family template presumes a broad assertion;
-    // an exact `assert_eq!` related test keeps its shape and the step names
-    // the missing discriminating input instead.
+    // an exact `assert_eq!` may observe a different sink. Establish return
+    // sensitivity before recommending a separating input.
     #[test]
     fn exact_related_oracle_names_the_missing_input_for_return_value() {
         let step = exact_oracle_gap_next_step(
@@ -1017,12 +1021,15 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
         assert!(
-            step.contains("where the changed branch behaves differently"),
+            step.contains("Check whether the change can affect the returned value"),
             "{step}"
         );
         assert!(!step.contains("broad assertions"), "{step}");
+        assert!(step.contains("If it can"), "{step}");
+        assert!(step.contains("If it cannot"), "{step}");
+        assert!(!step.contains("gap is not the assertion shape"), "{step}");
     }
 
     // Controls: a broad related oracle, a stronger broad oracle outranking
@@ -1100,9 +1107,9 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
         assert!(
-            step.contains("where the changed branch behaves differently"),
+            step.contains("Check whether the change can affect the returned value"),
             "{step}"
         );
     }
@@ -1126,7 +1133,7 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
     }
 
     // A syntactic assert_eq! the classifier downgraded (a self-computed

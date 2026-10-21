@@ -194,6 +194,11 @@ expression, so its aligned diff produces SideEffect and ReturnValue probes,
 not CallDeletion. The payload assertion observes the effect; it does not assert
 the returned boolean. Genuine standalone-call deletion has its separate
 semicolon-terminated control in `observation_verified_call_deletion` (#8954).
+The aligned `observation_verified_semicolon_effect` twin pins the standalone
+call at line 18 and `true` at line 19: exactly CallDeletion + SideEffect, both
+`exposed`, with one finding per family in the honesty corpus. Runtime payload
+and deletion controls are effect evidence; both payloads returning `true`
+supply no returned-value discriminator.
 
 A bare Medium mock observer (`mock.verify();`, no token) clears
 `observation_unverified` via Part C but remains `weakly_exposed` because Medium
