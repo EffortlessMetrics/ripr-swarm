@@ -516,3 +516,84 @@ fn npm_launcher_guarded_runner_rejects_missing_controls() {
             && violation.contains("source bin missing-package")
     }));
 }
+
+fn compiled_test_names(filter: &str) -> Result<std::collections::BTreeSet<String>, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let args = [filter, "--list", "--format", "terse"].map(str::to_string);
+    let output = crate::run::capture_output_with_timeout(
+        executable.to_str().ok_or("non-UTF-8 test executable")?,
+        &args,
+        &[],
+        std::time::Duration::from_secs(30),
+        "distribution source-gate test inventory",
+    )?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "test inventory failed: status={:?}, timed_out={}, stderr={}",
+            output.status, output.timed_out, output.stderr
+        ));
+    }
+    Ok(output
+        .stdout
+        .lines()
+        .filter_map(|line| line.strip_suffix(": test").map(str::to_string))
+        .collect())
+}
+
+#[test]
+fn python_source_gate_selects_complete_distribution_inventory() -> Result<(), String> {
+    let step = PYTHON_QUALIFICATION_WORKFLOW_TEXT
+        .split_once("      - name: Validate package source contract\n")
+        .ok_or("missing package source-contract step")?
+        .1
+        .split("\n      - name:")
+        .next()
+        .ok_or("missing package source-contract body")?;
+    let filter = step
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("cargo test -p xtask --locked ")?
+                .strip_suffix(" -- --nocapture")
+        })
+        .ok_or("missing focused distribution test command")?;
+    assert_eq!(filter.split_whitespace().count(), 1);
+
+    // Use libtest's actual matching, not a second substring-selector model.
+    let expected = compiled_test_names("policy::distribution::")?;
+    for module in ["tests", "wheelhouse::tests", "workflow::tests"] {
+        let prefix = format!("policy::distribution::{module}::");
+        assert!(expected.iter().any(|name| name.starts_with(&prefix)));
+    }
+    #[cfg(unix)]
+    assert!(expected.contains(
+        "policy::distribution::python_guidance_tests::local_wheelhouse_recipe_selects_its_installed_executable"
+    ));
+    let selected = compiled_test_names(filter)?;
+    println!(
+        "workflow selected {} of {} distribution tests",
+        selected.len(),
+        expected.len()
+    );
+    assert_eq!(selected, expected, "source gate omits distribution tests");
+
+    // Old omission, stale zero-match selector, and unrelated over-selection
+    // must all be rejected by the same complete-inventory comparison.
+    for wrong in [
+        "policy::distribution::tests",
+        "policy::distribution::renamed_away",
+        "policy::",
+    ] {
+        let actual = compiled_test_names(wrong)?;
+        println!("refused {wrong:?}: selected {} tests", actual.len());
+        assert_ne!(actual, expected, "accepted wrong selector {wrong}");
+        if wrong.ends_with("::tests") {
+            assert!(!actual.is_empty() && actual.is_subset(&expected));
+        } else if wrong.ends_with("::renamed_away") {
+            assert!(actual.is_empty());
+        } else {
+            assert!(actual.is_superset(&expected));
+        }
+    }
+    Ok(())
+}
