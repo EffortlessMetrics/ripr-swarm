@@ -7500,7 +7500,12 @@ fn outer_macro_path(text: &str) -> Option<String> {
         "if", "while", "match", "loop", "for", "unsafe", "async", "move", "else", "return",
         "break", "continue", "let", "in",
     ];
-    if PREFIX_KEYWORDS.contains(&path.as_str()) {
+    // A keyword as any segment (`if ::core::matches!(..)` collapses to
+    // `if::core::matches`) is a prefix token, not part of a macro path.
+    if path
+        .split("::")
+        .any(|segment| PREFIX_KEYWORDS.contains(&segment))
+    {
         return None;
     }
     Some(path)

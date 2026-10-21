@@ -102,6 +102,26 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 "oneline_if_vec_empty",
                 format!("if vec![1].is_empty() {{ {a} }}"),
             ),
+            (
+                "oneline_if_core_matches",
+                format!("if ::core::matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_core_cfg",
+                format!("if ::core::cfg!(any()) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_std_cfg",
+                format!("if ::std::cfg!(any()) {{ {a} }}"),
+            ),
+            (
+                "oneline_while_core_matches",
+                format!("while ::core::matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_match_core_line",
+                format!("match ::core::line!() {{ 0 => {a} _ => {{}} }}"),
+            ),
         ]
     };
     let live = |a: &str| -> Vec<(&'static str, String)> {

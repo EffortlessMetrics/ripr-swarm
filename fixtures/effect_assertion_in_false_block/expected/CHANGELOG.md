@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_in_false_block (5)
+
+Reason:
+RIPR-SPEC-0197: follow main's no-oracle wording in the human-full evidence path (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
