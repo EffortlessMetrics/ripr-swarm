@@ -798,13 +798,38 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
         let test = format!("{head}{body}}});\n");
         let finding = settings_finding(label, &test, "  return cfg;")?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+        assert!(
+            !finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("mocks a module"),
+            "{label}: {}",
+            finding.ripr.reveal.discriminate.summary
+        );
     }
-    // Discriminating negative: an unresolved test with no such callback (a
-    // shadowed `expect` helper) stays an actionable gap.
-    let shadowed = format!(
-        "{head}  const expect = (v: unknown) => ({{ toEqual: (_w: unknown) => v }});\n  expect(ready(cfg)).toEqual(cfg);\n}});\n"
-    );
-    let finding = settings_finding("unresolved-shadowed-expect", &shadowed, "  return cfg;")?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // Discriminating negatives that reach the arm (same-file no-op helper,
+    // so admission is `Unresolved` and nothing is collected): the markers
+    // beside it, in code that does not hold the `expect(`, or inside a
+    // comment or string, leave the gap actionable.
+    for (label, extra) in [
+        ("plain-helper", ""),
+        (
+            "unrelated-then",
+            "  Promise.resolve(1).then((n) => n + 1);\n",
+        ),
+        ("then-in-comment", "  // x.then((r) => expect(r).toBe(1))\n"),
+        (
+            "then-in-string",
+            "  const note = \".then(() => expect(1))\";\n",
+        ),
+    ] {
+        let test = format!(
+            "import {{ ready }} from \"../src/settings\";\nfunction check(v: unknown) {{}}\ntest(\"ready\", () => {{\n  const cfg = {{ ok: true }};\n{extra}  check(ready(cfg));\n}});\n"
+        );
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
     Ok(())
 }

@@ -195,8 +195,9 @@ rule 1, on the same value seams.
 **Rule 4. A refused nested callback holding an `expect(` is unknown, not a gap.**
 (Added 2026-10-21.) When every oracle-eligible related test collects no
 assertion, has assertion admission `assertion_like_present_but_unresolved`,
-and its body holds an `expect(` inside a `.then(` handler or an async
-`forEach` callback (the forms rule 2 refuses), the finding reads
+and its body holds an `expect(` inside the argument span of a `.then(` or
+an `forEach(async` call (the forms rule 2 refuses; comments and string
+contents are ignored), the finding reads
 `static_unknown` instead of `weakly_exposed`, with a missing note saying the
 discriminator is not established either way. Any other unresolved cause (a
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
@@ -250,6 +251,13 @@ and the rejected alternative.
    leave example 3 at `exposed`, which credits a test that passes on both
    versions; and demote every dropped override, which would remove credit
    from tests whose input lacks the field.
+
+7. **Refused callback assertion (rule 4, 2026-10-21).** Adopted: read
+   `static_unknown` only for the two refused shapes. A blanket demotion of
+   every `assertion_like_present_but_unresolved` test was tried and moved
+   three true-gap corpus rows to `limited`. The textual span match errs
+   toward abstaining, never toward credit. Rejected: crediting the shapes,
+   which rule 2 refuses on purpose. Recorded on #9290.
 
 ## Required Evidence
 
@@ -331,7 +339,9 @@ and the rejected alternative.
   rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows; cases
   `jest-spec0246-ex07-then-rejection-handler` and
-  `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`).
+  `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
+  `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
+  and a shadowed-`expect` negative.
 
 ## Implementation Mapping
 

@@ -4427,12 +4427,88 @@ fn unresolved_assertions_only(candidates: &[TypeScriptRelatedCandidate<'_>]) -> 
         })
 }
 
-/// An `expect(` inside a `.then(` handler or an async `forEach` callback: the
-/// two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the assertion
-/// still runs. Other `Unresolved` causes (a shadowed `expect`, a no-op helper)
-/// stay actionable gaps.
+/// An `expect(` inside the argument span of a `.then(` or `forEach(async`
+/// call: the two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the
+/// assertion still runs. Comments and string contents are blanked first, so a
+/// marker in either never counts. Other `Unresolved` causes (a shadowed
+/// `expect`, a no-op helper) stay actionable gaps.
 fn body_asserts_in_unmodeled_callback(body: &str) -> bool {
-    body.contains("expect(") && (body.contains(".then(") || body.contains("forEach(async"))
+    let masked = mask_comments_and_strings(body);
+    [".then(", "forEach(async"].iter().any(|marker| {
+        masked.match_indices(marker).any(|(start, _)| {
+            let Some(offset) = marker.find('(') else {
+                return false;
+            };
+            let open = start + offset;
+            let mut depth = 0usize;
+            let mut end = masked.len();
+            for (i, byte) in masked.bytes().enumerate().skip(open) {
+                match byte {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            masked.get(open..end).is_some_and(|span| {
+                span.match_indices("expect(").any(|(at, _)| {
+                    !span[..at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                })
+            })
+        })
+    })
+}
+
+/// Blanks comment and string/template-literal contents, keeping byte length.
+fn mask_comments_and_strings(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        let next = bytes.get(i + 1).copied();
+        match bytes[i] {
+            b'/' if next == Some(b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if next == Some(b'*') => {
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    out[i] = b' ';
+                    i += 1;
+                }
+                for slot in out.iter_mut().skip(i).take(2) {
+                    *slot = b' ';
+                }
+                i += 2;
+            }
+            quote @ (b'"' | b'\'' | b'`') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                    out[i] = b' ';
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    // Multi-byte characters inside masked spans become spaces byte by byte, so
+    // the output stays valid UTF-8; fall back to the original on any surprise.
+    String::from_utf8(out).unwrap_or_else(|_| body.to_string())
 }
 
 /// Returns `true` when `oracle_kind` can observe the seam identified by
@@ -5242,6 +5318,9 @@ pub(crate) fn classify_change_with_alias_state(
         missing,
     };
     let ladder_exposed = matches!(verdict.class, ExposureClass::Exposed);
+    // Only the unresolved-callback arm yields `static_unknown` before the
+    // post-ladder rules; any later `static_unknown` is the rule 8 mock cause.
+    let ladder_unresolved_unknown = matches!(verdict.class, ExposureClass::StaticUnknown);
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
@@ -5271,7 +5350,8 @@ pub(crate) fn classify_change_with_alias_state(
         discriminate_state,
         mut missing,
     } = verdict;
-    let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown);
+    let static_unknown_by_mock =
+        matches!(class, ExposureClass::StaticUnknown) && !ladder_unresolved_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
     // unchanged. Outside rule 8 a static limit is advisory: an `exposed`
@@ -5371,6 +5451,8 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if ladder_unresolved_unknown {
+        "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
         // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
         // ladder's credit; its missing line says why.
