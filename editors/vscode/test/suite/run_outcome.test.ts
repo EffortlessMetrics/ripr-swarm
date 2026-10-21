@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { validateRunOutcome } from './index';
+import { executedFromStats, validateRunOutcome } from './index';
 
 suite('run outcome guard', () => {
   test('a before-all setup death names the hook and what still executed', () => {
@@ -64,6 +64,18 @@ suite('run outcome guard', () => {
   test('ordinary failures keep the ordinary message', () => {
     const reason = validateRunOutcome({ executed: 5, failures: 2, failedBeforeHooks: [] });
     assert.strictEqual(reason, '2 tests failed.');
+  });
+
+  test('skipped tests do not count as executed', () => {
+    assert.strictEqual(executedFromStats({ passes: 0, failures: 0 }), 0);
+    assert.strictEqual(executedFromStats({ passes: 3, failures: 1 }), 4);
+    assert.strictEqual(executedFromStats(undefined), 0);
+    const reason = validateRunOutcome({
+      executed: executedFromStats({ passes: 0, failures: 0 }),
+      failures: 0,
+      failedBeforeHooks: []
+    });
+    assert.ok(reason?.includes('executed zero tests'), reason);
   });
 
   test('a clean run validates', () => {

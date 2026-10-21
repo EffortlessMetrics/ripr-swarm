@@ -42,6 +42,15 @@ export function validateRunOutcome({
   return undefined;
 }
 
+/**
+ * Tests that actually ran to a verdict. mocha's `stats.tests` also counts
+ * skipped (`this.skip()`) tests, so a lane whose every test skips would
+ * otherwise read as executed and pass; only passes and failures count.
+ */
+export function executedFromStats(stats?: { passes?: number; failures?: number }): number {
+  return (stats?.passes ?? 0) + (stats?.failures ?? 0);
+}
+
 function beforeHookTitle(runnable: { title?: string; type?: string }): string | undefined {
   if (
     runnable.type === 'hook' &&
@@ -71,7 +80,7 @@ export function run(): Promise<void> {
   return new Promise((resolve, reject) => {
     const failedBeforeHooks: string[] = [];
     const runner = mocha.run((failures: number) => {
-      const executed = runner.stats?.tests ?? 0;
+      const executed = executedFromStats(runner.stats);
       const reason = validateRunOutcome({ executed, failures, failedBeforeHooks });
       if (reason !== undefined) {
         reject(new Error(reason));
