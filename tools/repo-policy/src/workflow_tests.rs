@@ -1157,7 +1157,15 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "more than one queued PR",
-            "[ \"$parent\" = \"$GROUP_BASE_SHA\" ]",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");

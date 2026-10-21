@@ -1080,7 +1080,15 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "refuse merge groups that carry more than one queued PR",
-            "[ \"$parent\" = \"$GROUP_BASE_SHA\" ]",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha to the live head or group base",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer than the queued commit",
+            "[ \"$ref_sha\" != \"$head\" ]",
         ),
     ] {
         if !workflow.contains(snippet) {
