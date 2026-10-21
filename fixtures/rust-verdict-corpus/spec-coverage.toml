@@ -792,3 +792,8 @@ reason = "pilot start-command root rendering; not an exposure-verdict example a 
 id = "RIPR-SPEC-0292"
 scope = "out"
 reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "Display/Debug fmt dispatch direct_owner_call relation admission; numbered examples are unit-tested in fmt_dispatch.rs, not exposure-verdict examples a corpus case labels"
