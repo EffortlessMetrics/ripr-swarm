@@ -11,7 +11,7 @@ use crate::cli::commands_options::{
 use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
     baseline_created_at, non_empty_path_arg, read_optional_text_for_report, write_text_file,
@@ -60,11 +60,10 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if options.out.exists() && !options.force {
-        let quoted_from = crate::agent::loop_commands::shell_arg(&options.from.to_string_lossy());
-        let quoted_out = crate::agent::loop_commands::shell_arg(&options.out.to_string_lossy());
-        return Err(format!(
-            "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it",
-            options.out.display()
+        return Err(baseline_create_overwrite_error(
+            &options.from,
+            &options.out,
+            cfg!(windows),
         ));
     }
     write_text_file(&options.out, &rendered)?;
@@ -84,6 +83,15 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn baseline_create_overwrite_error(from: &Path, out: &Path, windows: bool) -> String {
+    let quoted_from = crate::agent::loop_commands::shell_arg_for(&from.to_string_lossy(), windows);
+    let quoted_out = crate::agent::loop_commands::shell_arg_for(&out.to_string_lossy(), windows);
+    format!(
+        "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it",
+        out.display()
+    )
 }
 
 fn baseline_diff(args: &[String]) -> Result<(), String> {
@@ -347,6 +355,38 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
 mod tests {
     use super::super::tests::{args, repo_root, unique_command_test_dir};
     use super::*;
+
+    #[test]
+    fn baseline_create_overwrite_discloses_windows_shell_routing() {
+        for (from, quoted_from) in [
+            (r"C:\work\gate$it's.json", r"'C:\work\gate$it'\''s.json'"),
+            (r"C:\work\gate`it's.json", r"'C:\work\gate`it'\''s.json'"),
+            (r"C:\work\gate%it's.json", r#""C:\work\gate%it's.json""#),
+        ] {
+            assert_eq!(
+                baseline_create_overwrite_error(
+                    Path::new(from),
+                    Path::new(r"C:\work\chosen baseline.json"),
+                    true,
+                ),
+                format!(
+                    "C:\\work\\chosen baseline.json already exists; rerun `ripr baseline create --from {quoted_from} --out \"C:\\work\\chosen baseline.json\" --force` to overwrite it. On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_create_overwrite_keeps_posix_retry_without_windows_hint() {
+        assert_eq!(
+            baseline_create_overwrite_error(
+                Path::new("gate $it's.json"),
+                Path::new("chosen baseline.json"),
+                false,
+            ),
+            r"chosen baseline.json already exists; rerun `ripr baseline create --from 'gate $it'\''s.json' --out 'chosen baseline.json' --force` to overwrite it"
+        );
+    }
 
     #[test]
     fn baseline_create_parses_option_surface() {
