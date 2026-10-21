@@ -113,7 +113,15 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
     let header = "from pkg.mod import price\n\ndef test_price():\n";
     let mut config = ripr::config::RiprConfig::default();
     config.languages.enabled = vec![ripr::domain::LanguageId::Python];
-    for (calls, second_file, expected_total) in [(12, false, 12), (12, true, 13), (32, true, 33)] {
+    for (calls, second_file, padding, expected_total) in [
+        (8, false, 0, 8),
+        (8, true, 0, 9),
+        (12, false, 0, 12),
+        (12, true, 0, 13),
+        (12, true, 20, 13),
+        (32, false, 0, 32),
+        (32, true, 0, 33),
+    ] {
         let body = (10..10 + calls)
             .map(|value| format!("    assert price({value}) == 1\n"))
             .collect::<String>();
@@ -122,9 +130,14 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
         if second_file {
             std::fs::write(
                 scratch.0.join("tests/test_b.py"),
-                format!("{header}    assert price(10) == 1\n"),
+                format!(
+                    "{}{header}    assert price(10) == 1\n",
+                    "\n".repeat(padding)
+                ),
             )
             .map_err(|e| e.to_string())?;
+        } else if scratch.0.join("tests/test_b.py").exists() {
+            std::fs::remove_file(scratch.0.join("tests/test_b.py")).map_err(|e| e.to_string())?;
         }
         let output = ripr::app::check_workspace_with_config(
             CheckInput {
@@ -157,7 +170,7 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
             .collect::<Vec<_>>();
         let mut expected = vec![(Some(Path::new("tests/test_a.py")), 4)];
         if second_file {
-            expected.push((Some(Path::new("tests/test_b.py")), 4));
+            expected.push((Some(Path::new("tests/test_b.py")), 4 + padding));
         }
         assert_eq!(repeated_locations, expected);
 
@@ -167,7 +180,7 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
             .filter(|line| line.contains("source function argument value"))
             .collect::<Vec<_>>();
         assert_eq!(source_lines.len(), 8, "{human}");
-        if second_file {
+        if second_file && padding == 0 {
             for file in ["tests/test_a.py", "tests/test_b.py"] {
                 assert!(
                     human.contains(&format!(
@@ -182,20 +195,30 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
                 "{human}"
             );
         }
-        assert!(
-            human.contains(&format!(
-                "showing 8 of {expected_total} read from related tests"
-            )),
-            "{human}"
-        );
-        assert!(
-            human.contains(if expected_total > 32 {
-                "--format json keeps a ranked 32"
-            } else {
-                "full list in --format json"
-            }),
-            "{human}"
-        );
+        if expected_total > 8 {
+            assert!(
+                human.contains(&format!(
+                    "showing 8 of {expected_total} read from related tests"
+                )),
+                "{human}"
+            );
+            assert!(
+                human.contains(if expected_total > 32 {
+                    "--format json keeps a ranked 32"
+                } else {
+                    "full list in --format json"
+                }),
+                "{human}"
+            );
+        } else {
+            assert!(!human.contains("source values (showing"), "{human}");
+        }
+        if padding > 0 {
+            assert!(
+                source_lines.iter().all(|line| line.contains("at line ")),
+                "{human}"
+            );
+        }
 
         let json: serde_json::Value = serde_json::from_str(&ripr::output::json::render(&output))
             .map_err(|e| e.to_string())?;
@@ -212,7 +235,7 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
                 .ok_or_else(|| "missing observed values array".to_string())?;
             assert_eq!(values.len(), expected_total.min(32));
             assert!(values.iter().all(|value| value.get("file").is_none()));
-            if second_file {
+            if second_file && padding == 0 {
                 assert_eq!(
                     values[0], values[1],
                     "distinct files retain identical wire facts"
@@ -225,5 +248,207 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
             assert!(rendered.get("observed_values_total").is_none());
         }
     }
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn cross_file_guard_and_term_facts_reach_consumers() -> Result<(), String> {
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![ripr::domain::LanguageId::Python];
+    for (label, source, line, before, after, call, value, discriminator) in [
+        (
+            "guard",
+            "def price(x):\n    if x > 5:\n        return 2\n    return 0\n",
+            3,
+            "        return 1",
+            "        return 2",
+            "assert price(0) == 0",
+            "x = 0",
+            "x > 5",
+        ),
+        (
+            "term",
+            "def shipping_fee(x):\n    if x >= 5:\n        return 0\n    return 1\n\ndef price(x):\n    return x\n",
+            7,
+            "    return x + shipping_fee(x)",
+            "    return x",
+            "assert price(10) == 10",
+            "x = 10",
+            "shipping_fee",
+        ),
+    ] {
+        let scratch = Scratch(
+            std::env::temp_dir().join(format!("ripr-cross-file-{label}-{}", std::process::id())),
+        );
+        std::fs::create_dir_all(scratch.0.join("src/pkg")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(scratch.0.join("tests")).map_err(|e| e.to_string())?;
+        for (path, text) in [
+            ("pyproject.toml", "[project]\nname = \"value-facts\"\n"),
+            ("src/pkg/__init__.py", ""),
+            ("src/pkg/mod.py", source),
+        ] {
+            std::fs::write(scratch.0.join(path), text).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(scratch.0.join("change.diff"), format!(
+            "diff --git a/src/pkg/mod.py b/src/pkg/mod.py\n--- a/src/pkg/mod.py\n+++ b/src/pkg/mod.py\n@@ -{line} +{line} @@\n-{before}\n+{after}\n"
+        )).map_err(|e| e.to_string())?;
+        for file in ["tests/test_b.py", "tests/test_a.py"] {
+            std::fs::write(
+                scratch.0.join(file),
+                format!("from pkg.mod import price\n\ndef test_price():\n    {call}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let output = ripr::app::check_workspace_with_config(
+            CheckInput {
+                root: scratch.0.clone(),
+                diff_file: Some(scratch.0.join("change.diff")),
+                mode: Mode::Fast,
+                format: OutputFormat::Json,
+                ..CheckInput::default()
+            },
+            &config,
+        )?;
+        let finding = output
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ripr::domain::ProbeFamily::ReturnValue
+                    && finding.probe.location.line == line
+            })
+            .ok_or_else(|| format!("{label}: missing changed return finding: {output:?}"))?;
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| format!("{fact:?}").contains(discriminator)),
+            "{label}: {finding:?}"
+        );
+        let facts = &finding.activation.observed_values;
+        assert_eq!(facts.len(), 2, "{label}: {facts:?}");
+        for (fact, file) in facts.iter().zip(["tests/test_a.py", "tests/test_b.py"]) {
+            assert_eq!(fact.file.as_deref(), Some(Path::new(file)));
+            assert_eq!(fact.line, 4);
+            assert_eq!(fact.value, value);
+        }
+        let human = ripr::output::human::render_finding(finding);
+        for file in ["tests/test_a.py", "tests/test_b.py"] {
+            assert!(
+                human.contains(&format!(
+                    "source function argument value {value} at {file}:4"
+                )),
+                "{human}"
+            );
+        }
+        let json: serde_json::Value = serde_json::from_str(&ripr::output::json::render(&output))
+            .map_err(|e| e.to_string())?;
+        let rendered = json["findings"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["id"] == finding.id))
+            .ok_or_else(|| "changed return missing from JSON".to_string())?;
+        for values in [
+            &rendered["observed_values"],
+            &rendered["activation"]["observed_values"],
+        ] {
+            let values = values
+                .as_array()
+                .ok_or_else(|| "missing observed values".to_string())?;
+            assert_eq!(values.len(), 2);
+            assert!(values.iter().all(|value| value.get("file").is_none()));
+            assert_eq!(values[0], values[1]);
+        }
+        assert!(rendered.get("observed_values_total").is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn classified_input_beyond_first_32_outranks_assertion_values_in_json() -> Result<(), String> {
+    let scratch = Scratch(std::env::temp_dir().join(format!(
+        "ripr-ranked-classified-values-{}",
+        std::process::id()
+    )));
+    std::fs::create_dir_all(scratch.0.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        scratch.0.join("Cargo.toml"),
+        "[package]\nname = \"ranked-values\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let assertions = "        assert_eq!(0, 0);\n".repeat(32);
+    std::fs::write(scratch.0.join("src/lib.rs"), format!(
+        "pub fn price(x: i32) -> bool {{\n    x > 5\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::price;\n    #[test]\n    fn test_price() {{\n{assertions}        assert!(price(10));\n    }}\n}}\n"
+    )).map_err(|e| e.to_string())?;
+    std::fs::write(scratch.0.join("change.diff"),
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    x >= 5\n+    x > 5\n"
+    ).map_err(|e| e.to_string())?;
+    let output = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(scratch.0.join("change.diff")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ripr::domain::ProbeFamily::Predicate)
+        .ok_or_else(|| "missing changed Rust predicate".to_string())?;
+    let facts = &finding.activation.observed_values;
+    assert!(facts.len() > 32, "{facts:?}");
+    let (input_index, input) = facts
+        .iter()
+        .enumerate()
+        .find(|(_, fact)| {
+            fact.context == ripr::domain::ValueContext::FunctionArgument && fact.value == "x = 10"
+        })
+        .ok_or_else(|| format!("missing classified owner input: {facts:?}"))?;
+    assert!(
+        input_index >= 32,
+        "ranked input must be outside a naive first-32 window"
+    );
+    assert!(
+        facts
+            .iter()
+            .take(32)
+            .all(|fact| fact.context == ripr::domain::ValueContext::AssertionArgument),
+        "{facts:?}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&ripr::output::json::render(&output)).map_err(|e| e.to_string())?;
+    let rendered = json["findings"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == finding.id))
+        .ok_or_else(|| "changed predicate missing from JSON".to_string())?;
+    for values in [
+        &rendered["observed_values"],
+        &rendered["activation"]["observed_values"],
+    ] {
+        let values = values
+            .as_array()
+            .ok_or_else(|| "missing observed values".to_string())?;
+        assert_eq!(values.len(), 32);
+        assert!(
+            values.iter().any(|value| value["value"] == input.value
+                && value["context"] == "function_argument"
+                && value["line"] == input.line),
+            "ranked owner input must survive the JSON cap: {values:?}"
+        );
+    }
+    assert_eq!(rendered["observed_values_total"], facts.len());
+    let human = ripr::output::human::render_finding(finding);
+    assert!(
+        human.contains(&format!(
+            "showing 8 of {} read from related tests",
+            facts.len()
+        )),
+        "{human}"
+    );
+    assert!(human.contains("--format json keeps a ranked 32"), "{human}");
+    assert!(
+        !human.contains("source function argument value x = 10 at"),
+        "human keeps the first eight, independently of JSON ranking: {human}"
+    );
     Ok(())
 }
