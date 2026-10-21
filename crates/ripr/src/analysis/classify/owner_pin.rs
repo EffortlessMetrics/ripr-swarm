@@ -172,6 +172,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
     std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
+    /// #8051: per test file, its bare `debug_assert_eq!` calls, parsed once
+    /// per file rather than once per (probe, related test).
+    debug_assert_eq_calls: SyncMemo<BTreeMap<PathBuf, Arc<Vec<DebugAssertEqCall>>>>,
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
@@ -248,6 +251,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #8051: one bare `debug_assert_eq!` call: its line and source text.
+type DebugAssertEqCall = (usize, String);
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
@@ -368,6 +374,25 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// #8051: the bare `debug_assert_eq!` calls of `file` from `start_line`
+    /// to `end_line`, from a per-file parse kept for the run.
+    pub(in crate::analysis) fn debug_assert_eq_calls(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Vec<(usize, String)> {
+        self.debug_assert_eq_calls
+            .get_or_build(file, || {
+                crate::analysis::syntax::debug_assert_eq_calls(source)
+            })
+            .iter()
+            .filter(|(line, _)| (start_line..=end_line).contains(line))
+            .cloned()
+            .collect()
+    }
+
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
@@ -3036,11 +3061,49 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
+        self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
+    }
+
+    /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
+    /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
+    /// where debug assertions are on, so this is never credit: the
+    /// gap-admission post-pass reads it as a profile limit.
+    pub(in crate::analysis) fn admits_debug_assert_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.admits_spelled(
+            test,
+            assertion,
+            index,
+            imports_foreign,
+            syntax,
+            "debug_assert_eq",
+        )
+    }
+
+    fn admits_spelled(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        spelling: &'static str,
+    ) -> bool {
         // A selected check-helper argument pin that a later gate refuses
         // (another owner of the same name, a scope or identity gate) leaves
         // the helper's later eager calls to try: an unrelated earlier call
         // must not hide the genuine pin.
-        let mut probe = HelperCallProbe::default();
+        let mut probe = HelperCallProbe {
+            spelling,
+            skip: 0,
+            selected: Cell::new(false),
+        };
         loop {
             if self.admits_candidate(test, assertion, index, imports_foreign, syntax, &probe) {
                 return true;
@@ -3062,6 +3125,7 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
         probe: &HelperCallProbe,
     ) -> bool {
+        let spelling = probe.spelling;
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -3090,11 +3154,16 @@ impl OwnerReturnPin {
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
+            || (!is_guard
+                && if spelling == "assert_eq" {
+                    is_plain_or_std_macro(&assertion.text, spelling)
+                } else {
+                    is_plain_macro(&assertion.text, spelling)
+                });
         let equality = if reads_assert_eq {
             None
         } else {
@@ -7933,20 +8002,20 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
         .then(|| format!("{root}{macro_name}"))
 }
 
-/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// `spelling` (`assert_eq` or `debug_assert_eq`) whose only nested macros are `expansion` (`format!`, which
 /// [`helper_arguments::rendered_template_call`] reads, or `vec!`, which
 /// [`single_element_index`] reads).
-fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
+fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
         return false;
     };
-    *first == "assert_eq"
+    *first == spelling
         && !nested.is_empty()
         && nested.iter().all(|(name, _)| *name == expansion)
         && masked
-            .find("assert_eq")
+            .find(spelling)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
@@ -13368,8 +13437,10 @@ mod tests;
 
 /// Which eligible eager call of a borrowed check helper one admission attempt
 /// reads, and whether the attempt selected one (RIPR-SPEC-0197).
-#[derive(Default)]
 struct HelperCallProbe {
+    /// The assertion macro the admission reads: `assert_eq` or (#8051, never
+    /// credit) `debug_assert_eq`.
+    spelling: &'static str,
     skip: usize,
     selected: Cell<bool>,
 }

@@ -238,7 +238,12 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
 #5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. Side-effect, call-deletion,
+compiling test stub, or a named refusal. When the finding line holds no seam
+of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
+seam's own line rather than the finding line, and only when asking for that
+line resolves to the same seam with no substitution note; otherwise no route
+is printed. A changed constant routed through a consuming function follows the
+same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.
 
@@ -373,6 +378,18 @@ content. Shared CLI blocks use compact section spacing; only empty separators
 are removed, never a content line. Consecutive references preserve evidence
 order and repeated entries.
 No finding or evidence fact is removed to shorten the report (#7394).
+
+One presentation exception applies to a `no_static_path` finding: its Weakness
+list omits the three generic `missing` entries ("No static test path reaches
+the changed owner", "No relevant oracle was detected", "No strong
+discriminator was detected") while the matching Evidence stage (reach,
+observation, discriminator) reads `no`, because the Evidence block already
+states the same fact. A distinct entry, such as a missing boundary input, and
+any entry whose stage is not `no` stay. The finding's JSON `missing` list is
+unchanged. The default digest skips the same restated entries when it names its one
+`Missing discriminator` entry, and labels a `Typed static limitation (...)`
+entry as an `Analyzer limit`, so it never presents an analyzer limit as a test
+gap or names an entry the exhaustive form dropped as a restatement (#9033).
 
 Sharing requires established identical full source ownership, source file,
 language/status/owner kind, currentness and raw test context/counts. An evidence
@@ -527,6 +544,7 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

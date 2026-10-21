@@ -3604,6 +3604,16 @@ fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
     if !stderr.contains("canary_config_secret_6834") {
         return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
     }
+    // #9033: stderr also names the way out; the machine message stays the
+    // one-line summary.
+    if !stderr.contains("removing it makes ripr use the next ripr.toml it finds") {
+        return Err(format!("stderr must name how to recover: {stderr}"));
+    }
+    if message.contains("built-in defaults") {
+        return Err(format!(
+            "the recovery hint must not enter the machine message: {message}"
+        ));
+    }
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -13498,6 +13508,28 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     assert!(stdout.contains("analysis.mode `slow` is not supported"));
     assert!(!stdout.contains("mode = \"slow\""));
 
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #9033: the loader's recovery line is for `check`/`explain`; verbose doctor
+/// already prints its own `Fix:` line and must not repeat it as an `error:` line.
+#[test]
+fn doctor_verbose_malformed_config_omits_the_loader_recovery_line() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(workspace.join("ripr.toml"), "[bogus\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("  Fix: correct ") {
+        return Err(format!("doctor must keep its own Fix line:\n{stdout}"));
+    }
+    if !stdout.contains("error: ") || stdout.contains("built-in defaults") {
+        return Err(format!(
+            "verbose doctor must show the parser error but not the loader hint:\n{stdout}"
+        ));
+    }
     ignore_remove_dir_all(&workspace);
     Ok(())
 }

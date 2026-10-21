@@ -150,7 +150,10 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
-  Class/language are exact wire tokens; unknown values produce an empty page.
+  Class/language are exact wire tokens. An unknown `language` is Invalid
+  Params (`-32602`) listing the allowed wire strings, because an empty page
+  would read as "no gaps in that language"; a known language with no match
+  produces an empty page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
@@ -403,7 +406,7 @@ is not evidence that a resource with a particular identity exists.
 
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
-  class/language/readiness exclusion, conjunction, unknown-value empty sets,
+  class/language/readiness exclusion, conjunction, known-value empty sets,
   filtered one-item continuation replay, unchanged snapshot after reads, and
   stale replay after replacement. The frozen pre-feature closed v1 success
   schema rejects the extended envelope, which carries v2. A dropped-forwarding

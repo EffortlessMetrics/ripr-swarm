@@ -1770,3 +1770,11 @@ path = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
 status = "proposed"
 owner = "product-xtask"
 standalone_reason = "Issue #8921 records the first-run over-budget step-occurrence contract: dx-scoreboard ingestion counts first_run.over_budget_steps per step occurrence instead of per breached metric row, aligning with the public-proof renderer and the declared steps unit, retaining both evidence entries per occurrence and keeping workflow_lines breaches separate."
+
+[[artifact]]
+id = "RIPR-SPEC-0300"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the wrapped-signature contract: the signature of a new function seeds no probe on its parameter, return or brace lines, several changed lines of one existing signature seed one probe on the first changed line, type-bound declarations keep their own probe, and any ambiguous header fails closed to per-line probes."
