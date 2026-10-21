@@ -2220,6 +2220,32 @@ mod tests {
         assert!(!rendered.contains("suggested file:"), "{rendered}");
     }
 
+    /// #9004: base-side evidence is not a candidate edit target, so the full
+    /// render must not print it at warning severity; a candidate-current
+    /// finding keeps its configured warning.
+    #[test]
+    fn base_side_finding_renders_at_note_severity() {
+        let current = sample_finding();
+        let location = current.probe.location.file.display().to_string();
+        let rendered_current = render_finding(&current);
+        assert!(rendered_current.contains(&format!("WARNING {location}:7")));
+
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = current.clone();
+            base_side.source_currentness = currentness;
+            let rendered = render_finding(&base_side);
+            assert!(
+                rendered.contains(&format!("NOTE {location}:7")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("WARNING"), "{rendered}");
+            assert!(!rendered.contains("(warning,"), "{rendered}");
+        }
+    }
+
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
     /// finding at line 5 over the carded literal finding at line 11, so check
     /// said "no ripr command routes this" while pilot had a card. A Python
