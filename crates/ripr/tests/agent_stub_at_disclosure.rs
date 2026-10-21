@@ -48,13 +48,16 @@ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String>
         .map_err(|error| format!("spawn ripr agent stub: {error}"))
 }
 
-fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
-    let prose_at = stderr
-        .find("ripr: agent stub: ")
-        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
-    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
-        .map_err(|error| format!("the refusal envelope did not parse: {error}: {stderr}"))?;
-    Ok((envelope, &stderr[prose_at..]))
+fn split_refusal_envelope<'a>(
+    stdout: &str,
+    stderr: &'a str,
+) -> Result<(serde_json::Value, &'a str), String> {
+    if !stderr.starts_with("ripr: agent stub: ") {
+        return Err(format!("the refusal prose must be on stderr: {stderr}"));
+    }
+    let envelope: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("the refusal envelope did not parse: {error}: {stdout}"))?;
+    Ok((envelope, stderr))
 }
 
 fn note_names_substitution(note: &str, requested: &str, stubbed: &str) -> Result<(), String> {
@@ -134,21 +137,21 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
 }
 
 /// An off-line `--at` whose nearest gap then refuses still carries the
-/// substitution note in the `--json` envelope (`insert(0)` runs before the
-/// outcome match). A selector miss would leave `seam_id` null and `warnings` empty.
+/// substitution note in the `--json` envelope on stdout (exit 3, prose on
+/// stderr); `insert(0)` runs before the outcome match. A selector miss would leave `seam_id` null and `warnings` empty.
 #[test]
 fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<(), String> {
     let scratch = Scratch::create("async-predicate", ASYNC_PREDICATE)?;
     let json = stub(&scratch.0, "src/lib.rs:3", "predicate", true)?;
     let stdout = String::from_utf8_lossy(&json.stdout).to_string();
     let stderr = String::from_utf8_lossy(&json.stderr).to_string();
-    if json.status.success() || !stdout.is_empty() {
+    if json.status.code() != Some(3) {
         return Err(format!(
-            "substituted async owner must refuse with empty stdout: status={:?} stdout={stdout} stderr={stderr}",
+            "substituted async owner must refuse with exit 3: status={:?} stdout={stdout} stderr={stderr}",
             json.status.code()
         ));
     }
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     if envelope["state"] != "refused" {
         return Err(format!("expected refused envelope, got {envelope}"));
     }

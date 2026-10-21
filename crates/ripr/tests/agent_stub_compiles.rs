@@ -335,13 +335,12 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         match expect {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
-                let (envelope, _) = split_refusal_envelope(&stderr)?;
+                let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
                 assert_eq!(envelope["schema_version"], "0.2");
                 assert_eq!(envelope["state"], "refused");
-                assert!(output.stdout.is_empty());
                 assert!(
-                    stderr.contains(&format!("\"kind\": \"{kind}\"")),
-                    "{needle}: {stderr}"
+                    stdout.contains(&format!("\"kind\": \"{kind}\"")),
+                    "{needle}: {stdout}"
                 );
                 assert_eq!(
                     std::fs::read_to_string(root.join("src/lib.rs"))
@@ -888,17 +887,19 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
-/// #7390: under `--json` a not-found refusal leads stderr with the typed
-/// `rust_test_stub` `state: "refused"` envelope (pretty-printed), followed by
-/// the prose refusal line; stdout stays empty. Returns the parsed envelope
-/// and the prose tail.
-fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
-    let prose_at = stderr
-        .find("ripr: agent stub: ")
-        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
-    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
-        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stderr}"))?;
-    Ok((envelope, &stderr[prose_at..]))
+/// #7390: under `--json` a not-found refusal puts the typed `rust_test_stub`
+/// `state: "refused"` envelope (pretty-printed) on stdout and the prose
+/// refusal line on stderr. Returns the parsed envelope and the prose.
+fn split_refusal_envelope<'a>(
+    stdout: &str,
+    stderr: &'a str,
+) -> Result<(serde_json::Value, &'a str), String> {
+    if !stderr.starts_with("ripr: agent stub: ") {
+        return Err(format!("the refusal prose must be on stderr: {stderr}"));
+    }
+    let envelope: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stdout}"))?;
+    Ok((envelope, stderr))
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
@@ -978,9 +979,9 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         }
         let output = run_bounded(command, root, "absent-selector", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_eq!(envelope["schema_version"], "0.2");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1038,7 +1039,6 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         command.arg("--write");
         let output = run_bounded(command, root, "ambiguous-files", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let mut repeat = kind_refusal_command(root, "src/lib.rs:2", kind);
         repeat.arg("--write");
         let repeated = run_bounded(
@@ -1052,7 +1052,8 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         assert_eq!(repeated.stderr, output.stderr);
         assert_eq!(fixture_files(root)?, before);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_selector_refusal(&envelope, "selector_ambiguous");
         assert_eq!(
             envelope["refusal"]["reason"],
@@ -1100,7 +1101,6 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     command.arg("--write");
     let output = run_bounded(command, root, "ambiguous-seams", Duration::from_mins(2))?;
     assert_eq!(output.status.code(), Some(3));
-    assert!(output.stdout.is_empty());
     let mut repeat = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
     repeat.arg("--write");
     let repeated = run_bounded(
@@ -1114,7 +1114,8 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     assert_eq!(repeated.stderr, output.stderr);
     assert_eq!(fixture_files(root)?, before);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_selector_refusal(&envelope, "selector_ambiguous");
     let reason = envelope["refusal"]["reason"]
         .as_str()
@@ -1208,12 +1209,9 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1370,12 +1368,9 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")
@@ -1468,12 +1463,9 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")

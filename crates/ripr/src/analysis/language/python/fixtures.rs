@@ -9,11 +9,12 @@
 //! simply leaves the test unrelated, and a renamed fixture
 //! (`@pytest.fixture(name=...)`) is not recorded.
 
+use super::admission::PythonAssertionAdmission;
 use super::owners_tests::{decorator_names, test_imports};
 use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFixtureDef, PythonImport, PythonTest};
 use rustpython_parser::ast::{Expr, Ranged, Stmt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Most resolved fixture definitions attached to one test.
@@ -115,12 +116,40 @@ fn resolve<'a>(
     if let Some(def) = find(test_file) {
         return Some(def);
     }
-    let mut dir = test_file.parent();
-    while let Some(current) = dir {
-        if let Some(def) = find(&current.join("conftest.py")) {
-            return Some(def);
+    conftest_chain(test_file).find_map(|conftest| find(&conftest))
+}
+
+/// The `conftest.py` paths pytest consults for a test file, nearest first:
+/// one per directory from the file's own up to the workspace root. Shared by
+/// fixture resolution and conftest-driven assertion admission (#6657).
+pub(super) fn conftest_chain(test_file: &Path) -> impl Iterator<Item = PathBuf> {
+    std::iter::successors(test_file.parent(), |dir| dir.parent()).map(|dir| dir.join("conftest.py"))
+}
+
+/// Withhold `extraction_complete_no_assertion` from every test whose
+/// directory chain holds a conftest that can run assertion-like code around
+/// it: an autouse fixture, a `pytest_runtest_*` hook, `pytest_plugins`, or a
+/// conftest RIPR could not read (#6657). A recognized assertion stays
+/// recognized; only a clean no-assertion state is downgraded, so a conftest
+/// can never grant `NoAssertionLike`.
+///
+/// `implicit_conftests` are the workspace-relative conftest paths known to
+/// install implicit setup. `is_unreadable_conftest` answers for a chain
+/// conftest that is not among the implicit set: true when it exists but was
+/// not read (capped, excluded or unreadable), which counts the same way.
+pub(super) fn taint_admission_by_conftest(
+    tests: &mut [PythonTest],
+    implicit_conftests: &BTreeSet<PathBuf>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if test.assertion_admission != PythonAssertionAdmission::NoAssertionLike {
+            continue;
         }
-        dir = current.parent();
+        if conftest_chain(&test.file).any(|conftest| {
+            implicit_conftests.contains(&conftest) || is_unreadable_conftest(&conftest)
+        }) {
+            test.assertion_admission = PythonAssertionAdmission::Unresolved;
+        }
     }
-    None
 }
