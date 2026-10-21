@@ -1539,7 +1539,7 @@ exit 66
         }
 
         /// Kernel wait channel of every thread of `pid`. A thread that exits
-        /// between the directory listing and the read is skipped; an
+        /// between the directory listing and the read (NotFound or ESRCH) is skipped; an
         /// unreadable instrument is an error, not an empty observation.
         fn task_wchans(pid: u32) -> Result<Vec<String>, String> {
             let mut waits = Vec::new();
@@ -1549,7 +1549,11 @@ exit 66
                 let entry = entry.map_err(|e| e.to_string())?;
                 match fs::read_to_string(entry.path().join("wchan")) {
                     Ok(wait) => waits.push(wait),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    // A thread can exit after the listing (NotFound) or between
+                    // open and read (ESRCH).
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::NotFound
+                            || e.raw_os_error() == Some(nix::errno::Errno::ESRCH as i32) => {}
                     Err(e) => return Err(format!("observe Linux blocked-I/O instrument: {e}")),
                 }
             }
@@ -1570,7 +1574,7 @@ exit 66
                 if child.try_wait().map_err(|e| e.to_string())?.is_some() {
                     return Err("CLI exited before blocked-I/O observation".to_string());
                 }
-                // The budgeted check runs on a worker thread (#8846), so the main
+                // The budgeted check runs on a worker thread (check_budget.rs), so the main
                 // thread waits on a futex while a sibling thread holds the blocking
                 // I/O. Observe every thread of the CLI, not only the leader.
                 let wait = task_wchans(child.id())?;
