@@ -2359,3 +2359,49 @@ fn equality_predicate_parametrize_on_either_constant_stays_exposed() -> Result<(
     }
     Ok(())
 }
+
+// #6585: an owner call nested in a wrapper that may ignore its argument is not
+// the value the assertion compares, so a strong exact oracle on the wrapper's
+// result does not discriminate the changed return.
+const PARSE_SOURCE: &str = "def parse(text):\n    return int(text) + 5\n";
+
+#[test]
+fn opaque_wrapper_around_owner_call_does_not_credit_exposed() -> Result<(), String> {
+    for body in [
+        "assert always_true(parse('1')) == True",
+        "assert bool(parse('1')) == True",
+        "self.assertTrue(always_true(parse('1')))",
+        "assert (always_true)(parse('1')) == True",
+        "assert always_true(parse('1')) == other.parse('2')",
+    ] {
+        let finding = classify_case(
+            PARSE_SOURCE,
+            &format!("from src.subject import parse\n\ndef test_parse():\n    {body}\n"),
+            2,
+            "    return int(text) + 1",
+            "    return int(text) + 5",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), String> {
+    for body in [
+        "assert parse('1') == 2",
+        "assert str(parse('1')) == '2'",
+        "assert round(parse('1'), 2) == 2",
+        "assert (parse('1')) == 2",
+    ] {
+        let finding = classify_case(
+            PARSE_SOURCE,
+            &format!("from src.subject import parse\n\ndef test_parse():\n    {body}\n"),
+            2,
+            "    return int(text) + 1",
+            "    return int(text) + 5",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}

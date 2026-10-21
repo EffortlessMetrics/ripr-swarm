@@ -229,7 +229,7 @@ written and must not copy these gaps.
   reason with its own row shapes (a matched row keeps its oracle strength and
   kind, only an unmatched row uses `<label>: ...; checked ...`, and a row with
   no recorded oracle shows only the reason, where human-full still prints its
-  `uses none unknown oracle` projection first), and diagnostics add up to three
+  `uses no oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
@@ -243,7 +243,10 @@ written and must not copy these gaps.
   strength is `unknown` (the probe family has no typed oracle relationships,
   so the assertion is not graded, not of unknown quality); `an unclassified
   oracle, not graded against this probe` when the kind is also `unknown` and
-  an assertion was selected; and `no oracle` when no assertion was selected.
+  an assertion was selected; and `no oracle` when the strength is `none`
+  (whatever the kind, #8747) or when no assertion was selected. The JSON
+  `evidence_path` uses the same projection, so strength `none` reads
+  `no oracle` there too.
   Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
   and the fixture-honesty matcher test
   `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.
