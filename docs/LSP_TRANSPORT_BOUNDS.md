@@ -55,11 +55,14 @@ input.
 
 Work-done progress creation uses that same 30-second request bound, but its
 announcement runs separately from refresh completion (#9149). Tokens register
-before announcement starts; termination removes an unstarted token silently.
+before announcement starts; terminal intent silences an unstarted token.
 A late create success cannot begin a terminated token. Begin, report and end
 notifications serialize per token, so one token's suspended send does not
 hold another token's report or terminal removal. An already-started token
-ends once, after its Begin, even if removal occurs during the Begin send.
+ends once, after its Begin. Terminal intent stays in the registry until
+cleanup completes, so cancellation while waiting cannot drop the current or
+unvisited drain records; retried cleanup retains custody. Late announcements
+and reports check that intent before sending.
 The full `end_all` drain still awaits in-flight notifications on the drained
 tokens; this isolation does not establish a total shutdown latency bound.
 Capability negotiation remains owned by
