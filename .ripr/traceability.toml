@@ -6573,6 +6573,19 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_all_drain_retains_retry_custody",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_attempt_completion_and_promotion",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_publishing_report",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::end_all_preserves_order_but_still_awaits_its_suspended_token",
+  "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::unanswered_create_does_not_delay_real_refresh_or_shutdown",
+  "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::late_create_success_cannot_begin_a_finished_real_refresh",
+  "crates/ripr/src/lsp/progress.rs::tests::late_create_success_never_revives_terminated_tokens",
+  "crates/ripr/src/lsp/progress.rs::tests::termination_during_begin_send_ends_the_started_token_exactly_once",
+  "crates/ripr/src/lsp/progress.rs::tests::detached_announcement_registers_before_its_task_is_polled",
+  "crates/ripr/src/lsp/progress.rs::tests::queued_promotion_during_create_announces_the_current_phase",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_status",
   "crates/ripr/src/lsp/tests.rs::failed_refresh_retains_last_snapshot_and_reports_stale_health",
     "crates/ripr/src/lsp/tests.rs::initialize_root_rejects_ambiguous_workspace_folders",
@@ -6592,6 +6605,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
     "crates/ripr/src/lsp/capabilities.rs",
     "crates/ripr/src/lsp/actions.rs",
