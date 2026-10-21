@@ -14047,6 +14047,23 @@ fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
     write_probe_stub(&dir.join(name), &unix, &windows)
 }
 
+fn write_marker_exporter_named(dir: &Path, marker: &Path, base_name: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    let name = if cfg!(windows) {
+        format!("{base_name}.bat")
+    } else {
+        base_name.to_string()
+    };
+    let marker_text = marker.display().to_string();
+    let unix = format!(
+        "#!/bin/sh\n: > '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo '{base_name} 9.9.9'; exit 0; fi\necho 'Usage: {base_name} ripr-facts --schema X'\nexit 0\n"
+    );
+    let windows = format!(
+        "@echo off\r\necho ran> \"{marker_text}\"\r\nif \"%1\"==\"--version\" echo {base_name} 9.9.9\r\nif \"%1\"==\"ripr-facts\" echo Usage: {base_name} ripr-facts --schema X\r\nexit /b 0\r\n"
+    );
+    write_probe_stub(&dir.join(name), &unix, &windows)
+}
+
 fn perl_hostile_root(label: &str) -> Result<PathBuf, String> {
     let root = unique_temp_workspace(label);
     std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
@@ -14184,9 +14201,136 @@ fn doctor_refuses_perl_exporter_symlinked_into_root() -> Result<(), String> {
         stdout.contains("exporter: refused"),
         "symlinked-into-root exporter must be refused:\n{stdout}"
     );
+    // Finding 2: the refusal names the canonical target that was
+    // judged, not the outside symlink spelling.
+    let canonical =
+        std::fs::canonicalize(root.join("bin/perllsp")).map_err(|err| err.to_string())?;
+    let refused_line = stdout
+        .lines()
+        .find(|line| line.contains("exporter: refused"))
+        .unwrap_or("");
+    assert!(
+        refused_line.contains(&canonical.display().to_string()),
+        "refusal must name the canonical resolved path {canonical:?}: {refused_line}\n{stdout}"
+    );
+    assert!(
+        !refused_line.contains(&outside.join("perllsp").display().to_string()),
+        "refusal must not name the symlink spelling: {refused_line}"
+    );
     assert!(
         !marker.exists(),
         "symlinked refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
+    Ok(())
+}
+
+#[test]
+fn doctor_json_refuses_repo_local_perl_exporter() -> Result<(), String> {
+    // Finding 4: the --json refusal is exercised end to end.
+    let root = perl_hostile_root("doctor-perl-json-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let root_str = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["doctor", "--json", "--root", &root_str],
+        &[("PATH", "bin"), ("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )
+    .map_err(|err| format!("run doctor --json: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("doctor --json did not parse: {err}\n{stdout}"))?;
+    let exporter = &report["perl_preview"]["exporter"];
+    assert_eq!(
+        exporter["state"], "refused",
+        "json exporter must be refused: {exporter}\n{stdout}"
+    );
+    assert!(
+        exporter["executable"]
+            .as_str()
+            .is_some_and(|exe| !exe.is_empty()),
+        "refused json exporter must name the judged path: {exporter}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused json exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_refuses_repo_local_perl_exporter_on_default_screen() -> Result<(), String> {
+    // Finding 1: without --verbose, the refusal still surfaces.
+    let root = perl_hostile_root("doctor-perl-default-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let root_str = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["doctor", "--root", &root_str],
+        &[("PATH", "bin"), ("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("exporter: refused") && stdout.contains("inside the analyzed checkout"),
+        "default doctor must surface the exporter refusal:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("- Perl preview:"),
+        "full Perl preview stays behind --verbose:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_refused_perl_exporter_takes_precedence_over_incompatible() -> Result<(), String> {
+    // Finding 3: a refused perl-ripr-facts must not be masked by an
+    // incompatible perllsp found outside the root.
+    let root = perl_hostile_root("doctor-perl-refusal-precedence")?;
+    let marker = root.join("PWNED");
+    write_marker_exporter_named(&root.join("bin"), &marker, "perl-ripr-facts")?;
+    let outside = unique_temp_workspace("doctor-perl-incompatible-outside");
+    std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+    let perllsp_name = if cfg!(windows) {
+        "perllsp.bat"
+    } else {
+        "perllsp"
+    };
+    write_probe_stub(
+        &outside.join(perllsp_name),
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 0.17.0'; exit 0; fi\necho 'error: unexpected argument' >&2\nexit 1\n",
+        "@echo off\r\nif \"%1\"==\"--version\" echo perllsp 0.17.0\r\nexit /b 1\r\n",
+    )?;
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let path = format!("bin{separator}{}", outside.display());
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        &path,
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused"),
+        "refusal must take precedence over incompatible:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("does not accept `ripr-facts`"),
+        "incompatible hit must not mask the refusal:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
     );
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&outside);

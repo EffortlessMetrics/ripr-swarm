@@ -156,10 +156,24 @@ Repository configuration evidence should cover:
 - `ripr doctor` never executing a Perl exporter PATH hit whose canonical
   path lies under the analyzed root unless
   `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1` is set (#5349): the hit is reported as
-  refused (not run) with the resolved path inside the checkout as the reason
+  refused (not run) with the canonical resolved path inside the checkout as the reason
   and the opt-in / move-outside-the-repo next step; a symlink or relative
   PATH entry pointing into the root is refused by canonicalization, while a
   relative PATH entry resolving outside the root still probes as before;
+  the refusal is shown on the default (non-verbose) human screen as well
+  as in `--verbose` and as `exporter.state: "refused"` in `--json`, names
+  the canonical path that was judged, and takes precedence over an
+  incompatible hit for the other exporter name; a candidate that cannot
+  be canonicalized is judged by its ancestor-resolved location (the
+  longest existing ancestor is canonicalized and the remaining suffix
+  appended lexically) and is refused when that location lies inside the
+  root, so unresolvable in-checkout candidates fail closed while
+  provably outside candidates still probe; an approved PATH hit is
+  executed through the canonical path that was judged, so swapping the
+  relative or symlink PATH spelling after judgement cannot redirect
+  execution (residual: an actor who can replace the canonical target
+  file itself, outside the checkout, between judgement and spawn can
+  still affect what runs; doctor does not claim to close that race);
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -433,6 +447,15 @@ Given the same checkout with RIPR_ALLOW_REPO_PERL_EXECUTABLE=1, or an
 exporter outside the root reached through a relative PATH entry,
 when ripr doctor runs,
 then the exporter is probed as before.
+Given a refused `perl-ripr-facts` and a version-only `perllsp` outside
+the root, when ripr doctor runs, then the report is the refusal, not
+the incompatible hit.
+Given a PATH candidate that cannot be canonicalized but whose
+ancestor-resolved location lies inside the root, when ripr doctor
+runs without the opt-in, then it is refused and never executed.
+Given an approved exporter reached through a symlink, when ripr
+doctor runs, then doctor executes the canonical target it judged,
+not the symlink spelling.
 ```
 
 ## Test Mapping
@@ -570,6 +593,16 @@ Current tests:
   proves a relative PATH entry outside the root still probes (#5349).
 - `crates/ripr/tests/cli_smoke.rs::doctor_refuses_perl_exporter_symlinked_into_root`
   proves a PATH symlink into the root is refused and not executed (#5349, Unix).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::compact_screen_discloses_refused_perl_exporter`
+  pins the refused exporter on the default (non-verbose) screen (#5349).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_unresolvable_symlink_ancestor_into_root`
+  pins fail-closed ancestor resolution for an unresolvable candidate (#5349, Unix).
+- `crates/ripr/tests/cli_smoke.rs::doctor_json_refuses_repo_local_perl_exporter`
+  proves the `--json` refusal (state refused) and non-execution end to end (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_repo_local_perl_exporter_on_default_screen`
+  proves the default human screen surfaces the refusal without `--verbose` (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refused_perl_exporter_takes_precedence_over_incompatible`
+  proves a refusal is not masked by an incompatible hit (#5349).
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_newline_root_stays_one_physical_line_per_entry`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::verbose_invalid_config_keeps_parser_reasons_without_source`
 - `crates/ripr/src/config.rs::tests::config_error_display_keeps_misplaced_mode_hint_without_source`

@@ -698,6 +698,14 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     {
         lines.push(line);
     }
+    // Same rule for a refused PATH exporter: a security refusal stays
+    // visible on the default screen (#5349 finding 1).
+    if !verbose
+        && let Some(line) =
+            perl_exporter_refused_compact_line(environment.facts.perl_preview.as_ref())
+    {
+        lines.push(line);
+    }
     let cache = &environment.facts.cache;
     let cache_loc = if cache.relocated_by_env {
         format!("{} (RIPR_CACHE_DIR active)", cache.cache_dir)
@@ -2082,6 +2090,23 @@ fn ignored_perl_executable_compact_line(
         .map(|refused| format!("- {}", ignored_perl_executable_disclosure(refused)))
 }
 
+/// Compact-screen line for a refused PATH exporter (#5349 finding 1).
+/// The full Perl preview is verbose-only, but a security refusal must
+/// not be hidden behind `--verbose`.
+fn perl_exporter_refused_compact_line(
+    preview: Option<&output::doctor::DoctorPerlPreview>,
+) -> Option<String> {
+    let preview = preview?;
+    if preview.exporter.state != output::doctor::DoctorPerlExporterState::Refused {
+        return None;
+    }
+    Some(format!(
+        "- exporter: refused `{}` (not run): resolved path is inside the analyzed checkout; set {}=1 to trust it",
+        display_text(preview.exporter.executable.as_deref().unwrap_or_default()),
+        crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+    ))
+}
+
 /// The Perl preview lines, in the order the human screen prints them. Rendered
 /// from the same typed value the JSON `perl_preview` object serializes, so the
 /// two surfaces cannot drift.
@@ -2315,17 +2340,79 @@ const PERL_EXPORTER_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 /// run under the configured `[perl].timeout_ms` deadline with bounded
 /// capture and a null stdin, so an LSP server that waits on stdin cannot
 /// hang the doctor. Packet validity is still only checked by `ripr check`.
-/// Whether `candidate` canonicalizes to a path under `root` (both
-/// canonicalized, so a symlink or relative PATH entry pointing into the
-/// checkout counts, #5349). Unresolvable paths are not under the root.
-fn path_lies_under_root(candidate: &Path, root: &Path) -> bool {
-    let (Ok(candidate), Ok(root)) = (
-        std::fs::canonicalize(candidate),
-        std::fs::canonicalize(root),
-    ) else {
-        return false;
+/// Lexically normalize an absolute path: drop `.` and resolve `..`
+/// against preceding normal components without touching the filesystem.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
+                out.push(component.as_os_str());
+            }
+        }
+    }
+    out
+}
+
+/// The path doctor judges and, when approved, executes for `candidate`
+/// (#5349, findings 2/5/6). A successful `canonicalize` is used verbatim,
+/// so the judged path and the executed path are the same object and a
+/// later symlink swap of the PATH spelling cannot redirect execution.
+/// When `canonicalize(candidate)` fails, the longest existing ancestor
+/// is canonicalized and the remaining suffix is appended lexically:
+/// this resolves an intermediate symlink (for example `outside/link ->
+/// <root>/bin` with a missing final component) to its real location
+/// instead of trusting the textual spelling. When no ancestor
+/// canonicalizes, the lexical absolute form is returned.
+fn judged_exporter_path(candidate: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(candidate) {
+        return canonical;
+    }
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(candidate))
+            .unwrap_or_else(|_| candidate.to_path_buf())
     };
-    candidate.starts_with(&root)
+    for ancestor in absolute.ancestors() {
+        if let Ok(canonical_ancestor) = std::fs::canonicalize(ancestor) {
+            let suffix = absolute.strip_prefix(ancestor).unwrap_or(Path::new(""));
+            let mut resolved = canonical_ancestor;
+            for component in suffix.components() {
+                match component {
+                    std::path::Component::Normal(part) => resolved.push(part),
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        resolved.pop();
+                    }
+                    std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+                }
+            }
+            return resolved;
+        }
+    }
+    lexical_normalize(&absolute)
+}
+
+/// Whether `candidate` lies under `root` (#5349). Both sides are judged
+/// through [`judged_exporter_path`], so a symlink or relative PATH entry
+/// pointing into the checkout counts. Fail-closed (finding 5): when
+/// `candidate` cannot be canonicalized, it is still judged by its
+/// ancestor-resolved / lexical location, so a candidate whose resolved
+/// location is inside the root is refused instead of executed. Only a
+/// candidate whose ancestor-resolved location is provably outside the
+/// (similarly resolved) root is allowed; resolvable outside-root
+/// exporters therefore keep working exactly as before.
+fn path_lies_under_root(candidate: &Path, root: &Path) -> bool {
+    let resolved_candidate = judged_exporter_path(candidate);
+    let resolved_root = judged_exporter_path(root);
+    resolved_candidate.starts_with(&resolved_root)
 }
 
 /// Whether doctor must refuse to execute this PATH hit: its canonical path
@@ -2353,22 +2440,32 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         ],
     };
     let opt_in = crate::config::perl_executable_opt_in();
+    let resolved_root = judged_exporter_path(root);
     let mut first_incompatible = None;
     let mut first_refused = None;
     for candidate in &candidates {
         let Some(program) = doctor_program(candidate) else {
             continue;
         };
+        // Resolve once: the judged path is the reported path and the
+        // executed path (#5349 findings 2 and 6). A later swap of the
+        // relative or symlink PATH spelling therefore cannot redirect
+        // execution to a different file than the one that was judged.
+        let judged = judged_exporter_path(&program);
         // #5349: never execute a PATH hit whose canonical path lies under
         // the analyzed root unless the user opted in. The explicit
         // `[perl].executable` branch only reaches here when opted in, so
         // its existing gating is unchanged.
-        if !has_explicit && perl_path_exporter_refused(&program, root, opt_in) {
+        // `judged`/`resolved_root` are already canonical, so this
+        // re-judgement is idempotent and cannot be redirected by
+        // swapping the original PATH spelling.
+        if !has_explicit && perl_path_exporter_refused(&judged, &resolved_root, opt_in) {
             first_refused.get_or_insert(PerlExporterProbe::Refused {
-                bin: program.display().to_string(),
+                bin: judged.display().to_string(),
             });
             continue;
         }
+        let program = judged;
         let bin = program.display().to_string();
         let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
@@ -2393,8 +2490,10 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         }
         first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
     }
-    first_incompatible
-        .or(first_refused)
+    // A refusal is a security decision and must not be masked by an
+    // incompatible hit for the other candidate name (#5349 finding 3).
+    first_refused
+        .or(first_incompatible)
         .unwrap_or(PerlExporterProbe::NotFound)
 }
 
@@ -5410,14 +5509,88 @@ mod tests {
         assert!(perl_path_exporter_refused(&inside_bin, &root, false));
         assert!(!perl_path_exporter_refused(&inside_bin, &root, true));
         assert!(!perl_path_exporter_refused(&outside_bin, &root, false));
-        assert!(!perl_path_exporter_refused(
+        // Fail-closed (finding 5): an unresolvable candidate whose
+        // ancestor-resolved location is inside the root is refused,
+        // while one provably outside is not.
+        assert!(perl_path_exporter_refused(
             &root.join("missing").join("perllsp"),
             &root,
             false
         ));
+        assert!(!perl_path_exporter_refused(
+            &outside.join("missing").join("perllsp"),
+            &root,
+            false
+        ));
+        assert_eq!(
+            judged_exporter_path(&inside_bin),
+            std::fs::canonicalize(&inside_bin).map_err(|e| e.to_string())?
+        );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn perl_path_exporter_refused_unresolvable_symlink_ancestor_into_root() -> Result<(), String> {
+        // Finding 5: final component missing, but an intermediate
+        // symlink resolves into the root; textual spelling is outside.
+        let root = unique_command_test_dir("doctor-perl-ancestor-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-ancestor-out");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let link = outside.join("link");
+        std::os::unix::fs::symlink(&inside, &link).map_err(|e| format!("symlink: {e}"))?;
+        let candidate = link.join("missing-perllsp");
+        assert!(perl_path_exporter_refused(&candidate, &root, false));
+        assert_eq!(
+            judged_exporter_path(&candidate),
+            std::fs::canonicalize(&inside)
+                .map_err(|e| e.to_string())?
+                .join("missing-perllsp")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_screen_discloses_refused_perl_exporter() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        environment.facts.perl_preview = Some(output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: false,
+            producer: None,
+            ignored_configured_executable: None,
+            canonical_exporter_on_path: false,
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::Refused,
+                executable: Some("/repo/bin/perllsp".to_string()),
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        });
+        let compact = render_screen(&report, &environment, false, true);
+        assert_fits_one_screen(&compact);
+        let text = compact.join("\n");
+        assert!(
+            text.contains("exporter: refused `/repo/bin/perllsp` (not run)")
+                && text.contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1"),
+            "default doctor must surface the exporter refusal:\n{text}"
+        );
+        assert!(
+            !text.contains("- Perl preview:"),
+            "full Perl preview stays behind --verbose:\n{text}"
+        );
     }
 
     #[cfg(unix)]
@@ -5434,6 +5607,12 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).map_err(|e| format!("symlink: {e}"))?;
         assert!(perl_path_exporter_refused(&link, &root, false));
         assert!(!perl_path_exporter_refused(&link, &root, true));
+        // Findings 2/6: the judged (and reported/executed) path is the
+        // canonical target, not the symlink spelling.
+        assert_eq!(
+            judged_exporter_path(&link),
+            std::fs::canonicalize(&target).map_err(|e| e.to_string())?
+        );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
         Ok(())
