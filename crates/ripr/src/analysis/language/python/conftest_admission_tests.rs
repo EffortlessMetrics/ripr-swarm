@@ -397,3 +397,80 @@ fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
     assert_eq!(A::NoAssertionLike.as_str(), NONE);
     Ok(())
 }
+
+/// The diff pass (`analyze_diff`) wires the same conftest taint as the repo
+/// pass; removing that call in `python.rs` makes the tainted run keep the
+/// no-assertion state.
+#[test]
+fn diff_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), String> {
+    let run = |label: &str, conftest: Option<&str>| -> Result<Vec<String>, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-py-conftest-diff-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = "def tax_band(amount):\n    if amount > 50:\n        return 2\n    return 1\n";
+        let write = |relative: &str, contents: &str| -> Result<(), String> {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+            }
+            std::fs::write(&path, contents).map_err(|err| format!("write {relative}: {err}"))
+        };
+        write("src/tax.py", source)?;
+        write("tests/test_tax.py", CALL_ONLY)?;
+        if let Some(conftest) = conftest {
+            write("tests/conftest.py", conftest)?;
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/tax.py"),
+            added_lines: vec![crate::analysis::diff::ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "    if amount > 50:".to_string(),
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove root: {err}"))?;
+        Ok(result
+            .findings
+            .iter()
+            .flat_map(|finding| finding.evidence.iter().cloned())
+            .filter(|line| line.starts_with("test_assertion_admission:"))
+            .collect())
+    };
+    let clean = run("clean", None)?;
+    assert!(
+        clean.iter().any(|line| line.contains(NONE)),
+        "without a conftest the call-only test is assertion-free, got {clean:?}"
+    );
+    let tainted = run("autouse", Some(AUTOUSE_LEAK_CHECK))?;
+    assert!(
+        tainted.iter().any(|line| line.contains(UNRESOLVED))
+            && !tainted.iter().any(|line| line.contains(NONE)),
+        "a conftest autouse must withhold the no-assertion state in diff mode, got {tainted:?}"
+    );
+    Ok(())
+}
