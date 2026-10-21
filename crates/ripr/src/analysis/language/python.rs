@@ -193,6 +193,11 @@ struct PythonOwner {
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
     dynamic_route_decorators: Vec<String>,
+    /// Decorator names whose binding is not the plain name they spell: a
+    /// decorator written as a call (`@final(wrapper)`) or one whose first
+    /// segment is redefined at module level. Transparent-decorator rules must
+    /// not trust the import for these.
+    unplain_decorators: Vec<String>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).

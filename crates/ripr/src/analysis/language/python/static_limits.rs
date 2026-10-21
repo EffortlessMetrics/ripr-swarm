@@ -301,7 +301,11 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.cli_receiver_names,
         )
         || is_imported_functools_memoization_decorator(decorator, &owner.imports)
-        || is_imported_typing_marker_decorator(decorator, &owner.imports)
+        || (is_imported_typing_marker_decorator(decorator, &owner.imports)
+            && !owner
+                .unplain_decorators
+                .iter()
+                .any(|name| name == decorator))
 }
 
 const TYPING_MODULES: [&str; 2] = ["typing", "typing_extensions"];
@@ -779,6 +783,7 @@ mod tests {
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
             dynamic_route_decorators: Vec::new(),
+            unplain_decorators: Vec::new(),
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
             ambiguous_src_modules: Vec::new(),
@@ -865,6 +870,40 @@ mod tests {
             );
             assert_eq!(decorator_limit(&module_alias), None, "t.{name}");
         }
+    }
+
+    fn parsed_limit(source: &str) -> Result<Option<StaticLimitKind>, String> {
+        let owner = super::super::owners_tests::extract_owners(
+            std::path::Path::new("src/rates.py"),
+            source,
+        )
+        .into_iter()
+        .find(|owner| owner.name == "rate")
+        .ok_or_else(|| "owner `rate` was not extracted".to_string())?;
+        Ok(decorator_limit(&owner))
+    }
+
+    #[test]
+    fn parsed_typing_markers_limit_only_when_called_or_redefined() -> Result<(), String> {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        for plain in [
+            "from typing import final\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+        ] {
+            assert_eq!(parsed_limit(plain)?, None, "{plain}");
+        }
+        for wrapped in [
+            // the decorator expression is a call, so its result wraps the owner
+            "from typing import final\n\ndef wrapper(fn):\n    return lambda n: 0\n\n@final(wrapper)\ndef rate(n):\n    return n + 1\n",
+            // the marker name is redefined after the import
+            "from typing import final\n\ndef final(fn):\n    return lambda n: 0\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfinal = make_wrapper()\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // the module receiver is rebound after the import
+            "import typing\n\ntyping = shim\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+        ] {
+            assert_eq!(parsed_limit(wrapped)?, limited, "{wrapped}");
+        }
+        Ok(())
     }
 
     #[test]

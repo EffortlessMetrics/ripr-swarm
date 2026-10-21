@@ -787,10 +787,13 @@ class Child(Base):
 
 Expected static evidence:
 
-- `@final`, `@override` and `@no_type_check` (and `typing.` /
-  `typing_extensions.` qualified or aliased spellings) return the function
-  unchanged, so the owner emits no `decorator_indirection`;
-- a rebound receiver, a competing alias, or a local same-named decorator stays
+- `@final`, `@override` and `@no_type_check` written as plain names (and
+  `typing.` / `typing_extensions.` qualified or aliased spellings; the
+  `typing_extensions` spelling covers `final` and `override` only) return the
+  function unchanged, so the owner emits no `decorator_indirection`;
+- a rebound receiver, a competing alias, a local same-named decorator, a
+  module-level `def`, `class` or assignment that redefines the marker name or
+  its receiver, or a marker written as a call (`@final(wrapper)`) stays
   `decorator_indirection`; `typing.overload`, `abc.abstractmethod`,
   `contextlib.contextmanager` and `property` also stay limited.
 

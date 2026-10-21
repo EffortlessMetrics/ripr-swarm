@@ -667,6 +667,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    mark_rebound_decorators(&module.body, &mut snapshot.owners);
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -1807,4 +1808,49 @@ fn dotted_dir(file: &Path) -> String {
                 .join(".")
         })
         .unwrap_or_default()
+}
+
+/// Records, per owner, the decorators whose first name segment the module
+/// redefines (`def final`, `class final`, `final = ...`), so an import match
+/// is not trusted for them.
+fn mark_rebound_decorators(statements: &[Stmt], owners: &mut [PythonOwner]) {
+    let mut bound: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                bound.insert(function.name.to_string());
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                bound.insert(function.name.to_string());
+            }
+            Stmt::ClassDef(class) => {
+                bound.insert(class.name.to_string());
+            }
+            Stmt::Assign(assign) => {
+                for target in &assign.targets {
+                    if let Expr::Name(name) = target {
+                        bound.insert(name.id.to_string());
+                    }
+                }
+            }
+            Stmt::AnnAssign(assign) => {
+                if let Expr::Name(name) = assign.target.as_ref() {
+                    bound.insert(name.id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    for owner in owners {
+        let rebound: Vec<String> = owner
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                let first = decorator.split('.').next().unwrap_or_default();
+                bound.contains(first)
+            })
+            .cloned()
+            .collect();
+        owner.unplain_decorators.extend(rebound);
+    }
 }
