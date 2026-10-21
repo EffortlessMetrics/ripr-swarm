@@ -77,15 +77,11 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
                     && test.start_line <= call.start_line
                     && call.end_line <= test.end_line
             })
-            // Never beside an assertion the ordinary extractor already read
-            // on the call's lines: a local macro that reuses a recognized
-            // assertion macro's name keeps that macro's own grade.
-            .filter(|call| {
-                !test
-                    .assertions
-                    .iter()
-                    .any(|own| call.start_line <= own.line && own.line <= call.end_line)
-            })
+            // Never for a call the ordinary extractor itself reads as an
+            // assertion: a local macro that reuses a recognized assertion
+            // macro's name keeps that macro's own grade. An unrelated
+            // assertion sharing the line does not suppress the credit.
+            .filter(|call| extract_assertions(&call.text, 1).is_empty())
             .filter_map(macro_call_oracle)
             .collect::<Vec<_>>();
         // The same never-run statements the ordinary extractor drops.
@@ -211,12 +207,39 @@ fn arm_attributes_an_assertion(macro_name: &str, arm: &MacroArm) -> bool {
     if fragments.is_empty() {
         return false;
     }
+    if may_not_run_every_time(&masked) {
+        return false;
+    }
     let mut assertions = extract_assertions(&arm.transcriber, 1);
     retain_reached_oracles(&mut assertions, &arm.transcriber, 1);
     assertions.iter().any(|assertion| {
         rank(&assertion.strength) > rank(&OracleStrength::Unknown)
             && assertion_uses_fragment(&assertion.text, &fragments)
             && !is_tautology(&assertion.text)
+    })
+}
+
+/// Fail-closed: a transcriber with a branch, loop, match, closure, early
+/// exit or repetition may skip its assertion, so none of it is credited.
+fn may_not_run_every_time(masked: &str) -> bool {
+    const KEYWORDS: [&str; 10] = [
+        "if", "else", "while", "for", "loop", "match", "return", "break", "continue", "async",
+    ];
+    if masked.contains("$(") {
+        return true;
+    }
+    if masked
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .any(|word| KEYWORDS.contains(&word))
+    {
+        return true;
+    }
+    // A closure opens with `|` where no operand can precede it.
+    masked.match_indices('|').any(|(index, _)| {
+        let before = masked[..index].trim_end();
+        before.is_empty()
+            || before.ends_with("move")
+            || before.ends_with(['(', ',', '=', '{', ';', ':'])
     })
 }
 
@@ -253,11 +276,14 @@ fn matcher_fragments(matcher: &str) -> Vec<String> {
 }
 
 fn assertion_uses_fragment(assertion: &str, fragments: &[String]) -> bool {
-    let masked = mask_comments_and_strings(assertion);
+    let Some((_, operands)) = leading_operands(assertion) else {
+        return false;
+    };
+    let asserted = operands.join(" , ");
     fragments.iter().any(|name| {
         let needle = format!("${name}");
-        masked.match_indices(&needle).any(|(index, _)| {
-            !masked[index + needle.len()..]
+        asserted.match_indices(&needle).any(|(index, _)| {
+            !asserted[index + needle.len()..]
                 .chars()
                 .next()
                 .is_some_and(|after| after.is_alphanumeric() || after == '_')
@@ -265,26 +291,33 @@ fn assertion_uses_fragment(assertion: &str, fragments: &[String]) -> bool {
     })
 }
 
+/// The macro name and its asserted operands: one for `assert!`, two for the
+/// rest. Later arguments are diagnostic messages and prove nothing. `None`
+/// when the shape is not read (generic turbofish commas are not split).
+fn leading_operands(assertion: &str) -> Option<(String, Vec<String>)> {
+    let masked = mask_comments_and_strings(assertion);
+    if masked.contains("::<") {
+        return None;
+    }
+    let (name, rest) = masked.trim().split_once('!')?;
+    let name = name.rsplit("::").next().unwrap_or(name).trim();
+    let name = name.strip_prefix("debug_").unwrap_or(name).to_string();
+    let inner = delimited_inner(rest.trim().trim_end_matches(';'))?;
+    let count = if name == "assert" { 1 } else { 2 };
+    let operands = top_level_arguments(inner).into_iter().take(count).collect();
+    Some((name, operands))
+}
+
 /// `assert!(true)`-style conditions and `assert_eq!(a, a)`-style comparisons
 /// of one operand with itself, or of two literals, prove nothing.
 fn is_tautology(assertion: &str) -> bool {
-    let masked = mask_comments_and_strings(assertion);
-    let Some((name, rest)) = masked.trim().split_once('!') else {
-        return false;
+    let Some((_, operands)) = leading_operands(assertion) else {
+        return true;
     };
-    let name = name.rsplit("::").next().unwrap_or(name).trim();
-    let name = name.strip_prefix("debug_").unwrap_or(name);
-    let Some(inner) = delimited_inner(rest.trim().trim_end_matches(';')) else {
-        return false;
-    };
-    let arguments = top_level_arguments(inner);
-    // Only the leading operands are asserted; later arguments are a message.
-    match (name, arguments.as_slice()) {
-        (_, []) => true,
-        ("assert", [condition, ..]) | (_, [condition]) => constant_condition(condition),
-        (_, [left, right, ..]) => {
-            same_operand(left, right) || (is_literal(left) && is_literal(right))
-        }
+    match operands.as_slice() {
+        [condition] => constant_condition(condition),
+        [left, right] => same_operand(left, right) || (is_literal(left) && is_literal(right)),
+        _ => true,
     }
 }
 
@@ -325,7 +358,7 @@ fn split_top<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
         match bytes[index] {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            _ if depth == 0 && text[index..].starts_with(operator) => {
+            _ if depth == 0 && bytes[index..].starts_with(operator.as_bytes()) => {
                 parts.push(&text[start..index]);
                 index += operator.len();
                 start = index;
@@ -339,6 +372,27 @@ fn split_top<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
     parts
 }
 
+/// The inside of `( .. )` when the opening paren closes at the last char.
+fn parenthesized_whole(text: &str) -> Option<&str> {
+    if !text.starts_with('(') || !text.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (index + 1 == text.len()).then(|| &text[1..index]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// A condition that is constant whatever the fragments hold: a literal,
 /// `x == x`, `x || true`, `true || x`, `!false`.
 fn constant_condition(condition: &str) -> bool {
@@ -346,9 +400,7 @@ fn constant_condition(condition: &str) -> bool {
     if is_literal(condition) {
         return true;
     }
-    if condition.starts_with('(')
-        && let Some(inner) = delimited_inner(condition)
-    {
+    if let Some(inner) = parenthesized_whole(condition) {
         return constant_condition(inner);
     }
     let alternatives = split_top(condition, "||");

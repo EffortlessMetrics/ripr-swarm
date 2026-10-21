@@ -111,7 +111,12 @@ assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) over
 a `$fragment` that arm's matcher binds, and the test calls it as a plain
 statement of its own body. A tautology (`assert!(true)`, `assert_eq!(1, 1)`,
 `assert_eq!($x, $x)`), a self-recursive macro and a call whose argument count
-no arm takes credit nothing. The call then earns one oracle of kind `unknown`
+no arm takes credit nothing. Only the asserted operands count (the first for
+`assert!`, the first two for `assert_eq!`/`assert_ne!`); a fragment that
+appears only in a diagnostic message does not attribute the assertion. A
+transcriber with a branch, loop, `match`, closure, early exit or repetition
+credits nothing, because its assertion may not run. An unrelated assertion on
+the same line as the call does not suppress the credit. The call then earns one oracle of kind `unknown`
 and strength `unknown`, never `weak` or stronger, so it records that an
 assertion exists without grading what it pins. A hand-rolled
 `if bad { panic!() }` body, a macro that only logs, a macro with one arm that

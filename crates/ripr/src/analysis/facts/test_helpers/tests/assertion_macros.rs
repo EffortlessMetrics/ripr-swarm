@@ -195,6 +195,51 @@ fn unattributable_local_macros_grant_nothing() -> Result<(), Box<dyn Error>> {
             "assert_gate!(gate(3));",
         ),
         (
+            "fragment only in the diagnostic message",
+            "($x:expr) => {{ assert_eq!(gate(11), true, \"{}\", $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "fragment only in the assert! message",
+            "($x:expr) => {{ assert!(gate(11), \"{}\", $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "parenthesized constant disjunction",
+            "($x:expr) => {{ assert!((true) || ($x)); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "parenthesized self-comparisons",
+            "($x:expr, $y:expr) => {{ assert!(($x == $x) && ($y == $y)); }};",
+            "assert_gate!(1, 2);",
+        ),
+        (
+            "turbofish commas are not split",
+            "($x:expr) => {{ assert_eq!(gate($x), parse::<A, B>()); }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "assertion under a never-true branch",
+            "($x:expr) => {{ if false {{ assert_eq!(gate($x), true); }} }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "assertion under a loop",
+            "($x:expr) => {{ for _ in 0..0 {{ assert_eq!(gate($x), true); }} }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "assertion under a match",
+            "($x:expr) => {{ match 0 {{ 1 => assert_eq!(gate($x), true), _ => {{}} }} }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "assertion inside a closure",
+            "($x:expr) => {{ let _f = || assert_eq!(gate($x), true); }};",
+            "assert_gate!(3);",
+        ),
+        (
             "recursive macro",
             "($x:expr) => {{ assert_eq!(gate($x), true); assert_gate!($x); }};",
             "assert_gate!(3);",
@@ -242,6 +287,52 @@ fn macro_defined_inside_the_test_or_exported_twice_grants_nothing() -> Result<()
         "assert_gate!(11);",
     ))?;
     assert!(test_named(&index, "probe")?.assertions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn attributed_macros_still_earn_an_unknown_credit() -> Result<(), Box<dyn Error>> {
+    for (shape, definition) in [
+        (
+            "fragment in the asserted operand, also in the message",
+            "($x:expr) => {{ assert_eq!(gate($x), true, \"{}\", $x); }};",
+        ),
+        (
+            "non-ascii identifier in the condition",
+            "($x:expr) => {{ assert!($x == résultat); }};",
+        ),
+        (
+            "non-ascii identifier beside a constant disjunction operand",
+            "($x:expr) => {{ assert!(gate($x) && résultat == résultat2); }};",
+        ),
+    ] {
+        let index = index_for(&module_with(
+            &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
+            "assert_gate!(11);",
+        ))?;
+        assert_eq!(
+            strengths(&index, "probe")?,
+            vec![OracleStrength::Unknown],
+            "{shape}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_credit_survives_an_unrelated_assertion_on_the_same_line() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&module_with(
+        "macro_rules! assert_gate {\n        ($x:expr) => { assert_eq!(gate($x), true); };\n    }",
+        "assert_gate!(11); assert!(true);",
+    ))?;
+    let test = test_named(&index, "probe")?;
+    assert!(
+        test.assertions
+            .iter()
+            .any(|assertion| assertion.text.starts_with("assert_gate!")),
+        "{:?}",
+        assertion_texts(test)
+    );
     Ok(())
 }
 
