@@ -1073,3 +1073,209 @@ fn git_file_is_a_repository_boundary() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #8768: a computed key (`["projects"]:`, `` [`workspace`]: ``) or a member
+/// assignment (`config.projects = ...`, `config.test["root"] = ...`) names the
+/// same keys as the plain spellings, so a config using one is not walked and
+/// the reading refuses. A `const root = ...` declaration and Jest's
+/// `roots` option are not those keys and keep the credit.
+#[test]
+fn computed_and_member_spellings_of_delegating_keys_stay_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, snap) in [
+        (
+            "jest.config.js",
+            "module.exports = { [\"projects\"]: [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { ['projects'] : [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projects = [\"<rootDir>/config/app.jest.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { [`workspace`]: [\"./packages/*\"] } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test[\"root\"] = \"./pkg\";\nexport default config;",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { ['update']: true } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test.update = true;\nexport default config;",
+            &vitest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-computed-key",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    // Not those keys: a plain declaration, Jest's own `roots`, an unrelated
+    // bracket member and a comparison.
+    for (config, text, snap) in [
+        (
+            "vitest.config.ts",
+            "const root = process.cwd();\nexport default { test: { include: [root + \"/a.test.ts\"] } };",
+            &vitest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { roots: [\"<rootDir>/src\"], [\"testMatch\"]: [\"**/*.test.ts\"] };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test[\"include\"] = [\"a\"];\nexport default config;",
+            &vitest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { verbose: process.env.root == \"x\" };",
+            &jest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-computed-control",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+/// #8768: a `package.json` script puts the `-u` flag after whitespace that
+/// the JSON text spells as an escape (`"jest\t-u"`), and the update flag
+/// still rewrites snapshots, so the reading refuses. A script with no `-u`
+/// flag keeps the credit.
+#[test]
+fn json_escaped_whitespace_before_the_update_flag_stays_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for script in [
+        "jest\\t-u",
+        "jest\\n-u",
+        "jest\\r-u",
+        "jest\\u0020-u",
+        "jest\\u0009-u",
+        "jest -u",
+    ] {
+        let package = format!("{{ \"scripts\": {{ \"test\": \"{script}\" }} }}");
+        assert_eq!(
+            strengths(
+                "snap-escaped-update",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("package.json", &package)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{package}"
+        );
+    }
+    for script in ["jest --ci", "jest --ci --silent-u"] {
+        let package = format!("{{ \"scripts\": {{ \"test\": \"{script}\" }} }}");
+        assert_eq!(
+            strengths(
+                "snap-escaped-update-control",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("package.json", &package)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{package}"
+        );
+    }
+    Ok(())
+}
+
+/// #8768: a submodule's `.git` file (`gitdir: ../../.git/modules/app`) is not
+/// the top of the repository whose runner configs reach its tests, so the
+/// walk continues to the superproject and reads a parent
+/// `snapshotResolver`.
+#[test]
+fn submodule_git_file_does_not_end_the_walk() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-submodule", Some(".git/HEAD"))?;
+    let written = ts_write_file(
+        &package_root.join(".git"),
+        "gitdir: ../../.git/modules/app\n",
+    )
+    .and_then(|()| ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG));
+    let outer_real = outer.canonicalize().map_err(|err| err.to_string())?;
+    let above = directories_above_root(&package_root, 16);
+    let got = strengths_at(&package_root);
+    // The same tree without the parent override reads strong: the walk
+    // climbed to the superproject and found nothing there.
+    let cleaned = std::fs::remove_file(outer.join("jest.config.js")).map_err(|err| err.to_string());
+    let clean = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    cleaned?;
+    assert_eq!(above, Some(vec![outer_real.join("packages"), outer_real]));
+    assert_eq!(
+        got,
+        vec![OracleStrength::Medium],
+        "the superproject's snapshotResolver is read through the submodule"
+    );
+    assert_eq!(clean, vec![OracleStrength::Strong]);
+    Ok(())
+}
+
+/// Only a regular `.git` file whose `gitdir:` target is a submodule's module
+/// directory is skipped; every other pointer, and an unreadable one, ends the
+/// walk at the analysis root.
+#[test]
+fn only_a_submodule_pointer_is_not_a_boundary() -> Result<(), String> {
+    for (label, pointer, ends_walk) in [
+        ("snap-ptr-worktree", "gitdir: ../.git/worktrees/app\n", true),
+        ("snap-ptr-garbage", "not a pointer\n", true),
+        ("snap-ptr-empty", "", true),
+        (
+            "snap-ptr-modules-name",
+            "gitdir: ../modules-dir/app\n",
+            true,
+        ),
+        (
+            "snap-ptr-worktree-of-submodule",
+            "gitdir: ../.git/modules/app/worktrees/w\n",
+            true,
+        ),
+        (
+            "snap-ptr-submodule",
+            "gitdir: ../../.git/modules/app\n",
+            false,
+        ),
+        (
+            "snap-ptr-submodule-backslash",
+            "gitdir: ..\\..\\.git\\modules\\app\n",
+            false,
+        ),
+    ] {
+        let (outer, package_root) = monorepo(label, Some(".git/HEAD"))?;
+        let written = ts_write_file(&package_root.join(".git"), pointer);
+        let above = directories_above_root(&package_root, 16);
+        let _ = std::fs::remove_dir_all(&outer);
+        written?;
+        assert_eq!(above == Some(Vec::new()), ends_walk, "{label}: {above:?}");
+    }
+    Ok(())
+}

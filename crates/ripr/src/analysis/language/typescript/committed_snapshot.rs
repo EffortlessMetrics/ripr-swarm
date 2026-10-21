@@ -289,19 +289,43 @@ const SNAPSHOT_OVERRIDES: [&str; 7] = [
 ];
 
 /// `true` when `text` holds `key` as an object key (`key:`, `key :`,
-/// `"key":`, `'key':`, or JS shorthand `{ key }` / `{ key, ... }`). A
-/// longer identifier (`rootDir`, `roots`) does not match `root`.
+/// `"key":`, `'key':`, a computed `["key"]:` / `['key']:` / `` [`key`]: ``, or
+/// JS shorthand `{ key }` / `{ key, ... }`) or as a member assignment
+/// (`config.key = ...`, `config["key"] = ...`). A longer identifier
+/// (`rootDir`, `roots`) does not match `root`, and a plain `const root = ...`
+/// declaration is not a key.
 fn mentions_named_key(text: &str, key: &str) -> bool {
     text.match_indices(key).any(|(index, matched)| {
-        let preceded_by_ident = text
-            .get(..index)
-            .and_then(|before| before.chars().next_back())
+        let before = text.get(..index).unwrap_or_default();
+        let preceded_by_ident = before
+            .chars()
+            .next_back()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'));
-        !preceded_by_ident
-            && text.get(index + matched.len()..).is_some_and(|rest| {
-                let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest).trim_start();
-                rest.starts_with(':') || rest.starts_with([',', '}'])
-            })
+        if preceded_by_ident {
+            return false;
+        }
+        let Some(rest) = text.get(index + matched.len()..) else {
+            return false;
+        };
+        let (quoted, after_quote) = match rest.strip_prefix(['"', '\'', '`']) {
+            Some(after) => (true, after),
+            None => (false, rest),
+        };
+        let trimmed = after_quote.trim_start();
+        // A computed key (`["key"]`) or bracket member (`config["key"]`)
+        // closes its bracket after the quote.
+        let (closed, after) = match trimmed.strip_prefix(']') {
+            Some(after) if quoted => (true, after.trim_start()),
+            _ => (false, trimmed),
+        };
+        let member = before.ends_with('.')
+            || (closed
+                && ["[\"", "['", "[`"]
+                    .iter()
+                    .any(|open| before.ends_with(open)));
+        after.starts_with(':')
+            || (!closed && after.starts_with([',', '}']))
+            || (member && after.starts_with('=') && !after.starts_with("=="))
     })
 }
 
@@ -320,13 +344,22 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
+/// JSON string escapes for the whitespace a `package.json` script may put
+/// before a flag (`"jest\t-u"`).
+const ESCAPED_WHITESPACE: [&str; 9] = [
+    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d",
+];
+
 /// `true` when `text` holds the short update flag after any whitespace
-/// (`jest -u`, `jest\t-u`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
+/// (`jest -u`, `jest\t-u`), including whitespace a JSON string spells as an
+/// escape (`"jest\\t-u"`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
 fn mentions_short_update_flag(text: &str) -> bool {
     text.match_indices("-u").any(|(index, _)| {
-        text.get(..index)
-            .and_then(|before| before.chars().next_back())
-            .is_some_and(char::is_whitespace)
+        let before = text.get(..index).unwrap_or_default();
+        before.chars().next_back().is_some_and(char::is_whitespace)
+            || ESCAPED_WHITESPACE
+                .iter()
+                .any(|escape| before.ends_with(escape))
     })
 }
 
@@ -431,12 +464,12 @@ const ABOVE_ROOT_LIMIT: usize = 16;
 /// `None` makes the caller refuse rather than guess.
 pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<PathBuf>> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    if root.join(".git").exists() {
+    if is_repository_boundary(&root) {
         return Some(Vec::new());
     }
     let all: Vec<&Path> = root.ancestors().skip(1).collect();
     let above: Vec<&Path> = all.iter().copied().take(limit).collect();
-    match above.iter().position(|dir| dir.join(".git").exists()) {
+    match above.iter().position(|dir| is_repository_boundary(dir)) {
         Some(boundary) => Some(
             above
                 .into_iter()
@@ -447,6 +480,43 @@ pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<Pa
         None if all.len() <= limit => Some(above.into_iter().map(Path::to_path_buf).collect()),
         None => None,
     }
+}
+
+/// `true` when `directory` holds a `.git` entry that ends the repository
+/// walk. A submodule's `.git` file (`gitdir: ../.git/modules/x`) does not: the
+/// superproject above it owns the runner configs that reach the submodule's
+/// tests, so the walk continues to the superproject's own marker. A worktree
+/// pointer (`gitdir: .../worktrees/x`), a `.git` directory and an unreadable
+/// entry are boundaries; a `.git` directory nested in a larger repository
+/// (a vendored clone) cannot be told from the top and stays one (RIPR-SPEC-0258
+/// known limits).
+fn is_repository_boundary(directory: &Path) -> bool {
+    let marker = directory.join(".git");
+    if !marker.exists() {
+        return false;
+    }
+    !is_submodule_pointer(&marker)
+}
+
+/// `true` when `marker` is a regular `.git` file whose `gitdir:` target is a
+/// submodule's module directory (a `modules` path component).
+fn is_submodule_pointer(marker: &Path) -> bool {
+    const POINTER_CAP: u64 = 4096;
+    let Ok(metadata) = std::fs::symlink_metadata(marker) else {
+        return false;
+    };
+    if !metadata.file_type().is_file() || metadata.len() > POINTER_CAP {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(marker) else {
+        return false;
+    };
+    let Some(target) = text.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let target = target.trim();
+    let mut components = target.split(['/', '\\']).filter(|part| !part.is_empty());
+    components.any(|part| part == "modules") && !target.contains("worktrees")
 }
 
 /// The runner configs and `package.json` files in the test's directory and
