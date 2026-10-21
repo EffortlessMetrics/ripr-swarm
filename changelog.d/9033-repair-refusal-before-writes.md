@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr repair` (and `ripr agent repair --phase before`) now refuse a start held by an uncommitted production edit target before writing any workflow artifact, with "No repair attempt started. Commit or stash `<file>`, then run `ripr repair`." Previously the refusal came after `workflow.json`, `agent-brief.json` and `agent-packet.json` were written, leaving `ripr status` reporting an incomplete repair awaiting its after snapshot while `ripr continue` found no attempt (#9033).
