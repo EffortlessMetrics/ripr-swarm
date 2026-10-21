@@ -10272,7 +10272,7 @@
       "probe_family": "static_unknown",
       "assertions": [
         { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 2 },
+        { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
       ]

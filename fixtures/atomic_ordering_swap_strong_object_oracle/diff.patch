@@ -1,6 +1,6 @@
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -10,7 +10,7 @@
+@@ -9,7 +9,7 @@
      pub fn new() -> Self { Slot { inner: AtomicUsize::new(0) } }
 
      pub fn claim(&self, id: usize) {
