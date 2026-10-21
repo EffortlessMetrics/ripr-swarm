@@ -779,17 +779,29 @@ mod tests {
         let _restore = RestoreMode(dir.path.clone());
         std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod root 000: {error}"))?;
+        // Probe the OS independently of the code under test, so a wrong
+        // implementation cannot declare the denial ineffective for itself.
+        // A privileged process can still traverse mode 000; skip visibly
+        // rather than fail production behavior that stays correct for
+        // unprivileged users.
+        let denied = crate::testing::access_denial::denied_by_permission(
+            std::fs::symlink_metadata(dir.path.join("ripr.toml")),
+        )?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unreadable_ripr_toml_lookup_is_not_built_in_defaults",
+            denied,
+        ) {
+            return Ok(());
+        }
         match agent_receipt_config_fingerprint(&dir.path) {
             Ok(None) => Err(
                 "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
                     .to_string(),
             ),
-            Ok(Some(_)) => {
-                // A privileged process can still traverse mode 000. Skip rather
-                // than fail the production behavior that remains correct for
-                // unprivileged users.
-                Ok(())
-            }
+            Ok(Some(_)) => Err(
+                "an unreadable ripr.toml lookup must not fingerprint as if it were readable"
+                    .to_string(),
+            ),
             Err(error) if error.contains("ripr.toml") => Ok(()),
             Err(error) => Err(format!(
                 "an unreadable ripr.toml lookup must name ripr.toml: {error}"
