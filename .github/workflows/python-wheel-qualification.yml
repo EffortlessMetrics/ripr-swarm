@@ -166,7 +166,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo xtask check-release-targets
-          cargo test -p xtask --locked policy::distribution::tests -- --nocapture
+          cargo test -p xtask --locked policy::distribution:: -- --nocapture
 
       - name: Resolve and cross-check Python distribution version
         id: python_version
