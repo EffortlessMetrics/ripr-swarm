@@ -1494,6 +1494,107 @@ fn checks() {
         Ok(())
     }
 
+    /// RIPR-SPEC-0231 rule 8 (#7638): both adapters drop the same
+    /// never-executed oracle statements and keep the same reached ones.
+    #[test]
+    fn parser_and_lexical_oracles_skip_statements_that_never_run() -> Result<(), String> {
+        let source = r#"
+#[test]
+fn dead_branch() {
+    if false { check(300).unwrap_err(); }
+    if !true {
+        assert!(check(301).is_err());
+    }
+    if false { assert_eq!(score(2), 4); }
+    if ready() {
+        check(302).unwrap_err();
+    }
+}
+
+#[test]
+fn uncalled_closure() {
+    let _never = || check(303).unwrap();
+    let never_assert = || assert_eq!(score(4), 8);
+    let probe = || check(304).unwrap();
+    probe();
+}
+
+#[test]
+fn after_divergence() {
+    check(305).unwrap_err();
+    if done() {
+        return;
+    }
+    check(306).unwrap();
+    panic!("stop");
+    assert_eq!(score(8), 16);
+    check(307).unwrap();
+}
+"#;
+        let adapters: [(&str, &dyn RustSyntaxAdapter); 2] = [
+            ("parser", &RaRustSyntaxAdapter),
+            ("lexical", &LexicalRustSyntaxAdapter),
+        ];
+        let mut readings = Vec::new();
+        for (label, adapter) in adapters {
+            let facts = adapter.summarize_file(Path::new("tests/reach.rs"), source)?;
+            let mut reading = Vec::new();
+            for name in ["dead_branch", "uncalled_closure", "after_divergence"] {
+                let test = facts
+                    .tests
+                    .iter()
+                    .find(|test| test.name == name)
+                    .ok_or_else(|| format!("{label}: expected the parsed test {name}"))?;
+                reading.extend(
+                    test.assertions
+                        .iter()
+                        .map(|oracle| (oracle.line, oracle.text.clone())),
+                );
+            }
+            let credited = |needle: &str| reading.iter().any(|(_, text)| text.contains(needle));
+            // Reached readings, and the strong `assert_eq!` that
+            // RIPR-SPEC-0197 execution admission refuses on its own.
+            for live in [
+                "check(302)",
+                "check(304)",
+                "check(305)",
+                "check(306)",
+                "score(2)",
+                "score(4)",
+            ] {
+                assert!(
+                    credited(live),
+                    "{label}: {live} must stay an oracle: {reading:?}"
+                );
+            }
+            for dead in [
+                "check(300)",
+                "check(301)",
+                "check(303)",
+                "score(8)",
+                "check(307)",
+            ] {
+                assert!(
+                    !credited(dead),
+                    "{label}: never-executed oracle {dead} must not be credited: {reading:?}"
+                );
+            }
+            // The lexical adapter keeps a same-line `if` or `let` prefix in
+            // its oracle text, so the adapters agree on the credited lines.
+            readings.push(
+                reading
+                    .into_iter()
+                    .map(|(line, _)| line)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            readings[0], readings[1],
+            "parser and lexical adapters agree"
+        );
+        Ok(())
+    }
+
     #[test]
     fn literal_extraction_keeps_decimal_boundaries_intact() {
         let literals = extract_literals("value >= 1_000u32 && ratio < 2.5f64 && delta == -3_i32");

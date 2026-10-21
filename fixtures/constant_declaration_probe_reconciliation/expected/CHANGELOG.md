@@ -1,5 +1,4 @@
 # Golden Output Changes
-
 ## Pending — constant_declaration_probe_reconciliation (1)
 
 Reason:
@@ -127,7 +126,7 @@ Command:
 
 Updated:
 - `expected/human.txt`
-## Pending — constant_declaration_probe_reconciliation (9)
+## Pending — constant_declaration_probe_reconciliation (11)
 
 Reason:
 RIPR-SPEC-0122: #4321 additive per-finding id lines in human-full (drill-in identifiers)
@@ -140,7 +139,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (11)
+## Pending — constant_declaration_probe_reconciliation (12)
 
 Reason:
 RIPR-SPEC-0122: #4322 summary header names all seven classes with canonical tokens and a shown/total denominator
@@ -152,7 +151,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — constant_declaration_probe_reconciliation (12)
+## Pending — constant_declaration_probe_reconciliation (13)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
@@ -165,7 +164,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (13)
+## Pending — constant_declaration_probe_reconciliation (14)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
@@ -178,7 +177,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (14)
+## Pending — constant_declaration_probe_reconciliation (15)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
@@ -191,7 +190,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (15)
+## Pending — constant_declaration_probe_reconciliation (16)
 
 Reason:
 RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
@@ -204,7 +203,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (16)
+## Pending — constant_declaration_probe_reconciliation (17)
 
 Reason:
 RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
@@ -217,7 +216,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (17)
+## Pending — constant_declaration_probe_reconciliation (18)
 
 Reason:
 RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
@@ -230,7 +229,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (18)
+## Pending — constant_declaration_probe_reconciliation (19)
 
 Reason:
 RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
@@ -243,7 +242,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (19)
+## Pending — constant_declaration_probe_reconciliation (20)
 
 Reason:
 RIPR-SPEC-0122: default human output speaks plain language (#8165)
@@ -256,7 +255,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (20)
+## Pending — constant_declaration_probe_reconciliation (21)
 
 Reason:
 RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
@@ -269,7 +268,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (21)
+## Pending — constant_declaration_probe_reconciliation (22)
 
 Reason:
 RIPR-SPEC-0046: #7617 an ownerless probe under a relative root keeps its own inline tests, so the constant test is related and confidence moves 0.20 to 0.50
@@ -282,10 +281,60 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — constant_declaration_probe_reconciliation (22)
+## Pending — constant_declaration_probe_reconciliation (23)
+
+Reason:
+RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — constant_declaration_probe_reconciliation (24)
 
 Reason:
 RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — constant_declaration_probe_reconciliation (25)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — constant_declaration_probe_reconciliation (23)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — constant_declaration_probe_reconciliation (26)
+
+Reason:
+RIPR-SPEC-0284: unknown-sink row gloss from the context-packet clarity lane lands on this golden after merging main
 
 Command:
 `cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`

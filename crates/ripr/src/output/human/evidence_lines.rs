@@ -127,10 +127,16 @@ fn evidence_path<T>(
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(project(
-            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
-            EvidenceSource::Flow(sink),
-        ));
+        let mut line = crate::output::flow_sink_line::flow_sink_evidence_line(sink);
+        // #8744: `unknown sink` is the one unglossed internal term in the
+        // explain vocabulary; the human window states its meaning beside the
+        // row instead of leaving the consumer to guess whether it is a ripr
+        // limit, a code property, or an instruction.
+        if let Some(meaning) = crate::output::flow_sink_line::flow_sink_kind_meaning(&sink.kind) {
+            line.push_str(" — ");
+            line.push_str(meaning);
+        }
+        lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
@@ -170,14 +176,16 @@ fn evidence_path<T>(
             ));
             continue;
         }
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
+            )
         );
         if let Some(oracle) = &test.oracle {
             line.push_str(&format!(": {oracle}"));
@@ -319,8 +327,4 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }

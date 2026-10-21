@@ -433,6 +433,17 @@ Defaults-first adoption evidence should cover:
 - implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
   `continue`, `agent stub`) from a workspace member directory, including
   member-relative `file:line` selectors that must not reach a sibling member;
+- the same implicit-root parity for `agent start/repair/card/status/verify`,
+  `rerun`, `diff` and `explain` from a workspace member directory, with
+  member-relative `--before/--after`, `--changed-test` and `file:line` inputs
+  bound to the invocation directory when they name an existing file (an
+  unresolved `rerun --changed-test` stays RIPR-SPEC-0123's named limitation),
+  `--root .` as the opt-out, and root-resolution failures of `diff --json` and
+  `rerun --json` keeping the refusal envelope, and a member-relative
+  `file:line` for `repair`, `agent repair` and `explain` refused (fail closed)
+  when a workspace-root file with the same path suffix exists, even without a
+  root finding there, with `--root .` or a seam, gap or finding ID as the
+  escape hatches;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's

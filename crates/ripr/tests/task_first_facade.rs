@@ -640,6 +640,241 @@ fn member_directory_diff_uses_the_resolved_workspace_root() -> Result<(), String
     Ok(())
 }
 
+/// #8872: the remaining agent subcommands (`agent start/repair/card/status/
+/// verify`), `rerun`, `diff` and `explain` resolve the implicit workspace root
+/// from a member directory exactly as `check` and the #8767 commands do:
+/// stderr disclosure, workspace-rooted artifacts, member-relative file
+/// selectors bound to the invocation directory, and `--root .` as the opt-out.
+#[cfg(unix)]
+#[test]
+fn member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-member-agent-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    // Seed one attempt from the member; it lands in the workspace store.
+    let repair = run_ripr(&member, &["repair"])?;
+    assert_exit(&repair, 0, "repair from a member directory");
+    let ids = attempt_ids(&outer);
+    assert_eq!(ids.len(), 1, "attempt store must live under the workspace");
+    let seam_id = read_manifest(&outer, &ids[0])?["seam_id"]
+        .as_str()
+        .ok_or("attempt manifest has no seam_id")?
+        .to_string();
+    std::fs::write(member.join("snap.json"), "{}\n").map_err(|e| e.to_string())?;
+
+    let commands: Vec<(&str, Vec<&str>)> = vec![
+        ("agent start", vec!["agent", "start", "--seam-id", &seam_id]),
+        ("agent card", vec!["agent", "card", "--seam-id", &seam_id]),
+        ("agent status", vec!["agent", "status"]),
+        (
+            "agent repair",
+            vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                &seam_id,
+            ],
+        ),
+        (
+            "agent verify",
+            vec![
+                "agent",
+                "verify",
+                "--before",
+                "snap.json",
+                "--after",
+                "snap.json",
+                "--json",
+            ],
+        ),
+        ("rerun", vec!["rerun", "--changed-test", "tests/pricing.rs"]),
+        ("diff", vec!["diff", "--base", "HEAD", "--head", "HEAD"]),
+        ("explain", vec!["explain", "src/lib.rs:2"]),
+    ];
+    for (label, args) in &commands {
+        let output = run_ripr(&member, args)?;
+        assert!(
+            stderr_text(&output).contains(&disclosure),
+            "{label} must disclose the resolved root:\nstdout:\n{}\nstderr:\n{}",
+            stdout_text(&output),
+            stderr_text(&output)
+        );
+        assert!(
+            !member.join("target/ripr").exists(),
+            "{label} must not create a member-local target/ripr"
+        );
+    }
+    assert!(
+        outer.join("target/ripr/workflow").exists(),
+        "agent start artifacts belong under the workspace target/ripr"
+    );
+
+    // Positive bindings: member-relative selectors reach the member's files.
+    let status = run_ripr(&member, &["agent", "status"])?;
+    assert!(
+        stdout_text(&status).contains(&ids[0]),
+        "agent status must read the workspace attempt store:\n{}",
+        stdout_text(&status)
+    );
+    let rerun = run_ripr(
+        &member,
+        &["rerun", "--changed-test", "tests/pricing.rs", "--json"],
+    )?;
+    assert!(
+        stdout_text(&rerun).contains("pkg/tests/pricing.rs"),
+        "rerun must bind the member-relative test file:\n{}\n{}",
+        stdout_text(&rerun),
+        stderr_text(&rerun)
+    );
+    let verify = run_ripr(
+        &member,
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "snap.json",
+            "--after",
+            "snap.json",
+            "--json",
+        ],
+    )?;
+    assert!(
+        stderr_text(&verify).contains("not a canonical repo-exposure artifact"),
+        "an existing member-relative snapshot must bind and reach content validation:\n{}",
+        stderr_text(&verify)
+    );
+    // RIPR-SPEC-0123: a changed test that resolves to nothing is a named
+    // limitation (exit 0), never a binding refusal.
+    let missing = run_ripr(&member, &["rerun", "--changed-test", "tests/nope.rs"])?;
+    assert_exit(&missing, 0, "rerun of an unresolved changed test");
+    assert!(
+        stdout_text(&missing).contains("State: limited")
+            && stdout_text(&missing).contains("changed_test_unresolved"),
+        "{}",
+        stdout_text(&missing)
+    );
+
+    // Negative control: a selector naming no file is refused, never suffix-matched.
+    for args in [
+        &["explain", "src/nope.rs:2"][..],
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "nope.json",
+            "--after",
+            "nope.json",
+            "--json",
+        ][..],
+    ] {
+        let output = run_ripr(&member, args)?;
+        assert_ne!(output.status.code(), Some(0), "{args:?}");
+        assert!(
+            stderr_text(&output).contains("names no file under the invocation directory"),
+            "{args:?}:\n{}",
+            stderr_text(&output)
+        );
+    }
+
+    // Negative control: `--root .` keeps the member directory for every command.
+    for (label, args) in &commands {
+        let mut pinned = args.clone();
+        pinned.extend(["--root", "."]);
+        let output = run_ripr(&member, &pinned)?;
+        assert!(
+            !stderr_text(&output).contains("resolved workspace root"),
+            "{label} --root . must keep the member directory:\n{}",
+            stderr_text(&output)
+        );
+    }
+    assert!(
+        member.join("target/ripr").exists(),
+        "`--root .` runs write their artifacts under the member's target/ripr"
+    );
+
+    // Positive binding with a colliding sibling: both members carry a changed
+    // `src/lib.rs`, so only the invocation-directory binding selects pkg's.
+    let other = outer.join("other");
+    std::fs::create_dir_all(other.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\", \"other\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        other.join("Cargo.toml"),
+        "[package]\nname = \"other_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(other.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&other)?;
+    let explain = run_ripr(&member, &["explain", "--worktree", "src/lib.rs:2"])?;
+    assert_exit(&explain, 0, "explain of a member-relative selector");
+    assert!(
+        stdout_text(&explain).contains("pkg/src/lib.rs:2")
+            && !stdout_text(&explain).contains("other/src/lib.rs"),
+        "explain must bind to the invocation directory's file:\n{}",
+        stdout_text(&explain)
+    );
+    Ok(())
+}
+
+/// #8872: a root-resolution failure of `diff --json` / `rerun --json` is a
+/// post-argv failure, so it still writes the #7331 refusal envelope on stdout.
+#[cfg(unix)]
+#[test]
+fn member_directory_root_resolution_failure_keeps_the_json_refusal_envelope() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-root-envelope")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let project = outer.join("proj");
+    std::fs::create_dir_all(&project).map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+        .map_err(|e| e.to_string())?;
+    init_repo(&project)?;
+    let programs = outer.join("programs");
+    std::fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
+    // A present, non-executable program is a launch failure, not missing Git.
+    std::fs::write(programs.join("git"), "not executable\n").map_err(|e| e.to_string())?;
+    let path = programs.to_str().ok_or("fixture PATH is not UTF-8")?;
+    for args in [
+        &["diff", "--json"][..],
+        &["rerun", "--json", "--changed-test", "tests/x.rs"][..],
+    ] {
+        let output = run_ripr_env(&project, args, &[("PATH", path), ("RIPR_CACHE_DIR", "")])?;
+        assert_exit(&output, 2, &format!("{args:?} root resolution failure"));
+        let document: serde_json::Value = serde_json::from_str(&stdout_text(&output))
+            .map_err(|e| format!("{args:?} stdout must be the refusal envelope: {e}"))?;
+        assert!(
+            document
+                .to_string()
+                .contains("cannot verify implicit Git root"),
+            "{args:?}: {document}"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();
@@ -2125,6 +2360,143 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #8726: once an attempt spent its after-phase retry budget it refuses its
+/// after phase, so a repeated `ripr repair` must start a fresh attempt (the
+/// shared repair-start gate still admits the seam) instead of resuming the
+/// dead one.
+#[test]
+fn repair_after_a_spent_retry_budget_starts_a_fresh_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-spent-budget")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &ids[0],
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    assert_eq!(read_manifest(root, &ids[0])?["after_refusal_count"], 5);
+
+    let second = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&second, 0, "repair after the budget is spent");
+    let after = attempt_ids(root);
+    assert_eq!(
+        after.len(),
+        2,
+        "a fresh attempt must be prepared: {after:?}"
+    );
+    assert!(after.contains(&ids[0]), "the spent attempt stays on disk");
+    // The spent attempt is not a continue candidate: a bare continue picks the
+    // fresh attempt instead of reporting two awaiting attempts.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 0, "bare continue after the spent attempt");
+    let fresh = after
+        .iter()
+        .find(|id| **id != ids[0])
+        .ok_or("no fresh attempt")?;
+    assert_eq!(read_manifest(root, fresh)?["state"], "ready_to_finish");
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "awaiting_edit");
+    Ok(())
+}
+
+/// #8726: a spent retry budget dominates a moved HEAD. The diverged-head
+/// recovery would otherwise offer "reset, then rerun the after phase", a command
+/// the spent attempt refuses without running.
+#[test]
+fn spent_retry_budget_withholds_the_diverged_head_after_recipe() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-spent-budget-diverged")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+    let attempt_id = ids[0].clone();
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &attempt_id,
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_OFF_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write edit: {error}"))?;
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-a",
+            "--amend",
+            "--allow-empty",
+            "--no-edit",
+        ],
+    )?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+    assert!(
+        doc["attempt"]["diverged_recovery"].is_null(),
+        "a spent attempt offers no reset-then-after recipe: {doc}"
+    );
+    assert_eq!(doc["attempt"]["last_after_refusal"]["refusal_count"], 5);
+    let offered = doc["next_action"]["command"].as_str().unwrap_or_default();
+    assert!(
+        !offered.contains(&attempt_id) && !offered.contains("--phase after"),
+        "status offered the spent attempt's after phase: {doc}"
+    );
+    Ok(())
+}
+
 /// #8742: a repeated `ripr repair` for the seam that already has an attempt
 /// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
 /// the printed `continue` command names the existing attempt, and a bare
@@ -3102,6 +3474,528 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     Ok(())
 }
 
+/// A test that does not touch the boundary input, so the seam stays open.
+const FIXTURE_OFF_BOUNDARY_TEST: &str = "\n#[test]\nfn above_threshold_by_a_little() {\n    assert_eq!(discounted_total(150, 100), 140);\n}\n";
+
+/// Run the advanced before phase, append `test` to the focused test file,
+/// run the after phase, and return the attempt ID and root argument.
+fn attempt_with_focused_edit(fixture: &Fixture, test: &str) -> Result<(String, String), String> {
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+        .map_err(|error| format!("write focused edit: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_exit(&after, 0, "advanced after phase");
+    Ok((attempt_id, root_arg))
+}
+
+/// #8766: once the build's own repair gate refuses a new start, `status` and
+/// `continue` must say the remaining work is by hand instead of printing the
+/// refused start. The refusal is first shown through the real `ripr repair`
+/// surface so the test cannot pass on a gate that never refused.
+#[test]
+fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-withheld-restart")?;
+    let (attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    patch_manifest(root, &attempt_id, &serde_json::json!({ "state": "failed" }))?;
+
+    let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
+    assert!(
+        stderr_text(&refused).contains("already grip it (exposed)"),
+        "precondition: the gate refuses the start and says why:\n{}",
+        stderr_text(&refused)
+    );
+
+    // The witness seam is already gripped: the note must say so as a
+    // static reading and must not tell the reader to strengthen a test.
+    let withheld = |label: &str, text: &str| {
+        assert!(
+            !text.contains("--phase before")
+                && !text.contains("start a new attempt")
+                && !text.contains("start fresh")
+                && !text.contains("start with `ripr repair"),
+            "{label} printed a start the same build refuses:\n{text}"
+        );
+        assert!(
+            text.contains("already grip it (exposed)")
+                && text.contains("not a runtime-verified result")
+                && !text.contains("by hand"),
+            "{label} must say the seam is already gripped on static evidence:\n{text}"
+        );
+    };
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    withheld("status", &stdout_text(&status));
+    let attempt_status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    withheld("attempt status", &stdout_text(&attempt_status));
+    let status_json = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout_text(&status_json)).map_err(|e| e.to_string())?;
+    assert!(
+        doc["next_action"].is_null(),
+        "attempt status JSON must carry no restart: {doc}"
+    );
+    assert!(
+        !stdout_text(&status_json).contains("--phase before"),
+        "attempt status JSON printed a start the same build refuses: {doc}"
+    );
+    // The inventory JSON carries each attempt's `command`; a restart the
+    // gate refuses is `null` there too.
+    let inventory_json = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let inventory: serde_json::Value =
+        serde_json::from_str(&stdout_text(&inventory_json)).map_err(|e| e.to_string())?;
+    let attempts = inventory["repair_attempts"]
+        .as_array()
+        .ok_or_else(|| format!("repair_attempts missing: {inventory}"))?;
+    assert!(!attempts.is_empty(), "precondition: the attempt is listed");
+    for attempt in attempts {
+        assert!(
+            attempt["command"].is_null(),
+            "repair_attempts[].command printed a refused start: {attempt}"
+        );
+    }
+    assert!(
+        !stdout_text(&inventory_json).contains("--phase before"),
+        "inventory JSON printed a start the same build refuses: {inventory}"
+    );
+    let cont = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&cont, 3, "continue on the failed attempt");
+    withheld("continue --attempt", &stderr_text(&cont));
+    let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
+    let bare_text = stderr_text(&bare);
+    assert!(
+        !bare_text.contains("start with `ripr repair --root")
+            && bare_text.contains("starts nothing right now"),
+        "bare continue offered `ripr repair`, which refuses:\n{bare_text}"
+    );
+    Ok(())
+}
+
+/// #8766: a seam id the current inventory no longer names (ids move with
+/// byte offsets) cannot be verified, so `status` and `continue` print no
+/// start for it and say it could not be verified.
+#[test]
+fn status_and_continue_do_not_offer_a_start_for_a_stale_seam_id() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-stale-seam")?;
+    let (attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    patch_manifest(root, &attempt_id, &serde_json::json!({ "state": "failed" }))?;
+    // Shift the production code so the seam's id (which moves with its byte
+    // offset) no longer matches the id the attempt recorded.
+    let lib_path = root.join("src/lib.rs");
+    let lib = std::fs::read_to_string(&lib_path).map_err(|error| format!("read lib: {error}"))?;
+    std::fs::write(&lib_path, format!("// shifted\n\n{lib}"))
+        .map_err(|error| format!("shift lib: {error}"))?;
+    let moved = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert!(
+        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no seam"),
+        "precondition: the recorded seam id no longer resolves:\n{}",
+        stderr_text(&moved)
+    );
+
+    let unverified = |label: &str, text: &str| {
+        assert!(
+            !text.contains("--phase before")
+                && !text.contains("start a new attempt")
+                && !text.contains("start fresh")
+                && text.contains("could not verify"),
+            "{label} must withhold the start and say it could not verify:\n{text}"
+        );
+    };
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    unverified("status", &stdout_text(&status));
+    let attempt_status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    unverified("attempt status", &stdout_text(&attempt_status));
+    let cont = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&cont, 3, "continue on the failed attempt");
+    unverified("continue --attempt", &stderr_text(&cont));
+    Ok(())
+}
+
+/// #8766: the start `ripr pilot` recorded for its top seam is repeated by
+/// `ripr status` only while the repair gate still admits that seam. After
+/// the exact boundary assertion lands, `ripr repair <seam>` refuses (the seam
+/// is already gripped on static evidence), so `status` must stop advertising
+/// the recorded `agent repair --phase before` start. The first half is the
+/// admitted-start control on the same workspace.
+#[test]
+fn status_drops_the_pilot_recorded_start_once_the_seam_is_gripped() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-pilot-then-strengthen")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+    assert_exit(&pilot, 0, "ripr pilot");
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.json"))
+            .map_err(|error| format!("read pilot summary: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"][0]["seam_id"], FIXTURE_SEAM,
+        "precondition: pilot ranked the fixture seam: {summary}"
+    );
+    assert!(
+        summary["next"]["repair_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("--phase before")),
+        "precondition: pilot recorded a repair start: {summary}"
+    );
+
+    // Control: the seam is still admitted, so status repeats the start.
+    let before = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let before_text = stdout_text(&before);
+    assert!(
+        before_text.contains("--phase before") && !before_text.contains("repair_start_withheld"),
+        "an admitted pilot start is kept:\n{before_text}"
+    );
+
+    // Strengthen the test with the exact boundary assertion.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write boundary test: {error}"))?;
+    let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
+
+    let after = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let after_text = stdout_text(&after);
+    assert!(
+        !after_text.contains("--phase before")
+            && after_text.contains("repair_start_withheld")
+            && after_text.contains("already grip it (exposed)"),
+        "status advertised a pilot start the same build refuses:\n{after_text}"
+    );
+    Ok(())
+}
+
+/// Run the advanced before phase, append `test` to the focused test file, add
+/// a stray file outside the edit cage, and run the after phase, which the
+/// cage refuses. Returns the attempt ID and root argument.
+fn attempt_refused_by_stray_file(
+    fixture: &Fixture,
+    test: &str,
+) -> Result<(String, String), String> {
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+        .map_err(|error| format!("write focused edit: {error}"))?;
+    std::fs::write(root.join("stray.txt"), "outside the edit cage\n")
+        .map_err(|error| format!("write stray file: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert!(
+        !after.status.success(),
+        "precondition: the stray file must violate the edit cage"
+    );
+    Ok((attempt_id, root_arg))
+}
+
+/// #8766: the refusal an attempt recorded embeds a `--phase before` recipe.
+/// When the repair gate refuses a new start, status projects the refusal
+/// without that recipe (control: with the gap still open it keeps it).
+#[test]
+fn recorded_refusal_text_drops_the_start_recipe_when_the_gate_refuses() -> Result<(), String> {
+    let refusal_reason = |fixture: &Fixture, root_arg: &str| -> Result<String, String> {
+        let status = run_ripr(&fixture.root, &["status", "--root", root_arg, "--json"])?;
+        let doc: serde_json::Value =
+            serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+        doc["repair_attempts"][0]["last_after_refusal"]["reason"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("no recorded refusal reason: {doc}"))
+    };
+
+    let open = Fixture::boundary("facade-refusal-open")?;
+    let (_, open_arg) = attempt_refused_by_stray_file(&open, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let open_reason = refusal_reason(&open, &open_arg)?;
+    assert!(
+        open_reason.contains("--phase before"),
+        "control: an admitted seam keeps the recorded recipe: {open_reason}"
+    );
+
+    let gripped = Fixture::boundary("facade-refusal-gripped")?;
+    let (_, gripped_arg) = attempt_refused_by_stray_file(&gripped, FIXTURE_BOUNDARY_TEST)?;
+    let gripped_reason = refusal_reason(&gripped, &gripped_arg)?;
+    assert!(
+        !gripped_reason.contains("--phase before")
+            && gripped_reason.contains("a new attempt is not offered"),
+        "a refused seam must not keep the recorded start recipe: {gripped_reason}"
+    );
+    Ok(())
+}
+
+/// #8766: the diverged-head recovery keeps its reset route and drops the
+/// new-attempt route when the repair gate refuses a new start; the status
+/// next command keeps the recovery (reset, then the after phase).
+#[test]
+fn diverged_head_recovery_drops_only_the_restart_when_the_gate_refuses() -> Result<(), String> {
+    let amended_status =
+        |fixture: &Fixture, test: &str| -> Result<(String, serde_json::Value), String> {
+            let root = &fixture.root;
+            let root_arg = root.to_string_lossy().into_owned();
+            let before = run_ripr(
+                root,
+                &[
+                    "agent",
+                    "repair",
+                    "--root",
+                    &root_arg,
+                    "--seam-id",
+                    FIXTURE_SEAM,
+                    "--phase",
+                    "before",
+                ],
+            )?;
+            assert_exit(&before, 0, "advanced before phase");
+            let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+            let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+                .map_err(|error| format!("read pricing tests: {error}"))?;
+            std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+                .map_err(|error| format!("write focused edit: {error}"))?;
+            run_git(
+                root,
+                &[
+                    "-c",
+                    "user.name=RIPR test",
+                    "-c",
+                    "user.email=ripr@example.invalid",
+                    "commit",
+                    "-a",
+                    "--amend",
+                    "--allow-empty",
+                    "--no-edit",
+                ],
+            )?;
+            let status = run_ripr(
+                root,
+                &[
+                    "status",
+                    "--root",
+                    &root_arg,
+                    "--attempt",
+                    &attempt_id,
+                    "--json",
+                ],
+            )?;
+            let doc: serde_json::Value =
+                serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+            Ok((attempt_id, doc))
+        };
+
+    let open = Fixture::boundary("facade-diverged-open")?;
+    let (_, doc) = amended_status(&open, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let recovery = &doc["attempt"]["diverged_recovery"];
+    assert!(
+        recovery["reset"].is_string()
+            && recovery["restart"]
+                .as_str()
+                .is_some_and(|restart| restart.contains("--phase before")),
+        "control: an admitted seam keeps both recovery routes: {doc}"
+    );
+
+    let gripped = Fixture::boundary("facade-diverged-gripped")?;
+    let (attempt_id, doc) = amended_status(&gripped, FIXTURE_BOUNDARY_TEST)?;
+    let recovery = &doc["attempt"]["diverged_recovery"];
+    assert!(
+        recovery["reset"].as_str().is_some_and(
+            |reset| reset.contains("git reset --soft") && reset.contains("--phase after")
+        ),
+        "the reset route is kept: {doc}"
+    );
+    assert!(
+        recovery["restart"].is_null(),
+        "the new-attempt route is withheld: {doc}"
+    );
+    assert!(
+        !doc.to_string().contains("--phase before"),
+        "no start is printed anywhere in the attempt status: {doc}"
+    );
+    let next = &doc["next_action"];
+    assert!(
+        next["command"].as_str().is_some_and(
+            |command| command.contains(&attempt_id) && command.contains("--phase after")
+        ),
+        "the recovery route stays the next action: {doc}"
+    );
+    Ok(())
+}
+
+/// #8766: `ripr continue` runs the after phase in process, and the recovery
+/// narration of a refused after phase names a `--phase before` attempt. When
+/// the repair gate refuses a new start, that recipe is not printed (control:
+/// with the gap still open the narration keeps it).
+#[test]
+fn continue_after_phase_narration_drops_the_start_recipe_when_the_gate_refuses()
+-> Result<(), String> {
+    let narration = |label: &str, test: &str| -> Result<String, String> {
+        let fixture = Fixture::boundary(label)?;
+        let root = &fixture.root;
+        let root_arg = root.to_string_lossy().into_owned();
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+        let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+        let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read pricing tests: {error}"))?;
+        std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+            .map_err(|error| format!("write focused edit: {error}"))?;
+        std::fs::write(root.join("stray.txt"), "outside the edit cage\n")
+            .map_err(|error| format!("write stray file: {error}"))?;
+        let cont = run_ripr(
+            root,
+            &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+        )?;
+        assert!(
+            !cont.status.success(),
+            "precondition: the stray file must violate the edit cage"
+        );
+        Ok(stderr_text(&cont))
+    };
+
+    let open = narration("facade-continue-open", FIXTURE_OFF_BOUNDARY_TEST)?;
+    assert!(
+        open.contains("--phase before"),
+        "control: an admitted seam keeps the recovery recipe:\n{open}"
+    );
+    let gripped = narration("facade-continue-gripped", FIXTURE_BOUNDARY_TEST)?;
+    assert!(
+        !gripped.contains("--phase before") && gripped.contains("a new attempt is not offered"),
+        "continue printed a start the same build refuses:\n{gripped}"
+    );
+    Ok(())
+}
+
+/// #8766 control: with no attempt at all and an eligible seam the auto
+/// selector picks, the picked seam passes the shared gate and bare `continue`
+/// still offers `ripr repair`.
+#[test]
+fn bare_continue_still_offers_ripr_repair_for_an_admitted_picked_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-picked")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
+    let text = stderr_text(&bare);
+    assert!(
+        text.contains("start with `ripr repair --root"),
+        "an admitted picked seam keeps the `ripr repair` start:\n{text}"
+    );
+    Ok(())
+}
+
+/// Negative control for #8766: while the repair gate still admits the seam
+/// (the focused edit missed the boundary, so the gap stays open), `status`
+/// keeps its restart command and prints no by-hand note.
+#[test]
+fn status_keeps_the_restart_when_the_repair_gate_admits_the_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-kept-restart")?;
+    let (_attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    let text = stdout_text(&status);
+    assert!(
+        text.contains("--phase before") && !text.contains("by hand"),
+        "an admitted seam keeps its restart command:\n{text}"
+    );
+    Ok(())
+}
+
 // Trust-bound exclusion is demonstrated beside the selector
 // (`app::task_first::tests::implicit_continue_skips_trust_bound_attempts`),
 // not here: the attempt commitment forbids staging a binding by editing
@@ -3110,3 +4004,396 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 
 #[path = "task_first_facade/inspection_cache_disclosure.rs"]
 mod inspection_cache_disclosure;
+
+/// #8872 review: the advanced `agent repair --phase before` spelling binds a
+/// member-relative `file:line` selector to the invocation directory before
+/// subject translation, so `quiet` never publishes an attempt at the sibling's
+/// `gap/src/lib.rs:2`; the owning member still can.
+#[cfg(unix)]
+#[test]
+fn advanced_agent_repair_member_selector_must_not_target_sibling() -> Result<(), String> {
+    let fixture = Fixture::dir("advanced-member-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let quiet = outer.join("quiet");
+    let gap = outer.join("gap");
+    for member in [&quiet, &gap] {
+        std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"quiet\", \"gap\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("Cargo.toml"),
+        "[package]\nname = \"quiet_member\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("src/lib.rs"),
+        "pub const NAME: &str = \"quiet\";\n\n\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "quiet", "gap"])?;
+    git_commit(&outer, "two member selector fixture")?;
+    let gap_before = tree_snapshot(&gap)?;
+    let args = [
+        "agent",
+        "repair",
+        "--phase",
+        "before",
+        "--seam-id",
+        "src/lib.rs:2",
+    ];
+
+    let refused = run_ripr(&quiet, &args)?;
+    assert_ne!(refused.status.code(), Some(0), "{}", stderr_text(&refused));
+    assert!(
+        attempt_ids(&outer).is_empty(),
+        "no sibling attempt may be published"
+    );
+    assert_eq!(tree_snapshot(&gap)?, gap_before, "source files unchanged");
+
+    // Positive control: the same selector typed from the member that owns it.
+    let owned = run_ripr(&gap, &args)?;
+    assert_exit(&owned, 0, "advanced repair from the owning member");
+    assert_eq!(attempt_ids(&outer).len(), 1);
+    Ok(())
+}
+
+/// #8872 review: an unresolved `rerun --changed-test` stays RIPR-SPEC-0123's
+/// named limitation from a member directory, identical to the explicit-root
+/// control, and `--json` keeps one parseable `ripr-targeted-rerun-v1` document.
+#[cfg(unix)]
+#[test]
+fn member_rerun_missing_selector_matches_the_explicit_root_json_report() -> Result<(), String> {
+    let fixture = Fixture::dir("member-rerun-missing-json")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "missing test selector fixture")?;
+    let root_arg = outer.to_string_lossy().into_owned();
+    let selector = ["rerun", "--changed-test", "tests/missing.rs", "--json"];
+    let explicit = run_ripr(&member, &[&selector[..], &["--root", &root_arg]].concat())?;
+    let implicit = run_ripr(&member, &selector)?;
+    for (label, output) in [("explicit", &explicit), ("implicit", &implicit)] {
+        assert_exit(output, 0, label);
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("{label} stdout must be one JSON document: {e}"))?;
+        assert_eq!(
+            report["schema_version"], "ripr-targeted-rerun-v1",
+            "{label}"
+        );
+        assert_eq!(report["state"], "limited", "{label}");
+        assert!(
+            stdout_text(output).contains("changed_test_unresolved")
+                && stdout_text(output).contains("tests/missing.rs"),
+            "{label}: {}",
+            stdout_text(output)
+        );
+    }
+    Ok(())
+}
+
+/// #8872 review: with `--diff`, a member-relative `file:line` whose file the
+/// working tree no longer has is anchored to the invocation directory, so it
+/// cannot suffix-match a sibling member's finding; with the file present the
+/// owning member's own finding is explained.
+#[cfg(unix)]
+#[test]
+fn member_explain_diff_replay_selector_never_reaches_a_sibling_finding() -> Result<(), String> {
+    let fixture = Fixture::dir("member-explain-replay")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    let other = outer.join("other");
+    for (dir, name) in [(&member, "boundary_gap_fixture"), (&other, "other_fixture")] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\", \"other\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg", "other"])?;
+    git_commit(&outer, "two member replay fixture")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&other)?;
+    let sibling_only = run_git(&outer, &["diff", "--", "other"])?;
+    let both = run_git(&outer, &["diff"])?;
+    let sibling_patch = outer.join("sibling.patch");
+    let both_patch = outer.join("both.patch");
+    std::fs::write(&sibling_patch, sibling_only).map_err(|e| e.to_string())?;
+    std::fs::write(&both_patch, both).map_err(|e| e.to_string())?;
+    // The working tree no longer has the member's file the patch edits.
+    std::fs::remove_file(member.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    let sibling_arg = sibling_patch.to_string_lossy().into_owned();
+    let both_arg = both_patch.to_string_lossy().into_owned();
+
+    let negative = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "src/lib.rs:2"],
+    )?;
+    assert!(
+        !stdout_text(&negative).contains("other/src/lib.rs"),
+        "a member selector must not explain the sibling's finding:\n{}",
+        stdout_text(&negative)
+    );
+    assert_ne!(
+        negative.status.code(),
+        Some(0),
+        "{}",
+        stderr_text(&negative)
+    );
+
+    // A selector already typed workspace-relative is not prefixed twice.
+    let relative = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(
+        relative.status.code(),
+        Some(0),
+        "{}",
+        stderr_text(&relative)
+    );
+    assert!(
+        stderr_text(&relative).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&relative)
+    );
+
+    // `./` is normalized before the prefix check.
+    let dotted = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "./pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(dotted.status.code(), Some(0), "{}", stderr_text(&dotted));
+    assert!(
+        stderr_text(&dotted).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&dotted)
+    );
+
+    // Positive control: with the member's file back, the same selector explains
+    // the member's own finding, never the sibling's.
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))
+        .map_err(|e| e.to_string())?;
+    let positive = run_ripr(&member, &["explain", "--diff", &both_arg, "src/lib.rs:2"])?;
+    assert_exit(&positive, 0, "selector in the owning member");
+    assert!(
+        stdout_text(&positive).contains("pkg/src/lib.rs:2")
+            && !stdout_text(&positive).contains("other/src/lib.rs"),
+        "{}",
+        stdout_text(&positive)
+    );
+    Ok(())
+}
+
+/// #8872 review: a member-relative `agent repair --seam-id` naming no file is
+/// refused with exit 2 on both the before-phase route (driven from `cli::run`)
+/// and the dispatched route, and publishes no attempt.
+#[cfg(unix)]
+#[test]
+fn advanced_agent_repair_unbindable_selector_exits_2_on_both_routes() -> Result<(), String> {
+    let fixture = Fixture::dir("advanced-unbindable-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "unbindable selector fixture")?;
+    for phase in ["before", "after"] {
+        let output = run_ripr(
+            &member,
+            &[
+                "agent",
+                "repair",
+                "--phase",
+                phase,
+                "--seam-id",
+                "src/nope.rs:2",
+            ],
+        )?;
+        assert_exit(&output, 2, &format!("{phase} phase unbindable selector"));
+        assert!(
+            stderr_text(&output).contains("names no file under the invocation directory"),
+            "{phase}:\n{}",
+            stderr_text(&output)
+        );
+        assert!(attempt_ids(&outer).is_empty(), "{phase}: no attempt");
+    }
+    Ok(())
+}
+
+/// #8872 review: the shared `file:line` matcher accepts path suffixes, so a
+/// selector bound to `pkg/src/lib.rs` would also match a workspace-root
+/// package's `src/lib.rs` at the same line. Such a selector is refused for
+/// `repair`, `agent repair` and `explain` whether the root package has the
+/// only gap or both packages do, and nothing is published.
+#[cfg(unix)]
+#[test]
+fn member_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), String> {
+    for member_has_gap in [false, true] {
+        let fixture = Fixture::dir("member-selector-root-shadow")?;
+        let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+        let member = outer.join("pkg");
+        for dir in [&outer, &member] {
+            std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        }
+        // Root package (with the workspace) and one member, same src/lib.rs.
+        std::fs::write(
+            outer.join("Cargo.toml"),
+            format!("{FIXTURE_CARGO_TOML}\n[workspace]\nmembers = [\"pkg\"]\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member_pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let member_lib = if member_has_gap {
+            FIXTURE_LIB
+        } else {
+            "pub const NAME: &str = \"member\";\n\n\n"
+        };
+        std::fs::write(member.join("src/lib.rs"), member_lib).map_err(|e| e.to_string())?;
+        init_repo(&outer)?;
+        run_git(&outer, &["add", "."])?;
+        git_commit(&outer, "root and member share src/lib.rs")?;
+        if member_has_gap {
+            weaken_boundary_predicate(&member)?;
+        }
+        weaken_boundary_predicate(&outer)?;
+
+        for args in [
+            &["repair", "src/lib.rs:2"][..],
+            &[
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                "src/lib.rs:2",
+            ][..],
+            &["explain", "--worktree", "src/lib.rs:2"][..],
+        ] {
+            let output = run_ripr(&member, args)?;
+            let label = format!("member_has_gap={member_has_gap} {args:?}");
+            assert_ne!(output.status.code(), Some(0), "{label}");
+            assert!(
+                stderr_text(&output).contains("also matches the workspace-root file"),
+                "{label}:\n{}",
+                stderr_text(&output)
+            );
+            assert!(
+                !stdout_text(&output).contains("src/lib.rs:2"),
+                "{label} must not explain either file:\n{}",
+                stdout_text(&output)
+            );
+            assert!(attempt_ids(&outer).is_empty(), "{label}: no attempt");
+        }
+        // Control: `--root .` analyzes the member alone and is not refused as shadowed.
+        let pinned = run_ripr(
+            &member,
+            &["explain", "--worktree", "src/lib.rs:2", "--root", "."],
+        )?;
+        assert!(
+            !stderr_text(&pinned).contains("also matches the workspace-root file"),
+            "{}",
+            stderr_text(&pinned)
+        );
+        if member_has_gap {
+            assert_exit(&pinned, 0, "`--root .` explains the member's own finding");
+            assert!(
+                stdout_text(&pinned).contains("src/lib.rs:2")
+                    && !stdout_text(&pinned).contains("pkg/"),
+                "{}",
+                stdout_text(&pinned)
+            );
+        } else {
+            assert_ne!(pinned.status.code(), Some(0), "member has no finding");
+        }
+    }
+    Ok(())
+}
+
+/// #8872 review: the `--diff` replay arm re-anchors a selector whose file the
+/// working tree lacks; it must still refuse when a proper suffix of the
+/// anchored path names a real root file (`crates/pkg/src/lib.rs` vs the root
+/// package directory `pkg/src/lib.rs`).
+#[cfg(unix)]
+#[test]
+fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Result<(), String> {
+    let fixture = Fixture::dir("member-replay-shadow")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("crates/pkg");
+    let shadow = outer.join("pkg");
+    for (dir, name) in [(&member, "member_pkg"), (&shadow, "shadow_pkg")] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/pkg\", \"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "."])?;
+    git_commit(&outer, "member and root directory share a suffix")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&shadow)?;
+    let patch = outer.join("both.patch");
+    std::fs::write(&patch, run_git(&outer, &["diff"])?).map_err(|e| e.to_string())?;
+    std::fs::remove_file(member.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    let patch_arg = patch.to_string_lossy().into_owned();
+    let output = run_ripr(&member, &["explain", "--diff", &patch_arg, "src/lib.rs:2"])?;
+    assert_ne!(output.status.code(), Some(0), "{}", stderr_text(&output));
+    assert!(
+        stderr_text(&output).contains("also matches the workspace-root file"),
+        "{}",
+        stderr_text(&output)
+    );
+    assert!(
+        !stdout_text(&output).contains("pkg/src/lib.rs"),
+        "{}",
+        stdout_text(&output)
+    );
+    Ok(())
+}
