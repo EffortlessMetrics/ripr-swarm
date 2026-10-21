@@ -184,15 +184,28 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
             assert_eq!(target.provenance(), TestTargetProvenance::RustIndexFunction);
             assert_eq!(target.currentness, TestTargetCurrentness::Current);
             let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
-            let compact_target = compact
-                .related_tests
-                .iter()
-                .find(|test| test.test_name == "exact_value")
-                .and_then(|test| test.test_target.as_ref())
-                .ok_or("compact indexed test identity missing")?;
+            // Compact badge evidence intentionally omits target details.
+            // Its observable contract is stage parity with full evidence.
+            assert!(compact.related_tests.is_empty());
+            for (name, compact_stage, full_stage) in [
+                ("reach", &compact.reach, &evidence.reach),
+                ("activate", &compact.activate, &evidence.activate),
+                ("propagate", &compact.propagate, &evidence.propagate),
+                ("observe", &compact.observe, &evidence.observe),
+                (
+                    "discriminate",
+                    &compact.discriminate,
+                    &evidence.discriminate,
+                ),
+            ] {
+                assert_eq!(
+                    compact_stage.state, full_stage.state,
+                    "{placement:?}: full/compact {name}"
+                );
+            }
             assert_eq!(
-                compact_target, target,
-                "{placement:?}: full/compact identity"
+                compact.statically_contradicted_related_tests,
+                evidence.statically_contradicted_related_tests
             );
             // This is a snapshot digest: source motion intentionally changes
             // it, but moving the same bytes to an equivalent root must not.
@@ -272,6 +285,9 @@ fn module_extraction_changed_value_keeps_semantic_discriminator() -> Result<(), 
             StageState::Yes,
             "{placement:?}: {evidence:?}"
         );
+        let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+        assert_eq!(compact.reach.state, evidence.reach.state);
+        assert_eq!(compact.discriminate.state, evidence.discriminate.state);
     }
     Ok(())
 }
@@ -305,6 +321,9 @@ fn module_extraction_private_child_is_not_accessible_to_parent_observer() -> Res
             StageState::Yes,
             "{placement:?}: {evidence:?}"
         );
+        let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+        assert_eq!(compact.reach.state, evidence.reach.state);
+        assert_eq!(compact.discriminate.state, evidence.discriminate.state);
     }
     Ok(())
 }
@@ -489,17 +508,28 @@ fn module_extraction_visibility_keeps_existing_helper_witness() -> Result<(), St
     )
     .map_err(|error| error.to_string())?;
     // The sibling call enters the coarse direct-name candidate set. Privacy
-    // removes that candidate for child::compute, then the independent wrapper
+    // removes that candidate for child::compute_value, then the independent wrapper
     // must survive the final veto. A wrapper-only test would miss that path.
-    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute() }\n}\nmod other { pub(super) fn compute() -> i32 { 99 } }\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::other::compute(), 99); assert_eq!(super::child::exercise(), 9); }\n}\n")
+    // The existing helper authority requires a specific owner token: `compute`
+    // alone is deliberately too short; `compute_value` is admitted.
+    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute_value() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute_value() }\n}\nmod other { pub(super) fn compute_value() -> i32 { 99 } }\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::other::compute_value(), 99); assert_eq!(super::child::exercise(), 9); }\n}\n")
         .map_err(|error| error.to_string())?;
     let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
     assert_eq!(index.tests().len(), 1);
+    assert_eq!(
+        index
+            .functions()
+            .iter()
+            .filter(|function| function.name == "compute_value")
+            .count(),
+        2
+    );
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
     let selected = seams
         .iter()
         .filter(|seam| {
-            seam.owner() == "src/lib.rs::child::compute" && seam.kind() == SeamKind::ReturnValue
+            seam.owner() == "src/lib.rs::child::compute_value"
+                && seam.kind() == SeamKind::ReturnValue
         })
         .collect::<Vec<_>>();
     assert_eq!(selected.len(), 1);
