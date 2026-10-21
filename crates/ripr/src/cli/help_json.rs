@@ -36,7 +36,7 @@ use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 /// Schema version of the `help --json` document. Bump on any material shape
 /// change to the DTO; the value is pinned by unit tests and documented in
 /// `docs/OUTPUT_SCHEMA.md`.
-pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 2;
+pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 3;
 
 /// Top-level limitations of the machine document: what governs its identity
 /// and what a consumer must not infer from it.

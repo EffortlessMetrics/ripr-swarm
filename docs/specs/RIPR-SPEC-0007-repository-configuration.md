@@ -411,7 +411,7 @@ Given a repository whose ignore rules do not cover the artifact root, or whose
 index tracks an artifact root, or whose cache directory is unwritable, doctor
 prints each advisory starting with `~ ` and exits with the status of its core
 checks alone; only a failed core check or required runtime probe prints `!`
-and exits 2.
+and exits 3.
 
 ## Test Mapping
 
