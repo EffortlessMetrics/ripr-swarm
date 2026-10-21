@@ -70,6 +70,7 @@ fn materialize(
     copy_tree(&source.join("base"), &root)?;
     fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
     fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    fixture_git_ok(&root, &["config", "commit.gpgsign", "false"])?;
     fixture_git_ok(&root, &["config", "user.name", "fixture"])?;
     fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
     fixture_git_ok(&root, &["add", "-A"])?;
@@ -256,6 +257,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             &["check", "--root", &vroot_arg, "--base", "HEAD~1"],
         )?;
         need(&out, "repair packet is not ready", variant)?;
+        decoy_untouched(&vdecoy)?;
         if out.contains("the repair packet is complete") {
             return Err(format!("{variant} projected a delegatable packet:\n{out}"));
         }
