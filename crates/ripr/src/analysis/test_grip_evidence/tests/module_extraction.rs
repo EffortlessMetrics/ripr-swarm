@@ -15,11 +15,30 @@ const PLACEMENTS: [Placement; 3] = [
     Placement::FileChild,
 ];
 
+#[derive(Clone, Copy, Debug)]
+enum Control {
+    Ordinary,
+    CrateVisible,
+    PrivateChild,
+    ShadowedImport,
+    AmbiguousImport,
+}
+
 fn motion_case(
     placement: Placement,
     value: i32,
     wrong_owner: bool,
     imported: bool,
+) -> Result<(AuthorityFixtureRoot, RustIndex, RepoSeam), String> {
+    motion_case_with_control(placement, value, wrong_owner, imported, Control::Ordinary)
+}
+
+fn motion_case_with_control(
+    placement: Placement,
+    value: i32,
+    wrong_owner: bool,
+    imported: bool,
+    control: Control,
 ) -> Result<(AuthorityFixtureRoot, RustIndex, RepoSeam), String> {
     let root = claim_index_fixture_root(4680)?;
     fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
@@ -28,7 +47,12 @@ fn motion_case(
         "[package]\nname = \"module-motion-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|error| error.to_string())?;
-    let function = format!("pub(super) fn compute() -> i32 {{ {value} }}\n");
+    let visibility = match control {
+        Control::CrateVisible => "pub(crate) ",
+        Control::PrivateChild => "",
+        _ => "pub(super) ",
+    };
+    let function = format!("{visibility}fn compute() -> i32 {{ {value} }}\n");
     let (declaration, call, owner_file) = match placement {
         Placement::Parent => (
             format!("fn compute() -> i32 {{ {value} }}\n"),
@@ -54,17 +78,31 @@ fn motion_case(
     } else {
         call
     };
-    let import = if imported {
+    let import = if matches!(control, Control::AmbiguousImport) {
+        format!(
+            "use {};\nuse super::other::compute;\n",
+            call.trim_end_matches("()")
+        )
+    } else if imported {
         format!("use {};\n", call.trim_end_matches("()"))
     } else {
         String::new()
     };
     let call = if imported { "compute()" } else { call };
-    let expected = if wrong_owner { 99 } else { 9 };
+    let shadow = if matches!(control, Control::ShadowedImport) {
+        "fn compute() -> i32 { 99 }\n"
+    } else {
+        ""
+    };
+    let expected = if wrong_owner || matches!(control, Control::ShadowedImport) {
+        99
+    } else {
+        9
+    };
     let source = format!(
         "{declaration}\nmod other {{ pub(super) fn compute() -> i32 {{ 99 }} }}\n\
          #[cfg(test)]\nmod tests {{\n{import}\
-         #[test]\nfn exact_value() {{ assert_eq!({call}, {expected}); }}\n}}\n"
+         #[test]\nfn exact_value() {{\n{shadow}assert_eq!({call}, {expected});\n}}\n}}\n"
     );
     fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let mut files = vec![PathBuf::from("src/lib.rs")];
@@ -85,17 +123,22 @@ fn motion_case(
             .iter()
             .filter(|f| f.name == "compute")
             .count(),
-        2,
+        if matches!(control, Control::ShadowedImport) {
+            3
+        } else {
+            2
+        },
         "{placement:?}: both owner and same-named sibling must be indexed"
     );
     let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
+    let expected_owner = match placement {
+        Placement::Parent => "src/lib.rs::compute",
+        Placement::InlineChild => "src/lib.rs::child::compute",
+        Placement::FileChild => "src/child.rs::compute",
+    };
     let selected = seams
         .into_iter()
-        .filter(|seam| {
-            seam.kind() == SeamKind::ReturnValue
-                && seam.owner().ends_with("::compute")
-                && !seam.owner().contains("::other::")
-        })
+        .filter(|seam| seam.kind() == SeamKind::ReturnValue && seam.owner() == expected_owner)
         .collect::<Vec<_>>();
     assert_eq!(
         selected.len(),
@@ -121,6 +164,8 @@ fn semantic_projection(seam: &RepoSeam, evidence: &TestGripEvidence) -> serde_js
             "confidence": test.relation_confidence,
             "oracle_kind": test.oracle_kind,
             "oracle_strength": test.oracle_strength,
+            "target_symbol": test.test_target.as_ref().map(|target| &target.symbol_id().0),
+            "target_kind": test.test_target.as_ref().map(TestTargetEvidence::test_kind),
         })).collect::<Vec<_>>(),
         "reach": evidence.reach.state,
         "activate": evidence.activate.state,
@@ -135,6 +180,7 @@ fn semantic_projection(seam: &RepoSeam, evidence: &TestGripEvidence) -> serde_js
 fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Result<(), String> {
     let mut baseline = None;
     for placement in PLACEMENTS {
+        let mut workspace_identity = None;
         // Two independent roots for each form also challenge absolute-root leakage.
         for _ in 0..2 {
             let (_root, index, seam) = motion_case(placement, 9, false, false)?;
@@ -147,6 +193,26 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
             let related = &evidence.related_tests[0];
             assert_eq!(related.test_name, "exact_value");
             assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+            let target = related
+                .test_target
+                .as_ref()
+                .ok_or("indexed test identity missing")?;
+            assert_eq!(target.symbol_id().0, "src/lib.rs::tests::exact_value");
+            assert_eq!(target.file(), Path::new("src/lib.rs"));
+            assert_eq!(target.test_kind(), TestKind::InlineUnit);
+            assert_eq!(target.provenance(), TestTargetProvenance::RustIndexFunction);
+            assert_eq!(target.currentness, TestTargetCurrentness::Current);
+            // This is a snapshot digest: source motion intentionally changes
+            // it, but moving the same bytes to an equivalent root must not.
+            if let Some(expected) = &workspace_identity {
+                assert_eq!(
+                    target.workspace_identity(),
+                    expected,
+                    "{placement:?}: root-dependent snapshot identity"
+                );
+            } else {
+                workspace_identity = Some(target.workspace_identity().to_string());
+            }
             assert_eq!(
                 evidence.reach.state,
                 StageState::Yes,
@@ -215,6 +281,100 @@ fn module_extraction_changed_value_keeps_semantic_discriminator() -> Result<(), 
             evidence.discriminate.state,
             StageState::Yes,
             "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_imported_sibling_stays_unrelated() -> Result<(), String> {
+    for placement in PLACEMENTS {
+        let (_root, index, seam) = motion_case(placement, 9, true, true)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        assert!(
+            evidence.related_tests.is_empty(),
+            "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_local_function_shadows_imported_owner() -> Result<(), String> {
+    for placement in PLACEMENTS {
+        let (_root, index, seam) =
+            motion_case_with_control(placement, 9, false, true, Control::ShadowedImport)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        assert_ne!(
+            evidence.reach.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+        assert_ne!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_private_child_is_not_accessible_to_parent_observer() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        // Intentionally inaccessible Rust: parsing a spelled path must not
+        // manufacture a reachable relation which ordinary visibility forbids.
+        let (_root, index, seam) =
+            motion_case_with_control(placement, 9, false, false, Control::PrivateChild)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        assert_ne!(
+            evidence.reach.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+        assert_ne!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_ambiguous_import_is_not_an_established_observer() -> Result<(), String> {
+    for placement in PLACEMENTS {
+        // Duplicate bindings are deliberately invalid/ambiguous input. A
+        // parser-only analyzer must retain uncertainty instead of choosing one.
+        let (_root, index, seam) =
+            motion_case_with_control(placement, 9, false, true, Control::AmbiguousImport)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        assert_ne!(
+            evidence.reach.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+        assert_ne!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "{placement:?}: {evidence:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn module_extraction_pub_crate_keeps_existing_direct_relation() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        let (_ordinary_root, ordinary_index, ordinary_seam) =
+            motion_case(placement, 9, false, false)?;
+        let ordinary = evidence_for_seam(&ordinary_seam, &ordinary_index);
+        let (_root, index, seam) =
+            motion_case_with_control(placement, 9, false, false, Control::CrateVisible)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        assert_eq!(
+            semantic_projection(&seam, &evidence),
+            semantic_projection(&ordinary_seam, &ordinary)
         );
     }
     Ok(())
