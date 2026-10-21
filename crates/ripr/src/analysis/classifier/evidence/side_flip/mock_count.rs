@@ -101,7 +101,7 @@ pub(in crate::analysis::classifier::evidence) fn discrimination(
     let (owner_name, root, source) = owner_file(context)?;
     let function = unique_plain_free_function(root.syntax(), &owner_name)?;
     let gate = CountGate::read(&function, root.syntax(), &source)?;
-    if !gate.is_probe(context) || !old_condition_orders(context.probe.before.as_deref()?) {
+    if !gate.is_probe(context) || !gate.old_condition_moves_edge(context.probe.before.as_deref()?) {
         return None;
     }
     plain_related_tests(context, &owner_name, false)
@@ -126,24 +126,6 @@ fn unique_plain_free_function(root: &SyntaxNode, name: &str) -> Option<ast::Fn> 
     .then_some(function)
 }
 
-/// The old text is an ordering comparison: the old condition alone, or the
-/// old guard's opening line `if <condition> {`.
-fn old_condition_orders(before: &str) -> bool {
-    let text = before.trim();
-    let text = text.strip_prefix("if ").unwrap_or(text);
-    let text = text.strip_suffix('{').unwrap_or(text).trim();
-    let Some(old) = parse_expression(text) else {
-        return false;
-    };
-    let old = unwrap_parens(old);
-    matches!(&old, ast::Expr::BinExpr(comparison)
-        if matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(ast::CmpOp::Ord { .. }))))
-        && !is_equality(&old)
-        && old.syntax().descendants().all(|node| {
-            !ast::MacroCall::can_cast(node.kind()) && !ast::BlockExpr::can_cast(node.kind())
-        })
-}
-
 /// Rules 1 and 2: the owner's first-statement guard and the one mocked call
 /// it gates.
 struct CountGate {
@@ -152,6 +134,8 @@ struct CountGate {
     parameter: usize,
     receiver: usize,
     parameter_count: usize,
+    /// The compared parameter's name, so the old guard can be read against it.
+    parameter_name: String,
     /// The comparison, normalized to `parameter <op> bound`.
     op: ast::CmpOp,
     bound: i128,
@@ -224,6 +208,7 @@ impl CountGate {
             parameter,
             receiver,
             parameter_count: parameters.len(),
+            parameter_name: name,
             op,
             bound,
             mock_type: format!("Mock{trait_name}"),
@@ -231,6 +216,49 @@ impl CountGate {
             condition: canonical_tokens(condition.syntax(), None),
             condition_line: line_of(source, condition.syntax())?,
         })
+    }
+
+    /// The old text is an ordering comparison of the same parameter in the
+    /// same direction as the new guard, with no macro or block: the old
+    /// condition alone, or the old guard's opening line `if <condition> {`.
+    /// Only then do the two test inputs bracket an edge that moved. An
+    /// inverted old guard (`<=` against `>`) takes the opposite input, so the
+    /// count would be the same under both and cannot tell them apart.
+    fn old_condition_moves_edge(&self, before: &str) -> bool {
+        let text = before.trim();
+        let text = text.strip_prefix("if ").unwrap_or(text);
+        let text = text.strip_suffix('{').unwrap_or(text).trim();
+        let Some(old) = parse_expression(text) else {
+            return false;
+        };
+        let old = unwrap_parens(old);
+        if is_equality(&old)
+            || !old.syntax().descendants().all(|node| {
+                !ast::MacroCall::can_cast(node.kind()) && !ast::BlockExpr::can_cast(node.kind())
+            })
+        {
+            return false;
+        }
+        let ast::Expr::BinExpr(comparison) = &old else {
+            return false;
+        };
+        let Some(ast::BinaryOp::CmpOp(op @ ast::CmpOp::Ord { .. })) = comparison.op_kind() else {
+            return false;
+        };
+        let (Some(lhs), Some(rhs)) = (comparison.lhs(), comparison.rhs()) else {
+            return false;
+        };
+        let (lhs, rhs) = (unwrap_parens(lhs), unwrap_parens(rhs));
+        let normalized = if parameter_name(&lhs).as_deref() == Some(self.parameter_name.as_str()) {
+            op
+        } else if parameter_name(&rhs).as_deref() == Some(self.parameter_name.as_str()) {
+            flipped(op)
+        } else {
+            return false;
+        };
+        matches!((normalized, self.op),
+            (ast::CmpOp::Ord { ordering: old, .. }, ast::CmpOp::Ord { ordering: new, .. })
+                if old == new)
     }
 
     fn is_probe(&self, context: &ProbeContext<'_>) -> bool {
@@ -255,15 +283,17 @@ impl CountGate {
 
     /// Rules 3 and 4 for one test.
     fn counted_on_both_sides(&self, test: &ast::Fn, owner: &str) -> bool {
-        self.count_reading(test, owner)
-            .is_some_and(|(expected, inputs)| {
-                let taken = inputs.iter().filter(|value| self.takes(**value));
-                let skipped = inputs.iter().filter(|value| !self.takes(**value));
-                taken.clone().count() == expected
-                    && taken
-                        .clone()
-                        .any(|a| skipped.clone().any(|b| a.abs_diff(*b) == 1))
-            })
+        !self.mock_type_is_declared_or_imported(test)
+            && self
+                .count_reading(test, owner)
+                .is_some_and(|(expected, inputs)| {
+                    let taken = inputs.iter().filter(|value| self.takes(**value));
+                    let skipped = inputs.iter().filter(|value| !self.takes(**value));
+                    taken.clone().count() == expected
+                        && taken
+                            .clone()
+                            .any(|a| skipped.clone().any(|b| a.abs_diff(*b) == 1))
+                })
     }
 
     /// The expected call count and the compared input of every owner call,
@@ -345,6 +375,27 @@ impl CountGate {
             .filter(|token| token.kind() == SyntaxKind::IDENT && identifier_text(token) == mock)
             .count();
         (named == mock_uses + 1).then_some((expected?, inputs))
+    }
+
+    /// The test's file declares or imports an item named like the generated
+    /// mock (`struct MockT`, `use other::MockT`). The name then may not
+    /// resolve to the `automock` type, and a stand-in with the same
+    /// expectation-chain methods enforces no count, so the file refuses.
+    fn mock_type_is_declared_or_imported(&self, test: &ast::Fn) -> bool {
+        let Some(root) = test.syntax().ancestors().last() else {
+            return true;
+        };
+        root.descendants().any(|node| {
+            ast::Name::cast(node.clone()).is_some_and(|name| name.text() == self.mock_type)
+                || ast::Use::can_cast(node.kind())
+                    && node
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .any(|token| {
+                            token.kind() == SyntaxKind::IDENT
+                                && identifier_text(&token) == self.mock_type
+                        })
+        })
     }
 
     /// `let mut m = MockT::new();` (or `::default()`), the test's only
@@ -1131,12 +1182,36 @@ mod tests {
     }
 
     #[test]
-    fn the_old_line_must_order() {
-        assert!(old_condition_orders("overdue_days > GRACE_DAYS"));
-        assert!(old_condition_orders("    if overdue_days > GRACE_DAYS {"));
-        assert!(!old_condition_orders("overdue_days == GRACE_DAYS"));
-        assert!(!old_condition_orders("if overdue_days != 30 {"));
-        assert!(!old_condition_orders("check(overdue_days)"));
-        assert!(!old_condition_orders("overdue_days > limit!()"));
+    fn the_old_line_must_move_the_same_edge() -> Result<(), String> {
+        let gate = gate(OWNER).ok_or("premise: the owner gate reads")?;
+        // Same parameter, same direction: an edge move.
+        assert!(gate.old_condition_moves_edge("overdue_days > GRACE_DAYS"));
+        assert!(gate.old_condition_moves_edge("    if overdue_days >= GRACE_DAYS {"));
+        assert!(gate.old_condition_moves_edge("GRACE_DAYS < overdue_days"));
+        // An inversion takes the opposite input, so the count is the same.
+        assert!(!gate.old_condition_moves_edge("overdue_days <= GRACE_DAYS"));
+        assert!(!gate.old_condition_moves_edge("if overdue_days < 30 {"));
+        assert!(!gate.old_condition_moves_edge("GRACE_DAYS >= overdue_days"));
+        // Another parameter, equality, a call or a macro are not edge moves.
+        assert!(!gate.old_condition_moves_edge("limit > GRACE_DAYS"));
+        assert!(!gate.old_condition_moves_edge("overdue_days == GRACE_DAYS"));
+        assert!(!gate.old_condition_moves_edge("if overdue_days != 30 {"));
+        assert!(!gate.old_condition_moves_edge("check(overdue_days)"));
+        assert!(!gate.old_condition_moves_edge("overdue_days > limit!()"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_that_declares_or_imports_the_mock_name_is_not_counted() -> Result<(), String> {
+        assert!(counted(OWNER, TEST)?);
+        for (label, extra) in [
+            ("a local struct", "struct MockMailer;\n"),
+            ("an imported name", "use fakes::MockMailer;\n"),
+            ("a local alias", "type MockMailer = Fake;\n"),
+        ] {
+            let owner = format!("{OWNER}{extra}");
+            assert!(!counted(&owner, TEST)?, "{label}");
+        }
+        Ok(())
     }
 }

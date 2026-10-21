@@ -15884,7 +15884,8 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::other_test_shapes_the_rule_counts",
   "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::tests_the_count_cannot_vouch_for_are_not_counted",
   "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::owners_whose_call_count_is_not_plain_are_not_read",
-  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::the_old_line_must_order",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::the_old_line_must_move_the_same_edge",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::a_file_that_declares_or_imports_the_mock_name_is_not_counted",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

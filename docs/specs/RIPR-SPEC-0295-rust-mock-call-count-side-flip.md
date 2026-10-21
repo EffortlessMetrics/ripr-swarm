@@ -103,7 +103,9 @@ the evidence unchanged.
      owner does not shadow.
 
    The probe is that condition on its own line. The old line is an
-   ordering comparison, not `==` or `!=`, with no macro or block. As in
+   ordering comparison, not `==` or `!=`, with no macro or block, of the
+   same parameter in the same direction as the new guard (an inverted old
+   guard refuses). As in
    RIPR-SPEC-0227 rule 3, an old equality agrees with the new guard at the
    edge pair while differing elsewhere.
 2. **One gated call.** The first parameter whose type is `&dyn T` or
@@ -187,11 +189,15 @@ reads `exposed`.
   integer literals.
 - Judging the returned value. The rule says nothing about what `send`
   returns or whether the result assertions discriminate on their own.
-- Predicate inversions of the guard (`>` to `<=`, `==` or `!=`). The credit
-  rests on the two edge-move mutants only: an inversion that takes just the
-  edge input leaves the count unchanged, so a count-only test with no result
-  assertion does not notice it. Like RIPR-SPEC-0227 this is the edge-pair
-  claim, not a claim about every mutant of the predicate.
+- Edits that invert the guard (an old `x <= 30` against a new `x > 30`). The
+  old line must compare the same parameter in the same direction as the new
+  guard, so the two test inputs bracket an edge that moved; an inverted old
+  guard takes the opposite input, the count is the same under both, and the
+  predicate stays `weakly_exposed`. The credit is the edge-pair claim, as in
+  RIPR-SPEC-0227, not a claim about every mutant of the predicate.
+- Tests in a file that declares or imports an item named like the generated
+  mock (`struct MockT`, `use other::MockT`): the name may not resolve to the
+  `automock` type and a stand-in enforces no count, so the file refuses.
 
 ## Acceptance Examples
 
@@ -219,8 +225,9 @@ tested only through statement calls under one mockall count.
 - `crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs`
   tests: example 1 (`the_corpus_shape_reads_and_counts`), the admitted
   variants (example 6 among them), examples 2, 3 and 5 among the test
-  refusals, example 4 among the owner refusals, and the old-line ordering
-  rule.
+  refusals, example 4 among the owner refusals, the old-line edge move
+  (`the_old_line_must_move_the_same_edge`) and the declared or imported
+  mock name (`a_file_that_declares_or_imports_the_mock_name_is_not_counted`).
 - `fixtures/rust-verdict-corpus`: example 1
   (`lib-mockall-grace-boundary-times`) and examples 2 to 6
   (`lib-mockall-count-one-side`, `-range`, `-sent-on-both-paths`,
