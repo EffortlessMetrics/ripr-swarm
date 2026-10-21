@@ -20851,13 +20851,13 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
         error.set_input(Some(&text));
         format!("{path}: invalid non-Rust allowlist TOML: {error}")
     })?;
-    let line_number = |offset| {
-        text.bytes()
-            .take(offset)
-            .filter(|byte| *byte == b'\n')
-            .count()
-            + 1
-    };
+    // Spans use byte offsets. Index line breaks once instead of rescanning
+    // every prefix for every entry and field in the allowlist.
+    let newline_offsets = text
+        .match_indices('\n')
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let line_number = |offset| newline_offsets.partition_point(|newline| *newline < offset) + 1;
     let mut entries = Vec::new();
     for (key, value) in document.get_ref().iter() {
         let key = key.get_ref().as_ref();
@@ -22330,6 +22330,84 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]
 mod sorted_allowlist_content_tests;
+
+/// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`
+/// (as `bench_agent_surfaces` and the DX scoreboard admission do).
+pub(crate) const CHECK_FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
+
+/// Whether a `ripr check --format json` document reports a complete analysis
+/// (#9010). `analysis_outcome.analysis_complete` is the analysis verdict, but a
+/// findings array cut by the byte budget adds `document_complete: false`; that
+/// document holds only a prefix of the findings and is never complete for a
+/// consumer. Returns `Some(false)` for it, otherwise the producer's boolean
+/// (`None` when absent or non-boolean). A non-boolean `document_complete` also
+/// fails closed.
+pub(crate) fn check_document_analysis_complete(check: &serde_json::Value) -> Option<bool> {
+    let outcome = check.get("analysis_outcome")?;
+    if let Some(document_complete) = outcome.get("document_complete")
+        && document_complete.as_bool() != Some(true)
+    {
+        return Some(false);
+    }
+    // Legacy shape: the bound disclosed only in `run_limitations[]`.
+    if check
+        .get("run_limitations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|limitations| {
+            limitations.iter().any(|entry| {
+                ["run_status", "category"].iter().any(|key| {
+                    entry.get(key).and_then(serde_json::Value::as_str)
+                        == Some(CHECK_FINDINGS_BOUND_RUN_STATUS)
+                })
+            })
+        })
+    {
+        return Some(false);
+    }
+    outcome
+        .get("analysis_complete")
+        .and_then(serde_json::Value::as_bool)
+}
+
+#[cfg(test)]
+mod check_document_completeness_tests {
+    use super::check_document_analysis_complete;
+    use serde_json::json;
+
+    #[test]
+    fn bounded_document_is_never_complete_but_unbounded_control_is() {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3}});
+        assert_eq!(check_document_analysis_complete(&bounded), Some(false));
+        let corrupt = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": "false"}});
+        assert_eq!(check_document_analysis_complete(&corrupt), Some(false));
+        let legacy = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_findings_bound"}]});
+        assert_eq!(check_document_analysis_complete(&legacy), Some(false));
+        let legacy_status = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"run_status": "limited_findings_bound"}]});
+        assert_eq!(
+            check_document_analysis_complete(&legacy_status),
+            Some(false)
+        );
+        let other_limitation = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_partial_scope"}]});
+        assert_eq!(
+            check_document_analysis_complete(&other_limitation),
+            Some(true)
+        );
+        let control = json!({"analysis_outcome": {"analysis_complete": true}});
+        assert_eq!(check_document_analysis_complete(&control), Some(true));
+        let incomplete = json!({"analysis_outcome": {"analysis_complete": false}});
+        assert_eq!(check_document_analysis_complete(&incomplete), Some(false));
+        assert_eq!(check_document_analysis_complete(&json!({})), None);
+    }
+}
 
 #[cfg(test)]
 mod inherited_failure_tests {

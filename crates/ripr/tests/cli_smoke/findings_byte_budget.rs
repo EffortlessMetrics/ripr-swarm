@@ -111,6 +111,25 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             "message must name the applied limit: {message}"
         );
         assert_eq!(entry["repair_route"], "output/check-findings-budget");
+        // #9010: the analysis outcome discloses the bounded document too,
+        // keeping `analysis_complete` as the analysis verdict.
+        assert_eq!(
+            bounded_report["analysis_outcome"]["analysis_complete"],
+            baseline["analysis_outcome"]["analysis_complete"],
+            "analysis_complete stays the analysis verdict"
+        );
+        assert_eq!(
+            bounded_report["analysis_outcome"]["document_complete"],
+            false
+        );
+        assert_eq!(bounded_report["analysis_outcome"]["findings_rendered"], 1);
+        assert_eq!(bounded_report["analysis_outcome"]["findings_total"], total);
+        assert!(
+            baseline["analysis_outcome"]
+                .get("document_complete")
+                .is_none(),
+            "unbounded outcome carries no document_complete member"
+        );
         assert_eq!(
             bounded_report["canonical_next_action"], baseline["canonical_next_action"],
             "findings-array omission must not change the primary canonical action"
