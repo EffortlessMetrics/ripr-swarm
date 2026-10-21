@@ -1,5 +1,9 @@
 # RIPR-SPEC-0224: Examined-test miss evidence
 
+This spec is the one language-neutral contract for `RelatedTest.miss` and its
+rendered `why` (#5566, parent #5445). The sections below that name Rust,
+Python, TypeScript or Perl describe each adapter's slice of it.
+
 Status: proposed
 
 Owner: analysis
@@ -13,11 +17,13 @@ Linked issues:
 - #5356 (`ripr explain` repeats the human-full block)
 - #5508 (`observation_unconfirmed` read as an established miss)
 - #5498 (Perl findings list tests without a reason)
+- #5566 (promote to a language-neutral related-test miss contract)
+- #5445 (Python, TypeScript and Perl related tests without a reason)
 
 Support-tier impact:
 
-- None. No language support claim changes; the slice discloses facts the Rust
-  classifier already computes.
+- None. No language support claim changes; the contract discloses facts a
+  producer already computes and promotes no adapter tier.
   [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
@@ -34,6 +40,109 @@ could say "Related tests were found" and `reach: yes` while listing no test
 (16 findings across 4 of 12 shared-corpus repos, #5344). Where tests were
 listed, the finding did not say why each one fails to catch the change, so a
 developer who disagreed had to re-derive the analysis.
+
+## Language-neutral contract
+
+`miss` explains one related-test row. It is evidence, not a verdict, and a
+renderer never decides it.
+
+### Producer and renderer responsibility
+
+A language producer owns, per test row: which test is related; relation
+certainty and provenance; assertion admission state; the assertion judged for
+the changed behavior family; row-local activation or boundary evidence;
+row-local owner/sink observation state; row-owned discriminator support; and
+the final typed miss, if one is established. Renderers, transports and policy
+facades own none of these.
+
+### Class gate
+
+- `exposed`: no class-level row misses.
+- `static_unknown` and every other explicitly unknown, blocked or partial
+  state: no speculative row miss.
+- A concrete gap class may carry a miss only on a row for which the producer
+  established it. A row inside a concrete gap stays `miss: null` when its own
+  evidence is unresolved.
+- A producer never changes the finding class to obtain a more satisfying
+  explanation. Language deviations follow the existing classification
+  taxonomy; no cross-language class exists for this feature.
+
+### Explanation is non-decisional
+
+`miss` and `why` cannot determine gate, actionability or fix-site eligibility
+(#5563). A row's decision or evidence role is a separate producer-owned fact,
+so changing only the explanation changes no decision field.
+
+### Row-owned support
+
+- `missing_input` requires a typed predicate-activation or boundary fact that
+  applies to the same row.
+- `missing_exact_assertion` requires a typed changed-observable or
+  discriminator fact that applies to the same row.
+- A finding-wide fact is never attached to one test by renderer convention. A
+  row without its own support falls back to `observation_unconfirmed` or no
+  miss; it never borrows another row's fact (#5564).
+
+### Assertion admission
+
+Three states stay distinct: a recognized assertion; proven no assertion-like
+construct after complete extraction; and an assertion-like, refused, custom or
+dynamic form whose admission is unresolved. An empty recognized-assertion
+vector is not by itself `no_assertion`. `assertion_not_credited` is not a
+bucket for unsupported syntax; only a typed proven refusal (#5446) may use it.
+
+### Minimum evidence per miss
+
+| miss | Minimum evidence |
+| --- | --- |
+| `no_call_path` | no established path to the changed owner under the producer's relation model |
+| `no_assertion` | path established, extraction complete, no executable assertion-like construct |
+| `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
+| `assertion_not_credited` | a typed proven refusal accepted by #5446 |
+| `weak_assertion` | an admitted, family-relevant oracle below the producer's strong or exact threshold |
+| `missing_input` | a row-owned predicate-activation or boundary omission |
+| `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
+| `observation_unconfirmed` | a path/assertion relationship exists but observation can be neither proved nor refuted |
+
+The typed `ProbeFamily` is authoritative for behavior-family prose; source
+text such as ` == ` never decides whether a fact is a boundary, return value,
+field, error variant, effect, call deletion or match arm.
+
+### Adapter capability table
+
+This table documents which propositions each adapter may emit today. It is
+normative documentation, not a second capability registry; once #5531 lands it
+is validated against or derived from that registry. An adapter that reports an
+unsupported state as unknown and fabricates no reason conforms.
+
+| miss | Rust | Python | TypeScript | Perl v1 |
+| --- | --- | --- | --- | --- |
+| `no_call_path` | yes | pending #5491 | pending #5495 | no |
+| `no_assertion` | yes | pending #5491 | pending #5495 | no |
+| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `assertion_not_credited` | yes | no (#5446) | no (#5446) | no |
+| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
+| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
+| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+
+"Pending" means the row-evidence prerequisites in this spec have landed or are
+tracked, and the producer has not yet mapped them. Perl's narrower coverage is
+a capability difference, not a parity failure.
+
+### Projection law
+
+Every surface that carries related tests derives from the stored enum and the
+shared renderer: human and human-full, JSON/context/JSONL, explain, LSP, MCP,
+applicable agent and repair projections, and single-row TypeScript preview
+cards or packets. No transport defines its own miss semantics.
+
+### Compatibility
+
+`miss` is optional; artifacts that predate it read as no miss. The enum is
+controlled in `policy/output_contracts.txt`. Additions are additive and bump
+the schema only as `docs/OUTPUT_SCHEMA.md` requires. Explanatory prose is
+excluded from deterministic identity.
 
 ## Behavior
 
@@ -288,8 +397,11 @@ actionability or rendered output.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript miss producers (#5491, #5495); only their admission
-  prerequisite is specified here. Richer Perl reasons that need row-owned facts (#5562).
+- Python and TypeScript miss producers (#5491, #5495) are not yet landed; the
+  contract and their prerequisites are specified here, the mapping is not.
+  Richer Perl reasons that need row-owned facts (#5562).
+- Any producer implementation, parser, call-graph or oracle expansion,
+  support-tier promotion, or runtime or mutation-kill claim.
 
 ## Acceptance Examples
 
