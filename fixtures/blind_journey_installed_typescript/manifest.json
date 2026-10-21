@@ -81,10 +81,10 @@
     }
    },
    "variant-object-namespace-write": {
-    "commit": "925faba1ca374a59f0cda3a077700227dbb83465",
-    "tree": "6fd139f3a5c8e2cf29817f46e96388bb07419970",
+    "commit": "5a0a097e6eeb2de23335c3119bec661da6c4fa57",
+    "tree": "8474f4ea8ee0350b4fc588ad37de8e8a343a6396",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "1f6b591b6924961ae3b2025991df3d1d22350f3540c53369651101be90565dca",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
