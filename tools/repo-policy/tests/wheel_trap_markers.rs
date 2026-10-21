@@ -77,9 +77,11 @@ fn exercise_traps(root: &std::path::Path) -> TestResult {
             assert_eq!(output.status.code(), Some(status), "{output:?}");
             assert_eq!(fs::read_to_string(&marker)?, message);
             if leaf.contains("$CI_TRAP_INERT") {
-                assert!(!case
-                    .join(leaf.replace("$CI_TRAP_INERT", "EXPANDED_WRONG"))
-                    .exists());
+                assert!(
+                    !case
+                        .join(leaf.replace("$CI_TRAP_INERT", "EXPANDED_WRONG"))
+                        .exists()
+                );
             }
         }
     }
