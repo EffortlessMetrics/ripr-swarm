@@ -106,7 +106,7 @@ Authority:
    `subject.canonical_gap_id` is the readable producer id (`gap:rust:...`)
    that `ripr check`, `ripr_list_gaps` and `ripr_get_gap` use, because that
    is the id agents receive and pass back (#8638); it is re-minted from the
-   seam by the producer's own minter, not a card-local one (a seam that cannot re-mint it falls back to the hash). The
+   seam by the producer's own minter, not a card-local one (a seam that cannot re-mint it reports a null `canonical_gap_id`; the hash never lands there). The
    pre-#8638 hash rides additively as `seam_content_gap_id`.
 4. Semantic identity is a sha256 hex digest over the scoped card surface
    (every load-bearing field except the digest itself). Command `display`

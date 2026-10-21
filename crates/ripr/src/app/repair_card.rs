@@ -74,6 +74,11 @@ pub(crate) struct RepairCardInput<'a> {
 }
 
 /// Project the shared repair authorities into a versioned repair card.
+///
+/// The subject/readiness gap consistency check compares
+/// `subject.seam_content_gap_id` (the seam-side content hash) with the
+/// readiness authority's gap id. `subject.canonical_gap_id` is the readable
+/// producer id and is not compared against readiness (#8638).
 pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCardV1, String> {
     let selected_target = project_target(&input.readiness.target_selection);
     if input.next_command.is_some()

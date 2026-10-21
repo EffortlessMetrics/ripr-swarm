@@ -572,11 +572,13 @@ pub(crate) fn assemble_repair_card(
             // #8638: the card reports the readable id `ripr check`,
             // `ripr_list_gaps` and `ripr_get_gap` use, minted by the
             // producer's own minter. The seam-side content hash stays the
-            // internal join key and rides additively under its own name; a
-            // seam that cannot re-mint the readable id keeps the hash so the
-            // subject never loses its gap binding.
-            canonical_gap_id: crate::analysis::canonical_gap::readable_gap_id_for_seam(entry)
-                .or_else(|| readiness.canonical_gap_id.clone()),
+            // internal join key and rides additively under its own name.
+            // Fail closed: a seam that cannot re-mint the readable id (a
+            // non-Rust path) reports no `canonical_gap_id` rather than
+            // publishing the hash as an address no gap tool accepts. The
+            // readable id comes from the seam, so a repair-ready seam with
+            // no bound finding still carries the id `ripr_list_gaps` lists.
+            canonical_gap_id: crate::analysis::canonical_gap::readable_gap_id_for_seam(entry),
             seam_content_gap_id: readiness.canonical_gap_id.clone(),
             finding_id: facts.finding_id.map(str::to_string),
         },

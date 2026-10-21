@@ -609,6 +609,32 @@ mod tests {
         Ok(())
     }
 
+    /// #8638: the finding side mints from the producer's path and the seam
+    /// side from the seam's path after `stable_path_text`; both normalize
+    /// Windows-style separators, so the ids match byte-for-byte.
+    #[test]
+    fn finding_and_seam_paths_agree_after_stable_path_text() -> Result<(), String> {
+        let windows = PathBuf::from("src\\pricing.rs");
+        let gap = gap_for(
+            &windows,
+            Some(owner("src/pricing.rs", "score")),
+            &ProbeFamily::Predicate,
+            "if a >= b {",
+        )?;
+        let seam_file = crate::analysis::stable_path_text(&windows);
+        assert_eq!(
+            rust_gap_id_for_seam_shape(
+                &seam_file,
+                "src/pricing.rs::score",
+                SeamKind::PredicateBoundary,
+                "if a >= b {"
+            )
+            .as_deref(),
+            Some(gap.id.as_str())
+        );
+        Ok(())
+    }
+
     #[test]
     fn producer_gap_id_rejects_other_languages_and_hash_ids() {
         for id in [

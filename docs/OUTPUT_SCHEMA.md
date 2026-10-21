@@ -205,7 +205,7 @@ id scheme names the same gap on every surface and an agent can pass the
 card's id back to a gap tool (#8638; the readable id wins because it is the
 id agents receive). The seam-side content hash (`gap:<16 hex>`) this field
 carried before #8638 is kept additively as `subject.seam_content_gap_id`
-(omitted when absent); `ripr_get_gap` and `ripr_list_gaps` do not accept it (the task-first selector still resolves it) and it is not the cross-surface address. Two seams with identical file, owner, kind and normalized expression share one readable id; the hash is unique per seam. A seam that cannot re-mint the readable id falls back to the hash in `canonical_gap_id`.
+(omitted when absent); `ripr_get_gap` and `ripr_list_gaps` do not accept it (the task-first selector still resolves it) and it is not the cross-surface address. Two seams with identical file, owner, kind and normalized expression share one readable id; the hash is unique per seam. Every Rust seam kind maps to a probe family, so the readable id is absent only for a non-Rust seam path, where `canonical_gap_id` is null and only `seam_content_gap_id` is set.
 
 The schema is additive within `repair_card.v1`: new fields arrive with
 `#[serde(default)]`; a breaking shape change mints a new version. The CLI

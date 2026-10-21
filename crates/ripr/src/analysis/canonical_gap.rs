@@ -244,7 +244,10 @@ pub(crate) fn producer_gap_id_names_seam(item: &str, entry: &ClassifiedSeam) -> 
 /// `ripr_list_gaps` and `ripr_get_gap` print for the finding that names this
 /// seam, re-minted from the seam through the producer's own minter (#8638).
 /// This is the id agents receive and pass back; the content-hash id from
-/// [`canonical_gap_identity`] stays an internal join key.
+/// [`canonical_gap_identity`] stays an internal join key. Every Rust seam kind
+/// maps to a probe family, so `None` here means only a non-Rust path; on that
+/// path the card reports a null `canonical_gap_id` (the hash stays in
+/// `seam_content_gap_id`).
 pub(crate) fn readable_gap_id_for_seam(entry: &ClassifiedSeam) -> Option<String> {
     let file = crate::analysis::stable_path_text(entry.seam.file());
     // The readable id is the Rust producer's spelling; a non-Rust path mints
