@@ -211,9 +211,20 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
     } else {
         String::new()
     };
+    // Bound the listed files so a large workspace does not bury the command's
+    // own result under a wall of paths; the count keeps the total honest.
+    const MAX_LISTED_DETAILS: usize = 3;
+    let total = details.len();
+    let mut listed = details
+        .into_iter()
+        .take(MAX_LISTED_DETAILS)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if total > MAX_LISTED_DETAILS {
+        listed.push_str(&format!(", and {} more", total - MAX_LISTED_DETAILS));
+    }
     Some(format!(
-        "ripr: {count} Rust module composition limitation(s): {}; affected module contexts remain fail-closed. {ANALYSIS_LIMIT_ORIENTATION}{next_step}",
-        details.into_iter().collect::<Vec<_>>().join(", ")
+        "ripr: {count} Rust module composition limitation(s): {listed}; affected module contexts remain fail-closed. {ANALYSIS_LIMIT_ORIENTATION}{next_step}"
     ))
 }
 
@@ -1796,6 +1807,29 @@ fn feature_gated_test() {}
         // No limitations: no disclosure.
         let clean = RustIndex::default();
         assert_eq!(module_composition_disclosure(&clean), None);
+
+        // Many limited files collapse to the first three plus a remainder,
+        // while the count stays the full total.
+        let mut many = RustIndex::default();
+        for n in 0..6 {
+            many.insert_file_only(
+                PathBuf::from(format!("src/m{n}.rs")),
+                FileFacts {
+                    role_provenance: crate::analysis::facts::SourceRoleProvenance {
+                        edges: Vec::new(),
+                        earliest_unresolved_reason: Some(
+                            "rust_module_ambiguous_parent".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let collapsed = module_composition_disclosure(&many).ok_or_else(no_disclosure)?;
+        assert!(collapsed.contains("6 Rust module composition limitation(s)"));
+        assert!(collapsed.contains("src/m2.rs:rust_module_ambiguous_parent, and 3 more;"));
+        assert!(!collapsed.contains("src/m3.rs"));
         Ok(())
     }
 }
