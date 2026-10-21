@@ -12,9 +12,8 @@
 //! change.
 
 use super::super::rust_index::{RustIndex, TestSummary};
-use crate::analysis::extract::test_body_let_shadow_line;
 use crate::analysis::facts::FunctionContainer;
-use crate::analysis::syntax::fn_name_binding_count;
+use crate::analysis::syntax::fn_call_has_local_binding;
 use crate::domain::{OracleKind, RelationReason};
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
@@ -214,12 +213,12 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
     // `let shipping = Money::new(shipping)` over `shipping: u64`).
     let mut established: Vec<String> = primitive_params
         .iter()
-        .filter(|name| !bindings.iter().any(|(bound, _, _)| bound == *name))
+        .filter(|name| !bindings.iter().any(|(bound, _, _, _)| bound == *name))
         .cloned()
         .collect();
     loop {
         let mut changed = false;
-        for (name, _, _) in &bindings {
+        for (name, _, _, _) in &bindings {
             if established.iter().any(|seen| seen == name) {
                 continue;
             }
@@ -235,12 +234,13 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
             // present: a primitive annotation proves the binding outright,
             // a non-primitive one refuses it even when the initializer
             // looks like a literal (`let s: Money = 499;`).
-            let all = bindings.iter().filter(|(bound, _, _)| bound == name).all(
-                |(_, bound_expr, annotation)| match annotation {
+            let all = bindings
+                .iter()
+                .filter(|(bound, _, _, _)| bound == name)
+                .all(|(_, bound_expr, annotation, offset)| match annotation {
                     Some(ty) => primitive_type_token(ty),
-                    None => expression_established(bound_expr, &basis, &text, index),
-                },
-            );
+                    None => expression_established(bound_expr, *offset, &basis, &text, index),
+                });
             if all {
                 established.push(name.clone());
                 changed = true;
@@ -257,6 +257,7 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
 /// are read by [`expression_established`].
 fn expression_established(
     expr: &str,
+    offset: usize,
     established: &[String],
     owner_body: &str,
     index: &RustIndex,
@@ -266,7 +267,7 @@ fn expression_established(
         return expr == "true" || expr == "false" || established.iter().any(|name| name == expr);
     }
     if let Some(callee) = call_callee(expr) {
-        return call_established_primitive(callee, owner_body, index);
+        return call_established_primitive(callee, offset, owner_body, index);
     }
     arithmetic_established(expr, established)
 }
@@ -316,16 +317,19 @@ fn call_callee(expr: &str) -> Option<CallCallee<'_>> {
 /// disagreeing returns, or any non-primitive return proves nothing: a call
 /// to a function outside the index (another crate) could return a type
 /// that overloads the operator.
-fn call_established_primitive(callee: CallCallee<'_>, owner_body: &str, index: &RustIndex) -> bool {
+fn call_established_primitive(
+    callee: CallCallee<'_>,
+    offset: usize,
+    owner_body: &str,
+    index: &RustIndex,
+) -> bool {
     // Keep the spelled qualification: a value named `fee` cannot shadow
-    // `crate::fee(..)`. For a bare call, use the shared parser authority for
-    // parameters, patterns, declaration-only lets and nested items. The
-    // lexical supplement also sees explicit lets inside macro token trees.
-    // The caller already rejected quoted text and stripped line comments.
+    // `crate::fee(..)`. For a bare call, settle bindings at this initializer,
+    // including hoisted imports/items and preceding declaration-only lets.
+    // A later let does not shadow this call. Opaque item/statement macros
+    // cannot establish the absence of a binding.
     if !callee.qualified
-        && (fn_name_binding_count(owner_body, callee.name) != Some(0)
-            || fn_name_binding_count(owner_body, &format!("r#{}", callee.name)) != Some(0)
-            || test_body_let_shadow_line(owner_body, callee.name).is_some())
+        && fn_call_has_local_binding(owner_body, offset, callee.name) != Some(false)
     {
         return false;
     }
@@ -396,17 +400,23 @@ fn primitive_type_token(text: &str) -> bool {
 /// the body's opening brace is read. A typed binding carries its
 /// annotation text; patterns other than a plain name, and
 /// initializer-less declarations, are not read.
-fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>)> {
-    let inner = match text.find('{') {
-        Some(open) if text[..open].contains("fn ") => text[open + 1..]
-            .trim_end()
-            .strip_suffix('}')
-            .unwrap_or(&text[open + 1..]),
-        _ => text,
+fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>, usize)> {
+    let start = match text.find('{') {
+        Some(open) if text[..open].contains("fn ") => open + 1,
+        _ => 0,
     };
+    let inner = text[start..]
+        .trim_end()
+        .strip_suffix('}')
+        .unwrap_or(&text[start..]);
     inner
         .split(';')
-        .filter_map(|statement| {
+        .scan(start, |offset, statement| {
+            let start = *offset;
+            *offset += statement.len() + 1;
+            Some((start, statement))
+        })
+        .filter_map(|(start, statement)| {
             let rest = statement.trim().strip_prefix("let ")?;
             let (name, value) = rest.split_once('=')?;
             let name = name.trim();
@@ -418,7 +428,15 @@ fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>)> 
                 Some((name, ty)) => (name.trim(), Some(ty.trim().to_string())),
                 None => (name, None),
             };
-            is_identifier(name).then(|| (name.to_string(), value.trim().to_string(), annotation))
+            let offset = start + statement.trim_end().len() - value.trim_start().len();
+            is_identifier(name).then(|| {
+                (
+                    name.to_string(),
+                    value.trim().to_string(),
+                    annotation,
+                    offset,
+                )
+            })
         })
         .collect()
 }
@@ -1759,6 +1777,7 @@ mod tests {
             "let (shipping_cents,) = (flat_rate,);",
             "let r#shipping_cents = flat_rate;",
             "let shipping_cents;\n    shipping_cents = flat_rate;",
+            "use crate::flat_rate as shipping_cents;",
         ] {
             let source = SHADOW_SOURCE.replace("let shipping_cents = flat_rate;", binding);
             assert_eq!(parsed_pin(&source)?, None, "{binding}");
@@ -1778,6 +1797,18 @@ mod tests {
                 .replace("quantity: u64)", &format!("quantity: u64, {parameter})"))
                 .replace("quote(3_000, 3)", &format!("quote(3_000, 3, {argument})"));
             assert_eq!(parsed_pin(&source)?, None, "{parameter}");
+        }
+        for binding in [
+            "use crate::local_rates::shipping_cents;",
+            "use crate::local_rates::*;",
+            "declare!(fn shipping_cents(_: u64) -> Shipping { Shipping });",
+        ] {
+            let source = format!(
+                "mod local_rates {{ pub use crate::flat_rate as shipping_cents; }}\n\
+                 macro_rules! declare {{ ($item:item) => {{ $item }}; }}\n{}",
+                SHADOW_SOURCE.replace("let shipping_cents = flat_rate;", binding)
+            );
+            assert_eq!(parsed_pin(&source)?, None, "{binding}");
         }
         Ok(())
     }
@@ -1817,6 +1848,20 @@ mod tests {
                 "= crate::shipping_cents(subtotal)",
             );
         assert!(parsed_pin(&source)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn only_bindings_in_scope_at_the_call_can_shadow_it() -> Result<(), String> {
+        for replacement in [
+            "let shipping = shipping_cents(subtotal);\n    let shipping_cents = 7u64;",
+            "let shipping = shipping_cents(subtotal)   ;",
+            "let shipping_cents = shipping_cents(subtotal);\n    let shipping = shipping_cents;",
+        ] {
+            let source =
+                PRIMITIVE_SOURCE.replace("let shipping = shipping_cents(subtotal);", replacement);
+            assert!(parsed_pin(&source)?.is_some(), "{replacement}");
+        }
         Ok(())
     }
 

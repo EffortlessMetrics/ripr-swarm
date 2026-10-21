@@ -750,14 +750,17 @@ rule only for an assertion whose context was admitted.
    and `as` casts to primitives, or a call whose every same-named
    function in the index is a free function without a self parameter and
    declares one bare primitive return (optionally behind one reference).
-   For an unqualified call, an owner-local binding of the callee name
-   refuses this proof: parameters, destructured or raw-identifier bindings,
-   declaration-only lets and local items can replace the indexed function.
+   An unqualified call must be a direct function-body let initializer.
+   Parameters, preceding destructured/raw/declaration-only lets, hoisted
+   local items and imports of its name (or globs) refuse primitive proof.
+   A later let, or the pattern currently being initialized, does not bind
+   at the call. Opaque statement/item macros refuse proof, including explicit
+   function declarations in their token trees. Other call scopes are unread.
    A qualified call such as `crate::shipping_cents(..)` is not shadowed by a
    local value named `shipping_cents`. Same-named associated functions and
    methods refuse proof even when their returns are primitive. This bounded
-   check does not resolve arbitrary import aliases, module paths or opaque
-   macro expansion. Anything else - a string, char literal or block
+   check refuses local imports rather than resolving their targets; it does
+   not resolve arbitrary module paths or expand macros. Anything else - a string, char literal or block
    comment anywhere in the owner body, a callee missing from or ambiguous
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded

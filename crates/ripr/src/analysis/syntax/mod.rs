@@ -30,7 +30,9 @@ pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
-pub(crate) use name_scope::{NameScope, NameScopes, UseBinding, name_scopes_for_fn};
+pub(crate) use name_scope::{
+    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, name_scopes_for_fn,
+};
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
 };

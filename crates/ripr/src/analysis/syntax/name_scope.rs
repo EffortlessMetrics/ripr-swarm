@@ -90,6 +90,62 @@ pub(crate) enum UseBinding {
     Opaque,
 }
 
+/// Whether a bare call at `offset` can be intercepted by a local binding.
+/// This bounded query reads only a direct function-body let initializer.
+/// Items/imports are hoisted; lets bind only after their statement. Other
+/// call scopes or opaque statement/item expansions return `None`.
+pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str) -> Option<bool> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    let call = function.syntax().descendants().find_map(|node| {
+        let call = ast::CallExpr::cast(node)?;
+        (usize::from(call.syntax().text_range().start()) == offset).then_some(call)
+    })?;
+    let binding = ast::LetStmt::cast(call.syntax().parent()?)?;
+    if binding.syntax().parent().as_ref() != Some(body.syntax()) {
+        return None;
+    }
+    let same_name = |text: &str| text.trim_start_matches("r#") == name.trim_start_matches("r#");
+    let binds_name = |node: &SyntaxNode| {
+        node.descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|pattern| pattern.name())
+            .any(|bound| same_name(bound.text().as_str()))
+    };
+    if binds_name(function.param_list()?.syntax()) {
+        return Some(true);
+    }
+    let mut scope = NameScope::default();
+    for node in body.syntax().children() {
+        if let Some(item) = ast::Item::cast(node.clone()) {
+            // An item macro after the call may still emit a hoisted item.
+            if matches!(item, ast::Item::MacroCall(_)) {
+                return None;
+            }
+            record_item(&item, &mut scope);
+        } else if let Some(statement) = ast::LetStmt::cast(node.clone()) {
+            if statement.syntax().text_range().end() <= call.syntax().text_range().start()
+                && binds_name(statement.pat()?.syntax())
+            {
+                return Some(true);
+            }
+        } else if node
+            .descendants()
+            .any(|inner| ast::MacroCall::can_cast(inner.kind()))
+        {
+            // A statement macro may create names invisible to the syntax tree.
+            return None;
+        }
+    }
+    Some(
+        !scope.globs.is_empty()
+            || scope.imports.iter().any(|import| same_name(&import.bound))
+            || scope.defines.iter().any(|defined| same_name(defined)),
+    )
+}
+
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
 /// on `fn_line`. `None` when the source does not parse cleanly or holds no
 /// such function, so a caller fails closed.
