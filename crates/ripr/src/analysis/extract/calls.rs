@@ -132,7 +132,13 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
     calls
 }
 
-/// A `let alias = path::to::function;` binding found in a masked body.
+/// Most `let` aliases considered per body; each costs a body scan, so the
+/// count is bounded. Aliases past the cap are ignored (less reach evidence).
+const MAX_LOCAL_ALIASES_PER_BODY: usize = 64;
+
+/// A `let alias = path::to::function;` binding found in a masked body. The
+/// path is matched by its last segment name only; it is never resolved to a
+/// definition.
 struct LocalFnAlias<'a> {
     alias: &'a str,
     target: &'a str,
@@ -184,7 +190,9 @@ fn local_fn_aliases(masked: &str) -> Vec<LocalFnAlias<'_>> {
     let bytes = masked.as_bytes();
     let mut aliases = Vec::new();
     let mut search = 0;
-    while let Some(found) = masked[search..].find("let") {
+    while aliases.len() < MAX_LOCAL_ALIASES_PER_BODY
+        && let Some(found) = masked[search..].find("let")
+    {
         let at = search + found;
         search = at + 3;
         if at > 0 && is_ident_byte(bytes[at - 1]) {
@@ -250,6 +258,12 @@ fn simple_fn_path_target(path: &str) -> Option<&str> {
 
 /// The alias is bound exactly once and every other mention is a direct call
 /// after the binding.
+///
+/// Limitation: block scope is not modeled. The decision is body-wide, so a
+/// same-named mention in any other block (a shadowing parameter, pattern or
+/// loop binding, a macro, a field) disables the alias for the whole body
+/// instead of being scoped out. That only drops reach evidence; it never
+/// credits a call the alias does not make.
 fn alias_is_unambiguous(masked: &str, alias: &LocalFnAlias<'_>) -> bool {
     let bytes = masked.as_bytes();
     let name = alias.alias;
@@ -514,6 +528,16 @@ mod tests {
             "fn t() {\n let f = value.target;\n f(2);\n}\n",
             // type-like final segment (unit struct or variant), not a function
             "fn t() {\n let f = real::Target;\n f(2);\n}\n",
+            // fn parameter reuses the name
+            "fn t() {\n let f = real::target;\n fn inner(f: fn()) { f(); }\n f(2);\n}\n",
+            // pattern binding reuses the name
+            "fn t() {\n let f = real::target;\n if let Some(f) = x { f(1); }\n f(2);\n}\n",
+            // loop binding reuses the name
+            "fn t() {\n let f = real::target;\n for f in xs { f(1); }\n f(2);\n}\n",
+            // macro mention of the name
+            "fn t() {\n let f = real::target;\n f!(1);\n f(2);\n}\n",
+            // struct field mention of the name
+            "fn t() {\n let f = real::target;\n let s = S { f: 1 };\n f(2);\n}\n",
             // alias inside a string or comment
             "fn t() {\n // let f = real::target;\n f(2);\n}\n",
         ];
@@ -521,7 +545,7 @@ mod tests {
             // A `target` fact on a line that calls through `f` would be an
             // alias credit; `target(1)` on the binding line is a real call.
             let credited = extract_call_facts(body, 1).into_iter().any(|call| {
-                (call.name == "target" || call.name == "Target")
+                matches!(call.name.as_str(), "target" | "Target" | "other")
                     && call
                         .text
                         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
