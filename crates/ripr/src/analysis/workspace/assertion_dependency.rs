@@ -467,9 +467,9 @@ pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIden
     })
 }
 
-const JSON_CHECKSUM: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
+const JSON_CHECKSUM: &str = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6";
 
-/// Audited serde_json 1.0.151 registry expansion under ordinary Cargo/cache
+/// Audited serde_json 1.0.154 registry expansion under ordinary Cargo/cache
 /// integrity assumptions. The resolved dependency edge, not its spelling in a
 /// lockfile, binds each importing file's package to this implementation.
 #[derive(Clone, Debug)]
@@ -667,7 +667,7 @@ pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity>
     let [package] = found.as_slice() else {
         return None;
     };
-    if package.get("version")?.as_str()? != "1.0.151"
+    if package.get("version")?.as_str()? != "1.0.154"
         || package.get("source")?.as_str()? != SOURCE
         || package.get("checksum")?.as_str()? != JSON_CHECKSUM
     {
@@ -681,7 +681,7 @@ pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity>
     let [package] = found.as_slice() else {
         return None;
     };
-    if package.get("version")?.as_str()? != "1.0.151" || package.get("source")?.as_str()? != SOURCE
+    if package.get("version")?.as_str()? != "1.0.154" || package.get("source")?.as_str()? != SOURCE
     {
         return None;
     }
@@ -724,7 +724,7 @@ mod tests {
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let root = root.canonicalize()?;
             let member = root.join("member/Cargo.toml");
-            std::fs::write(&member, "[dependencies]\nserde_json='=1.0.151'\n")?;
+            std::fs::write(&member, "[dependencies]\nserde_json='=1.0.154'\n")?;
             let metadata = serde_json::json!({"packages":[{"manifest_path":member}]});
             let before = json_manifest_digests(&metadata, &root).ok_or("missing snapshot")?;
             assert_eq!(

@@ -160,7 +160,7 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
             assert!(authority.verified_literal_json(file));
         }
         let changed_lock = lock.replace(
-            "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+            "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6",
             "0000000000000000000000000000000000000000000000000000000000000000",
         );
         assert_ne!(changed_lock, lock);
@@ -169,11 +169,11 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
         std::fs::write(root.join("Cargo.lock"), &lock).map_err(|e| e.to_string())?;
         assert!(authority.verified_literal_json(file));
         for dependency in [
-            "serde_json={version='=1.0.151',optional=true}",
-            "serde_json={version='=1.0.151',package='foreign'}",
+            "serde_json={version='=1.0.154',optional=true}",
+            "serde_json={version='=1.0.154',package='foreign'}",
             "serde_json={path='fake'}",
         ] {
-            let changed = manifest.replace("serde_json=\"=1.0.151\"", dependency);
+            let changed = manifest.replace("serde_json=\"=1.0.154\"", dependency);
             assert_ne!(changed, manifest);
             std::fs::write(root.join("Cargo.toml"), changed).map_err(|e| e.to_string())?;
             assert!(!authority.verified_literal_json(file), "{dependency}");

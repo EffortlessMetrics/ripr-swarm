@@ -5,7 +5,7 @@ Spec: RIPR-SPEC-0197
 ## Given
 
 The complete `Ok(())` callback return changes. The `effectful_operand` test constructs
-JSON data with the canonical serde_json 1.0.151 macro or an adversarial control.
+JSON data with the canonical serde_json 1.0.154 macro or an adversarial control.
 The real literal test preserves the didSave #17745 success body.
 
 ## When

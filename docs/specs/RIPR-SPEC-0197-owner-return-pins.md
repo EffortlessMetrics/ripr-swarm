@@ -2502,8 +2502,8 @@ finite float literals, arrays and string-keyed objects. It refuses interpolated 
 calls, nested macros, raw/byte/suffixed literals, split numeric tokens, trailing
 commas and unsupported syntax. A constructor name never supplies an oracle.
 
-Registry authority is limited to serde_json 1.0.151, crates.io checksum
-`c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+Registry authority is limited to serde_json 1.0.154, crates.io checksum
+`e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6`,
 whose macro expansion has no enclosing-function exit for this literal grammar.
 The analysis root must declare this dependency directly or in its workspace
 package table. Offline locked Cargo metadata must resolve one canonical package
