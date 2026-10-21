@@ -1160,11 +1160,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                 "packaged CLI check did not retain the requested base identity".to_string(),
             );
         }
-        if check_json
-            .get("analysis_outcome")
-            .and_then(|outcome| outcome.get("analysis_complete"))
-            != Some(&Value::Bool(true))
-        {
+        if crate::check_document_analysis_complete(&check_json) != Some(true) {
             return Err("packaged CLI check did not report complete analysis".to_string());
         }
         let finding = first_finding_id(&check_json)

@@ -523,6 +523,103 @@ fn ts_decidable_if_exit_withholds_following_assertion() {
     }
 }
 
+/// A `try` that always exits makes the statements after it dead (#9138): the
+/// finalizer replaces the completion when it exits, and without a finalizer
+/// override the block must exit and, when a catch exists, the catch must too.
+#[test]
+fn ts_assertion_after_always_exiting_try_is_withheld() {
+    for dead in [
+        "try { return; } finally { cleanup(); }",
+        "try { throw new Error(\"x\"); } finally {}",
+        "try { return; } catch (e) { return; }",
+        "try { x(); } catch (e) { return; } finally { return; }",
+        "try { x(); } finally { throw new Error(\"x\"); }",
+        "try { return; } catch (e) { throw e; } finally { cleanup(); }",
+    ] {
+        let body = format!("  {dead}\n  expect(price(150)).toBe(130);");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{dead}` is dead and must be withheld"
+        );
+    }
+}
+
+/// Undecidable or live-completing `try` shapes keep the later assertion
+/// credited: a conditional exit, a catch that falls through, a block that can
+/// complete normally, a conditional finalizer exit.
+#[test]
+fn ts_assertion_after_try_that_can_complete_stays_credited() {
+    for live in [
+        "try { if (x) { return; } } finally { cleanup(); }",
+        "try { return; } catch (e) {}",
+        "try { throw new Error(\"x\"); } catch (e) { log(e); }",
+        "try { x(); } catch (e) { return; }",
+        "try { x(); } finally { cleanup(); }",
+        "try { x(); } finally { if (y) { return; } }",
+        "try { return; } catch (e) { if (y) { return; } }",
+    ] {
+        let body = format!("  {live}\n  expect(price(150)).toBe(130);");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "assertion after `{live}` stays credited"
+        );
+    }
+}
+
+/// The finalizer's own assertions and ones before the `try` stay credited
+/// when the `try` always exits; only what follows is dead.
+#[test]
+fn ts_always_exiting_try_keeps_earlier_and_finalizer_credit() {
+    let body = "  expect(price(150)).toBe(130);\n  try { return; } finally { expect(price(150)).toBe(130); }\n  expect(price(150)).toBe(130);";
+    assert_eq!(
+        extracted_assertions(body).len(),
+        2,
+        "before-try and finalizer assertions stay; the trailing one is dead"
+    );
+}
+
+/// The shared predicate also stops the conditional-credit probe and walker, so
+/// a dead `if (flag)` after an always-exiting `try` discloses nothing, while
+/// the same shape after a completing `try` still does.
+#[test]
+fn ts_dead_conditional_after_always_exiting_try_yields_no_credit_gap() {
+    let dead =
+        "  try { return; } finally {}\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(dead).is_none(),
+        "dead `if (flag)` after an exiting try must not disclose"
+    );
+    let live = "  try { x(); } finally {}\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(live).is_some(),
+        "live conditional after a completing try still discloses"
+    );
+}
+
+/// End to end: the only strong oracle sits after an always-exiting `try`, so
+/// the changed predicate must not classify `exposed`; a completing `try`
+/// control keeps the credit.
+#[test]
+fn ts_dead_assertion_after_try_finally_return_does_not_expose() -> Result<(), String> {
+    let got = finding_for_body(
+        "  try { return; } finally { cleanup(); }\n  expect(price(150)).toBe(130);",
+    )?;
+    assert_ne!(
+        got.class,
+        ExposureClass::Exposed,
+        "an unreachable assertion must not expose the change: {got:?}"
+    );
+    let control =
+        finding_for_body("  try { x(); } finally { cleanup(); }\n  expect(price(150)).toBe(130);")?;
+    assert_eq!(
+        control.class,
+        ExposureClass::Exposed,
+        "a completing try keeps the credited assertion: {control:?}"
+    );
+    Ok(())
+}
+
 /// A dead conditional assertion after `return;` must not produce a
 /// conditional-credit limitation; the live assertion before it is credited.
 #[test]
