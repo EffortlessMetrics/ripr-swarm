@@ -62,7 +62,7 @@ GENERATED_EXEMPT_NEVER = {".gitattributes"}
 GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^(?:\*\*/)?package-lock\.json$"),
     re.compile(r"^(?:\*\*/)?Cargo\.lock$"),
-    re.compile(r"^fixtures/[A-Za-z0-9_.\-*/]*expected/\*\*$"),
+    re.compile(r"^fixtures/(?:[A-Za-z0-9_.\-*]+/)*expected/\*\*$"),
     re.compile(r"^metrics/public-proof/\*\*$"),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
@@ -336,10 +336,17 @@ def refusal(
     max_lines: int,
     peers: list[int] | None = None,
     detail: str = "",
+    generated_files: int = 0,
+    generated_lines: int = 0,
 ) -> dict[str, Any]:
-    changed_files = int(current.get("changed_files") or 0)
-    changed_lines = int(current.get("additions") or 0) + int(
-        current.get("deletions") or 0
+    # Same reviewable totals as an admitted decision, so the published scope
+    # fields mean one thing whatever the outcome.
+    changed_files = max(0, int(current.get("changed_files") or 0) - generated_files)
+    changed_lines = max(
+        0,
+        int(current.get("additions") or 0)
+        + int(current.get("deletions") or 0)
+        - generated_lines,
     )
     return {
         "status": "refused",
@@ -369,7 +376,8 @@ def decide(
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
     refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
-        reason, current, fields, max_files, max_lines, peers, detail
+        reason, current, fields, max_files, max_lines, peers, detail,
+        generated_files, generated_lines,
     )
     if not expected_head or not SHA_RE.fullmatch(expected_head):
         return refuse(
@@ -680,6 +688,10 @@ def self_test() -> None:
         decide(big, [big], head, False, max_files, max_lines, 0, 50)["reason"]
         == "qualification_scope_oversized"
     )
+    refused_big = decide(big, [big], head, False, max_files, max_lines, 20, 50)
+    assert refused_big["reason"] == "qualification_scope_oversized"
+    assert refused_big["changed_files"] == 150 and refused_big["changed_lines"] == 3050
+    assert "150 files / 3050 changed lines" in refused_big["detail"]
     huge = fixture(body=fixture_body(), head=head, additions=90000, deletions=0)
     assert (
         decide(huge, [huge], head, False, max_files, max_lines, 2, 90000)["reason"]
@@ -693,12 +705,54 @@ def self_test() -> None:
         "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
     ) == []
     for bad in (
+        "fixtures/notexpected/**", "fixtures/myexpected/**", "fixtures/a/xexpected/**",
         "**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh", "*.json",
         "**/*.md", ".claude/**", ".github/**", "crates/**", "scripts/*", "package.json",
         "policy/**", "CLAUDE.md", "fixtures/**/input/**",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     assert check_generated_declarations("src/lib.rs linguist-generated=false linguist-generated\n")
+    assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
+    assert (
+        run(fixture(body=fixture_body(), head=head, draft=True), [], head)["reason"]
+        == "candidate_not_open_ready"
+    )
+    assert run(current, [], "short")["reason"] == "expected_head_missing"
+    bump = {
+        "login": "dependabot[bot]",
+        "user_type": "Bot",
+        "ref": "dependabot/npm_and_yarn/editors/vscode/markdown-it-14.3.3",
+    }
+    admitted = run(fixture(body="Bumps markdown-it.", head=head, **bump), [])
+    assert admitted["status"] == "admitted"
+    assert admitted["claim"] == "docs/ci.md dependency update policy"
+    assert admitted["acceptance_delta"] == f"dependency update {bump['ref']}".casefold()
+    sibling = fixture(
+        number=11,
+        body="Bumps another.",
+        head="b" * 40,
+        **{**bump, "ref": "dependabot/cargo/serde-1.0.1"},
+    )
+    assert run(fixture(body="", head=head, **bump), [sibling])["status"] == "admitted"
+    for spoof in (
+        {**bump, "login": "contributor"},
+        {**bump, "user_type": "User"},
+        {**bump, "ref": "feature/dependabot/x"},
+        {**bump, "repository": "external/fork"},
+    ):
+        refused = run(fixture(body="", head=head, **spoof), [])
+        assert refused["reason"] == "claim_identity_missing", spoof
+    matching = fixture(
+        number=12,
+        body=fixture_body(
+            claim="docs/CI.md dependency update policy",
+            delta=f"dependency update {bump['ref']}",
+        ),
+        head="c" * 40,
+    )
+    bot = fixture(number=10, body="", head=head, **bump)
+    assert run(bot, [bot, matching])["reason"] == "competing_candidate"
+    assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
     print("candidate-admission self-test: all controls passed")
 
 
