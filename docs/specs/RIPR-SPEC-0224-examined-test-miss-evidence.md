@@ -245,8 +245,8 @@ written and must not copy these gaps.
   oracle, not graded against this probe` when the kind is also `unknown` and
   an assertion was selected; and `no oracle` when the strength is `none`
   (whatever the kind, #8747) or when no assertion was selected. The JSON
-  `evidence_path` keeps the legacy `none <kind> oracle` spelling for strength
-  `none` until its own follow-up moves it.
+  `evidence_path` uses the same projection, so strength `none` reads
+  `no oracle` there too.
   Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
   and the fixture-honesty matcher test
   `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.

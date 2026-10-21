@@ -1138,7 +1138,7 @@ fn bracket_depth_at(text: &str, idx: usize) -> usize {
 /// Bracket depth of an asserted operand in an assertion's text: `0` in an
 /// `assert` statement, `1` inside an assertion call's arguments
 /// (`self.assertEqual(...)`). `None` when the text is neither shape.
-fn oracle_operand_depth(text: &str) -> Option<usize> {
+pub(super) fn oracle_operand_depth(text: &str) -> Option<usize> {
     if text
         .strip_prefix("assert")
         .and_then(|rest| rest.chars().next())
