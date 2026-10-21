@@ -169,8 +169,9 @@ use super::{
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
     parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
-    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
+    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
+    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
     pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
     pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
@@ -12814,6 +12815,66 @@ fn pr_shape_warnings_flag_analysis_without_evidence() {
         },
     ];
     assert!(pr_shape_warnings(&with_evidence).is_empty());
+}
+
+const COMPLETE_PR_BODY: &str = "\
+Proposal: none, issue-driven
+Spec: none, no spec governs this surface
+ADR: none
+Plan item: none
+Governing issue or accepted claim: #8601
+Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.
+Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check
+Stack parent or prerequisite PR (if any): none
+Proposed replacement of PR (if any; not yet accepted): none
+Acceptance retained from a replaced candidate (if any): none
+Accepted winner and losing candidate disposition (when decided): not decided
+";
+
+#[test]
+fn pr_body_template_complete_body_passes() {
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    // The `gh pr view --json body` shape unwraps to the same body.
+    let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
+    let body = pr_body_from_input_text(&json).expect("json body input");
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_body_template_missing_governing_issue_line_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace("Governing issue or accepted claim: #8601\n", "");
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Governing issue or accepted claim:"]);
+    assert!(
+        pr_body_template_missing_error(&missing).contains("Governing issue or accepted claim:")
+    );
+}
+
+#[test]
+fn pr_body_template_missing_acceptance_delta_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace(
+        "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.\n",
+        "",
+    );
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Acceptance delta (one sentence):"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Acceptance delta (one sentence):"));
+}
+
+#[test]
+fn pr_body_template_placeholder_values_fail() {
+    for placeholder in ["", "TBD", "n/a", "<issue or claim>"] {
+        let body = COMPLETE_PR_BODY.replace(
+            "Governing issue or accepted claim: #8601",
+            &format!("Governing issue or accepted claim: {placeholder}"),
+        );
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&"Governing issue or accepted claim:"),
+            "placeholder {placeholder:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).starts_with("claim_identity_missing:"));
+    }
 }
 
 #[test]

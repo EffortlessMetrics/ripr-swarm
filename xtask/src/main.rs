@@ -3553,9 +3553,175 @@ pub(crate) fn pr_summary_impl() -> Result<(), String> {
 }
 
 fn check_pr_shape() -> Result<(), String> {
+    check_pr_shape_with_args(&[])
+}
+
+pub(crate) fn check_pr_shape_with_args(args: &[String]) -> Result<(), String> {
+    let body = pr_body_input(args)?;
     let changes = collect_pr_changes()?;
-    let warnings = pr_shape_warnings(&changes);
-    write_report("pr-shape.md", &pr_shape_report_body(&warnings))
+    let mut warnings = pr_shape_warnings(&changes);
+    let mut missing: Vec<&'static str> = Vec::new();
+    if let Some(body) = &body {
+        missing = pr_body_template_missing_lines(body);
+        for line in &missing {
+            warnings.push(format!(
+                "PR body is missing or has a placeholder value for `{line}`; add the line from .github/pull_request_template.md with a real value."
+            ));
+        }
+    }
+    write_report("pr-shape.md", &pr_shape_report_body(&warnings))?;
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(pr_body_template_missing_error(&missing))
+    }
+}
+
+/// Template lines an agent-authored PR body must carry verbatim, with real
+/// values, before first Ready (#8601). Mirrors the Source-of-truth Links and
+/// Candidate Relationships sections of `.github/pull_request_template.md`.
+const PR_BODY_TEMPLATE_LINES: [&str; 11] = [
+    "Proposal:",
+    "Spec:",
+    "ADR:",
+    "Plan item:",
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+    "Candidate branch (GitHub PR head is authoritative after publication):",
+    "Stack parent or prerequisite PR (if any):",
+    "Proposed replacement of PR (if any; not yet accepted):",
+    "Acceptance retained from a replaced candidate (if any):",
+    "Accepted winner and losing candidate disposition (when decided):",
+];
+
+/// Lines admission gates on (`claim_identity_missing`): a placeholder counts
+/// as missing, mirroring `candidate_admission.py`'s placeholder set.
+const PR_BODY_GATED_LINES: [&str; 2] = [
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+];
+
+const PR_BODY_PLACEHOLDERS: [&str; 11] = [
+    "",
+    "n/a",
+    "na",
+    "none",
+    "not applicable",
+    "tbd",
+    "todo",
+    "unknown",
+    "pending",
+    "-",
+    "\u{2014}",
+];
+
+fn pr_body_template_missing_error(missing: &[&'static str]) -> String {
+    format!(
+        "claim_identity_missing: missing or placeholder PR body line(s): {}; add the line(s) from .github/pull_request_template.md with a real value",
+        missing.join(", ")
+    )
+}
+
+fn pr_body_template_missing_lines(body: &str) -> Vec<&'static str> {
+    PR_BODY_TEMPLATE_LINES
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(value) = pr_body_template_line_value(body, line) else {
+                return true;
+            };
+            if value.is_empty() {
+                return true;
+            }
+            PR_BODY_GATED_LINES.contains(line) && pr_body_value_is_placeholder(value)
+        })
+        .collect()
+}
+
+fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
+    let label = template_line.trim_end_matches(':');
+    body.lines().find_map(|raw| {
+        let trimmed = raw.trim().trim_start_matches('\u{feff}');
+        let line = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let (head, value) = line.split_once(':')?;
+        head.trim()
+            .eq_ignore_ascii_case(label)
+            .then_some(value.trim())
+    })
+}
+
+fn pr_body_value_is_placeholder(value: &str) -> bool {
+    let normalized = value
+        .trim()
+        .trim_matches('`')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    PR_BODY_PLACEHOLDERS.contains(&normalized.as_str()) || normalized.starts_with('<')
+}
+
+/// Resolve the optional offline PR-body input for `check-pr-shape`.
+/// `--body-file <path>` reads raw Markdown or `gh pr view --json body`
+/// JSON; `--body-env <var>` reads the same from an environment variable.
+/// No network or `gh` call happens inside xtask.
+fn pr_body_input(args: &[String]) -> Result<Option<String>, String> {
+    let mut body_file: Option<String> = None;
+    let mut body_env: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--body-file" => {
+                body_file =
+                    Some(iter.next().cloned().ok_or_else(|| {
+                        "check-pr-shape: --body-file requires a path".to_string()
+                    })?);
+            }
+            "--body-env" => {
+                body_env = Some(iter.next().cloned().ok_or_else(|| {
+                    "check-pr-shape: --body-env requires a variable name".to_string()
+                })?);
+            }
+            other => {
+                return Err(format!(
+                    "check-pr-shape: unknown argument `{other}`; usage: cargo xtask check-pr-shape [--body-file <path> | --body-env <var>]"
+                ));
+            }
+        }
+    }
+    match (body_file, body_env) {
+        (Some(_), Some(_)) => {
+            Err("check-pr-shape: pass only one of --body-file or --body-env".to_string())
+        }
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(&path).map_err(|err| {
+                format!("check-pr-shape: cannot read --body-file `{path}`: {err}")
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, Some(var)) => {
+            let text = std::env::var(&var).map_err(|err| {
+                format!(
+                    "check-pr-shape: environment variable `{var}` named by --body-env is not set: {err}"
+                )
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// Accept raw Markdown, or the JSON object emitted by
+/// `gh pr view --json body` (its `body` field carries the Markdown).
+fn pr_body_from_input_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(body) = value.get("body").and_then(serde_json::Value::as_str)
+    {
+        return Ok(body.to_string());
+    }
+    Ok(text.to_string())
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {

@@ -928,6 +928,26 @@ warns when a diff shape suggests missing evidence, such as analyzer code
 without specs/tests/fixtures, output code without output contract evidence, or
 policy changes without process docs.
 
+With a PR body supplied, `check-pr-shape` also validates the
+`.github/pull_request_template.md` Source-of-truth Links and Candidate
+Relationships lines offline, before the expensive Draft-to-Ready admission
+transit (#8601). It fails naming each missing or placeholder line, mirroring
+admission's `claim_identity_missing` detail. The check reads only the supplied
+input; it makes no `gh` or network call inside xtask. Feed it a body captured
+outside xtask, as raw Markdown or as `gh pr view --json body` JSON:
+
+```bash
+gh pr view <number> --json body > pr-body.json
+cargo xtask check-pr-shape --body-file pr-body.json
+# or: gh pr view <number> --json body --jq .body > pr-body.md
+cargo xtask check-pr-shape --body-file pr-body.md
+# or: RIPR_PR_BODY="$(gh pr view <number> --json body --jq .body)"
+cargo xtask check-pr-shape --body-env RIPR_PR_BODY
+```
+
+Without a body argument, the existing advisory diff-shape behavior is
+unchanged.
+
 ## Fix Kinds
 
 Every check should classify failures into one of four fix modes.
