@@ -256,6 +256,18 @@ def decide(
         result["reason"] = "cut_candidate_pinned"
         return result
 
+    if (
+        actual_head == expected_head
+        and _changed_paths(pr_files) == [PACKET_PATH]
+        and proposed_packet is not None
+        and proposed_packet.get("state") == "inactive"
+    ):
+        # Reopening binds no cut, so it must not depend on the recorded cut
+        # commit being readable: a freeze whose cut cannot be read has to stay
+        # exitable through qualification.
+        result["reason"] = "cut_packet_control_update"
+        return result
+
     if actual_head != expected_head:
         return {
             **result,
@@ -600,6 +612,28 @@ def self_test() -> None:
         verdict = watch_main(active_p, compare=bad)
         assert verdict["status"] == "violation" and verdict["reason"] == "cut_main_moved"
 
+    # A reopen stays exitable when the recorded cut commit is unreadable or wrong.
+    reopen = fixture_packet()
+    for cut in (None, fixture_commit("f" * 40, "c" * 40, [])):
+        assert (
+            result(
+                active,
+                cut_commit=cut,
+                pr_files=[{"filename": PACKET_PATH}],
+                proposed_packet=reopen,
+            )["reason"]
+            == "cut_packet_control_update"
+        )
+    assert (
+        result(
+            active,
+            cut_commit=None,
+            actual_head="f" * 40,
+            pr_files=[{"filename": PACKET_PATH}],
+            proposed_packet=reopen,
+        )["reason"]
+        == "cut_candidate_head_moved"
+    )
     # An unreadable head copy fails closed for a packet-only PR only.
     assert (
         result(active, pr_files=[{"filename": PACKET_PATH}], proposed_packet=None)[
@@ -651,6 +685,11 @@ def run_admit(args: argparse.Namespace) -> int:
             # update that repairs it. Only a packet-only PR carrying a valid
             # packet is let through; everything else stays refused.
             if _changed_paths(pr_files) == [PACKET_PATH] and proposed is not None:
+                head = ((load_json(args.current, "PR snapshot").get("head") or {}).get("sha"))
+                if head != args.expected_head:
+                    raise PacketError(
+                        f"{error}; PR head {head} is not the admitted head {args.expected_head}"
+                    )
                 if validate_packet(proposed)["state"] != "inactive":
                     raise PacketError(
                         f"{error}; a repair of an unusable packet must land inactive"
