@@ -5426,6 +5426,36 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #8547: an unchanged BOM-prefixed or lossy-decoded file is current
+    /// for reuse (the stored source is decoded text, not raw bytes), so
+    /// reuse performs no fact-cache lookup for it.
+    #[test]
+    fn reuse_treats_unchanged_bom_and_lossy_files_as_current() -> Result<(), String> {
+        let root = make_tempdir("reuse-bom-current")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reusebom\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(b"pub fn a() -> i32 { 1 }\n");
+        let lossy = b"pub fn b() -> i32 { 2 }\n// \xFF\n".to_vec();
+        let files = vec![
+            (PathBuf::from("src/lib.rs"), bom),
+            (PathBuf::from("src/b.rs"), lossy),
+        ];
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &files, &[])?;
+        let before = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let reused = rust_index::reuse_cached_index_with_loaded_files(core, &root, &files, &[])?;
+        let after = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        let _ = std::fs::remove_dir_all(&root);
+        if before != after {
+            return Err(format!(
+                "unchanged BOM/lossy files must not be re-looked-up on reuse ({before} -> {after})"
+            ));
+        }
+        Ok(())
+    }
+
     /// #8547: extending the admission probe's core index with the
     /// admitted extras must produce the same index facts (and therefore
     /// the same seams) as one fresh build over the whole file set, and

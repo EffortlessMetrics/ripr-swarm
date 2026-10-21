@@ -191,8 +191,10 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     let mut extras: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     for (path, bytes) in files {
         let current = cached.index.files().get(path).is_some_and(|facts| {
+            // The stored source is the decoded text (BOM stripped, invalid
+            // bytes replaced), so compare against the same decoding.
             let source: &str = facts.data().source.as_ref();
-            source.as_bytes() == bytes.as_slice()
+            build::rust_source_text(bytes).text == source
         });
         if !current {
             extras.push((path.clone(), bytes.clone()));
@@ -207,6 +209,25 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         .collect();
     if extras.is_empty() && dropped.is_empty() {
         return Ok(cached);
+    }
+    // Post-processing is only incrementally exact when the file set grows by
+    // leaf additions. A dropped file can retract module provenance and helper
+    // credits already applied to retained files, and an added or changed file
+    // with an `include!` directive can re-parent already rebased function
+    // identities; none of those can be undone in place, so fail closed to a
+    // fresh build over exactly `files` (verdicts equal a non-reusing build).
+    let retracts = !dropped.is_empty();
+    let rebases_includes = extras
+        .iter()
+        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
+    if retracts || rebases_includes {
+        drop(cached);
+        return build_cached_index_with_test_harnesses(
+            root,
+            files,
+            registrations,
+            MissAttribution::Skipped,
+        );
     }
     for path in &dropped {
         cached.index.remove_file(path);
