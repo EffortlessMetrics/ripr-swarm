@@ -174,8 +174,9 @@ grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
 ("configured off for strongly_gripped seams and is not included in agent
 results"). Side-effect and call-presence gaps, async, unsafe, and generic
-owners are refused with a named reason (exit `3`); stdout stays empty on a
-refusal.
+owners are refused with a named reason (exit `3`); under `--json` stdout
+carries the `rust_test_stub` document with `state: refused` and stderr carries
+the prose; without `--json` stdout stays empty on a refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.

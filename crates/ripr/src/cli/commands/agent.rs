@@ -129,7 +129,8 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
         // adapter classifies deliberate named refusals (rendering the
-        // versioned `agent_card_refusal` envelope on stderr under `--json`)
+        // versioned `agent_card_refusal` envelope on stdout under `--json`,
+        // with the prose on stderr)
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),

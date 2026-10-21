@@ -123,8 +123,10 @@ Authority:
     whose numeric codes are the implemented `CommandError` mapping
     (`docs/EXIT_CODES.md`). Orchestrator-branching rows are pinned:
     `check` findings including `exposed` complete with 0; `gate evaluate`
-    maps `config_error` to 2 and `blocked` to 3; `agent verify` / `agent
-    card` / `agent stub` refuse with 3 and empty stdout; `agent
+    maps `config_error` to 2 and `blocked` to 3; `agent verify` refuses
+    with 3 and empty stdout; `agent card` / `agent stub` / `agent packet`
+    refuse with 3 and json-optional stdout (typed refusal document on stdout
+    under `--json`, prose on stderr); `agent
     verify-execute` refuses with 3 and a stdout document; `agent repair`
     refuses with 3 and json-optional stdout; `receipt check` orphan or gap
     mismatch is 2, not 3. A metadata row that contradicts that mapping is a
@@ -137,10 +139,10 @@ unwritable: a previously rendered JSON refusal remains intact with exit `2`
 or `3`. Panic diagnostics are also best effort, retaining the internal-error
 exit `2` without recursive abort. This does not guarantee report production
 when an earlier analysis-stage diagnostic fails.
-The `agent card` and `agent stub` stderr JSON refusal writers likewise retain
+The `agent card` and `agent stub` JSON refusal writers likewise retain
 exit `3` after reaching their named decision, even when the stderr reader has
-closed. Their refusal stdout stays empty; readable stderr keeps the same JSON
-envelope, escaping, newline and following prose.
+closed. Under `--json` the refusal document goes to stdout and the prose to
+stderr; without `--json` stdout stays empty.
 
 `help --json` serializes existing catalog authority only. It never parses
 human help, executes commands, inspects a repository, or strengthens any
@@ -247,7 +249,7 @@ command or workflow claim.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/cli/commands_context.rs` | best-effort stderr JSON refusal writer shared by card and stub |
+| `crates/ripr/src/cli/commands_context.rs` | stdout JSON refusal writer (best-effort stderr prose) shared by card and stub |
 | `crates/ripr/src/cli/commands/agent_card.rs` | typed card refusal reporting before returning its decision |
 | `crates/ripr/src/cli/commands/agent_stub.rs` | selector and resolved-stub refusal reporting before returning its decision |
 | `crates/ripr/src/cli/help_json.rs` | versioned DTO, catalog projection, digest, fail-closed document validation, render/print entry points, tests |
