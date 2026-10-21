@@ -84,14 +84,19 @@ pub(super) struct RepoInput {
 }
 
 /// Discover and partition the workspace under `limit`.
-pub(super) fn select_repo_input(root: &Path, limit: usize, walk_limit: usize) -> RepoInput {
+pub(super) fn select_repo_input(
+    root: &Path,
+    limit: usize,
+    walk_limit: usize,
+    handwritten: &[String],
+) -> RepoInput {
     if !root.is_dir() || std::fs::read_dir(root).is_err() {
         return RepoInput {
             root_unreadable: true,
             ..RepoInput::default()
         };
     }
-    let scan = visit_workspace_with_handwritten(root, walk_limit, &[]);
+    let scan = visit_workspace_with_handwritten(root, walk_limit, handwritten);
     let mut files: Vec<PathBuf> = scan.files;
     files.sort();
     files.dedup();
@@ -131,6 +136,7 @@ pub(super) fn analyze_repo_with_limit(
     walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
+    handwritten: &[String],
 ) -> Result<LanguageRepoResult, String> {
     let selection = select_and_analyze(
         options,
@@ -138,6 +144,7 @@ pub(super) fn analyze_repo_with_limit(
         walk_limit,
         file_read_limit,
         workspace_read_budget,
+        handwritten,
     )?;
     Ok(LanguageRepoResult {
         findings: selection.findings,
@@ -150,7 +157,10 @@ pub(super) fn analyze_repo_with_limit(
     })
 }
 
-pub(super) fn analyze_repo(options: &AnalysisOptions) -> Result<LanguageRepoResult, String> {
+pub(super) fn analyze_repo(
+    options: &AnalysisOptions,
+    handwritten: &[String],
+) -> Result<LanguageRepoResult, String> {
     let limit = resolve_repo_working_set_limit(std::env::var(TS_REPO_FILE_LIMIT_ENV))?;
     analyze_repo_with_limit(
         options,
@@ -158,6 +168,7 @@ pub(super) fn analyze_repo(options: &AnalysisOptions) -> Result<LanguageRepoResu
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
+        handwritten,
     )
 }
 
@@ -167,8 +178,9 @@ fn select_and_analyze(
     walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
+    handwritten: &[String],
 ) -> Result<RepoSelection, String> {
-    let input = select_repo_input(&options.root, limit, walk_limit);
+    let input = select_repo_input(&options.root, limit, walk_limit, handwritten);
     let mut reasons: Vec<String> = Vec::new();
     if input.root_unreadable {
         reasons.push("typescript_repo_root_unreadable: workspace root could not be read, so TypeScript/JavaScript source absence is unestablished".to_string());
@@ -265,7 +277,7 @@ fn select_and_analyze(
         &changed,
         file_read_limit,
         workspace_read_budget,
-        &[],
+        handwritten,
     )?;
     if !diff.limitations.is_empty() {
         let mut details: Vec<String> = diff
@@ -296,12 +308,13 @@ fn select_and_analyze(
 }
 
 /// Whole-file presentation probes every behavior line; keep one finding per
-/// (file, owner, probe family, delta, exposure class) so repo evidence is one
-/// row per distinct behavior rather than one per line, while a weaker class
-/// is never hidden behind a stronger row. Order stays the diff-mode
+/// (file, owner, probe family, delta, exposure class, changed expression), so
+/// only genuinely identical behaviors collapse and a distinct predicate or a
+/// weaker class is never hidden behind another row. Order stays the diff-mode
 /// order (production-file order, ascending line).
 fn representative_findings(findings: Vec<Finding>) -> Vec<Finding> {
-    let mut seen: BTreeSet<(String, Option<String>, String, String, String)> = BTreeSet::new();
+    let mut seen: BTreeSet<(String, Option<String>, String, String, String, String)> =
+        BTreeSet::new();
     findings
         .into_iter()
         .filter(|finding| {
@@ -315,6 +328,7 @@ fn representative_findings(findings: Vec<Finding>) -> Vec<Finding> {
                 format!("{:?}", finding.probe.family),
                 format!("{:?}", finding.probe.delta),
                 format!("{:?}", finding.class),
+                finding.probe.expression.clone(),
             ))
         })
         .collect()

@@ -259,7 +259,12 @@ analysis. Repo-mode analysis differs per adapter:
   `test_parse_failure`, `limitations`, `root_unreadable`), joined by ` | `,
   and can never back an all-clear, badge or baseline claim; a
   fully discovered workspace without TS/JS production source is an honest
-  zero. No support-tier, gate or baseline promotion.
+  zero. The cap bounds the analysis subjects (the selected production
+  files); the test/evidence index stays workspace-wide and is bounded by
+  `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
+  `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
+  partial reason. Declared `handwritten_files` are admitted as in diff mode.
+  No support-tier, gate or baseline promotion.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the

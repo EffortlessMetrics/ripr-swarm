@@ -35,6 +35,7 @@ fn run(root: &Path, limit: usize) -> Result<LanguageRepoResult, String> {
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
+        &[],
     )
 }
 
@@ -232,33 +233,6 @@ fn test_files_beyond_the_limit_do_not_cap_the_run() -> Result<(), String> {
 }
 
 #[test]
-fn distinct_exposure_classes_of_one_owner_are_not_collapsed() -> Result<(), String> {
-    let root = ts_unique_tempdir("repo-dedup-class")?;
-    ts_write_file(
-        &root.join("src/lib.ts"),
-        "export function f(a: number, b: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  if (b > 0) {\n    return 2;\n  }\n  return 0;\n}\n",
-    )?;
-    ts_write_file(
-        &root.join("test/f.test.ts"),
-        "import { f } from \"../src/lib\";\ndescribe(\"f\", () => {\n  it(\"a\", () => {\n    expect(f(1, 0)).toBe(1);\n  });\n});\n",
-    )?;
-    let result = run(&root, 800);
-    let _ = std::fs::remove_dir_all(&root);
-    let result = result?;
-    let classes: std::collections::BTreeSet<String> = result
-        .findings
-        .iter()
-        .map(|f| format!("{:?}", f.class))
-        .collect();
-    assert_eq!(
-        result.findings.len(),
-        classes.len(),
-        "at most one row per exposure class for the same owner/family/delta"
-    );
-    Ok(())
-}
-
-#[test]
 fn truncated_discovery_walk_is_partial() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-walk-cap")?;
     for i in 0..6 {
@@ -270,6 +244,7 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
         3,
         ts_file_read_limit(),
         ts_workspace_read_budget(),
+        &[],
     );
     let _ = std::fs::remove_dir_all(&root);
     let reason = result?
@@ -292,6 +267,7 @@ fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), St
         ts_workspace_file_limit(),
         8,
         ts_workspace_read_budget(),
+        &[],
     );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
@@ -313,5 +289,44 @@ fn unreadable_test_file_makes_the_run_partial() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&root);
     let reason = result?.partial_reason.ok_or("must be partial")?;
     assert!(reason.contains("typescript_repo_unread_tests:"), "{reason}");
+    Ok(())
+}
+
+#[test]
+fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-handwritten")?;
+    ts_write_file(&root.join("dist/handwritten.ts"), TS_SRC)?;
+    let declared = vec!["dist/handwritten.ts".to_string()];
+    let with_decl = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        ts_workspace_file_limit(),
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &declared,
+    );
+    let without_decl = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(with_decl?.production_files, 1);
+    assert_eq!(without_decl?.production_files, 0);
+    Ok(())
+}
+
+#[test]
+fn distinct_predicates_of_one_owner_both_survive() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-two-predicates")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function f(a: number, b: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  if (b > 7) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let exprs: Vec<String> = result?
+        .findings
+        .iter()
+        .map(|f| f.probe.expression.clone())
+        .collect();
+    assert!(exprs.iter().any(|e| e.contains("a > 0")), "{exprs:?}");
+    assert!(exprs.iter().any(|e| e.contains("b > 7")), "{exprs:?}");
     Ok(())
 }

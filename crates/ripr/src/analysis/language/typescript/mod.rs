@@ -219,11 +219,21 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
         // unreadable or partially indexed run discloses itself through
         // `partial_reason` on the shared `language_runs` channel.
-        repo::analyze_repo(options)
+        repo::analyze_repo(options, &[])
     }
 }
 
 impl TypeScriptAdapter {
+    /// [`LanguageAdapter::analyze_repo`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386), so repo mode admits the same
+    /// declared hand-written sources diff mode does.
+    pub(crate) fn analyze_repo_with_handwritten_env(
+        options: &AnalysisOptions,
+        handwritten: &[String],
+    ) -> Result<LanguageRepoResult, String> {
+        repo::analyze_repo(options, handwritten)
+    }
+
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the read caps injected (mirrors
     /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves

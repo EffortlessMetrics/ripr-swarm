@@ -345,6 +345,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             config.oracles(),
             &languages,
             &config.languages().rust,
+            config.languages(),
         )?,
     };
     // #5988: the published identity block must distinguish runs whose loaded
