@@ -401,6 +401,7 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut expected_sha256 = None;
     let mut expected_version = None;
     let mut expected_commit = None;
+    let mut candidate_manifest: Option<String> = None;
     let mut families = Vec::new();
     let mut removal_controls = Vec::new();
     let mut removal_manifest = None;
@@ -434,6 +435,10 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
             "--expected-sha256" => expected_sha256 = Some(value),
             "--expected-version" => expected_version = Some(value),
             "--expected-commit" => expected_commit = Some(value),
+            "--candidate-manifest" => {
+                candidate_manifest =
+                    Some(super::candidate_manifest::candidate_sha(Path::new(&value))?);
+            }
             "--family" => families.push(parse_family(&value)?),
             "--removal-control" => {
                 let (family, path) = value.split_once('=').ok_or_else(|| {
@@ -470,6 +475,17 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
     let Some(binary) = binary else {
         return Err(usage().to_string());
     };
+    if let Some(sha) = candidate_manifest {
+        if expected_commit
+            .as_deref()
+            .is_some_and(|given: &str| !given.eq_ignore_ascii_case(&sha))
+        {
+            return Err(format!(
+                "--expected-commit disagrees with the candidate manifest's {sha}"
+            ));
+        }
+        expected_commit = Some(sha);
+    }
     Ok(Options {
         binary,
         out,
@@ -535,7 +551,7 @@ fn parse_family(value: &str) -> Result<Family, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--expected-commit <sha>] [--family <name>]... [--removal-control <family>=<binary>]... [--removal-manifest <manifest.json>] [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
+    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--expected-commit <sha> | --candidate-manifest <path>] [--family <name>]... [--removal-control <family>=<binary>]... [--removal-manifest <manifest.json>] [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
 }
 
 fn hash_file(path: &Path) -> Result<String, String> {

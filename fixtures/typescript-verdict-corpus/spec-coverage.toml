@@ -653,16 +653,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 [[known_false]]
-case = "jest-mined-private-impl-dispatcher"
-issue = 6655
-reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
-
-
-
-
-
-
-[[known_false]]
 case = "shape-nullish-middle-operand"
 issue = 9437
 reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
@@ -792,11 +782,6 @@ reason = "False actionable: bare boolean assert on a predicate owner reads as sm
 case = "ts-grid-boundary-table"
 issue = 9533
 reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
-
-[[known_false]]
-case = "ts-grid-delete-exact"
-issue = 9515
-reason = "False actionable: delete-operator edit with an exact assertion reads as a gap (#9515)."
 
 [[known_false]]
 case = "ts-grid-delete-helper"

@@ -14,6 +14,8 @@ mod flow;
 mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
+mod implicit_effect;
+pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
 mod implicit_call;
 mod infection;
 mod macro_item_names;
