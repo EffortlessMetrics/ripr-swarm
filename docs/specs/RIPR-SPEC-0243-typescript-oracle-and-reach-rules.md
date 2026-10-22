@@ -766,9 +766,9 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
-**Rule 16. Playwright Test specs of pure functions (#9434).** A spec that
-imports `expect` and `test` from `@playwright/test` reads like its plain
-form in four places:
+**Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
+that imports `expect` and `test` from `@playwright/test` reads like its
+plain form in six places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -790,6 +790,24 @@ form in four places:
    the expected value is one of the two arms. An argument outside that
    interval, an expected value equal to neither arm, a wrapped call and
    equal arms keep the old reading.
+5. A message that is one template literal with interpolations (`not a
+   count: ${text}` becoming `not a number: ${text}`, the same expressions
+   in both) is read as fixed text around holes. An anchored `toThrow`
+   pattern separates the versions when its literal text can be the whole
+   message of exactly one version for some filling of the holes, and the
+   same call fills both. The test's literal argument then yields the text
+   the pattern pins on one version and cannot on the other. A pattern that
+   fits neither or both versions, a changed or different interpolated
+   expression, a second throw site, and unanchored, flagged or substring
+   payloads (`toThrow("...")`) keep the old reading.
+6. A changed field of a single-line returned object literal
+   (`return { area: w * h, perimeter: 2 * w + h };`, one `key: value`
+   differing from the removed line) is observed by an assertion on that
+   field of the owner's result: `d.perimeter` for `const d = dims(3, 4)` or
+   `dims(3, 4).perimeter`, including the second term of an `expect.soft`
+   pair. The base must be the owner call or a local alias of it; a field
+   whose value is unchanged, another object's field and another owner keep
+   the old reading.
 
 ### Static limits
 
@@ -969,8 +987,36 @@ rejected alternative. Any can be reversed later without touching the rest.
     factory-made receivers, `do { } while` bodies, and tables or helpers as
     the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
     gaps until the adapter resolves literal tables and same-file helper
-    assertions, #9534). A getter-backed field is not detected.
-19. **Empty tables and mock call counts (2026-10-22, #9683, #9684).**
+    assertions, #9534). A getter-backed field is refused by decision 20.
+
+19. **Literal tables and same-file assertion helpers (2026-10-22, #9534).**
+    Adopted, extending decision 18. (a) A table-driven expected side counts when
+    it is a bare name destructured by `for (const [a, b] of rows)` from a
+    constant numeric table (`const rows = [[0, 0], [1, 1]]`, equal-width rows,
+    each cell an integer), the owner call is in that loop (and counting loops
+    `for (let i = 0; i < n; i++)` bounded by a column or a positive literal),
+    nothing rebinds the destructured names, and some row calls the owner at
+    least once and expects a nonzero value. Other loops, computed or ragged
+    tables, and bounds the scan cannot read refuse. (b) A same-file top-level
+    function whose body is exactly one assertion call is treated as that
+    assertion at each call site: the call must be its own statement ending in
+    `;`, every argument a bare name or non-negative integer, every use of a
+    parameter a plain argument or member base, and every mention of the helper
+    such a call; a helper free name declared more than once refuses. The
+    renamed assertion then passes every ordinary gate (binding, oracle kind,
+    pinned expected side, field-update rules). Rejected: helpers with more than
+    one statement, defaults, async or generator helpers, aliases and exports,
+    computed arguments, strings, and calls inside expressions.
+
+20. **Accessor-backed fields (2026-10-22, #9768).** Adopted, extending decision
+    18. A field update is not credited when the owner's class, in the same
+    file, declares `get <field>` or `set <field>`: reading the field runs the
+    accessor, which need not return what the changed statement wrote, so an
+    exact assertion on it does not observe the update. Rejected: modelling the
+    accessor body (it can compute anything), and `accessor <field>` auto-
+    accessors, which the owner index does not record yet.
+
+21. **Empty tables and mock call counts (2026-10-22, #9683, #9684).**
     Adopted: a `for...of` loop over a top-level test-local `const` that is
     an empty array literal and is named only in its declaration and that
     loop runs the body zero times, so it reads as no assertions (rule 11's
@@ -1244,11 +1290,24 @@ to `amount - 20`, and `tests/lib.test.ts` has
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
     `break`, stay `weakly_exposed` (rule 11).
-38. `const rows: Array<[number, number, number]> = []; for (const [a, b,
+38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
+    threw `` `not a count: ${text}` ``, and the Playwright spec runs
+    `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
+    `exact_error_variant` / strong, `exposed` (the pinned text fits only the
+    old pieces for some fill of `${text}`). With `/^something else$/`,
+    `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
+    unchanged.
+39. `src/soft.ts` returns `{ area: w * h, perimeter: 2 * w + h }` where it
+    returned `perimeter: 2 * (w + h)`, and the Playwright spec runs
+    `const d = dims(3, 4); expect.soft(d.area).toBe(12);
+    expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
+    (today `weakly_exposed`: only the unchanged `area` term reached the
+    changed-value check). With only the `d.area` assertion: unchanged.
+40. `const rows: Array<[number, number, number]> = []; for (const [a, b,
     want] of rows) { assert.equal(f(a, b), want); }` against a changed
     `return a * b`: the loop runs zero times and asserts nothing, so the
-    test names no assertion and the change is not `exposed` (decision 19).
-39. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+    test names no assertion and the change is not `exposed` (decision 21).
+41. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
     `const send = mock.fn(); mockedSend(4, { send });
     assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
     `weakly_exposed` (the count does not see the argument; today
@@ -1263,7 +1322,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
 
-- #9683, #9684 (decision 19): `table_loop_tests.rs`
+- #9683, #9684 (decision 21): `table_loop_tests.rs`
   (`an_empty_literal_table_asserts_nothing`) and
   `tests/mock_call_count_tests.rs` pin the empty-table and call-count
   readings and their controls. Corpus rows `ts-trap-empty-table` and

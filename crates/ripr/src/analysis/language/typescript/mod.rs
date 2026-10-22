@@ -101,6 +101,7 @@ pub(crate) use package::detect_framework_for_root;
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_rows;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -124,6 +125,7 @@ mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+mod assertion_helper;
 mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]

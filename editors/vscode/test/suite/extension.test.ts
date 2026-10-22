@@ -4888,6 +4888,17 @@ suite('Extension Smoke', () => {
     assert.ok(!hasUnsafeShellMetacharacter(body('"it\'s"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('""'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"sub\\dir\\\\"'), true));
+    // `%` and `!` are literal in PowerShell, Git Bash and native argv; cmd.exe
+    // expansion is the console form's documented limit, the same decision the
+    // CLI makes (#9659). A `^` inside a span is literal too.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"100% done!"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD^"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"%PATH%"'), true));
+    // An even run then `""`, and adjacent spans, stay one quoted word.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body(`"a"'b'`), true));
+    // A backslash run not followed by a quote is literal mid-span.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\\\b\\\\"'), true));
     // Not Windows: a double quote is refused, as before.
     assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
     assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"'), false));
@@ -4897,7 +4908,9 @@ suite('Extension Smoke', () => {
       body('"a"b"'),
       body('"$(calc)"'),
       body('"`calc`"'),
-      body('"%PATH%"'),
+      // cmd.exe's escape character outside every span.
+      body('HEAD^'),
+      `${body('"HEAD~1"')} ^& calc`,
       body('"a\u201db"'),
       body('"a\nb"'),
       `${body('"HEAD~1"')} ; calc`,
@@ -4906,7 +4919,13 @@ suite('Extension Smoke', () => {
       body('"a" ; "b"') + ' --x "c',
       body('abc\\def'),
       // A `"` inside a single-quoted span cannot pair with a later `"`.
-      body(`'a" & calc & "b$'`)
+      body(`'a" & calc & "b$'`),
+      // An odd backslash run escapes the quote for native argv and Git Bash,
+      // so the "span" would end elsewhere and `; calc ;` runs unquoted.
+      body('"\\" x " ; calc ; \\"'),
+      body('"a\\"'),
+      body('"a\\\\\\"'),
+      body('"a\\""b"')
     ]) {
       assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
     }
@@ -4930,6 +4949,17 @@ suite('Extension Smoke', () => {
     assert.ok(!redirectTargetMatches(`${slash(root)}/sub/../${artifact}`, artifact, [root]));
     assert.ok(!redirectTargetMatches(`${slash(root)}/${artifact} extra`, artifact, [root]));
     assert.ok(!redirectTargetMatches('target/ripr/agent/../agent/agent-packet.json', artifact, [root]));
+
+    // The server's console double-quoted tail on Windows (#9659), only when
+    // the caller says the server quotes for Windows.
+    const consoleTail = `"${slash(spaced)}/${artifact}"`;
+    assert.ok(redirectTargetMatches(consoleTail, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(consoleTail, artifact, [spaced]));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/$x/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/${artifact}`, artifact, [spaced], true));
+    // cmd.exe expands `%NAME%` and `!NAME!` inside quotes.
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/%x%/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/!x!/${artifact}"`, artifact, [spaced], true));
   });
 
   test('redirectStaysInWorkspace keeps every redirect inside the workspace (#4265)', () => {
@@ -4961,6 +4991,20 @@ suite('Extension Smoke', () => {
     ]) {
       assert.ok(!accepts(command), command);
     }
+
+    // Windows console quoting (#9659): a double-quoted span is literal, so its
+    // `>` is an argument and a double-quoted in-root tail is accepted; the
+    // POSIX reading still refuses the double-quoted tail.
+    const acceptsWindows = (command: string) => redirectStaysInWorkspace(command, [root], true);
+    assert.ok(acceptsWindows(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(acceptsWindows('ripr agent packet --gap-id "gap:a>b" --json > target/ripr/agent-packet.json'));
+    assert.ok(!accepts(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(!acceptsWindows(`ripr first-pr --json > "${path.resolve('/work/repo-other').replace(/\\/g, '/')}/out.json"`));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/../../outside.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "%TEMP%/out.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "!TEMP!/out.json"'));
+    assert.ok(!acceptsWindows("ripr first-pr --json > '%TEMP%/out.json'"));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/ripr/out.json'));
   });
 
   test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
