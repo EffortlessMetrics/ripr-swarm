@@ -1073,6 +1073,207 @@ fn given_baseline_of_unrecognized_kind_when_gate_evaluated_then_config_error() -
 }
 
 #[test]
+fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    // #9301 F3: the gate shares `baseline diff`'s schema/root contract.
+    let (_fixture, probe) = fixture_input(GateMode::BaselineCheck)?;
+    let own_root = display_path(&probe.root).replace('\\', "/");
+    let foreign = [
+        (
+            "schema-99.json",
+            r#"{"schema_version":"99.0","kind":"gate_baseline","entries":[]}"#.to_string(),
+            "unsupported schema_version",
+        ),
+        (
+            "root-top.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":"/elsewhere/other","entries":[]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-decisions.json",
+            r#"{"schema_version":"0.1","decisions":[{"root":"/elsewhere/other","seam_id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-comments.json",
+            r#"{"schema_version":"0.1","comments":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-summary.json",
+            r#"{"schema_version":"0.1","summary_only":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-suppressed.json",
+            r#"{"schema_version":"0.1","suppressed":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-numeric.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":7,"entries":[]}"#.to_string(),
+            "different repository",
+        ),
+        (
+            "root-entry.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"root":"/elsewhere/other","canonical_gap_id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+    ];
+    for (name, contents, expected) in foreign {
+        let dir = temp_dir("gate-baseline-foreign")?;
+        let baseline = write_temp_json(&dir, name, &contents)?;
+        let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{name}");
+        assert!(
+            report.config_errors.iter().any(|e| e.contains(expected)),
+            "{name}: {:?}",
+            report.config_errors
+        );
+        ignore_remove_dir_all(dir);
+    }
+    // Positive controls: own/unknown roots and absent schema stay accepted AND
+    // the baseline is actually loaded (the fixture seam is honored as baselined).
+    let seam = r#""identity":{"seam_id":"8f7fa8644fd12280","source_id":"ripr-review-8f7fa8644fd12280","id":"ripr-gate-8f7fa8644fd12280","dedupe_key":null,"fallback":"src/pricing.rs:88:weakly_gripped"}"#;
+    let with_slash = format!("{own_root}/");
+    let spellings: Vec<(&str, String)> = vec![
+        ("own", format!("{own_root:?}")),
+        ("own-trailing-slash", format!("{with_slash:?}")),
+        ("dot", "\".\"".to_string()),
+        ("dot-slash", "\"./\"".to_string()),
+        ("relative", "\"crates/other\"".to_string()),
+        ("blank", "\"\"".to_string()),
+        ("null", "null".to_string()),
+    ];
+    for (label, root) in spellings {
+        for shape in ["entries", "decisions"] {
+            let item = if shape == "entries" {
+                format!(r#"{{"root":{root},{seam}}}"#)
+            } else {
+                format!(r#"{{"root":{root},"seam_id":"8f7fa8644fd12280"}}"#)
+            };
+            let contents =
+                format!(r#"{{"schema_version":"0.1","root":{root},"{shape}":[{item}]}}"#);
+            let dir = temp_dir("gate-baseline-own-root")?;
+            let baseline = write_temp_json(&dir, "own.json", &contents)?;
+            let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+            input.baseline = Some(baseline);
+            let report = build_gate_decision_report(&input)?;
+            assert!(
+                report.config_errors.is_empty(),
+                "{label}/{shape}: {:?}",
+                report.config_errors
+            );
+            assert_eq!(report.summary.advisory, 1, "{label}/{shape}");
+            assert!(
+                report.decisions[0]
+                    .gate_reason
+                    .contains("explicit baseline"),
+                "{label}/{shape}: baseline must be honored"
+            );
+            ignore_remove_dir_all(dir);
+        }
+    }
+    // Absent schema_version and absent root stay accepted (compat window).
+    let dir = temp_dir("gate-baseline-absent")?;
+    let baseline = write_temp_json(
+        &dir,
+        "absent.json",
+        r#"{"decisions":[{"seam_id":"8f7fa8644fd12280"}]}"#,
+    )?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("explicit baseline")
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn relative_gate_root_accepts_and_honors_absolute_recorded_root() -> Result<(), String> {
+    // The realistic `--root .` CI case: the gate root is relative, so an
+    // absolute recorded root is unknown, not positively foreign (#9301).
+    let contents = r#"{"schema_version":"0.1","root":"/elsewhere/other","decisions":[{"root":"/elsewhere/other","seam_id":"8f7fa8644fd12280"}]}"#;
+    let dir = temp_dir("gate-baseline-relative-root")?;
+    let baseline = write_temp_json(&dir, "abs.json", contents)?;
+    let (fixture, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    // Relative inputs resolve against the gate root, so pin the guidance
+    // input to the hermetic copy while the root itself stays the relative `.`.
+    input.pr_guidance = input
+        .pr_guidance
+        .take()
+        .map(|relative| fixture.path().join(relative));
+    input.root = PathBuf::from(".");
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("explicit baseline"),
+        "baseline must be honored"
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn rootless_gate_decision_baseline_create_round_trips_through_gate_evaluate() -> Result<(), String>
+{
+    // Real production path: `baseline create` writes `"root": null` for a
+    // rootless gate decision; the gate must accept that baseline (#9301).
+    let decision = r#"{"schema_version":"0.1","mode":"visible-only","decisions":[{
+      "decision":"advisory","id":"ripr-gate-old","seam_id":"old","source_id":"ripr-review-old",
+      "static_class":"weakly_gripped","placement":{"path":"src/old.rs","line":7},
+      "evidence_record":{"canonical_gap_id":"pricing::discount::threshold_equality"},
+      "evidence":{"missing_discriminator":"amount == threshold"}}]}"#;
+    let report = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        decision,
+    )?;
+    let rendered = crate::output::baseline::render_baseline_create_json(&report)?;
+    let parsed: Value = serde_json::from_str(&rendered).map_err(|e| e.to_string())?;
+    assert!(
+        parsed["root"].is_null(),
+        "premise: created baseline carries root null"
+    );
+    let dir = temp_dir("gate-baseline-roundtrip")?;
+    let baseline = write_temp_json(&dir, "created.json", &rendered)?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_calibrated_mode_uses_imported_mutation_support() -> Result<(), String> {
     let dir = temp_dir("gate-mutation-calibrated")?;
     let baseline = dir.join("baseline.json");

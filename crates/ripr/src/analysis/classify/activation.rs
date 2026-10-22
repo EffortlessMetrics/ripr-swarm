@@ -149,6 +149,9 @@ struct ParameterValue {
     value: String,
     line: usize,
     text: String,
+    /// The test file whose call produced the row, so a fact built from it
+    /// can be matched back to that test alone.
+    file: Option<std::path::PathBuf>,
 }
 
 /// `value_facts_for_test` per (related test, owner), computed at most once
@@ -428,8 +431,27 @@ fn observed_discriminator_values(
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && exact_values_equal(&left_value.value, &right_value.value)
         {
+            let (value, names_value) = equality_value(
+                &EqualitySide::new(
+                    &left,
+                    &left_value.value,
+                    left_parameter.as_deref(),
+                    left_resolved.as_ref(),
+                ),
+                &EqualitySide::new(
+                    &right,
+                    &right_value.value,
+                    right_parameter.as_deref(),
+                    right_resolved.as_ref(),
+                ),
+            );
             facts.push(ValueFact {
-                file: None,
+                // A fact that names the local's value carries its test file:
+                // same-test pairing matches it by line and call text, and a
+                // second file's call on the same line must not satisfy it.
+                file: names_value
+                    .then(|| row.first().and_then(|cell| cell.file.clone()))
+                    .flatten(),
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -439,7 +461,7 @@ fn observed_discriminator_values(
                     left_value.provenance,
                     right_value.provenance,
                 ),
-                value: format!("{left} == {right}"),
+                value,
                 context: ValueContext::FunctionArgument,
             });
             continue;
@@ -490,6 +512,63 @@ fn observed_discriminator_values(
     }
 
     facts
+}
+
+/// The `left == right` text of an equality fact. A parameter compared with a
+/// local that the row's inputs evaluated (`bytes == unit`, `unit` being
+/// `if si { KIB } else { KB }`, on either side of the comparison) names the
+/// local's value instead of the local, so the fact reads like the literal
+/// comparison it is: same-test pairing matches `parameter == literal` terms
+/// against the literals the call feeds, and a local's name carries nothing to
+/// match.
+fn equality_value(left: &EqualitySide<'_>, right: &EqualitySide<'_>) -> (String, bool) {
+    match (left.kind, right.kind) {
+        (SideKind::Parameter, SideKind::Local) => {
+            (format!("{} == {}", left.text, right.value), true)
+        }
+        (SideKind::Local, SideKind::Parameter) => {
+            (format!("{} == {}", right.text, left.value), true)
+        }
+        _ => (format!("{} == {}", left.text, right.text), false),
+    }
+}
+
+fn is_plain_integer(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// One operand of an equality fact: its source text, its exact value in the
+/// row, and whether it is a plain owner parameter or a resolved local.
+struct EqualitySide<'a> {
+    text: &'a str,
+    value: &'a str,
+    kind: SideKind,
+}
+
+#[derive(Clone, Copy)]
+enum SideKind {
+    Parameter,
+    Local,
+    Other,
+}
+
+impl<'a> EqualitySide<'a> {
+    fn new(
+        text: &'a str,
+        value: &'a str,
+        parameter: Option<&str>,
+        resolved: Option<&ResolvedOperand>,
+    ) -> Self {
+        let kind = match resolved {
+            // Only an integer, the boundary a literal comparison would name;
+            // a boolean or text local keeps its own name.
+            Some(ResolvedOperand::Local(..)) if is_plain_integer(value) => SideKind::Local,
+            _ if parameter == Some(text.trim()) => SideKind::Parameter,
+            _ => SideKind::Other,
+        };
+        EqualitySide { text, value, kind }
+    }
 }
 
 /// The exact value of one comparison operand under one related-test
@@ -3301,6 +3380,7 @@ fn owner_call_parameter_values_where(
                             value: value.clone(),
                             line: call.line,
                             text: call.text.to_string(),
+                            file: Some(test.file.clone()),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -3608,6 +3688,7 @@ fn helper_transferred_rows(
                         .first()
                         .map(|cell| cell.text.clone())
                         .unwrap_or_default(),
+                    file: row.first().and_then(|cell| cell.file.clone()),
                 });
             }
             bound_rows.push(bound);
@@ -5089,6 +5170,46 @@ mod tests {
     }
 
     #[test]
+    fn an_equality_fact_names_the_integer_a_local_evaluated_to() {
+        let local =
+            ResolvedOperand::Local("unit".into(), "if si { KIB } else { KB }".into(), vec![]);
+        let side =
+            |text, value, parameter, resolved| EqualitySide::new(text, value, parameter, resolved);
+        // A parameter against an evaluated local reads like the literal
+        // comparison, whichever side the local sits on.
+        assert_eq!(
+            equality_value(
+                &side("bytes", "1024", Some("bytes"), None),
+                &side("unit", "1024", None, Some(&local)),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        assert_eq!(
+            equality_value(
+                &side("unit", "1024", None, Some(&local)),
+                &side("bytes", "1024", Some("bytes"), None),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        // A boolean local, or two non-parameter operands, keep their text.
+        let open = ResolvedOperand::Local("open".into(), "label.starts_with(\"p\")".into(), vec![]);
+        assert_eq!(
+            equality_value(
+                &side("open", "true", None, Some(&open)),
+                &side("want", "true", Some("want"), None),
+            ),
+            ("open == want".to_string(), false)
+        );
+        assert_eq!(
+            equality_value(
+                &side("a", "1", None, Some(&local)),
+                &side("b", "1", None, Some(&local)),
+            ),
+            ("a == b".to_string(), false)
+        );
+    }
+
+    #[test]
     fn a_duplicate_of_the_initializer_text_cannot_hide_a_flag_rebinding() {
         let init = "if si { KIB } else { KB }";
         let body =
@@ -5121,6 +5242,7 @@ mod tests {
                 value: value.to_string(),
                 line: 1,
                 text: String::new(),
+                file: None,
             }]
         };
         assert!(counterpart_is_comparable(
