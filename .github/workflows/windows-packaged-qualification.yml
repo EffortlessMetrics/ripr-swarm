@@ -220,6 +220,7 @@ jobs:
           [ordered]@{ vsix = $vsix.Name; sha256 = $hash; bytes = $vsix.Length; candidate_sha = $env:CANDIDATE_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'vsix-identity.json'); "RIPR_VSIX=$($vsix.FullName)" >> $env:GITHUB_ENV
 
       - name: Run trusted packaged editor journey
+        timeout-minutes: 30
         shell: pwsh
         working-directory: editors/vscode
         run: |
@@ -229,12 +230,20 @@ jobs:
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'trusted editor journey left an owned process' }
 
       - name: Run untrusted trust-boundary journey
+        timeout-minutes: 30
         shell: pwsh
         working-directory: editors/vscode
         run: |
           $ErrorActionPreference = 'Stop'; $env:RIPR_TEST_EXTENSION_PATH = Join-Path $env:QUAL_TEMP_ROOT 'vsix-extracted\extension'; $env:RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED; $env:RIPR_TEST_WORKSPACE_TRUST = 'untrusted'; $env:RIPR_TEST_ARTIFACT_ROOT = Join-Path $env:QUAL_TEMP_ROOT 'untrusted-editor'
           npm run test:e2e 2>&1 | Tee-Object (Join-Path $env:QUAL_ROOT 'editor-untrusted.log'); if ($LASTEXITCODE -ne 0) { throw "untrusted editor journey failed with exit $LASTEXITCODE" }
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'untrusted editor journey left an owned process' }
+
+      - name: Retain editor host logs
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'; $dest = Join-Path $env:QUAL_ROOT 'editor-host-logs'; New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          foreach ($lane in 'trusted-editor', 'untrusted-editor') { $logs = Join-Path $env:QUAL_TEMP_ROOT "$lane\vscode-test-user-data\logs"; if (Test-Path $logs) { Get-ChildItem $logs -File -Recurse -Filter *.log | Where-Object { $_.Length -lt 2MB } | ForEach-Object { $rel = $_.FullName.Substring($logs.Length + 1); $to = Join-Path $dest "$lane\$rel"; New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null; Copy-Item $_.FullName $to } } }
 
       - name: Write Actions-only qualification receipt
         if: always()
