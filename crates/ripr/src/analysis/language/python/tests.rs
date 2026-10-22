@@ -8087,3 +8087,40 @@ fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), Str
     ));
     Ok(())
 }
+
+/// #6466: a capped Python run reports typed selected/omitted/total counts and
+/// the shared working-set cap as the first limiting stage; an uncapped run
+/// reports a measured zero and no cap.
+#[test]
+fn analyze_repo_reports_typed_file_accounting_for_a_capped_run() -> Result<(), String> {
+    use crate::analysis::language::{RepoCapFired, RepoLimitingStage};
+    let root = unique_repo_test_root("accounting-capped");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+
+    let capped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2))?;
+    let uncapped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let accounting = capped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(2));
+    assert_eq!(accounting.skipped, Some(1), "vendor excluded by role");
+    assert_eq!(accounting.omitted, Some(1));
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 2,
+        })
+    );
+    let accounting = uncapped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3));
+    assert_eq!(accounting.omitted, Some(0));
+    assert_eq!(accounting.first_cap_fired, None);
+    Ok(())
+}

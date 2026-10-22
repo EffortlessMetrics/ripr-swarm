@@ -1164,6 +1164,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })

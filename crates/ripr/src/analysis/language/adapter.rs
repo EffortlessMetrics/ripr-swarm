@@ -49,6 +49,47 @@ pub(crate) struct LanguageDiffResult {
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
+/// The stage of a repo run at which a named bound first limited the working
+/// set. Stages are ordered: discovery precedes selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RepoLimitingStage {
+    /// The discovery walk stopped at its entry cap.
+    Discovery,
+    /// Discovered files exceeded the working-set limit at selection.
+    Selection,
+}
+
+/// A bound that actually fired, reported by the producer that owns it. `name`
+/// is the producer's own operator-visible bound name (an env override name);
+/// it is never derived from a disclosure string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RepoCapFired {
+    pub(crate) name: &'static str,
+    pub(crate) stage: RepoLimitingStage,
+    /// The numeric limit in force when the bound fired.
+    pub(crate) limit: usize,
+}
+
+/// Typed repo-mode file accounting reported by the producer (#6466). Every
+/// field is `None` when the producer did not measure it; unknown is never
+/// zero. When discovered, selected, skipped and omitted are all known:
+/// `discovered == selected + skipped + omitted`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RepoFileAccounting {
+    /// Adapter-routed files seen. `None` when discovery was incomplete, so no
+    /// trustworthy total exists.
+    pub(crate) discovered: Option<usize>,
+    /// Files taken into the working set (production and evidence).
+    pub(crate) selected: Option<usize>,
+    /// Files intentionally excluded by role or kind (generated, declaration,
+    /// environment), not by a cap.
+    pub(crate) skipped: Option<usize>,
+    /// Eligible files left out because a cap fired.
+    pub(crate) omitted: Option<usize>,
+    /// The first bound that limited the run, if any fired.
+    pub(crate) first_cap_fired: Option<RepoCapFired>,
+}
+
 /// Per-language results returned by [`LanguageAdapter::analyze_repo`].
 ///
 /// `findings` are unsorted. `production_files` is the number of files
@@ -71,6 +112,8 @@ pub(crate) struct LanguageRepoResult {
     /// human/JSON output renders and gates fail closed on. `None` for
     /// complete runs and honest zeros.
     pub(crate) partial_reason: Option<String>,
+    /// Typed file accounting (#6466); unmeasured producers leave it default.
+    pub(crate) file_accounting: RepoFileAccounting,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     /// Empty for preview adapters.
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
