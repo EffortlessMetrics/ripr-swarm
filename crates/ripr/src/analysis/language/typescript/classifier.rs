@@ -4686,13 +4686,40 @@ fn unresolved_assertions_only(
 /// marker in either never counts. An unrelated callback, and other
 /// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
 /// gaps.
-fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
+pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
     let calls_owner = |text: &str| {
         text.match_indices(owner_name).any(|(at, _)| {
-            let before = text[..at].chars().next_back();
-            before.is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '.')))
-                && text[at + owner_name.len()..].starts_with('(')
+            let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+            let mut before = text[..at].chars().rev().peekable();
+            // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
+            // same way a bare call does when its whole receiver is an
+            // identifier chain; a call or index step anywhere in it
+            // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
+            // receiver.
+            let boundary = match before.next() {
+                None => true,
+                Some('.') => {
+                    before.next_if_eq(&'?');
+                    loop {
+                        if before.next_if(|c| word(*c)).is_none() {
+                            break false;
+                        }
+                        while before.next_if(|c| word(*c)).is_some() {}
+                        match before.peek() {
+                            Some('.') => {
+                                before.next();
+                                before.next_if_eq(&'?');
+                            }
+                            Some(')' | ']') => break false,
+                            _ => break true,
+                        }
+                    }
+                }
+                Some(c) => !word(c),
+            };
+            let after = &text[at + owner_name.len()..];
+            boundary && (after.starts_with('(') || generic_call_args(after))
         })
     };
     [".then(", "forEach(async"].iter().any(|marker| {
@@ -4716,8 +4743,7 @@ fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
                     _ => {}
                 }
             }
-            let statement_start = masked[..start].rfind([';', '\n']).map_or(0, |at| at + 1);
-            let tied_to_owner = calls_owner(&masked[statement_start..start])
+            let tied_to_owner = calls_owner(&masked[receiver_start(&masked, start)..start])
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
@@ -4730,6 +4756,61 @@ fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
                 })
         })
     })
+}
+
+/// Where the receiver of the `.then(` at `marker` begins: the start of its line
+/// when code precedes the marker there, otherwise (the prettier layout, the
+/// marker leading its own line) the start of the line holding the chain's head.
+/// The walk back crosses only lines that continue a chain (they begin with `.`)
+/// plus the one line that opens it, and stops at a `;` or a blank line, so an
+/// earlier statement is never read as the receiver.
+fn receiver_start(masked: &str, marker: usize) -> usize {
+    let line_start = |at: usize| masked[..at].rfind('\n').map_or(0, |nl| nl + 1);
+    let mut start = line_start(marker);
+    // A line that begins with `.` continues a chain even when more steps
+    // (`.catch(...).then(`) precede the marker on it.
+    let continues = masked[start..marker].trim_start().starts_with('.');
+    if !continues && !masked[start..marker].trim().is_empty() {
+        return masked[..marker]
+            .rfind(';')
+            .map_or(start, |at| (at + 1).max(start));
+    }
+    while start > 0 {
+        let previous = line_start(start - 1);
+        let line = &masked[previous..start - 1];
+        if line.trim().is_empty() || line.contains(';') {
+            break;
+        }
+        start = previous;
+        if !line.trim_start().starts_with('.') {
+            break;
+        }
+    }
+    start
+}
+
+/// `<...>(` after a callee name: a generic call, `owner<T>(x)`. The type
+/// arguments are bounded to one line without parentheses, so `a < b` followed
+/// by a call elsewhere is never read as one.
+fn generic_call_args(after: &str) -> bool {
+    if !after.starts_with('<') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (i, c) in after.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return after[i + 1..].starts_with('(');
+                }
+            }
+            '(' | ')' | ';' | '\n' | '{' | '}' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Blanks comment and string/template-literal contents, keeping byte length.
