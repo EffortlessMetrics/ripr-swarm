@@ -17,3 +17,15 @@ def test_reversed_after_nonadjacent_list_rebind():
     r = numeric_range(0)
     [a, [r]] = [2, [[1]]]
     assert list(reversed(r)) == [1]
+
+
+def test_reversed_after_unbracketed_outer_rebind():
+    r = numeric_range(0)
+    x, (y, (r)) = 1, (2, [1])
+    assert list(reversed(r)) == [1]
+
+
+def test_reversed_after_chained_outer_rebind():
+    r = numeric_range(0)
+    x = (y, (r)) = 2, [1]
+    assert list(reversed(r)) == [1]
