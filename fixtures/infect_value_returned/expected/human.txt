@@ -8,25 +8,31 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
-  File: ./src/lib.rs:5
-  Static exposure: exposed (severity: info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:score:return_value:return_value:result+1
-  Changed behavior: result + 1
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:4
+  Static exposure: unknown (severity: note, confidence 0.50)
+  Why unknown: the analysis could not determine a static exposure state
+  Canonical gap: gap:rust:src/lib.rs:score:static_unknown:static_unknown:let_result=helper_amount*multiplier
+  Changed behavior: let result = helper(amount * MULTIPLIER);
+  Analyzer limit: No strong discriminator was detected
   Related test: tests/score_tests.rs:4 score_uses_multiplier
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
+    changed implementations with a focused run using the project's configured test runner (`cargo
+    test` for ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     - reach yes: Related tests appear to reach score: score_uses_multiplier
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection unknown: Changed syntax is not mapped to a high-confidence probe family
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast probe:src_lib.rs:return_value:d146b764
-  ripr context --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast --at probe:src_lib.rs:return_value:d146b764
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:d146b764 --root <cwd>/fixtures/infect_value_returned/input` for the full gate's answer
+  ripr explain --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast probe:src_lib.rs:static_unknown:134382d4
+  ripr context --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:134382d4
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:134382d4 --root <cwd>/fixtures/infect_value_returned/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:4 (unknown)
+    - ./src/lib.rs:5 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

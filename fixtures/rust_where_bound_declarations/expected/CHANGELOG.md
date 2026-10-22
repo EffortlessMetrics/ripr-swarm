@@ -164,3 +164,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_where_bound_declarations (13)
+
+Reason:
+RIPR-SPEC-0122: changed where-bound unknown is an independent edit and keeps its limitation headline over the decisive field probe (#9346 review)
+
+Command:
+`cargo xtask goldens bless rust_where_bound_declarations --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
