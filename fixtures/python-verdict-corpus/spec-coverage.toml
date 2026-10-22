@@ -728,11 +728,6 @@ issue = 9426
 reason = "False actionable: boundary check fires on a reversing comparison flip (#9426)."
 
 [[known_false]]
-case = "py-hostile-crlf-test-helper-assert"
-issue = 9419
-reason = "False actionable: an assertion inside a helper function in another file reads as reach-only (#9419)."
-
-[[known_false]]
 case = "py-hostile-live-version-branch"
 issue = 9423
 reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
@@ -751,11 +746,6 @@ reason = "False exposed: property assertion credited as exact for an arithmetic 
 case = "py-grid-arithmetic-table"
 issue = 9594
 reason = "False actionable: table-loop assertion not credited for an arithmetic edit (#9594)."
-
-[[known_false]]
-case = "py-grid-delete-helper"
-issue = 9594
-reason = "False actionable: field update read through a same-file helper is not credited (#9594)."
 
 [[known_false]]
 case = "py-grid-returns-property"
