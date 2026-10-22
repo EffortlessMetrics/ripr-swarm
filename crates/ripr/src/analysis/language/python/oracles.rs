@@ -345,6 +345,67 @@ fn assertion_from_assert(
         oracle_kind,
         oracle_strength,
         oracle_shape,
+        bare_bool_call: bare_bool_call(assert_stmt.test.as_ref(), source),
+    }
+}
+
+/// `assert f(lit, ..)` and `assert not f(lit, ..)` with a bare callee name and
+/// only literal positional arguments. Whether the call pins a value is
+/// decided once the callee is resolved (`bool_oracle.rs`).
+fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonBareBoolCall> {
+    let (inner, negated) = match expr {
+        Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => (unary.operand.as_ref(), true),
+        other => (other, false),
+    };
+    let Expr::Call(call) = inner else {
+        return None;
+    };
+    let Expr::Name(callee) = call.func.as_ref() else {
+        return None;
+    };
+    if !call.keywords.is_empty() || !call.args.iter().all(is_literal_argument) {
+        return None;
+    }
+    Some(super::PythonBareBoolCall {
+        callee: callee.id.to_string(),
+        call_text: text_for_range(source, call.range).trim().to_string(),
+        bool_arguments: call
+            .args
+            .iter()
+            .map(|argument| match argument {
+                Expr::Constant(ast::ExprConstant {
+                    value: ast::Constant::Bool(value),
+                    ..
+                }) => Some(*value),
+                _ => None,
+            })
+            .collect(),
+        negated,
+    })
+}
+
+/// A number, string, bool or `None` literal, with an optional sign on a number.
+fn is_literal_argument(expr: &Expr) -> bool {
+    match expr {
+        Expr::Constant(constant) => matches!(
+            constant.value,
+            ast::Constant::None
+                | ast::Constant::Bool(_)
+                | ast::Constant::Str(_)
+                | ast::Constant::Int(_)
+                | ast::Constant::Float(_)
+        ),
+        Expr::UnaryOp(unary) => {
+            matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd)
+                && matches!(
+                    unary.operand.as_ref(),
+                    Expr::Constant(ast::ExprConstant {
+                        value: ast::Constant::Int(_) | ast::Constant::Float(_),
+                        ..
+                    })
+                )
+        }
+        _ => false,
     }
 }
 
@@ -409,6 +470,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             oracle_kind,
             oracle_strength,
             oracle_shape,
+            bare_bool_call: None,
         });
     }
     let gate_text = compared_operands(call)
@@ -430,6 +492,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         oracle_kind,
         oracle_strength,
         oracle_shape,
+        bare_bool_call: None,
     })
 }
 

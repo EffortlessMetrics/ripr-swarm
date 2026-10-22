@@ -59,6 +59,7 @@ use std::{
     path::{Path, PathBuf},
 };
 mod arm_activation;
+mod bool_oracle;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -382,6 +383,24 @@ struct PythonAssertion {
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     oracle_shape: PythonOracleShape,
+    /// Set for a bare `assert f(lit, ..)` / `assert not f(lit, ..)`: an
+    /// assertion on a call whose arguments are all literals. Extraction reads
+    /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
+    /// boolean pin once the callee is known to return `bool`.
+    bare_bool_call: Option<PythonBareBoolCall>,
+}
+
+/// The call under a bare boolean assertion (`bool_oracle.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonBareBoolCall {
+    /// The bare callee name; dotted callees are never resolved.
+    callee: String,
+    /// The call's source text, without the `not`.
+    call_text: String,
+    /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
+    /// literal, by position.
+    bool_arguments: Vec<Option<bool>>,
+    negated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -778,6 +797,9 @@ impl PythonAdapter {
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
         related_tests::apply_src_module_ambiguity(
             &mut all_owners,
             workspace_files.iter().filter(|file| !is_test_file(file)),
@@ -1103,6 +1125,9 @@ mod arm_activation_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod bool_oracle_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;
