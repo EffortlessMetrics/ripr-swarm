@@ -489,9 +489,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// hand-written recording double are withheld as
 /// `rust_framework_oracle_unresolved` (RIPR-SPEC-0240, #9609, #9610). Old
 /// entries keep the weak gap.
-/// `1.95`: safe typed function-pointer calls retain reach and can pin a
+/// `1.95`: a same-file assertion wrapper beside a proximity-only oracle names
+/// `rust_macro_wrapped_assertion_unresolved` (RIPR-SPEC-0120, #7089). Old
+/// entries keep the weak gap.
+/// `1.96`: safe typed function-pointer calls retain reach and can pin a
 /// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.95";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.96";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -632,8 +635,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.95";
 /// `0.99`: same caller-loop selector limit as full `1.92`.
 /// `0.100`: same Display string pin as full `1.93`.
 /// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
-/// `0.102`: same typed function-pointer pins as full `1.95` (#9478).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.102";
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same typed function-pointer pins as full `1.96` (#9478).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.103";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -776,8 +780,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.102";
 /// `0.99`: same caller-loop selector limit as full `1.92`.
 /// `0.100`: same Display string pin as full `1.93`.
 /// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
-/// `0.102`: same typed function-pointer pins as full `1.95` (#9478).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.102";
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same typed function-pointer pins as full `1.96` (#9478).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.103";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4740,8 +4745,9 @@ mod tests {
         // 1.91 -> 1.92: caller-loop selector limit (RIPR-SPEC-0240, #5503).
         // 1.92 -> 1.93: write-only `Display::fmt` pinned by `to_string()` (RIPR-SPEC-0297, #9608).
         // 1.93 -> 1.94: fixture-receiver and recording-double limits (RIPR-SPEC-0240, #9609, #9610).
-        // 1.94 -> 1.95: typed function-pointer owner pins (#9478).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.95");
+        // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
+        // 1.95 -> 1.96: typed function-pointer owner pins (#9478).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.96");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4824,9 +4830,10 @@ mod tests {
         // 0.98 -> 0.99: same caller-loop selector limit as full 1.92.
         // 0.99 -> 0.100: same Display string pin as full 1.93.
         // 0.100 -> 0.101: same fixture-receiver and recording-double limits as full 1.94.
-        // 0.101 -> 0.102: same typed function-pointer pins as full 1.95.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.102");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.102");
+        // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
+        // 0.102 -> 0.103: same typed function-pointer pins as full 1.96.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.103");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.103");
     }
 
     #[test]
