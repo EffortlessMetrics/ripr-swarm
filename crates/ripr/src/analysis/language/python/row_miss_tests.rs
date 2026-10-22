@@ -798,9 +798,20 @@ mod direct {
         ] {
             assert_no_missing_input(&build(body)?, label);
         }
-        // Control: a receiver provably the owner class is an owner call.
+        // An instance method is never claimed (the constructor body is unread,
+        // so `Cart(...)` could call the owner), even through the owner class.
         let owned = build("def test_a():\n    assert Cart().can_reserve(5, 3) == True\n")?;
-        assert!(omission(&owned, 0), "Cart().can_reserve is the owner");
+        assert_no_missing_input(&owned, "instance method through its constructor");
+        // Control: a classmethod called on its class reaches no constructor.
+        let class_source = "class Cart:\n    @classmethod\n    def can_reserve(cls, qty, on_hand):\n        if qty >= on_hand:\n            return True\n        return False\n";
+        let classmethod = case(
+            class_source,
+            "from src.subject import Cart\n\ndef test_a():\n    assert Cart.can_reserve(5, 3) == True\n",
+            4,
+            "        if qty > on_hand:",
+            "        if qty >= on_hand:",
+        )?;
+        assert!(omission(&classmethod, 0), "classmethod on its class");
         Ok(())
     }
 
@@ -855,6 +866,30 @@ mod direct {
             (
                 "test module rebinds the owner name",
                 "can_reserve = lambda qty, on_hand: True\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "callee from a dict subscript",
+                "H = {'x': can_reserve}\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n    assert H['x'](4, 4) == True\n",
+            ),
+            (
+                "callee from a list subscript",
+                "H = [can_reserve]\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n    assert H[0](4, 4) == True\n",
+            ),
+            (
+                "custom test decorator",
+                "from helpers import wrap\n\n@wrap\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "functools.lru_cache test decorator",
+                "import functools\n\n@functools.lru_cache\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "pytest_generate_tests in the test module",
+                "def pytest_generate_tests(metafunc):\n    can_reserve(4, 4)\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "rebound bare import alias",
+                "import src.subject as s\n\ns = None\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
             ),
             (
                 "test-local shadow of the owner name",

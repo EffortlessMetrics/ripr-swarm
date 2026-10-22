@@ -164,8 +164,13 @@ static limit, one row at a time, in `python/row_miss.rs`:
   only. Known limits that stay invisible: an autouse fixture imported by name
   from another module, import side effects of a sidecar module, `from conftest
   import helper`, and plugins loaded by `-p`, ini/`addopts` or `sitecustomize`.
-  A method call counts
-  only on a receiver provably the owner class. Compared parameters must be
+  The row guard is a closed-world allowlist: a callee read from a subscript
+  or call result (a subscripted or called value that is then called), a test decorator other than an inert
+  `pytest.mark.*` or skip mark, a `pytest_*` function in the test module, or a
+  rebound import alias keeps no miss. An instance method is never claimed,
+  because its constructor (`__init__`, `__new__`, `__post_init__`) is unread;
+  a classmethod or staticmethod called on its class can be. Decorators of an
+  unnamed shape (`@registry['x']`) are another invisible limit. Compared parameters must be
   ones the owner body never rebinds; a relational change must keep the same
   operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,
   never unequal.

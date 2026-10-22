@@ -69,12 +69,30 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
     // may wrap or replace the body.
     if test.constant_rebinding.implicit_reach
         || test.constant_rebinding.opaque
-        || call_names.iter().chain([&owner.name]).any(|name| {
-            test.constant_rebinding.module_rebinds(name) || test.constant_rebinding.rebinds(name)
-        })
+        || call_names
+            .iter()
+            .chain([&owner.name])
+            .flat_map(|name| {
+                // The name and its bare import alias root (`s` of `s.owner`).
+                [Some(name.as_str()), name.split('.').next()]
+            })
+            .flatten()
+            .any(|name| {
+                test.constant_rebinding.module_rebinds(name)
+                    || test.constant_rebinding.rebinds(name)
+            })
         || owner.decorators.iter().any(|decorator| {
             !(decorator.ends_with("staticmethod") || decorator.ends_with("classmethod"))
         })
+    {
+        return false;
+    }
+    // Only inert marks may decorate the test: any other decorator can wrap it
+    // and call the owner.
+    if !test
+        .decorators
+        .iter()
+        .all(|decorator| is_inert_decorator(decorator))
     {
         return false;
     }
@@ -91,6 +109,14 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         return false;
     };
     if DYNAMIC_WORDS.iter().any(|word| contains_word(&code, word)) {
+        return false;
+    }
+    // A callee read out of a subscript or a call result (`H['x'](4, 4)`,
+    // `make()(4, 4)`) is unknown.
+    if code
+        .match_indices([']', ')'])
+        .any(|(at, _)| code[at + 1..].trim_start().starts_with('('))
+    {
         return false;
     }
     let class_name = owner_class_name(owner);
@@ -137,11 +163,10 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
                         return false;
                     }
                 }
-                Some(OwnerKind::Method) => {
-                    if !after_dot || !receiver_is_owner_instance(&code, start, &class_name) {
-                        return false;
-                    }
-                }
+                // An instance method is reached through a constructor whose body
+                // (`__init__`, `__new__`, `__post_init__`) this guard cannot
+                // read, so it is never claimed.
+                Some(OwnerKind::Method) => return false,
                 Some(OwnerKind::ClassMethod) => {
                     if !after_dot || !receiver_is_owner_class(&code, start, &class_name) {
                         return false;
@@ -162,12 +187,6 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
                 )
         } else {
             SAFE_BARE_CALLS.contains(&ident)
-                || (!class_name.is_empty()
-                    && ident == class_name
-                    && matches!(
-                        owner.owner_kind,
-                        Some(OwnerKind::Method | OwnerKind::ClassMethod)
-                    ))
         };
         if !safe {
             return false;
@@ -227,34 +246,18 @@ fn receiver_is_owner_class(code: &str, name_start: usize, class_name: &str) -> b
     }
 }
 
-/// `Class(...).owner(` only.
-fn receiver_is_owner_instance(code: &str, name_start: usize, class_name: &str) -> bool {
-    if class_name.is_empty() {
-        return false;
-    }
-    let receiver = receiver_before(code, name_start);
-    if receiver.ends_with(')') {
-        let mut depth = 0usize;
-        for (idx, ch) in receiver.char_indices().rev() {
-            match ch {
-                ')' => depth += 1,
-                '(' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let head = &receiver[..idx];
-                        return head.ends_with(class_name)
-                            && !head[..head.len() - class_name.len()].ends_with(|c: char| {
-                                c == '_' || c == '.' || c.is_ascii_alphanumeric()
-                            });
-                    }
-                }
-                _ => {}
-            }
-        }
-        return false;
-    }
-    // A variable receiver is never accepted: its binding is not read here.
-    false
+/// Marks and skips that cannot wrap the test body.
+fn is_inert_decorator(decorator: &str) -> bool {
+    decorator.starts_with("pytest.mark.")
+        || matches!(
+            decorator,
+            "staticmethod"
+                | "classmethod"
+                | "unittest.skip"
+                | "unittest.skipIf"
+                | "unittest.skipUnless"
+                | "unittest.expectedFailure"
+        )
 }
 
 fn contains_word(text: &str, word: &str) -> bool {

@@ -1727,6 +1727,12 @@ pub(super) fn module_implicit_reach(
         || context.has_runtest_hook
         || !context.opaque_classes.is_empty()
         || !lifecycle.is_empty()
+        || statements.iter().any(|statement| match statement {
+            // A `pytest_*` function in a test module is a live hook, like conftest's.
+            Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            Stmt::AsyncFunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            _ => false,
+        })
         || module_level_effects(source, statements)
 }
 
