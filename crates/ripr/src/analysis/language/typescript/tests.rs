@@ -17415,6 +17415,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod boolean_pin_tests;
 mod catch_arm_tests;
+mod changed_field_tests;
 mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod custom_matcher_tests;
@@ -17434,6 +17435,7 @@ mod mock_form_tests;
 mod mock_object_argument_tests;
 mod mock_spread_source_tests;
 mod mocked_callee_tests;
+mod module_const_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;

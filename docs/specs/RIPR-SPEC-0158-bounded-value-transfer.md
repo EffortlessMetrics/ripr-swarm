@@ -28,7 +28,30 @@ exercised boundary from a missing one.
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
   `char::len_utf8`, `map_or` with a literal default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
-  from exact indices.
+  from exact indices. Exact integer arithmetic (`+ - * / %`, with
+  precedence and parentheses, failing closed on a leading sign,
+  overflow, underflow, division by zero, or an operand or result at or
+  above `i32::MAX`),
+  `split_whitespace().count()` and
+  `chars().count()` are credit-only families (#9637): a chain that
+  uses one may close a boundary through an observed equality row but
+  never names a missing input, so no row on the boundary leaves the
+  stage unknown. A comparison operand that is itself such a chain over
+  `&str`/`String`/integer owner parameters, same-file constants and
+  literals resolves the same way, but only for ordering predicates
+  (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
+  on-boundary row cannot discriminate its neighbours. Integer owner
+  parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
+  `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
+  A computed or call-result argument, a generic or slice receiver and a
+  rebound parameter stay unknown, and a local initializer that reads a
+  parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
+  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  closed-form operand is known only when every related call row
+  evaluates it; a computed local keeps its existing any-row semantics
+  (#3295), where one evaluable row suffices. The difference is
+  deliberate: the direct form is new and fails closed on a row that may
+  sit on the other side.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);

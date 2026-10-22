@@ -8148,14 +8148,16 @@ fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), Str
 const MONEY_SRC: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __add__(self, other):\n        return Money(self.cents - other.cents)\n";
 
 #[test]
-fn dunder_operator_edit_with_constructed_operands_abstains_instead_of_gap() -> Result<(), String> {
-    // #9421: `Money(5) + Money(7) == Money(12)` relates only as `dunder_protocol`.
-    // The adapter cannot read that assertion against `__add__`, so it abstains.
+fn dunder_operator_edit_with_a_reflected_receiver_abstains_instead_of_gap() -> Result<(), String> {
+    // #9421: `5 + Money(7)` runs the reflected `__radd__`, so the receiver is not
+    // certain and the test relates only as `dunder_protocol`.
+    // The adapter cannot read that assertion against `__add__`, so it abstains
+    // (the certain `Money(5) + Money(7)` form is credited, see `dunder_entry_tests`).
     let file = Path::new("shapes/money.py");
     let owners = extract_owners(file, MONEY_SRC);
     let tests = extract_tests(
         Path::new("tests/test_money.py"),
-        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5) + Money(7) == Money(12)\n",
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert 5 + Money(7) == Money(12)\n",
     );
     assert_eq!(tests.len(), 1);
     let owner = flat_owner(&owners, "Money.__add__")?;

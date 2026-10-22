@@ -102,6 +102,9 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 pub(crate) struct CreditFacts<'a> {
     pub(crate) mock_facts: &'a MockCallFacts,
     pub(crate) pin_facts: &'a PinFacts,
+    /// The one field of a single-line returned object literal whose value
+    /// changed, when the old line is known (RIPR-SPEC-0243 rule 17).
+    pub(crate) changed_field: Option<&'a TypeScriptChangedField>,
 }
 
 /// Returns `true` when there is static evidence that a strong assertion in one
@@ -206,6 +209,7 @@ pub(crate) fn ts_changed_value_is_observed(
     let CreditFacts {
         mock_facts,
         pin_facts,
+        changed_field,
     } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -226,7 +230,13 @@ pub(crate) fn ts_changed_value_is_observed(
 
     // Collect changed identifier tokens from the discriminator value.
     let raw_discriminator = typescript_missing_discriminator_value(&probe_shape.family, line_text);
-    let changed_tokens: Vec<String> = if let Some(ref disc) = raw_discriminator {
+    let changed_tokens: Vec<String> = if let Some(field) = changed_field {
+        // The changed field's own value, not the first field of the literal.
+        identifier_tokens(&field.value)
+            .into_iter()
+            .filter(|tok| !CALL_EFFECT_TEMPLATE_WORDS.contains(&tok.as_str()))
+            .collect()
+    } else if let Some(ref disc) = raw_discriminator {
         let raw_expr = strip_synthesized_prefix(disc);
         identifier_tokens(raw_expr)
             .into_iter()
@@ -339,6 +349,29 @@ pub(crate) fn ts_changed_value_is_observed(
                     owner_is_method,
                     &namespace_receivers,
                 ) {
+                    return true;
+                }
+                // RIPR-SPEC-0243 rule 17: `<owner call or alias of one>.<key>`
+                // reads the changed field of the returned literal.
+                if let Some(field) = changed_field
+                    && let Some(base) = observed
+                        .trim()
+                        .strip_suffix(field.key.as_str())
+                        .and_then(|rest| rest.trim_end().strip_suffix('.'))
+                    && (ts_masked_observes_owner(
+                        &ts_mask_literals_and_comments(base),
+                        &owner_names,
+                        owner_is_method,
+                        &namespace_receivers,
+                    ) || ts_observed_local_aliases_owner(
+                        base,
+                        &owner_names,
+                        &changed_tokens,
+                        candidate.test,
+                        owner_is_method,
+                        &namespace_receivers,
+                    ))
+                {
                     return true;
                 }
                 if changed_tokens
@@ -5378,8 +5411,10 @@ pub(crate) fn classify_change_with_alias_state(
     let field_update_witnessed = !probe_shape.specific
         && lookup_change.is_none()
         && !returns_changed_state
-        && ts_field_update_change(owner, line_text, old_line_text)
-            .is_some_and(|change| ts_field_update_witnessed(&change, owner, &related_candidates));
+        && ts_field_update_change(owner, line_text, old_line_text).is_some_and(|change| {
+            !ts_field_has_accessor(&change, owner, owners)
+                && ts_field_update_witnessed(&change, owner, &related_candidates)
+        });
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
@@ -5497,6 +5532,7 @@ pub(crate) fn classify_change_with_alias_state(
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
+    let changed_field = ts_changed_object_field(old_line_text, line_text);
     let error_facts = ErrorChangeFacts::read(old_line_text, line_text);
     // RIPR-SPEC-0247 rule 1 reads the owner body only when an effect seam
     // has a related mock payload to credit.
@@ -5686,6 +5722,7 @@ pub(crate) fn classify_change_with_alias_state(
                 CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    changed_field: changed_field.as_ref(),
                 },
             ));
 
@@ -5855,6 +5892,7 @@ pub(crate) fn classify_change_with_alias_state(
                 error_facts: &error_facts,
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                changed_field: changed_field.as_ref(),
             },
             mock_paths: &mock_paths,
             alias_map,
@@ -6299,6 +6337,19 @@ fn ts_apply_post_ladder_rules(
         verdict.discriminate_state = StageState::Weak;
         verdict.missing = vec![format!(
             "The change to `{}` only replaces the returned `{subject}` with a copy of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual` pass on both. Add an identity assertion such as `expect(result).toBe(input)` or `assert.strictEqual(result, input)`.",
+            context.owner.name
+        )];
+        return;
+    }
+    // A module scalar constant a test compares to the very literal the edit
+    // wrote: the test passes on the edited value, so no assertion notices it.
+    if let Some(literal) = super::probe_shape::module_scalar_constant_literal(context.line_text)
+        && ts_candidates_expect_literal(context.candidates, &context.owner.name, literal)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change sets `{}` to `{literal}`, and a related test already expects that value, so it passes on the edit. Assert a value the edit changes, or pin the previous value.",
             context.owner.name
         )];
         return;
@@ -7475,6 +7526,40 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
     }
 }
 
+/// A string literal without its quotes, so `'x'` and `"x"` compare equal.
+fn ts_unquoted(text: &str) -> &str {
+    ['\'', '"', '`']
+        .iter()
+        .find_map(|quote| text.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(text)
+}
+
+/// Two literal texts denote one value. Quotes only drop when both sides are
+/// quoted strings, so `11` and `'11'` (number vs string) stay different.
+fn ts_same_literal(a: &str, b: &str) -> bool {
+    let quoted = |text: &str| ts_unquoted(text).len() != text.len();
+    quoted(a) == quoted(b) && ts_unquoted(a) == ts_unquoted(b)
+}
+
+/// `true` when an oracle-bearing related test asserts the bare `owner` against
+/// exactly `literal` (`expect(LIMIT).toBe(11)`).
+fn ts_candidates_expect_literal(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &str,
+    literal: &str,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate.test.assertions.iter().any(|assertion| {
+                assertion.observed_expression.as_deref().map(str::trim) == Some(owner)
+                    && assertion
+                        .expected_value_or_variant
+                        .as_deref()
+                        .is_some_and(|expected| ts_same_literal(expected.trim(), literal))
+            })
+    })
+}
+
 /// `true` when a related test that grants oracle credit pins identity. A
 /// heuristic (name-linked) relation cannot see the owner's result, so its
 /// `toBe` does not count. Heuristic candidates appear today only when no
@@ -7547,6 +7632,7 @@ struct Rule8LadderFacts<'a> {
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
     pin_facts: &'a PinFacts,
+    changed_field: Option<&'a TypeScriptChangedField>,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -7573,6 +7659,7 @@ fn ts_rule8_mocked_changed_callee(
         error_facts,
         mock_facts,
         pin_facts,
+        changed_field,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -7626,6 +7713,7 @@ fn ts_rule8_mocked_changed_callee(
                 CreditFacts {
                     mock_facts,
                     pin_facts,
+                    changed_field,
                 },
             )
         {

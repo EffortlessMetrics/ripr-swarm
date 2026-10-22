@@ -99,6 +99,23 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A route decorator edit changes where the handler is registered, which
+    // only a client call to a route observes; a test that calls the function
+    // directly never sees it (#9756).
+    if is_route_decorator_edit(trimmed)
+        && !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: "static_limit decorator_indirection: route registration edit".to_string(),
+            missing: format!(
+                "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
+                owner.qualified_name
+            ),
+        });
+    }
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
@@ -437,6 +454,14 @@ fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[Pytho
         .iter()
         .any(|import| import.alias == decorator && import.source_module != "functools");
     from_functools && !competing_alias
+}
+
+/// A changed line that is itself a static route decorator (`@app.get("/a")`).
+fn is_route_decorator_edit(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix('@')
+        .and_then(|rest| rest.split('(').next())
+        .is_some_and(is_static_route_decorator)
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
@@ -996,6 +1021,43 @@ pub(super) fn heuristic_only_relation_limit(
     None
 }
 
+/// An equality dunder (`__eq__`, `__ne__`) whose operator entries bind to the
+/// owner but whose related tests credit no assertion (#9421).
+///
+/// An equality method's behavior turns on the operand's type as much as its
+/// value: an `isinstance` guard, a `NotImplemented` fallback or an attribute
+/// read on a foreign operand fails (or answers) by raising or by type, which a
+/// weak `==` / `!=` read cannot tell from the edit. Grading that as a gap
+/// would be a wrong actionable signal when the test does catch the edit
+/// (`assert Money(1) != 1` against a removed type guard), so an uncredited
+/// equality owner abstains. A credited assertion keeps its ordinary verdict.
+pub(super) fn unpinned_equality_dunder_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: bool,
+) -> Option<PythonStaticLimit> {
+    if credited
+        || !matches!(owner.name.as_str(), "__eq__" | "__ne__")
+        || !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ProtocolEntryCall)
+    {
+        return None;
+    }
+    let class = dunder_method_class(owner)?;
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::DynamicDispatch,
+        evidence: format!(
+            "static_limit dynamic_dispatch: equality dunder `{}` is invoked through an operator and no assertion pins its result",
+            owner.qualified_name
+        ),
+        missing: format!(
+            "Static limit `dynamic_dispatch`: `{}` is an equality dunder Python invokes through `==` / `!=` on `{class}` instances; related tests compare instances, but a weak equality read does not establish whether an operand-type guard or fallback path is exercised, so it does not grade this edit as a gap.",
+            owner.qualified_name
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1043,6 +1105,7 @@ mod tests {
             module_callees: Vec::new(),
             class_path: String::new(),
             term_facts: Default::default(),
+            class_facts: Default::default(),
         }
     }
 
