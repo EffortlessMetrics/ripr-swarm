@@ -1,0 +1,3 @@
+case = "pw-expect-soft-second-term"
+issue = 9434
+reason = "Playwright expect.soft read as no oracle (#9434)."

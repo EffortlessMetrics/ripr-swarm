@@ -1,0 +1,3 @@
+case = "py-idioms-caplog-message"
+issue = 9424
+reason = "caplog text assertions pin log messages but are graded weak (#9424)."
