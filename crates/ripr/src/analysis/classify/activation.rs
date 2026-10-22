@@ -832,8 +832,7 @@ fn resolve_boundary_operand(
                 .rfind(initializer.trim())
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
-            parameters.contains(name)
-                && owner_declares_local(owner, name, declared_line.saturating_sub(1))
+            parameters.contains(name) && parameter_rebound_before(owner, name, declared_line)
         }) {
             return None;
         }
@@ -862,6 +861,8 @@ fn resolve_boundary_operand(
 /// guard has neighbours (`len() < 2` survives an `== 0` test) that one
 /// on-boundary row does not discriminate.
 fn ordering_predicate(expression: &str) -> bool {
+    let expression = expression.replace("->", " ").replace("=>", " ");
+    let expression = expression.as_str();
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if expression.contains(operator) {
             return !matches!(operator, "==" | "!=");
@@ -1410,6 +1411,55 @@ fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
             .iter()
             .any(|operator| after.starts_with(operator));
     assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether parameter `name` may hold something other than the caller's value
+/// where the local declared on `declared_line` reads it: an earlier `let`, any
+/// assignment or `mut` binding, or a `for`/`if let`/`while let`/`match`/
+/// closure binding on or before that line. The declaration's own shadow
+/// (`let input = input.trim();`) is not an earlier rebinding.
+fn parameter_rebound_before(owner: &FunctionSummary, name: &str, declared_line: usize) -> bool {
+    if owner_declares_local(owner, name, declared_line.saturating_sub(1)) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    if masked.match_indices(name).any(|(start, _)| {
+        let before = masked[..start].trim_end();
+        is_token(&masked, start)
+                // A `let` declaration is an earlier-`let` question, answered
+                // above; only assignments and `mut` parameters count here.
+                && !(before.ends_with("let") || before.ends_with("let mut"))
+                && name_assigned_or_mut(&masked, name, start)
+    }) {
+        return true;
+    }
+    masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= declared_line)
+        .any(|(_, line)| {
+            line.match_indices(name)
+                .any(|(start, _)| is_token(line, start))
+                && (["for ", "if let ", "while let ", "match ", "=>"]
+                    .iter()
+                    .any(|form| line.contains(form))
+                    || [
+                        format!("|{name}|"),
+                        format!("|{name},"),
+                        format!(", {name}|"),
+                        format!("|{name}:"),
+                    ]
+                    .iter()
+                    .any(|closure| line.contains(closure.as_str())))
+        })
 }
 
 /// Whether the owner's body mentions `name` anywhere before the line that
@@ -8041,6 +8091,22 @@ assert_eq!(input.amount, 100);"#
         let gathered = boundary_input(&two, &predicate, &[&compared]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(gathered.unresolved_boundary.is_some());
+
+        // Control: with the literal row alone the same boundary names its
+        // missing input, so the guard (not a failed parse) holds it back.
+        let literal_only = test_with_body_calls(
+            "assert!(score(\"123\"));",
+            &[(11, "assert!(score(\"123\"));")],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() < 4"),
+            &[&literal_only],
+        );
+        assert!(
+            gathered.unresolved_boundary.is_some()
+                || !gathered.activation.missing_discriminators.is_empty()
+        );
     }
 
     #[test]
@@ -8655,52 +8721,122 @@ assert_eq!(input.amount, 100);"#
     fn given_narrow_integer_parameter_arithmetic_then_boundary_stays_unresolved() {
         // `n * 1000` with n = 200 is exact 200000 here but overflows u8 at
         // runtime, so a narrow parameter never resolves a closed form.
-        for (ty, expr, arg) in [("u8", "n * 1000", "200"), ("u8", "n + 100", "200")] {
-            let source = format!("pub fn f(n: {ty}) -> bool {{\n    {expr} < 5\n}}");
+        // The u32 control proves the same source and call do credit, so the
+        // u8 negatives are not vacuous.
+        for (ty, expr, bound, arg, credited) in [
+            ("u8", "n * 1000", "5", "200", false),
+            ("u8", "n + 100", "300", "200", false),
+            ("u32", "n + 100", "300", "200", true),
+        ] {
+            let source = format!("pub fn score(n: {ty}) -> bool {{\n    {expr} < {bound}\n}}");
             let owner = function(&source);
-            let call = format!("assert!(f({arg}));");
+            let call = format!("assert!(score({arg}));");
             let t = test_with_body_calls(&call, &[(10, &call)]);
             let gathered = boundary_input(
                 &owner,
-                &probe(ProbeFamily::Predicate, &format!("{expr} < 5")),
+                &probe(ProbeFamily::Predicate, &format!("{expr} < {bound}")),
                 &[&t],
             );
-            assert!(!has_observed_boundary_equality(&gathered.activation));
+            assert_eq!(
+                has_observed_boundary_equality(&gathered.activation),
+                credited,
+                "{source}"
+            );
             assert!(gathered.activation.missing_discriminators.is_empty());
         }
     }
 
     #[test]
     fn given_rebound_parameter_in_local_initializer_then_boundary_is_not_credited() {
-        for (source, predicate, call) in [
+        for (source, predicate, call, line, credited) in [
+            // Controls: the same shapes without the earlier rebinding credit.
+            (
+                "pub fn score(x: usize) -> u32 {\n    let y = x * 2;\n    if y == 40 {\n        return 0;\n    }\n    1\n}",
+                "y == 40",
+                "score(20)",
+                3,
+                true,
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let n = s.chars().count();\n    if n == 5 {\n        return 0;\n    }\n    1\n}",
+                "n == 5",
+                "score(\"abcde\")",
+                3,
+                true,
+            ),
+            (
+                "pub fn score(mut x: usize) -> u32 {\n    x += 5;\n    let y = x * 2;\n    if y == 12 {\n        return 0;\n    }\n    1\n}",
+                "y == 12",
+                "score(1)",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(mut x: usize) -> u32 {\n    x = 10;\n    let y = x * 2;\n    if y == 4 {\n        return 0;\n    }\n    1\n}",
+                "y == 4",
+                "score(2)",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(x: usize) -> u32 {\n    let mut t = 0;\n    for x in 0..3 {\n        t += x;\n    }\n    let y = x * 2;\n    if y == 4 {\n        return 0;\n    }\n    1\n}",
+                "y == 4",
+                "score(2)",
+                7,
+                false,
+            ),
             (
                 "pub fn score(x: usize) -> u32 {\n    let x = x + 10;\n    let y = x * 2;\n    if y == 40 {\n        return 0;\n    }\n    1\n}",
                 "y == 40",
                 "score(20)",
+                4,
+                false,
             ),
             (
                 "pub fn score(s: &str) -> u32 {\n    let s = s.replace(\" \", \"\");\n    let n = s.chars().count();\n    if n == 5 {\n        return 0;\n    }\n    1\n}",
                 "n == 5",
                 "score(\"a b c d e\")",
+                4,
+                false,
             ),
             (
                 "pub fn score(s: &str) -> u32 {\n    let s = s.trim();\n    let n = s.len();\n    if n == 3 {\n        return 0;\n    }\n    1\n}",
                 "n == 3",
                 "score(\"  abc \")",
+                4,
+                false,
             ),
         ] {
             let mut owner = function(source);
-            owner.end_line = 8;
+            owner.end_line = 12;
             let mut predicate = probe(ProbeFamily::Predicate, predicate);
-            predicate.location.line = 4;
+            predicate.location.line = line;
             let body = format!("assert_eq!({call}, 0);");
             let test = test_with_body_calls(&body, &[(10, &body)]);
             let gathered = boundary_input(&owner, &predicate, &[&test]);
-            assert!(
-                !has_observed_boundary_equality(&gathered.activation),
+            assert_eq!(
+                has_observed_boundary_equality(&gathered.activation),
+                credited,
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn given_identical_initializer_text_with_rebinding_between_then_boundary_is_not_credited() {
+        // Both `let y = x * 2;` statements share text. The second reads the
+        // rebound `x` (real y = 6 for score(2)), so `y == 4` must not credit
+        // whichever statement the text lookup lands on.
+        let mut owner = function(
+            "pub fn score(x: usize) -> u32 {\n    let y = x * 2;\n    if y == 9 {\n        return 0;\n    }\n    let x = x + 1;\n    let y = x * 2;\n    if y == 4 {\n        return 1;\n    }\n    2\n}",
+        );
+        owner.end_line = 12;
+        let mut predicate = probe(ProbeFamily::Predicate, "y == 4");
+        predicate.location.line = 8;
+        let body = "assert_eq!(score(2), 1);".to_string();
+        let test = test_with_body_calls(&body, &[(10, &body)]);
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(!has_observed_boundary_equality(&gathered.activation));
     }
 
     #[test]
@@ -8739,6 +8875,16 @@ assert_eq!(input.amount, 100);"#
             &[&test],
         );
         assert!(!has_observed_boundary_equality(&gathered.activation));
+
+        // Control: the ordering form of the same guard does credit.
+        let ordering = function("pub fn score(s: &str) -> bool {\n    s.len() < 1\n}");
+        let one = test_with_body_calls("assert!(score(\"a\"));", &[(10, "assert!(score(\"a\"));")]);
+        let gathered = boundary_input(
+            &ordering,
+            &probe(ProbeFamily::Predicate, "s.len() < 1"),
+            &[&one],
+        );
+        assert!(has_observed_boundary_equality(&gathered.activation));
     }
 
     #[test]
