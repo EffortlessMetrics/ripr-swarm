@@ -977,6 +977,8 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
             "{source}"
         );
     }
+}
+
 /// RIPR-SPEC-0243 rule 17 (#9497): a `node:test` callback that calls
 /// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
 /// have gone, so it registers no discriminator. Negative: the same body
