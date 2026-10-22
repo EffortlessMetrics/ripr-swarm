@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as os from 'os';
 import * as path from 'path';
 import { firstPrCommandIsSafe, validateFirstPrPacket } from '../../src/firstPrProjection';
 import { hasUnsafeShellMetacharacter } from '../../src/packetJson';
@@ -57,6 +58,9 @@ suite('First-PR command safety', () => {
 
   test('retains rejection of operators, malformed quotes and escaping redirects', () => {
     const outside = `${path.resolve('outside-first-pr').replace(/\\/g, '/')}/out.json`;
+    const apostropheRoot = path.join(os.tmpdir(), "ripr's repo").replace(/\\/g, '/');
+    assert.ok(path.isAbsolute(apostropheRoot));
+    assert.ok(apostropheRoot.includes("'") && apostropheRoot.includes(' '));
     for (const command of [
       'ripr agent receipt --root . --json\0',
       'ripr agent receipt --root . --json ; calc',
@@ -65,7 +69,7 @@ suite('First-PR command safety', () => {
       'ripr agent receipt --root "unterminated --json',
       `ripr agent packet --root . --gap-id gap:pricing --json > '${outside}'`,
       `ripr agent packet --root . --gap-id gap:pricing --json > target/ripr/ok.json > '${outside}'`,
-      `ripr agent receipt --root "C:/work/ripr's repo" --json > '${outside}'`
+      `ripr agent receipt --root "${apostropheRoot}" --json > '${outside}'`
     ]) {
       assert.strictEqual(firstPrCommandIsSafe(command, [workspaceRoot]), false, command);
     }
