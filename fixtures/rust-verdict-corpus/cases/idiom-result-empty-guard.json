@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-result-empty-guard",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-result-empty-guard.diff",
+  "anchor": {
+    "file": "src/results.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "error_variant_exact_pin",
+  "hard_case": "The empty guard has one exact `Err(ParseError::Empty)` test on the empty string.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if text.len() < 2 {",
+        "mutated_line": "if text.len() < 2 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if text.len() == 0 {` becomes `if text.len() < 2 {`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if text.is_empty() && false {",
+        "mutated_line": "if text.is_empty() && false {",
+        "outcome": "tests_failed",
+        "failing_test": "results::tests::empty_is_rejected",
+        "equivalence_review": "not equivalent: `if text.len() == 0 {` becomes `if text.is_empty() && false {`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Disabling the guard turns the empty input into a number error, so empty_is_rejected fails; `len() < 2` still rejects the empty string, and the only one-character input, \"a\" in word_is_an_error, then returns Err(Empty) instead of Err(NotNumber), which `is_err()` accepts. Shape: guard boundary beside an exact error pin.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -537,3 +537,34 @@ fn markdown_projection_shows_every_records_theme() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn input_over_the_byte_cap_is_rejected_not_truncated() -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-input-cap-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("input.json");
+    let path = path.to_string_lossy().to_string();
+    std::fs::write(&path, b"0123456789").map_err(|error| error.to_string())?;
+    let at_cap = super::read_capped(&path, "facts", 10)?;
+    if at_cap.len() != 10 {
+        return Err(format!(
+            "a file exactly at the cap read {} bytes",
+            at_cap.len()
+        ));
+    }
+    let over = match super::read_capped(&path, "facts", 9) {
+        Ok(bytes) => return Err(format!("an oversize file read {} bytes", bytes.len())),
+        Err(error) => error,
+    };
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    if !over.contains("facts") || !over.contains("9-byte release-ledger input limit") {
+        return Err(format!(
+            "the error does not name the input and limit: {over}"
+        ));
+    }
+    Ok(())
+}
