@@ -83,11 +83,22 @@ Progress:
   `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_PILOT_SEAM_BUDGET   Maximum seams written to pilot artifacts (repo-exposure.json,
-                            agent-seam-packets.json). Default: 2000. Set to 0 to disable
-                            the budget and write all seams (may produce very large files).
-                            When the budget is applied, both artifacts include a
-                            limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_SEAM_BUDGET        Maximum seams written to pilot artifacts (repo-exposure.json,
+                                 agent-seam-packets.json). Default: 2000. Set to 0 to disable
+                                 the budget and write all seams (may produce very large files).
+                                 When the budget is applied, both artifacts include a
+                                 limitations[] disclosure naming the env var and a repair route.
+  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum seams analyzed and ranked in one pilot run.
+                                 Default: 10000. Set to 0 to analyze every seam. When the
+                                 limit cuts the ranking, the terminal and summary state
+                                 "ranked N of M seams" and actionable seam totals become
+                                 lower bounds until you raise or remove the limit.
+  RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
+                                 in the current-change discovery path, exactly as `ripr
+                                 check` uses it. A git command that exceeds the deadline
+                                 is terminated and the error names git_invocation_timeout.
+                                 0 disables the deadline. Invalid values fail closed.
+                                 Default: 300 (5 minutes).
 
 Outputs:
   - repo-exposure.json and repo-exposure.md
