@@ -1361,6 +1361,10 @@ fn route_decorator_literal_methods(text: &str) -> Vec<String> {
             _ => return Vec::new(),
         }
     }
+    // A GET route also serves HEAD (Flask and Starlette add it).
+    if verbs.iter().any(|verb| verb == "get") && !verbs.iter().any(|verb| verb == "head") {
+        verbs.push("head".to_string());
+    }
     verbs
 }
 
