@@ -255,10 +255,12 @@ fn an_operator_bound_through_lets_is_credited_when_typed() -> Result<(), String>
         (
             "operand rebound by a for loop",
             "let t = Tile(1);\n        let _ = t;\n        for t in [Money(1)] {\n            assert_eq!(t + Money(2), Money(3));\n        }",
+            false,
         ),
         (
             "operand rebound by a match arm",
             "let t = Tile(1);\n        let _ = t;\n        match Some(Money(1)) {\n            Some(t) if true => assert_eq!(t + Money(2), Money(3)),\n            _ => {}\n        }",
+            false,
         ),
         (
             "operands bound",
