@@ -30,6 +30,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
         mark_commonjs_default_binding(&ret.program, &mut owners);
+        clear_overwritten_commonjs_defaults(&ret.program, &mut owners);
         mark_default_object_members(&ret.program.body, &mut owners);
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
@@ -630,16 +631,33 @@ fn module_exports_assignments(code: &str) -> usize {
     if code.contains("module[") {
         return usize::MAX;
     }
+    let bytes = code.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric();
+    let skip_space = |mut at: usize| {
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        at
+    };
     let mut count = 0;
     let mut from = 0;
-    while let Some(found) = code[from..].find("module.exports") {
+    while let Some(found) = code[from..].find("module") {
         let start = from + found;
-        let end = start + "module.exports".len();
-        from = end;
-        let before = code[..start].chars().next_back();
-        if before
-            .is_some_and(|ch| ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        {
+        from = start + "module".len();
+        if start > 0 && (is_ident(bytes[start - 1]) || bytes[start - 1] == b'.') {
+            continue;
+        }
+        // `module . exports =` is the same member write as `module.exports =`.
+        let at = skip_space(from);
+        if bytes.get(at) != Some(&b'.') {
+            continue;
+        }
+        let at = skip_space(at + 1);
+        if !code[at..].starts_with("exports") {
+            continue;
+        }
+        let end = at + "exports".len();
+        if bytes.get(end).is_some_and(|byte| is_ident(*byte)) {
             continue;
         }
         let rest = code[end..].trim_start();
@@ -648,6 +666,28 @@ fn module_exports_assignments(code: &str) -> usize {
         }
     }
     count
+}
+
+/// A `module.exports = <function>` default export is only trusted while the
+/// file assigns the whole slot exactly once: a later `module.exports = 0` (or
+/// any other whole-slot write, however spaced) replaces the function that
+/// `require()` returns, so the inline owner no longer carries the flag.
+fn clear_overwritten_commonjs_defaults(
+    program: &oxc_ast::ast::Program<'_>,
+    owners: &mut [TypeScriptOwner],
+) {
+    if !owners.iter().any(|owner| owner.commonjs_default_export) {
+        return;
+    }
+    let stable =
+        super::tests_extract::byte_preserving_code_mask(program.source_text).is_some_and(|code| {
+            !super::tests_extract::file_is_opaque(&code) && module_exports_assignments(&code) == 1
+        });
+    if !stable {
+        for owner in owners.iter_mut() {
+            owner.commonjs_default_export = false;
+        }
+    }
 }
 
 /// Mark top-level function (or const arrow) owners held by the module's `export default {

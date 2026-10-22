@@ -176,6 +176,12 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
                 test.default_member_only_locals_in_file = member_only.clone();
             }
         }
+        let rewritten = rewritten_identifier_names(&code);
+        if !rewritten.is_empty() {
+            for test in &mut tests {
+                test.written_locals_in_file = rewritten.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             for test in &mut tests {
@@ -1923,6 +1929,19 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
     names
 }
 
+/// Names `text` writes at least twice: a declaration initializer counts as
+/// one write, so a second one is a reassignment, update or loop target.
+fn rewritten_identifier_names(text: &str) -> Vec<String> {
+    let writes = identifier_writes(text);
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in &writes {
+        if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
 /// `true` when `text` may write `identifier`; see [`identifier_writes`].
 pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
     identifier_writes(text)
@@ -2599,6 +2618,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         default_member_only_locals_in_file: Vec::new(),
+        written_locals_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's

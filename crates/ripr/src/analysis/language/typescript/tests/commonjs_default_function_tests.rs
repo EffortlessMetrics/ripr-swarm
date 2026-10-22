@@ -162,3 +162,35 @@ fn assertion_on_an_unrelated_value_is_not_credited() -> Result<(), String> {
     assert_ne!(class, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn a_later_whole_slot_overwrite_leaves_the_inline_function_unmarked() {
+    for source in [
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule.exports = 0;\n",
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule . exports = 0;\n",
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule\n  .exports = 0;\n",
+    ] {
+        assert!(
+            marks(source).iter().all(|(_, _, marked)| !marked),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_spaced_overwrite_leaves_the_declared_function_unmarked() {
+    let source = "function triple(x) {\n  // triple\n  return x * 3;\n}\n\nmodule.exports = triple;\nmodule . exports = 0;\n";
+    assert!(marks(source).iter().all(|(_, _, marked)| !marked));
+}
+
+#[test]
+fn a_reassigned_require_binding_is_not_credited() -> Result<(), String> {
+    for test_source in [
+        "let f = require('../src/k.js');\nf = (x) => x * 3;\n\ntest('triples', () => {\n  expect(f(2)).toBe(6);\n});\n",
+        "var f = require('../src/k.js');\nf++;\n\ntest('triples', () => {\n  expect(f(2)).toBe(6);\n});\n",
+    ] {
+        let class = class_for("cjs-reassigned-binding", ANONYMOUS, test_source)?;
+        assert_ne!(class, ExposureClass::Exposed, "{test_source}");
+    }
+    Ok(())
+}

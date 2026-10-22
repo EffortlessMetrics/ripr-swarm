@@ -154,6 +154,11 @@ pub(crate) struct TypeScriptTest {
     /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
+    /// Names the containing test file writes more than once (their
+    /// declaration initializer plus a reassignment, update or loop target),
+    /// so a binding such as `let f = require('./owner')` may no longer hold
+    /// the owner function. Populated once per file by `extract_tests`.
+    pub(crate) written_locals_in_file: Vec<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
