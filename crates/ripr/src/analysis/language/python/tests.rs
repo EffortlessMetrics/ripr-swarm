@@ -7793,6 +7793,9 @@ fn a_coroutine_runner_is_transparent_and_the_filter_bound_decides_the_verdict() 
     for call in [
         "asyncio.run(fetch_total([3, 1, 4]))",
         "asyncio.get_event_loop().run_until_complete(fetch_total([3, 1, 4]))",
+        "loop.run_until_complete(fetch_total([3, 1, 4]))",
+        "self.loop.run_until_complete(fetch_total([3, 1, 4]))",
+        "asyncio.new_event_loop().run_until_complete(fetch_total([3, 1, 4]))",
     ] {
         let finding = classify_filter_boundary(call)?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{call}");
@@ -7827,6 +7830,12 @@ fn a_runner_lookalike_wrapper_stays_opaque() -> Result<(), String> {
     for call in [
         "run(fetch_total([3, 1, 4]))",
         "task.run(fetch_total([3, 1, 4]))",
+        // `run_until_complete` on a receiver that is not an event loop is that
+        // object's own method; a fake can return the asserted constant and
+        // drop the coroutine (#9662).
+        "runner.run_until_complete(fetch_total([3, 1, 4]))",
+        "FakeRunner().run_until_complete(fetch_total([3, 1, 4]))",
+        "make_runner(loop).run_until_complete(fetch_total([3, 1, 4]))",
     ] {
         let finding = classify_filter_boundary(call)?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{call}");

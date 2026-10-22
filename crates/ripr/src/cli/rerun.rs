@@ -106,6 +106,10 @@ struct TargetedRerunCache {
     corrupt_ignored: usize,
     stores: usize,
     store_errors: usize,
+    /// Bounded `{path, stage, error}` rows behind `store_errors` (#9503);
+    /// retained rows plus `store_failures_dropped` equal `store_errors`.
+    store_failures: Vec<serde_json::Value>,
+    store_failures_dropped: usize,
     recomputation_reasons: Vec<String>,
     invalidation_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1789,6 +1793,8 @@ fn limited_report(
             corrupt_ignored: 0,
             stores: 0,
             store_errors: 0,
+            store_failures: Vec::new(),
+            store_failures_dropped: 0,
             recomputation_reasons: Vec::new(),
             invalidation_status: "not_available".to_string(),
             input_fingerprint: None,
@@ -1811,6 +1817,19 @@ fn limited_report_with_scope_limitations(
     report
 }
 
+/// Published store-failure projection: at most `MAX_STORE_FAILURE_ROWS` rows,
+/// with any retained row past the cap added to the existing dropped count so
+/// `rows + dropped == store_errors` holds. The raw stats are not mutated.
+fn published_store_failures(
+    cache: &crate::analysis::seam_cache::FileFactCacheStats,
+) -> (Vec<serde_json::Value>, usize) {
+    let mut rows = crate::analysis::file_fact_store_failure_rows(cache);
+    let cap = crate::analysis::seam_cache::MAX_STORE_FAILURE_ROWS;
+    let excess = rows.len().saturating_sub(cap);
+    rows.truncate(cap);
+    (rows, cache.store_failures_dropped + excess)
+}
+
 fn cache_from(
     cache: &crate::analysis::seam_cache::FileFactCacheStats,
     selected_scope_reasons: impl IntoIterator<Item = &'static str>,
@@ -1831,6 +1850,7 @@ fn cache_from(
             .iter()
             .map(|path| format!("file_content_changed:{}", display_path(path))),
     );
+    let (store_failures, store_failures_dropped) = published_store_failures(cache);
     TargetedRerunCache {
         schema_version: crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION,
         reuse_state: if cache.misses == 0 && cache.corrupt_ignored == 0 {
@@ -1846,6 +1866,8 @@ fn cache_from(
         corrupt_ignored: cache.corrupt_ignored,
         stores: cache.stores,
         store_errors: cache.store_errors,
+        store_failures,
+        store_failures_dropped,
         recomputation_reasons,
         invalidation_status: if cache.invalidated_files.is_empty() {
             "not_available".to_string()
@@ -2131,6 +2153,32 @@ mod tests {
         specs.verify = verify_spec.into_iter().collect();
         specs.receipt = receipt_spec.into_iter().collect();
         record
+    }
+
+    #[test]
+    fn published_store_failures_cap_rows_and_fold_excess_into_dropped() {
+        use crate::analysis::seam_cache::{FileFactCacheStats, FileFactStoreFailure};
+        let mut stats = FileFactCacheStats::zero_work();
+        stats.store_errors = 43;
+        stats.store_failures_dropped = 3;
+        stats.store_failures = (0..40)
+            .map(|index| FileFactStoreFailure {
+                path: PathBuf::from(format!("src/f{index}.rs")),
+                stage: "write",
+                error: "boom".to_string(),
+            })
+            .collect();
+        let cache = cache_from(&stats, std::iter::empty());
+        assert_eq!(cache.store_failures.len(), 32);
+        assert_eq!(cache.store_failures_dropped, 11);
+        assert_eq!(cache.store_errors, 43);
+        assert_eq!(
+            cache.store_failures.len() + cache.store_failures_dropped,
+            cache.store_errors
+        );
+        // Raw stats are unchanged.
+        assert_eq!(stats.store_failures.len(), 40);
+        assert_eq!(stats.store_failures_dropped, 3);
     }
 
     #[cfg(feature = "lang-typescript")]
@@ -2993,6 +3041,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: String::new(),
                 input_fingerprint: None,
@@ -3881,6 +3931,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: "not_available".to_string(),
                 input_fingerprint: None,
@@ -3941,6 +3993,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: "not_available".to_string(),
                 input_fingerprint: None,

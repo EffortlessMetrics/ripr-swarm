@@ -541,7 +541,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     strength, so an exact conjunct on something else does not credit a
     weak conjunct on the owner (`fee(10) > 0 and other == 5` does not
     observe `fee`). `or`,
-    `not` and any other boolean form stay `smoke_only` / smoke.
+    `not` and any other boolean form stay `smoke_only` / smoke, with one
+    exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
+    `assert not f(lit, ..)` whose single resolved workspace function owner
+    provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
+    `== False`.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
