@@ -68,8 +68,12 @@ Each row ends in exactly one #4505 state. Only `passed_supported_analysis`
 failing states are `semantic_failure` (wrong limitation class, false limit on a
 supported input, non-JSON output), `process_abort`, `nonterminal_deadline`,
 `missing_or_false_clean_limitation`, `wrong_subject` (the changed file's
-evidence was lost), `instrument_failure` (launch, workspace or cleanup) and
-`not_run`.
+evidence was lost), `instrument_failure` (launch, workspace, cleanup or output
+over budget) and `not_run`.
+
+Each case's stdout and stderr are read through a 16 MiB per-stream budget. A
+binary that writes more fails its row as `instrument_failure` naming the stream;
+the output is refused, not truncated and kept.
 
 ## Controls
 
@@ -80,7 +84,10 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
   the deadline kill.
 - **Execution controls** (Unix) run stubs through the launch path and check that
   the harness decided what ran: the child sees only the harness `PATH` and no
-  ambient `ripr`, runs in the owned case root, cannot read an artifact that was
+  ambient `ripr`, runs in the owned case root, discovers no repository above it
+  (Git discovery stops at the case root's parent and `GIT_DIR`, `GIT_WORK_TREE`
+  and `GIT_INDEX_FILE` are removed; the control plants a decoy repository above
+  the root and the probe must not find it), cannot read an artifact that was
   in the workspace before launch (the harness removes it first), and runs the
   admitted bytes after the candidate path is rewritten. A passing row whose
   workspace cannot be removed becomes an `instrument_failure`; the denial is
@@ -122,10 +129,22 @@ reports in `--version`, not the build that produced it. It does not exercise LSP
 Known gaps against the child issues, each deliberate for this first harness:
 
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
-- #4510 controls not built: a decoy repository in the caller's directory.
+- The decoy-repository control plants its repository above the case root; it
+  does not run the harness from a decoy caller directory, because the child's
+  working directory is always the owned root.
   `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
-- The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
-  and is tested against an inline fixture, not the real DTO.
+- `ripr` words every generated skip the same way, so the harness cannot read an
+  exclusion's cause from the limitation. It attributes the cause by experiment:
+  each excluded path is also run under a nonmatching `generated_file_patterns`
+  and must be analyzed, which rules out a naming convention or generator header
+  as the cause. A test fails if a generated-exclusion row has no such pair. A
+  per-path cause in `ripr`'s output would be a public schema change and is not
+  part of this harness.
+- The #1609 manifest is not filled until the cut. Its DTO and admission
+  (`LiveHeadSnapshot::admit`, schema 1.1) already exist; the reader takes
+  `candidate.sha` only, and a test requires it to read the same commit the
+  admission validator accepts from the same bytes. The harness does not run
+  the admission checks itself.
 - A control passed with `--removal-control` instead of a manifest is bound to
   the candidate by `--version` only; the packet says so in the control detail.
 - The candidate in the packet is the shipped binary, not the manifest's own

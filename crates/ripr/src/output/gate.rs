@@ -220,6 +220,22 @@ pub(crate) fn build_gate_decision_report(
     } else {
         Vec::new()
     };
+    // Issue #9301 F2: disclose which files the candidate source analyzed. A
+    // diff-scoped review-comments document evaluates only the changed files,
+    // so a baseline entry elsewhere is not evidence of resolution.
+    let analysis_scope = if config_errors.is_empty() {
+        match gap_ledger.as_ref() {
+            Some(records) => {
+                Some(crate::output::review_comments::gap_ledger_analysis_scope_json(records))
+            }
+            None => pr_guidance
+                .get("analysis_scope")
+                .filter(|scope| scope.is_object())
+                .cloned(),
+        }
+    } else {
+        None
+    };
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
@@ -325,6 +341,7 @@ pub(crate) fn build_gate_decision_report(
         causal_delta,
         causal_projection,
         exception_policy,
+        analysis_scope,
     })
 }
 

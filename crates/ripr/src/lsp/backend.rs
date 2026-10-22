@@ -4278,11 +4278,10 @@ fn root_relative_components_on(
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if case_insensitive {
-            expected.eq_ignore_ascii_case(actual)
-        } else {
-            expected == actual
+        let key = |name: &str| {
+            crate::output::path::path_identity_key_on(Path::new(name), false, case_insensitive)
         };
+        let matched = key(expected) == key(actual);
         if !matched {
             return None;
         }
@@ -4361,7 +4360,9 @@ fn diagnostics_input_watchers(
             })
             .collect());
     }
-    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Display/glob text, not an identity key: lossy for non-UTF-8, `\`
+    // rewritten only on Windows (a Unix `\` is a filename byte).
+    let absolute = crate::output::path::path_display_lossy(root);
     // Glob syntax has no portable escape, so a root containing
     // metacharacters would match other paths or none at all.
     if absolute.contains(['*', '?', '[', ']', '{', '}']) {
@@ -4677,7 +4678,7 @@ mod workspace_input_tests {
         // Without it: absolute string globs, because VS Code matches a
         // string glob against the absolute path and a bare relative string
         // never fires.
-        let absolute = root.to_string_lossy().replace('\\', "/");
+        let absolute = crate::output::path::path_display_lossy(&root);
         let expected_absolute = expected
             .iter()
             .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
@@ -11157,8 +11158,15 @@ mod gap_record_context_tests {
 
     #[test]
     fn display_path_normalizes_backslashes_to_forward_slashes() {
+        // Display-only: `\` is rewritten on Windows hosts; a Unix `\` is a
+        // filename byte and stays visible.
         let path = std::path::PathBuf::from(r"a\b\c.rs");
-        assert_eq!(display_path(&path), "a/b/c.rs");
+        let expected = if cfg!(windows) {
+            "a/b/c.rs"
+        } else {
+            r"a\b\c.rs"
+        };
+        assert_eq!(display_path(&path), expected);
     }
 
     #[test]

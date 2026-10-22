@@ -318,7 +318,7 @@ fn unjudgeable_commits_block_instead_of_defaulting() -> Result<(), String> {
 
 #[test]
 fn deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row() -> Result<(), String> {
-    let mut mention = commit(5, Some(1), "present_effective", &["crates/ripr/src/a.rs"]);
+    let mut mention = commit(5, Some(1), "present_effective", &["docs/a.md"]);
     mention.issue_refs = vec![4427];
     let ledger = derive(&DeriveInput {
         facts: &facts(vec![mention]),
@@ -332,6 +332,24 @@ fn deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row() -> Result<(), St
         record.release_disposition == "included_with_release_nonclaim"
             && record.claim_ref.as_deref() == Some("deferred"),
         "the claim ref is recorded",
+    )
+}
+
+#[test]
+fn product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim() -> Result<(), String> {
+    let mut fix = commit(5, Some(1), "present_effective", &["crates/ripr/src/a.rs"]);
+    fix.issue_refs = vec![4427];
+    let ledger = derive(&DeriveInput {
+        facts: &facts(vec![fix]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let record = ledger.records.first().ok_or("no record")?;
+    require(
+        record.release_disposition == "included_accepted_product" && record.claim_ref.is_none(),
+        "landed product behavior is not reported as a non-claim",
     )
 }
 

@@ -14407,6 +14407,12 @@ fn file_uri_to_path_normalizes_backslash_separators() -> Result<(), String> {
     let drive = "C";
     let uri = test_uri(&format!("file:///{drive}:%5Cworkspace%5Csrc%5Clib.rs"))?;
 
+    if !cfg!(windows) {
+        // `%5C` is a literal filename byte on Unix, never a separator; the
+        // drive-shaped result is drive-relative and fails closed.
+        assert_eq!(path_from_file_uri(&uri), None);
+        return Ok(());
+    }
     let Some(path) = path_from_file_uri(&uri) else {
         return Err("expected path from file URI".to_string());
     };

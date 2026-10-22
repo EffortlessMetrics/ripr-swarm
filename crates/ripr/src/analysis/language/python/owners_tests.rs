@@ -159,6 +159,15 @@ fn owner_from_function(
     let route_paths = collect_static_route_paths(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
+    let decorator_lines = decorators
+        .first()
+        .zip(decorators.last())
+        .map(|(first, last)| {
+            (
+                line_for_range_start(context.source, first.range()),
+                line_for_range_end(context.source, last.range()),
+            )
+        });
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -194,6 +203,7 @@ fn owner_from_function(
         route_paths,
         dynamic_route_decorators,
         unplain_decorators,
+        decorator_lines,
         parameters,
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -260,6 +270,7 @@ fn owner_from_class(
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -292,6 +303,7 @@ pub(super) fn module_owner(
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -432,7 +444,12 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -509,7 +526,12 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
