@@ -38,6 +38,7 @@ Weakness
 
 Static limitation
   rust_field_match_selector_unresolved — A plain owner-parameter field selects this match, but ripr cannot align its value at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer limitation without changing classification or claiming coverage.
+  Next: Call the owner with a literal value for the selecting field and `assert_eq!` on its return value.
 
 Limitation detail
   last established edge: owner parameter field `lease.elapsed` is the changed tail match selector

@@ -18,6 +18,7 @@ mod language;
 pub(crate) mod language_capability;
 #[cfg(test)]
 mod language_capability_drift;
+mod limit_guidance;
 mod next_action;
 mod probe;
 mod repair_card;

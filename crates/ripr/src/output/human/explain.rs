@@ -109,6 +109,7 @@ pub(crate) fn render_verdict_explanation(
                 reason.as_str(),
                 stop_reason_meaning(reason)
             ));
+            out.push_str(&format!("    Next: {}\n", reason.next_step()));
         }
     }
     out

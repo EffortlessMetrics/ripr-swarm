@@ -78,6 +78,7 @@ Weakness
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result; run `ripr explain` on the finding for what ripr did read.
 
 Next step
   Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown

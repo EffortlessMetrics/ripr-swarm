@@ -47,9 +47,11 @@ Weakness
 
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
+    Next: Call the changed owner directly from a test so the path needs no name-matched hops.
 
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
+  Next: Call the changed owner directly from a test, or assert on its result through the public API in the same test body so the path is visible.
 
 Where to look
   For example, the test `atom_written` (tests/site.rs:6) calls `build_site`, an entry point that may lead here (and 2 other tests). Inspect it to judge whether this change is observed.

@@ -45,9 +45,11 @@ Weakness
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result; run `ripr explain` on the finding for what ripr did read.
 
 Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
+  Next: Test the undecorated function directly, and assert on the decorated result with an exact value so a wrong result fails.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
   ripr context --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d

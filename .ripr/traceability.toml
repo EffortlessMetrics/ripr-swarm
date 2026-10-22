@@ -17744,3 +17744,24 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+[[behavior]]
+id = "RIPR-SPEC-0310"
+name = "Every named limitation and stop reason carries a next step"
+spec = "docs/specs/RIPR-SPEC-0310-classification-keyed-guidance.md"
+tests = [
+  "crates/ripr/src/domain/limit_guidance.rs::tests::every_static_limit_names_an_actionable_next_step",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::every_stop_reason_names_an_actionable_next_step",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::next_steps_are_distinct_per_kind",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::next_steps_make_no_runtime_or_coverage_claim",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::static_limit_kinds_all_is_a_gap_free_ordinal_sequence",
+  "crates/ripr/src/domain/limit_guidance.rs::tests::stop_reasons_all_is_a_gap_free_ordinal_sequence",
+]
+code = [
+  "crates/ripr/src/domain/limit_guidance.rs",
+  "crates/ripr/src/output/human/sections.rs",
+  "crates/ripr/src/output/human/explain.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0310-classification-keyed-guidance.md",
+]
+metrics = ["unit_test_pass_rate"]

@@ -38,9 +38,11 @@ Weakness
 
 Stop reasons:
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+    Next: Make the related test's assertion a plain `assert_eq!` on the changed value in a test that always runs, so ripr can tie it to this change.
 
 Static limitation
   rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Use the standard `assert_eq!` in a test that always compiles: drop the feature `cfg` on the test and any glob import that rebinds the macro.
 
 Limitation detail
   last established edge: related tests `checks_weight` (tests/weight_tests.rs:4)
