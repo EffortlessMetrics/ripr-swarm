@@ -91,6 +91,7 @@ pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
+pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 pub use seam_cache::cache_layer_names;

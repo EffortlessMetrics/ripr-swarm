@@ -130,7 +130,7 @@ pub(crate) fn render_pilot_summary_json(
     // total above covers only the kept seams and is a lower bound.
     out.push_str(&format!(
         "  \"actionable_seams_total_is_lower_bound\": {},\n",
-        context.seam_limit.is_some()
+        context.seam_limit.is_some() || !declined_rust_files(context).is_empty()
     ));
     match context.seam_limit {
         Some(limit) => out.push_str(&format!(
@@ -141,6 +141,7 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"seam_limit\": null,\n"),
     }
+    push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
         withheld_static_limitations(classified)
@@ -385,6 +386,7 @@ pub(crate) fn render_pilot_summary_md(
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_md(&mut out, first_use);
     }
+    push_declined_rust_files_md(&mut out, declined_rust_files(context));
     if let Some(excluded) = rust_excluded(context) {
         push_rust_exclusion_md(&mut out, excluded);
     }
@@ -707,6 +709,7 @@ pub(crate) fn render_pilot_terminal(
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_terminal(&mut out, first_use);
     }
+    push_declined_rust_files_terminal(&mut out, declined_rust_files(context));
     if let Some(excluded) = rust_excluded(context) {
         push_rust_exclusion_terminal(&mut out, excluded);
     }
@@ -1299,6 +1302,77 @@ fn rust_excluded(context: PilotSummaryContext<'_>) -> Option<usize> {
     context
         .language_routes
         .and_then(PilotLanguageRoutes::rust_exclusion)
+}
+
+/// Rust files a parse limit declined (#9308); empty when none were.
+fn declined_rust_files(context: PilotSummaryContext<'_>) -> &[crate::analysis::DeclinedRustFile] {
+    context
+        .language_routes
+        .map(|routes| routes.declined_rust_files.as_slice())
+        .unwrap_or(&[])
+}
+
+const DECLINED_RUST_GUIDANCE: &str = "These files were read lexically, which emits no probe shapes, so their tests and seams are under-credited and this run is not a complete result. Split them below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`.";
+
+fn declined_path(file: &crate::analysis::DeclinedRustFile) -> String {
+    crate::terminal_text::terminal_safe(file.path.to_string_lossy().replace('\\', "/"))
+}
+
+fn push_declined_rust_files_json(out: &mut String, declined: &[crate::analysis::DeclinedRustFile]) {
+    // Omitted when none were declined, so pilot JSON for ordinary
+    // repositories is unchanged.
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("  \"declined_rust_files\": {\n");
+    out.push_str(&format!("    \"file_count\": {},\n", declined.len()));
+    out.push_str("    \"files\": [");
+    for (idx, file) in declined.iter().take(10).enumerate() {
+        out.push_str(if idx == 0 { "\n" } else { ",\n" });
+        out.push_str(&format!(
+            "      {{ \"path\": \"{}\", \"reason\": \"{}\" }}",
+            json_escape(&declined_path(file)),
+            json_escape(&file.reason)
+        ));
+    }
+    out.push_str("\n    ],\n");
+    out.push_str(&format!(
+        "    \"files_omitted\": {},\n",
+        declined.len().saturating_sub(10)
+    ));
+    json_string_field(out, 4, "guidance", DECLINED_RUST_GUIDANCE, false);
+    out.push_str("  },\n");
+}
+
+fn push_declined_rust_files_md(out: &mut String, declined: &[crate::analysis::DeclinedRustFile]) {
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("## Rust Files Declined By A Parse Limit\n\n");
+    for file in declined.iter().take(10) {
+        out.push_str(&format!("- `{}`: {}\n", declined_path(file), file.reason));
+    }
+    if declined.len() > 10 {
+        out.push_str(&format!("- and {} more\n", declined.len() - 10));
+    }
+    out.push_str(&format!("\n{DECLINED_RUST_GUIDANCE}\n\n"));
+}
+
+fn push_declined_rust_files_terminal(
+    out: &mut String,
+    declined: &[crate::analysis::DeclinedRustFile],
+) {
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("Rust files declined by a parse limit:\n");
+    for file in declined.iter().take(10) {
+        out.push_str(&format!("  {}: {}\n", declined_path(file), file.reason));
+    }
+    if declined.len() > 10 {
+        out.push_str(&format!("  and {} more\n", declined.len() - 10));
+    }
+    out.push_str(&format!("  {DECLINED_RUST_GUIDANCE}\n\n"));
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
