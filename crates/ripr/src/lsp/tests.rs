@@ -27,7 +27,7 @@ use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
 use super::hover::{
-    classified_seam_hover_response, diagnostic_covers_position, hover_response,
+    classified_seam_hover_response, diagnostic_covers_position, hover_response_without_evidence,
     hover_with_snapshot_status,
 };
 use super::input_identity::LspAnalysisInputIdentity;
@@ -2396,7 +2396,8 @@ fn published_seam_diagnostic(
 
 #[test]
 fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
-    let hover = hover_response();
+    // The analyzed, Rust-only workspace renders the exact legacy generic text.
+    let hover = hover_response_without_evidence(true, &["Rust".to_string()]);
 
     match hover.contents {
         HoverContents::Markup(markup) => {
@@ -2405,6 +2406,113 @@ fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
         }
         _ => Err("expected markup hover".to_string()),
     }
+}
+
+#[test]
+fn hover_without_evidence_before_analysis_points_at_refresh() -> Result<(), String> {
+    // #9604 finding 32: before the first analysis the generic "run the CLI"
+    // pointer names the wrong recovery — the `ripr.refresh` editor command
+    // populates this server — and the languages come from configuration.
+    let hover = hover_response_without_evidence(false, &["Rust".to_string(), "Python".to_string()]);
+
+    match hover.contents {
+        HoverContents::Markup(markup) => {
+            assert!(
+                markup.value.contains("has not analyzed this workspace yet"),
+                "must name the never-analyzed state: {}",
+                markup.value
+            );
+            assert!(
+                markup.value.contains("`ripr.refresh`"),
+                "must name the editor recovery route: {}",
+                markup.value
+            );
+            assert!(
+                markup.value.contains("changed Rust and Python behavior"),
+                "must list the configured languages: {}",
+                markup.value
+            );
+            assert!(
+                !markup.value.contains("for current findings."),
+                "the current-findings pointer is stale before any analysis: {}",
+                markup.value
+            );
+            Ok(())
+        }
+        _ => Err("expected markup hover".to_string()),
+    }
+}
+
+#[test]
+fn hover_without_evidence_after_analysis_keeps_cli_pointer() -> Result<(), String> {
+    // #9604 finding 32: after analysis the CLI pointer stays, with the
+    // configured language list instead of a hardcoded "Rust".
+    let hover =
+        hover_response_without_evidence(true, &["Rust".to_string(), "TypeScript".to_string()]);
+
+    match hover.contents {
+        HoverContents::Markup(markup) => {
+            assert!(
+                markup
+                    .value
+                    .contains("Run `ripr check --format json` for current findings."),
+                "must keep the CLI pointer once analysis ran: {}",
+                markup.value
+            );
+            assert!(
+                markup
+                    .value
+                    .contains("changed Rust and TypeScript behavior"),
+                "must list the configured languages: {}",
+                markup.value
+            );
+            assert!(
+                !markup.value.contains("has not analyzed this workspace yet"),
+                "must not claim the never-analyzed state after analysis: {}",
+                markup.value
+            );
+            Ok(())
+        }
+        _ => Err("expected markup hover".to_string()),
+    }
+}
+
+#[test]
+fn hover_language_list_reads_naturally() {
+    // Prose join: one label, two with "and", three with an Oxford comma.
+    let labels = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+    };
+    let one = hover_response_without_evidence(false, &labels(&["Python"]));
+    let two = hover_response_without_evidence(false, &labels(&["Rust", "Python"]));
+    let three = hover_response_without_evidence(false, &labels(&["Rust", "Python", "TypeScript"]));
+    let text = |hover: &tower_lsp_server::ls_types::Hover| -> String {
+        match &hover.contents {
+            HoverContents::Markup(markup) => markup.value.clone(),
+            // Never constructed: every hover in this test is markup; the
+            // empty fallback fails the assert with the same message instead
+            // of panicking.
+            _ => String::new(),
+        }
+    };
+    assert!(
+        text(&one).contains("changed Python behavior"),
+        "{}",
+        text(&one)
+    );
+    assert!(
+        text(&two).contains("changed Rust and Python behavior"),
+        "{}",
+        text(&two)
+    );
+    assert!(
+        text(&three).contains("changed Rust, Python, and TypeScript behavior"),
+        "{}",
+        text(&three)
+    );
 }
 
 #[test]
@@ -3038,7 +3146,7 @@ fn hover_for_position_returns_none_when_no_diagnostic_matches() -> Result<(), St
         "expected None when no diagnostic matches position"
     );
 
-    let generic = hover_response();
+    let generic = hover_response_without_evidence(true, &["Rust".to_string()]);
     match generic.contents {
         HoverContents::Markup(markup) => {
             assert_eq!(markup.value, HOVER_TEXT);
@@ -14407,6 +14515,12 @@ fn file_uri_to_path_normalizes_backslash_separators() -> Result<(), String> {
     let drive = "C";
     let uri = test_uri(&format!("file:///{drive}:%5Cworkspace%5Csrc%5Clib.rs"))?;
 
+    if !cfg!(windows) {
+        // `%5C` is a literal filename byte on Unix, never a separator; the
+        // drive-shaped result is drive-relative and fails closed.
+        assert_eq!(path_from_file_uri(&uri), None);
+        return Ok(());
+    }
     let Some(path) = path_from_file_uri(&uri) else {
         return Err("expected path from file URI".to_string());
     };

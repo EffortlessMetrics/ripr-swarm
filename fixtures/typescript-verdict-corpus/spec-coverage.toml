@@ -24,7 +24,18 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 121
+floor = 131
+
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 13
+false_credit_ceiling = 2
 
 # LSP Repair Packet Command
 [[spec]]
@@ -604,6 +615,10 @@ reason = "acceptance examples are bullet prose, not numbered; no corpus case cit
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[unmeasured]]
+id = "RIPR-SPEC-0291"
+reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
+
 [[spec]]
 id = "RIPR-SPEC-0290"
 scope = "out"
@@ -651,144 +666,3 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
-
-[[known_false]]
-case = "shape-nullish-middle-operand"
-issue = 9437
-reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
-
-[[known_false]]
-case = "shape-template-plural-boundary"
-issue = 9437
-reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
-
-[[known_false]]
-case = "shape-async-catch-fallback-unexercised"
-issue = 9437
-reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
-
-[[known_false]]
-case = "shape-static-factory-rounding"
-issue = 9437
-reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
-
-[[known_false]]
-case = "pw-expect-soft-second-term"
-issue = 9434
-reason = "Playwright expect.soft read as no oracle (#9434)."
-
-[[known_false]]
-case = "pw-step-heavy-parcel-threshold"
-issue = 9434
-reason = "Playwright test.step body read as no oracle (#9434)."
-
-[[known_false]]
-case = "pw-tothrow-anchored-regex"
-issue = 9434
-reason = "Anchored regex in toThrow read as no oracle (#9434)."
-
-[[known_false]]
-case = "pw-loop-registered-rounding-mode"
-issue = 9434
-reason = "Playwright loop-registered test read as a gap (#9434)."
-
-[[known_false]]
-case = "pw-fixme-clamp-upper-bound"
-issue = 9436
-reason = "test.fixme credited as a live test (#9436)."
-
-
-[[known_false]]
-case = "mocha-before-hook-trimmed-name"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "mocha-done-callback-value"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "mocha-nested-describe-boundary"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "mocha-throw-class-changed"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "mocha-throw-message-reworded"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "node-match-anchored-slug"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "node-mock-method-call-removed"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "node-retry-last-error"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "node-t-mock-attempt-bound"
-issue = 9496
-reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
-
-[[known_false]]
-case = "mocha-clamp-unexercised-lower-arm"
-issue = 9497
-reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
-
-[[known_false]]
-case = "mocha-it-skip-sole-pin"
-issue = 9497
-reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
-
-[[known_false]]
-case = "node-first-attempt-nonnegative-bound"
-issue = 9497
-reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
-
-[[known_false]]
-case = "node-t-skip-inside-test"
-issue = 9497
-reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
-
-[[known_false]]
-case = "ts-grid-boundary-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-equality-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-logical-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-boundary-table"
-issue = 9533
-reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
-
-[[known_false]]
-case = "ts-grid-delete-helper"
-issue = 9534
-reason = "False actionable: field update read through a same-file helper is not credited (#9534)."
-
-[[known_false]]
-case = "ts-grid-delete-table"
-issue = 9534
-reason = "False actionable: field update read through a literal table is not credited (#9534)."

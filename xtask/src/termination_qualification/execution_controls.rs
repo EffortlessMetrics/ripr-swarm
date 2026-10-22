@@ -99,6 +99,45 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
     }
     out.push(cwd_control);
 
+    let mut decoy_control = control(
+        "execution-decoy-repository",
+        "a repository above the owned case root is not discovered by the child",
+    );
+    let decoy = work_root.join("decoy-above");
+    let planted = ["objects", "refs"]
+        .iter()
+        .try_for_each(|dir| fs::create_dir_all(decoy.join(".git").join(dir)))
+        .and_then(|()| fs::write(decoy.join(".git").join("HEAD"), "ref: refs/heads/main\n"))
+        .map_err(|error| error.to_string());
+    match planted.and_then(|()| {
+        write(
+            "decoy-probe",
+            "#!/bin/sh\ncommand -v git >/dev/null 2>&1 || { echo no-git; exit 0; }\ngit rev-parse --show-toplevel 2>/dev/null || echo none\n",
+        )
+    }) {
+        Ok(binary) => {
+            let (matched, row) = stdout_is(&binary, "decoy-above/probe", "none\n");
+            decoy_control.observed = Some(
+                if matched {
+                    "decoy_not_found"
+                } else {
+                    "decoy_or_git_missing"
+                }
+                .to_string(),
+            );
+            decoy_control.discriminated = matched;
+            if !matched {
+                decoy_control.detail = format!(
+                    "probe row {} (stdout digest {}); a probe without `git` on the child PATH cannot establish this control",
+                    row.result.as_str(),
+                    row.stdout_sha256
+                );
+            }
+        }
+        Err(error) => decoy_control.detail = error,
+    }
+    out.push(decoy_control);
+
     let mut stale_control = control(
         "execution-stale-artifact",
         "an artifact left in the workspace before launch is not read as the run's output",

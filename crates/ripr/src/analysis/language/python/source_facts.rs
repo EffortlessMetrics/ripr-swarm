@@ -29,6 +29,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Single-assert helper defs of the module (#9419).
+    pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
     /// tests in its scope (#6657). A conftest that failed to parse is not
     /// flagged here; the workspace pass treats any limitation as unreadable.
@@ -622,6 +624,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
         conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
@@ -701,6 +704,8 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.helper_module =
+        super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
@@ -716,6 +721,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
                     _ => false,
                 })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
     let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
     for test in &mut snapshot.tests {
         test.constant_rebinding.implicit_reach |= implicit_reach;

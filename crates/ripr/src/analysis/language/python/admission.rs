@@ -1151,7 +1151,7 @@ impl TestScope {
     }
 }
 
-fn bound_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
+pub(super) fn bound_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
     for stmt in statements {
         match stmt {
             Stmt::Assign(assign) => {

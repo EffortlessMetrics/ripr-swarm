@@ -127,6 +127,9 @@ pub(crate) struct TypeScriptTest {
     /// file. Used only to map relative named or namespace imports back to a
     /// source owner before considering alias calls related.
     pub(crate) imports_in_file: Vec<TypeScriptImport>,
+    /// Imported roots whose whole-file uses can rebind, mutate or escape
+    /// their member value. Rule 15 cannot infer enum identity through them.
+    pub(crate) unstable_member_roots_in_file: Vec<String>,
     /// Names the enclosing scopes bind for this test (declarations,
     /// `beforeEach`/`beforeAll` assignments, callback parameters), each
     /// resolved to its innermost scope. Used only to find receivers built
@@ -674,11 +677,13 @@ impl TypeScriptErrorPayload {
         match self.kind {
             TypeScriptErrorPayloadKind::ThrowsLiteral
             | TypeScriptErrorPayloadKind::ThrowsObject
+            | TypeScriptErrorPayloadKind::ThrowsRegex
             | TypeScriptErrorPayloadKind::ThrowsClass => {
                 format!("expect(...).toThrow({})", self.expected)
             }
             TypeScriptErrorPayloadKind::RejectsThrowLiteral
             | TypeScriptErrorPayloadKind::RejectsThrowObject
+            | TypeScriptErrorPayloadKind::RejectsThrowRegex
             | TypeScriptErrorPayloadKind::RejectsThrowClass => {
                 format!("await expect(...).rejects.toThrow({})", self.expected)
             }
@@ -708,6 +713,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     /// literal-valued keys (fail-closed: shorthand / spread / dynamic
     /// computed properties are rejected).
     ThrowsObject,
+    /// `.toThrow(/^exact message$/)` — anchored regex (RIPR-SPEC-0243 rule 16).
+    ThrowsRegex,
     /// `.toThrow(SomeError)` or `.toThrow(SomeError.SubClass)` — class /
     /// constructor reference as a safe member path.
     ThrowsClass,
@@ -715,6 +722,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowLiteral,
     /// `await expect(...).rejects.toThrow({ code: "X" })`.
     RejectsThrowObject,
+    /// `await expect(...).rejects.toThrow(/^exact message$/)`.
+    RejectsThrowRegex,
     /// `await expect(...).rejects.toThrow(SomeError)`.
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.

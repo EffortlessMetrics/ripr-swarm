@@ -26,6 +26,9 @@ use std::path::Path;
 mod equality_dispatch;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+pub(in crate::analysis) use fmt_dispatch::{
+    assertion_pins_display_string, changes_only_string_literals,
+};
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
@@ -929,13 +932,14 @@ fn find_related_tests_with_candidates<'a>(
         };
         let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| {
-                call.name == owner_name
-                    && !(receiver_calls_cannot_reach_owner
-                        && super::helper_transfer::mentions_only_as_receiver_call(
-                            &call.text, owner_name,
-                        ))
-            }) || body_contains_owner_call(&test.body, owner_name));
+            && if receiver_calls_cannot_reach_owner {
+                // The body fallback must preserve the same free-call identity
+                // as captured calls; a receiver spelling cannot restore it.
+                test_calls_free_function(test, owner_name)
+            } else {
+                test.calls.iter().any(|call| call.name == owner_name)
+                    || body_contains_owner_call(&test.body, owner_name)
+            };
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
@@ -2744,11 +2748,56 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// The type a `let` binding certainly has: its annotation, or a constructor
+/// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
+/// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
+/// read: its name says nothing about the type it returns.
+pub(in crate::analysis) fn let_binding_certain_type_head<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
+    let stmt = last_let_statement(body, binding)?;
+    let eq = stmt.find('=')?;
+    if let Some(colon) = stmt[..eq].find(':') {
+        return type_head(&stmt[colon + 1..eq]).and_then(|(segments, _)| segments.last().copied());
+    }
+    let init = &stmt[eq + 1..];
+    if !initializer_is_one_head_expr(init) {
+        return None;
+    }
+    match type_head(init)? {
+        (segments, Some(b'(' | b'{')) if segments.len() == 1 => segments.first().copied(),
+        _ => None,
+    }
+}
+
+/// Whether the operand expression ending just before byte `end` of `code`
+/// (comments and strings masked) has type `ty`: a unit value, a bound
+/// identifier, or a constructor call or struct literal whose head is `ty`.
+/// Method chains, fields and anything unbalanced fail closed.
+pub(in crate::analysis) fn expr_ending_at_has_type(code: &str, end: usize, ty: &str) -> bool {
+    let Some(before) = code.get(..end) else {
+        return false;
+    };
+    let lets = before.rfind(';').map_or("", |at| &before[..=at]);
+    let end = before.trim_end().len();
+    match code.as_bytes().get(end.wrapping_sub(1)) {
+        Some(b')' | b'}') => bracketed_expr_has_type(code, end, ty, lets, false),
+        Some(_) => ident_ending_at(code, end)
+            .is_some_and(|ident| ident == ty || let_binding_mentions_type(lets, ident, ty)),
+        None => false,
+    }
+}
+
 /// Whether the binding's own type is `type_name`: its annotation
 /// (`let x: Site = ..`) or its initializer head (`Site::new(..)`,
 /// `Site { .. }`, `&mut Site::default()`). A type named only inside nested
 /// arguments (`Cache::new(Site::default())`) is not the binding's type.
-fn let_binding_mentions_type(body: &str, binding: &str, type_name: &str) -> bool {
+pub(in crate::analysis) fn let_binding_mentions_type(
+    body: &str,
+    binding: &str,
+    type_name: &str,
+) -> bool {
     last_let_statement(body, binding)
         .and_then(let_statement_type_head)
         .is_some_and(|head| head == type_name)

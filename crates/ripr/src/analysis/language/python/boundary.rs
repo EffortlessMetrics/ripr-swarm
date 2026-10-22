@@ -38,6 +38,7 @@
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
+use super::guard_activation::name_rebound_in_owner;
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
@@ -149,6 +150,7 @@ pub(super) fn python_boundary_evidence(
     line_text: &str,
     old_line_text: Option<&str>,
     owner: &PythonOwner,
+    owner_source: Option<&str>,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<PythonBoundaryEvidence> {
@@ -170,6 +172,51 @@ pub(super) fn python_boundary_evidence(
 
     let constants = unrebound_constants(owner, related_candidates);
     let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    if let (Some((left, right)), Some(old)) = (&operands, old_line_text)
+        && reversing_flip(&condition, old, left, right)
+        && rows.iter().any(|row| {
+            matches!(
+                (
+                    resolve_operand(left, row, &constants),
+                    resolve_operand(right, row, &constants),
+                ),
+                (Some(l), Some(r)) if !literals_equal(&l, &r)
+            )
+        })
+    {
+        // A reversing flip (`a > b` -> `a < b`) changes the result for every
+        // unequal pair, not only at the boundary. A strong call that places
+        // the operands at two statically unequal literals therefore
+        // discriminates it, and the equality boundary is not what differs.
+        // Calls that only place the operands equal (or unresolved) fall
+        // through to the adjacent-boundary rules below and stay unproven.
+        return None;
+    }
+    if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
+        for operand in [left, right] {
+            if owner
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == *operand)
+                && name_rebound_in_owner(source, owner, operand)
+            {
+                // The owner rebinds the operand (a loop counter such as
+                // `start -= 1`), so the call argument does not stay the
+                // value the predicate reads and the boundary may be reached
+                // inside the owner. Static evidence cannot place the input
+                // either way: unknown, never a missing-boundary gap.
+                return Some(PythonBoundaryEvidence {
+                    activation: BoundaryActivation::Unresolved,
+                    discriminator: None,
+                    observed_values: Vec::new(),
+                    reason: format!(
+                        "`{operand}` is rebound inside `{}`, so a call argument does not fix its value at the changed boundary of `{condition}`",
+                        owner.name
+                    ),
+                });
+            }
+        }
+    }
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
         .flat_map(|row| {
@@ -579,6 +626,35 @@ fn provably_unequal(left: &str, right: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether the old predicate compares the same operands in the same order
+/// with the mirrored relational operator (`<` <-> `>`, `<=` <-> `>=`).
+fn reversing_flip(new_condition: &str, old_line_text: &str, left: &str, right: &str) -> bool {
+    let old_condition = predicate_condition(old_line_text);
+    let new_ops = relational_operators(new_condition);
+    let old_ops = relational_operators(&old_condition);
+    let ([(new_start, new_len)], [(old_start, old_len)]) = (new_ops.as_slice(), old_ops.as_slice())
+    else {
+        return false;
+    };
+    let Some((old_left, old_right)) =
+        simple_comparison_operands(&old_condition, *old_start, *old_len)
+    else {
+        return false;
+    };
+    let (Some(new_op), Some(old_op)) = (
+        new_condition.get(*new_start..new_start + new_len),
+        old_condition.get(*old_start..old_start + old_len),
+    ) else {
+        return false;
+    };
+    old_left == left
+        && old_right == right
+        && matches!(
+            (old_op, new_op),
+            ("<", ">") | (">", "<") | ("<=", ">=") | (">=", "<=")
+        )
 }
 
 fn operand_provenance(operand: &str, value: &str, constants: &[PythonModuleConstant]) -> String {

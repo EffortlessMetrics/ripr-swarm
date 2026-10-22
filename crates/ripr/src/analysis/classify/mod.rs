@@ -19,10 +19,12 @@ pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, Implicit
 mod implicit_call;
 mod infection;
 mod macro_item_names;
+mod mask_pin;
 mod match_transfer;
 mod operand_pin;
 mod owner_pin;
 mod owner_shape;
+mod pinned_shape;
 mod propagation_witness;
 mod reach;
 mod related_tests;
@@ -78,6 +80,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
+pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
@@ -89,6 +92,7 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
+pub(in crate::analysis) use pinned_shape::withhold_pinned_shape_gap;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection_for_probe, current_path_witness_with,
@@ -106,10 +110,11 @@ pub(in crate::analysis) use reach::{
     reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
-    call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    is_partial_eq_method, manifests_with_unindexed_files, method_call_resolves_to_impl,
-    module_stem, owner_call_text, owner_dispatch_trait, package_prefix, test_calls_free_function,
+    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
+    body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
+    find_related_tests_with_candidate_index, impl_self_type_name, is_partial_eq_method,
+    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
+    owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
