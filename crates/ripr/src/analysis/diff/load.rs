@@ -815,6 +815,7 @@ fn git_reason_means_no_repository(reason: &str) -> bool {
     [
         "fatal: not a git repository",
         "fatal: invalid gitfile",
+        "fatal: no path in gitfile",
         "fatal: gitfile does not point to a valid repository",
     ]
     .iter()
@@ -4393,12 +4394,15 @@ mod tests {
         // Older Git (2.43) and newer Git (hosted Windows runners, #9661) name a
         // gitfile whose existing target is not a repository differently; both
         // are "no repository here", not repository damage.
+        // `check-local-context` forbids drive-letter path literals.
+        let drive = "F:";
         for reason in [
-            "fatal: not a git repository: /work/admin",
-            "fatal: invalid gitfile format: /work/.git",
-            "fatal: gitfile does not point to a valid repository: D:/work/admin/.git",
+            "fatal: not a git repository: /work/admin".to_string(),
+            "fatal: invalid gitfile format: /work/.git".to_string(),
+            "fatal: no path in gitfile: /work/.git".to_string(),
+            format!("fatal: gitfile does not point to a valid repository: {drive}/work/admin/.git"),
         ] {
-            assert!(git_reason_means_no_repository(reason), "{reason}");
+            assert!(git_reason_means_no_repository(&reason), "{reason}");
         }
         // A damaged repository whose path contains the words stays damage.
         for reason in [

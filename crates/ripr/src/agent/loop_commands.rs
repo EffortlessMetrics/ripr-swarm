@@ -472,8 +472,29 @@ pub(crate) fn outcome_command(
     }
 }
 
+/// The `output::path::fold_verbatim_on_host` rule, restated because xtask
+/// includes this file by path without the rest of the crate (#9660): on
+/// Windows a slash-unified `//?/<drive>:` or `//?/UNC/` root prints in its
+/// plain spelling.
+fn fold_verbatim(unified: String) -> String {
+    if !cfg!(windows) {
+        return unified;
+    }
+    let Some(rest) = unified.strip_prefix("//?/") else {
+        return unified;
+    };
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return rest.to_string();
+    }
+    if bytes.len() > 4 && bytes[..4].eq_ignore_ascii_case(b"UNC/") {
+        return format!("//{}", &rest[4..]);
+    }
+    unified
+}
+
 pub(crate) fn display_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let text = fold_verbatim(path.to_string_lossy().replace('\\', "/"));
     if text.is_empty() {
         ".".to_string()
     } else {

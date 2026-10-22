@@ -697,6 +697,20 @@ fn unique_temp_workspace(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("ripr-{label}-{stamp}-{pid}-{counter}"))
 }
 
+/// How ripr prints an absolute path: on Windows a canonical `\\?\<drive>:`
+/// root folds to its drive spelling with `/` separators, the form a shell or
+/// editor accepts (#9660). Elsewhere the path text is printed as is.
+fn printed_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.strip_prefix(r"\\?\")
+            .unwrap_or(&text)
+            .replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root()
         .canonicalize()
@@ -1112,10 +1126,7 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     mut value: serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let fixture_root = workspace_root().join("fixtures/boundary_gap/input");
-    let canonical_root = fixture_root
-        .canonicalize()?
-        .to_string_lossy()
-        .replace('\\', "/");
+    let canonical_root = printed_path(&fixture_root.canonicalize()?);
     let produced_root = json_pointer_str(&value, "/artifact/repository/root")?;
     assert_ne!(
         produced_root, ".",
@@ -2376,10 +2387,10 @@ fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(),
             String::from_utf8_lossy(&output.stdout)
         ));
     }
-    if !stderr.contains(&expected_config_path.display().to_string()) {
+    if !stderr.contains(&printed_path(&expected_config_path)) {
         return Err(format!(
             "nested config validate did not report parent config path {}\nstderr:\n{stderr}",
-            expected_config_path.display()
+            printed_path(&expected_config_path)
         ));
     }
     Ok(())

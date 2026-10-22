@@ -1673,7 +1673,8 @@ fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    let value = path.display().to_string().replace('\\', "/");
+    let value =
+        crate::output::path::fold_verbatim_on_host(path.display().to_string().replace('\\', "/"));
     if value.is_empty() {
         ".".to_string()
     } else {
