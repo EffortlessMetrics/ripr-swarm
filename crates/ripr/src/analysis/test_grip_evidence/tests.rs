@@ -514,6 +514,12 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     if second.file_value_scan.get().is_none() {
         return Err("first test's facts did not populate the shared file scan".to_string());
     }
+    if !first
+        .value_facts(&index)
+        .shares_module_constants_with(second.value_facts(&index))
+    {
+        return Err("tests in one file must share one constants map, not clone it".to_string());
+    }
     // Identity alone would pass with an empty shared scan: both tests must
     // still resolve the same-file constant through it.
     let seam = inventory_seams_from_index(&files[..1], &index)

@@ -29,12 +29,14 @@
 //! pointing at anything that is not a provenance-valid producer artifact is
 //! refused.
 //!
-//! Descendant containment is a declared limitation: the workspace forbids
-//! `unsafe_code` and the dependency policy admits neither `libc` nor
-//! `windows-sys`, so no process-group or job-object substrate is available.
-//! The authority boundary compensates structurally — the only executable route
-//! is one leaf `ripr agent verify` invocation, and termination is asserted
-//! against that owned child.
+//! The child is spawned through the shared [`OwnedProcess`] owner (#3803). On
+//! Windows a Job Object owns the whole tree, so timeout, cancellation, output
+//! overflow and normal exit all end any descendant before the output readers
+//! are joined. Other platforms keep the direct-child kill: no process-group
+//! substrate is available under the workspace `unsafe_code` and dependency
+//! policy. There the authority boundary compensates structurally — the only
+//! executable route is one leaf `ripr agent verify` invocation, and
+//! termination is asserted against that owned child.
 
 use crate::agent::artifact::current_git_head;
 use crate::agent::command_specs::{agent_command_spec_from_display, agent_verify_command_spec};
@@ -43,13 +45,14 @@ use crate::domain::{
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy, VerificationCurrentnessV1,
     VerificationExecutionResultV1, VerificationProcessDispositionV1,
 };
+use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -62,7 +65,10 @@ const RESPONSE_SCHEMA_VERSION: &str = "1";
 const CLAIM_BOUNDARY: &str = "Process observation only; this does not prove mutation adequacy, correctness, coverage, requirement satisfaction, or merge approval.";
 const STATIC_EVIDENCE_BOUNDARY: &str =
     "Static before/after movement remains separate from verification process disposition.";
-const DESCENDANT_CONTAINMENT: &str = "owned_child_only: no process-group or job-object substrate is available under the workspace unsafe_code and dependency policy; the authority boundary admits only one leaf verify route.";
+#[cfg(windows)]
+const DESCENDANT_CONTAINMENT: &str = "job_object: the owned child runs inside a Windows Job Object assigned before execution; timeout, cancellation, output overflow and exit terminate every process in it.";
+#[cfg(not(windows))]
+const DESCENDANT_CONTAINMENT: &str = "owned_child_only: no process-group substrate is available under the workspace unsafe_code and dependency policy; the authority boundary admits only one leaf verify route.";
 
 /// Variable names allowed to cross into the child, values taken from the parent.
 ///
@@ -811,16 +817,16 @@ fn run_process(
     cancel_after_ms: Option<u64>,
 ) -> Result<ProcessObservation, Refusal> {
     let started = Instant::now();
-    let mut child = match Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args(&spec.args)
         .current_dir(root)
         .env_clear()
         .envs(child_environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    let mut child = match OwnedProcess::spawn(command) {
         Ok(child) => child,
         Err(error) => {
             return Ok(ProcessObservation {
@@ -842,11 +848,11 @@ fn run_process(
         }
     };
     let stdout = child
-        .stdout
+        .stdout_pipe()
         .take()
         .ok_or_else(|| rejected("stdout pipe unavailable"))?;
     let stderr = child
-        .stderr
+        .stderr_pipe()
         .take()
         .ok_or_else(|| rejected("stderr pipe unavailable"))?;
     let (stdout_rx, stdout_thread) = spawn_capture(stdout);
@@ -890,7 +896,13 @@ fn run_process(
         }
         thread::sleep(Duration::from_millis(10));
     }
-    let _ = child.wait();
+    // Every terminal path ends the owned tree and reaps the primary before
+    // the reader joins: on Windows the Job Object takes down a descendant
+    // that still holds an output pipe, so the joins reach EOF instead of
+    // waiting on it. A failed termination refuses rather than joining behind
+    // a process that may never close the pipe.
+    kill_child(&mut child)?;
+    drop(child);
     let stdout = stdout_thread
         .join()
         .map_err(|_panic| rejected("stdout reader panicked"))?
@@ -966,9 +978,9 @@ fn spawn_capture<R: Read + Send + 'static>(
     (rx, handle)
 }
 
-fn kill_child(child: &mut Child) -> Result<(), Refusal> {
+fn kill_child(child: &mut OwnedProcess) -> Result<(), Refusal> {
     child
-        .kill()
+        .terminate_tree()
         .map_err(|error| rejected(format!("terminate child failed: {error}")))
 }
 

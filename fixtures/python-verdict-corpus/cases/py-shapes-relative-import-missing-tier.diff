@@ -1,0 +1,9 @@
+diff --git a/shapes/rates/table.py b/shapes/rates/table.py
+--- a/shapes/rates/table.py
++++ b/shapes/rates/table.py
+@@ -2,4 +2,4 @@
+ 
+ 
+ def lookup(tier):
+-    return RATE_TABLE.get(tier, 0)
++    return RATE_TABLE.get(tier, 1)
