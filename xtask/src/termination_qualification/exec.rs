@@ -76,6 +76,18 @@ pub(crate) fn run_case(
     case: &Case,
     deadline: Duration,
 ) -> (Row, Observation) {
+    run_case_with(binary, work_root, case, deadline, &cleanup)
+}
+
+/// `run_case` with the workspace remover supplied, so a control can show that
+/// a failed cleanup turns an otherwise passing row into a failure.
+pub(crate) fn run_case_with(
+    binary: &Binary,
+    work_root: &Path,
+    case: &Case,
+    deadline: Duration,
+    clean: &dyn Fn(&Path) -> String,
+) -> (Row, Observation) {
     let root = work_root.join(&case.id);
     let mut row = base_row(case, deadline);
     let mut observation = Observation {
@@ -94,7 +106,7 @@ pub(crate) fn run_case(
         Err(error) => {
             row.result = RowResult::InstrumentFailure;
             row.detail = error;
-            row.cleanup = cleanup(&root);
+            row.cleanup = clean(&root);
             return (row, observation);
         }
     }
@@ -165,7 +177,7 @@ pub(crate) fn run_case(
             };
         }
     }
-    row.cleanup = cleanup(&root);
+    row.cleanup = clean(&root);
     if row.cleanup != "removed" && row.result.is_pass() {
         row.result = RowResult::InstrumentFailure;
         row.detail = format!("cleanup did not remove the case root ({})", row.cleanup);
@@ -289,7 +301,11 @@ fn signal_description(_status: &std::process::ExitStatus) -> String {
 }
 
 pub(crate) fn cleanup(root: &Path) -> String {
-    match fs::remove_dir_all(root) {
+    cleanup_with(root, &|path| fs::remove_dir_all(path))
+}
+
+pub(crate) fn cleanup_with(root: &Path, remove: &dyn Fn(&Path) -> std::io::Result<()>) -> String {
+    match remove(root) {
         Ok(()) if !root.exists() => "removed".to_string(),
         Ok(()) => "retained_after_remove".to_string(),
         Err(error) if !root.exists() && error.kind() == std::io::ErrorKind::NotFound => {
