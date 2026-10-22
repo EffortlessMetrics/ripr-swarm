@@ -110,9 +110,19 @@ Neutrality still requires all of:
 - no line holding a whitespace character literal (`' '` or a real tab
   between quotes): joining collapses whitespace runs and would erase the
   literal's content from the comparison;
-- the squeezed comparison never touches angle brackets, so two puncts
-  (`-` and `>`) are never merged into one joint punct (`->`) that macro
-  matching distinguishes.
+- neither comparison ever merges two puncts into one joint punct that
+  macro matching distinguishes: the squeezed comparison touches only
+  delimiters (a delimiter bounds its token group, so spacing beside it is
+  invisible even in a token tree), and `join_tokens` keeps a wrap-point
+  space before `,`/`;` when the preceding character is another punct
+  (`-` `,` never becomes `-,`).
+
+Known residual: position sensitivity that no token names — a
+`#[track_caller]` callee returning `Location::caller()`, or the location a
+`panic!` captures — still reads as neutral under a rewrap. Detecting it
+needs call-graph attribute resolution, which this claim does not build;
+the guards above cover the position-observing macros whose values are
+computed directly from source position.
 
 A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
 
