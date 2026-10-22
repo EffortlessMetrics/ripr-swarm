@@ -19,8 +19,8 @@ flags: `--expected-sha256`, `--expected-version`, `--family`, `--no-repeat`,
 ## What runs
 
 Every row writes generated files into an owned, disposable workspace, launches
-the binary by absolute path with a scrubbed `PATH`, and removes the workspace
-afterwards. `xtask/src/run.rs` supplies process-group custody, deadline kill
+the binary by absolute path with a fixed `PATH` and `HOME`/`TMPDIR` inside the
+workspace (other parent variables are inherited), and removes the workspace. `xtask/src/run.rs` supplies process-group custody, deadline kill
 and bounded drains.
 
 | Family | Route | Shapes |
@@ -50,17 +50,14 @@ evidence was lost), `instrument_failure` (launch, workspace or cleanup) and
 A packet that cannot fail proves nothing, so the aggregate needs these.
 
 - **Instrument controls** (Unix) run stub binaries through the same path and
-  must reach `process_abort`, `nonterminal_deadline`,
-  `missing_or_false_clean_limitation`, `wrong_subject`, `semantic_failure` and
-  `instrument_failure`. The hang stub's child must also be gone after the
-  deadline kill.
-- **Repeat control** reruns the corpus on the unchanged binary; every row's
-  semantic content must match.
+  must reach each failing state, and the hang stub's child must be gone after
+  the deadline kill.
+- **Repeat control** reruns the corpus; every row's semantic content must match.
 - **Removal controls** run a family's discriminator rows against a binary with
   the repair disabled. At least one row must abort, hang, or return a false
   clean result. A control byte-identical to the candidate does not count.
-  Without `--removal-control` for a selected family the aggregate is
-  `incomplete`, and the command exits nonzero unless `--allow-incomplete`.
+  A missing removal control, `--no-repeat` or `--family` exclusion makes the
+  aggregate `incomplete`; the command exits nonzero unless `--allow-incomplete`.
 
 A repairs-disabled binary is a build of the candidate source with the guards
 neutralised (`rust_nesting_refusal` returns `None`, the Python tree-depth
@@ -82,14 +79,11 @@ LSP, prove absence of every crash or hang class, or establish latency.
 
 Known gaps against the child issues, each deliberate for this first harness:
 
-- No toolchain identity, per-finding identities, parser or fallback state, or
-  exit-status field in a row.
-- `check` does not project the Rust `rust_nesting_budget` decline, so those
-  rows assert termination and changed-file evidence only, and human/JSON
-  parity is not checked (#9308).
-- Python rows use `check --diff` only: no `pilot` route, gate or agent
-  consumer, and no multi-line or continuation forms.
-- #4510 execution controls not built: planted ambient `ripr`, foreign CWD with
-  a decoy repository, preseeded stale artifact, simulated cleanup failure.
-  `--expected-sha256` is optional; without it any runnable binary is admitted.
-- A non-Unix host is refused rather than skipped.
+- `check` does not project the Rust `rust_nesting_budget` decline, so those rows
+  assert termination and changed-file evidence only (#9308).
+- Python rows use `check --diff` only, with no multi-line or continuation forms.
+- #4510 controls not built: planted ambient `ripr`, foreign CWD with a decoy
+  repository, preseeded stale artifact, simulated cleanup failure.
+  `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
+- A removal control is bound to the candidate by `--version` only, not by a
+  source or build identity.

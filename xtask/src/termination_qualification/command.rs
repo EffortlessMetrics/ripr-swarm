@@ -92,7 +92,10 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
 
     // Rows launch an owned copy of the admitted bytes, so replacing or
     // rebuilding the candidate path mid-run cannot change what is tested.
-    let snapshot = snapshot_binary(&options.binary, &run_root, &identity.sha256)?;
+    let snapshot =
+        snapshot_binary(&options.binary, &run_root, &identity.sha256).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&run_root);
+        })?;
     let binary = Binary {
         path: snapshot.clone(),
     };

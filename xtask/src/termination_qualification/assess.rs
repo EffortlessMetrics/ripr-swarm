@@ -300,6 +300,13 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         assessment.artifact_projection = Some(projection.clone());
         assessment
     };
+    let run_status = exposure.get("run_status").and_then(Value::as_str);
+    if !matches!(run_status, Some("complete" | "limited_declined_files")) {
+        return attach(Assessment::fail(
+            RowResult::SemanticFailure,
+            format!("pilot inventory is not whole: run_status {run_status:?}"),
+        ));
+    }
     let hostile = case.hostile.as_deref().unwrap_or_default();
     let disclosure = observed
         .stderr

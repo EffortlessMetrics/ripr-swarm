@@ -265,7 +265,7 @@ fn child_gone(pid_file: &Path) -> bool {
     let state = String::from_utf8_lossy(&out.stdout);
     match out.status.and_then(|status| status.code()) {
         Some(0) => state.trim().starts_with('Z'),
-        Some(1) => state.trim().is_empty(),
+        Some(1) => state.trim().is_empty() && out.stderr.is_empty(),
         _ => false,
     }
 }
@@ -306,6 +306,7 @@ pub(crate) fn removal_controls(
         let path = &match fs::canonicalize(path) {
             Ok(path) if path.is_file() => path,
             _ => {
+                control.observed = Some("unreadable".to_string());
                 control.detail =
                     format!("removal control {} is not a readable file", path.display());
                 out.push(control);
