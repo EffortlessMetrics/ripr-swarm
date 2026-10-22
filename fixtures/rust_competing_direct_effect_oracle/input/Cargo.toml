@@ -1,7 +1,0 @@
-[package]
-name="rust_competing_direct_effect_oracle"
-version="0.0.0"
-edition="2024"
-publish=false
-
-[workspace]
