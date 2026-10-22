@@ -3072,14 +3072,14 @@ fn expression_is_active_declaration(
     }
 }
 
-/// A `describe`-root call the runner skips: a `.skip` / `.todo` / `.fixme`
+/// A `describe`-root call the runner skips: a `.skip` / `.fixme`
 /// modifier on the root (alone or after active modifiers), or an options
 /// object that turns the suite off.
 fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
     fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
         match expression {
             Expression::StaticMemberExpression(member) => {
-                (matches!(member.property.name.as_str(), "skip" | "todo" | "fixme")
+                (matches!(member.property.name.as_str(), "skip" | "fixme")
                     && expression_is_active_declaration(
                         &member.object,
                         TestDeclarationRoot::Describe,
@@ -3090,25 +3090,31 @@ fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
             _ => false,
         }
     }
-    // Only a literal `skip: true` / `todo: true` turns the suite off; a
+    // Only a literal `skip: true` turns the suite off; a
     // dynamic value, a spread or any other key (`fails`) leaves it active.
     let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
         call.arguments.iter().take(3).any(|argument| {
             let oxc_ast::ast::Argument::ObjectExpression(options) = argument else {
                 return false;
             };
-            options.properties.iter().any(|property| {
+            // A later spread or computed key may override `skip`, so the
+            // literal counts only when nothing after it can.
+            let mut off = false;
+            for property in &options.properties {
                 let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
-                    return false;
+                    off = false;
+                    continue;
                 };
-                !property.computed
-                    && !property.method
-                    && matches!(property.key.static_name().as_deref(), Some("skip" | "todo"))
-                    && matches!(
+                if property.computed {
+                    off = false;
+                } else if property.key.static_name().as_deref() == Some("skip") {
+                    off = matches!(
                         &property.value,
                         Expression::BooleanLiteral(literal) if literal.value
-                    )
-            })
+                    );
+                }
+            }
+            off
         })
     };
     skipped_modifier_on_describe(&call.callee)

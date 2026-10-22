@@ -923,7 +923,6 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
     for header in [
         "describe.skip(\"medal\", () => {",
         "describe.only.skip(\"medal\", () => {",
-        "describe.todo(\"medal\", () => {",
         "describe(\"medal\", { skip: true }, () => {",
     ] {
         let source = format!(
@@ -945,6 +944,9 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
         "{ fails: true }",
         "{ expectFailure: true }",
         "{ skip: false }",
+        "{ skip: true, ...opts }",
+        "{ skip: true, [key]: false }",
+        "{ todo: true }",
     ] {
         let source = format!(
             "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
