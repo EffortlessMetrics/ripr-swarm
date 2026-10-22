@@ -190,6 +190,99 @@ pub(super) fn python_guarded_arm_gap(
     })
 }
 
+/// Whether every strong related call provably enters every `if` guard around a
+/// changed line (#9833), so an effect written there runs under each observed
+/// input. This is the credit-side twin of `python_guarded_arm_gap`: that gate
+/// excludes with a fail-open reading, which would credit wrongly if reused
+/// here, so this reader is strict instead. Only plain `if X:` ancestors are
+/// accepted (an `elif` is reached only when an earlier arm was not taken, and
+/// `else`, `for`, `try` and the like add reachability this reader does not
+/// model), and no line before the change may leave the owner or loop
+/// forever. Anything else answers `false`, which keeps the abstention.
+pub(super) fn python_guard_entered_by_every_call(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let Some(conditions) = entered_if_conditions(owner, owner_source, changed_line) else {
+        return false;
+    };
+    let constants = unrebound_constants(owner, related_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    if rows.is_empty() || gaps {
+        return false;
+    }
+    rows.iter().all(|row| {
+        conditions.iter().all(|(condition_line, condition)| {
+            condition_holds(
+                condition,
+                *condition_line,
+                row,
+                &constants,
+                owner_source,
+                owner.start_line,
+            ) == Some(true)
+        })
+    })
+}
+
+/// Keywords that can leave the owner, swallow an error or loop without end
+/// before a later line runs. A line naming one stops the strict reader.
+const FLOW_ESCAPES: [&str; 12] = [
+    "return", "raise", "assert", "break", "continue", "yield", "exit", "quit", "_exit", "while",
+    "try", "with",
+];
+
+/// The plain `if` conditions enclosing `changed_line`, outermost first, when
+/// nothing between the owner header and the line can stop it running once
+/// they hold. `None` for any other enclosing or preceding shape.
+fn entered_if_conditions(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+) -> Option<Vec<(usize, String)>> {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let changed_index = changed_line.checked_sub(1)?;
+    if owner.start_line == 0 || changed_index >= lines.len() {
+        return None;
+    }
+    let changed = lines.get(changed_index)?;
+    if changed.trim().is_empty() {
+        return None;
+    }
+    let mut threshold = leading_whitespace(changed);
+    let mut conditions = Vec::new();
+    for index in (owner.start_line..changed_index).rev() {
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Docstring text is scanned like code: a keyword in it only refuses.
+        if FLOW_ESCAPES
+            .iter()
+            .any(|keyword| keyword_outside_quotes(trimmed, keyword))
+            || trimmed.starts_with("except")
+            || trimmed.starts_with("finally")
+            || trimmed.starts_with("match ")
+        {
+            return None;
+        }
+        if leading_whitespace(raw) >= threshold {
+            continue;
+        }
+        let condition = trimmed.strip_prefix("if ")?;
+        let condition = condition.trim_end().strip_suffix(':')?.trim();
+        conditions.push((index, condition.to_string()));
+        threshold = leading_whitespace(raw);
+    }
+    conditions.reverse();
+    (!conditions.is_empty()).then_some(conditions)
+}
+
 /// The text of the left operand of a condition's first comparison, used to
 /// name the observed values the strong related calls bind to it.
 fn condition_lhs(condition: &str) -> String {

@@ -120,7 +120,7 @@ pub(super) fn classify_sink_alignment(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
 ) -> SinkAlignment {
-    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests)
+    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false)
 }
 
 /// Whether a strong related-test oracle actually observes the changed behavior's
@@ -572,9 +572,17 @@ pub(super) fn classify_sink_alignment_with_old(
     old_line_text: Option<&str>,
     related: &[RelatedTest],
     all_tests: &[PythonTest],
+    guard_entered: bool,
 ) -> SinkAlignment {
     let prep = AlignmentPrep::new(owner, all_tests);
-    classify_sink_alignment_prepared(owner, line_text, old_line_text, related, &prep)
+    classify_sink_alignment_prepared(
+        owner,
+        line_text,
+        old_line_text,
+        related,
+        &prep,
+        guard_entered,
+    )
 }
 
 pub(super) fn classify_sink_alignment_prepared(
@@ -583,6 +591,7 @@ pub(super) fn classify_sink_alignment_prepared(
     old_line_text: Option<&str>,
     related: &[RelatedTest],
     prep: &AlignmentPrep<'_>,
+    guard_entered: bool,
 ) -> SinkAlignment {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
@@ -615,7 +624,7 @@ pub(super) fn classify_sink_alignment_prepared(
         .collect();
     // A changed side effect (`print`, a file write, a call on a passed-in
     // collaborator, a `self` field) may be observed through its channel.
-    let effect = ChangedEffect::of(line_text, old_line_text, owner);
+    let effect = ChangedEffect::of(line_text, old_line_text, owner, guard_entered);
     let mock_tests: Vec<&RelatedTest> = if effect
         .as_ref()
         .is_some_and(ChangedEffect::admits_mock_assertion)

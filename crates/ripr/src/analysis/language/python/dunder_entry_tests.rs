@@ -1,7 +1,7 @@
 //! Operator and `with` entries of dunder owners (#9421): the syntax binds to
 //! the owner only where the receiver's class and the operator are certain.
 
-use super::classify::classify_change_with_old;
+use super::classify::{classify_change_with_old, classify_change_with_source};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::related_tests::{apply_class_facts, related_test_candidates};
 use super::{PythonOwner, PythonTest};
@@ -483,5 +483,99 @@ fn unguarded_self_field_write_in_an_ordinary_method_stays_credited() -> Check {
         &noter_test("    rec = Recorder()\n    rec.note(\"ok\")\n    assert rec.last == \"error\""),
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// Classify an edit of `note` with the new-side source threaded in, as the
+/// diff path does, so the guard readers can see the enclosing `if`.
+fn classify_note_with_source(
+    source: &str,
+    after: &str,
+    before: &str,
+    test_src: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("shapes/noter.py");
+    let owners = owners_of(source, "shapes/noter.py");
+    let (index, written) = source
+        .lines()
+        .enumerate()
+        .find(|(_, text)| text.trim() == after.trim())
+        .ok_or_else(|| "the edited line must be in the source".to_string())?;
+    let indent = &written[..written.len() - written.trim_start().len()];
+    let before = format!("{indent}{}", before.trim());
+    classify_change_with_source(
+        file,
+        index + 1,
+        written,
+        Some(&before),
+        &owners,
+        &tests_of(test_src)?,
+        Some(source),
+    )
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+const GUARDED_AFTER: &str = "            self.last = \"fault\"";
+const GUARDED_BEFORE: &str = "            self.last = \"error\"";
+
+fn guarded_note_source(preamble: &str, guard: &str) -> String {
+    format!(
+        "class Recorder:\n    def __init__(self):\n        self.last = None\n\n    def note(self, kind):\n{preamble}{guard}\n{GUARDED_AFTER}\n"
+    )
+}
+
+fn classify_guarded(source: &str, body: &str) -> Result<Finding, String> {
+    classify_note_with_source(source, GUARDED_AFTER, GUARDED_BEFORE, &noter_test(body))
+}
+
+#[test]
+fn guarded_self_field_write_is_credited_when_every_call_enters_the_guard() -> Result<(), String> {
+    let source = guarded_note_source("", "        if kind == \"error\":");
+    let finding = classify_guarded(
+        &source,
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_write_stays_uncredited_when_a_call_skips_the_guard() -> Result<(), String> {
+    let source = guarded_note_source("", "        if kind == \"error\":");
+    // The #9782 repro: the only call skips the guard.
+    let skips = classify_guarded(
+        &source,
+        "    rec = Recorder()\n    rec.note(\"ok\")\n    assert rec.last == None",
+    )?;
+    assert_ne!(skips.class, ExposureClass::Exposed);
+    // One call enters and one skips: the read cannot be tied to the entering call.
+    let mixed = classify_guarded(
+        &source,
+        "    rec = Recorder()\n    rec.note(\"error\")\n    other = Recorder()\n    other.note(\"ok\")\n    assert rec.last == \"error\"",
+    )?;
+    assert_ne!(mixed.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_write_stays_uncredited_for_shapes_the_reader_does_not_model()
+-> Result<(), String> {
+    let entering =
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"";
+    // An `elif` arm is reached only when an earlier arm was not taken.
+    let elif = guarded_note_source(
+        "        if kind == \"\":\n            self.last = \"empty\"\n",
+        "        elif kind == \"error\":",
+    );
+    // A loop may run zero times, and an earlier exit may leave first.
+    let looped = "class Recorder:\n    def __init__(self):\n        self.last = None\n\n    def note(self, kind):\n        for _ in range(kind):\n            if kind == \"error\":\n                self.last = \"fault\"\n".to_string();
+    let early_exit = guarded_note_source(
+        "        if kind == \"\":\n            return\n",
+        "        if kind == \"error\":",
+    );
+    for source in [elif, looped, early_exit] {
+        let finding = classify_guarded(&source, entering)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
+    }
     Ok(())
 }

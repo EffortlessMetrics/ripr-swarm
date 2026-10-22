@@ -43,10 +43,14 @@ pub(super) enum ChangedEffect {
 impl ChangedEffect {
     /// The changed line's effect, when it is one of the observable shapes.
     /// `old_line_text` is the line it replaced, when there is one.
+    /// `guard_entered` records that static evidence proved every strong related
+    /// call enters the guards around the line (#9833), which lets a write that
+    /// is not a direct body statement still count as run.
     pub(super) fn of(
         line_text: &str,
         old_line_text: Option<&str>,
         owner: &PythonOwner,
+        guard_entered: bool,
     ) -> Option<Self> {
         let line = line_text.trim();
         let context_dunder = matches!(owner.name.as_str(), "__enter__" | "__exit__");
@@ -54,12 +58,14 @@ impl ChangedEffect {
             .class_facts
             .direct_statements
             .iter()
-            .any(|statement| statement == line);
+            .any(|statement| statement == line)
+            || guard_entered;
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
             // Only a statement written directly in the method body always
             // runs; a write under an `if`, `try` or loop may never run in
-            // the test (#9421, #9782), so it reads no effect.
+            // the test (#9421, #9782), so it reads no effect unless every
+            // strong call provably enters the guard (#9833).
             && direct
         {
             return Some(Self::SelfField {

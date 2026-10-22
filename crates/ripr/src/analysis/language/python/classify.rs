@@ -304,8 +304,25 @@ pub(super) fn classify_change_for_owner(
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
-    let alignment =
-        classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
+    // A write under an `if` guard counts as run only when every strong related
+    // call provably enters the guard (#9833); otherwise it reads no effect.
+    let guard_entered = owner_source.is_some_and(|source| {
+        guard_activation::python_guard_entered_by_every_call(
+            owner,
+            source,
+            line,
+            &related_candidates,
+            &focus,
+        )
+    });
+    let alignment = classify_sink_alignment_with_old(
+        owner,
+        line_text,
+        old_line_text,
+        &related,
+        all_tests,
+        guard_entered,
+    );
     let static_limit =
         static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
@@ -1089,6 +1106,7 @@ pub(super) fn classify_change_for_owner(
             owner,
             line_text,
             old_line_text,
+            guard_entered,
         },
         all_tests,
     );

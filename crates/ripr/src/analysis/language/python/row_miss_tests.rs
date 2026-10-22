@@ -379,6 +379,7 @@ mod direct {
                 owner: &case.owner,
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
+                guard_entered: false,
             },
             &case.tests,
         );
@@ -500,6 +501,7 @@ mod direct {
                     owner: &case.owner,
                     line_text: &case.after,
                     old_line_text: Some(&case.before),
+                    guard_entered: false,
                 },
                 &case.tests,
             );
@@ -546,6 +548,7 @@ mod direct {
                 owner: &case.owner,
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
+                guard_entered: false,
             },
             &case.tests,
         );

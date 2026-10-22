@@ -714,8 +714,8 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
 }
 
 fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
-    ChangedEffect::of(old_line, Some(new_line), owner).is_none()
-        && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
+    ChangedEffect::of(old_line, Some(new_line), owner, false).is_none()
+        && ChangedEffect::of(new_line, Some(old_line), owner, false).is_none()
         && return_line_is_value_expression(old_line)
         && return_line_is_value_expression(new_line)
 }
