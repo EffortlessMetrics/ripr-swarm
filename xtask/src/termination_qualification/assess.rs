@@ -106,6 +106,44 @@ fn limitation_text(limitation: &Value) -> String {
     )
 }
 
+/// A passing "analyzed" row needs a complete analysis and no limitation that
+/// names the changed file, the same bar the `Supported` arm applies.
+fn require_whole_analysis(case: &Case, root: &Value) -> Option<Assessment> {
+    let names_changed = limitations(root)
+        .iter()
+        .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
+    if names_changed {
+        return Some(Assessment::fail(
+            RowResult::SemanticFailure,
+            "a limitation names the changed file; the row is not fully analyzed".to_string(),
+        ));
+    }
+    (root
+        .pointer("/analysis_outcome/analysis_complete")
+        .and_then(Value::as_bool)
+        != Some(true))
+    .then(|| {
+        Assessment::fail(
+            RowResult::SemanticFailure,
+            "an analyzed row did not report analysis_complete=true".to_string(),
+        )
+    })
+}
+
+fn changed_finding_suppressed(case: &Case, findings: &[Value]) -> (usize, usize) {
+    let of_changed = findings
+        .iter()
+        .filter(|finding| finding_file(finding).as_deref() == Some(case.changed.as_str()));
+    let total = of_changed.clone().count();
+    let marked = of_changed
+        .filter(|finding| {
+            finding.get("suppressed").and_then(Value::as_bool) == Some(true)
+                && finding.get("suppressed_by").and_then(Value::as_str).is_some()
+        })
+        .count();
+    (total, marked)
+}
+
 fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
     let root = match parse(observed.stdout, "check stdout") {
         Ok(root) => root,
@@ -252,6 +290,16 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                     "expected the pattern to suppress the finding; none was suppressed".to_string(),
                 ));
             }
+            let (_, marked) = changed_finding_suppressed(case, &findings);
+            if marked == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!(
+                        "suppression counters are positive but no finding for {} is marked suppressed",
+                        case.changed
+                    ),
+                ));
+            }
             counts(Assessment {
                 result: RowResult::PassedSupportedAnalysis,
                 detail: format!("{suppressed} finding(s) suppressed by the pattern"),
@@ -277,6 +325,15 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                         case.changed
                     ),
                 ));
+            }
+            if changed_finding_suppressed(case, &findings).1 != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a nonmatching pattern marked the changed finding suppressed".to_string(),
+                ));
+            }
+            if let Some(failure) = require_whole_analysis(case, &root) {
+                return counts(failure);
             }
             counts(Assessment {
                 result: RowResult::PassedSupportedAnalysis,
@@ -369,6 +426,9 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                     RowResult::WrongSubject,
                     format!("no finding for {} though it was not excluded", case.changed),
                 ));
+            }
+            if let Some(failure) = require_whole_analysis(case, &root) {
+                return counts(failure);
             }
             counts(Assessment {
                 result: RowResult::PassedSupportedAnalysis,

@@ -248,7 +248,7 @@ fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestRe
 fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
     let nonmatch = case_named("glob-suppression-many-star-nonmatch")?;
     let visible = format!(
-        "{{\"findings\":[{{\"canonical_gap\":{{\"file\":\"{}\"}}}}],\"suppression_policy\":{{\"suppressed\":0}},\"summary\":{{\"suppressed_by_policy\":0}}}}",
+        "{{\"findings\":[{{\"canonical_gap\":{{\"file\":\"{}\"}}}}],\"suppression_policy\":{{\"suppressed\":0}},\"summary\":{{\"suppressed_by_policy\":0}},\"analysis_outcome\":{{\"analysis_complete\":true}}}}",
         nonmatch.changed
     );
     if assess(&nonmatch, &observe(&visible, "", None)).result != RowResult::PassedSupportedAnalysis
@@ -258,6 +258,20 @@ fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
     let suppressed = visible.replace("\"suppressed\":0", "\"suppressed\":1");
     if assess(&nonmatch, &observe(&suppressed, "", None)).result != RowResult::SemanticFailure {
         return Err("a nonmatching pattern that suppressed must fail".to_string());
+    }
+    let partial = visible.replace("\"analysis_complete\":true", "\"analysis_complete\":false");
+    if assess(&nonmatch, &observe(&partial, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatch row with an incomplete analysis must fail".to_string());
+    }
+    let limited = visible.replace(
+        "\"analysis_outcome\":{\"analysis_complete\":true}",
+        &format!(
+            "\"analysis_outcome\":{{\"analysis_complete\":true,\"outcome\":{{\"limitations\":[{{\"path\":\"{}\",\"bounded_detail\":\"declined\"}}]}}}}",
+            nonmatch.changed
+        ),
+    );
+    if assess(&nonmatch, &observe(&limited, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatch row with a limitation on the changed file must fail".to_string());
     }
 
     let generated = case_named("glob-generated-many-star-nonmatch")?;
@@ -366,13 +380,17 @@ fn pilot_disclosure_must_name_the_hostile_file() -> TestResult {
 #[test]
 fn glob_and_generated_passing_branches_need_their_evidence() -> TestResult {
     let matched = case_named("glob-suppression-double-star-prefix")?;
-    let ok = "{\"findings\":[{\"canonical_gap\":{\"file\":\"src/lib.rs\"}}],\"suppression_policy\":{\"suppressed\":1},\"summary\":{\"suppressed_by_policy\":1}}";
+    let ok = "{\"findings\":[{\"canonical_gap\":{\"file\":\"src/lib.rs\"},\"suppressed\":true,\"suppressed_by\":\"**/lib.rs\"}],\"suppression_policy\":{\"suppressed\":1},\"summary\":{\"suppressed_by_policy\":1}}";
     if assess(&matched, &observe(ok, "", None)).result != RowResult::PassedSupportedAnalysis {
         return Err("a suppressing match must pass".to_string());
     }
     let half = ok.replace("\"suppressed_by_policy\":1", "\"suppressed_by_policy\":0");
     if assess(&matched, &observe(&half, "", None)).result != RowResult::SemanticFailure {
         return Err("summary and policy counts must both show the suppression".to_string());
+    }
+    let unmarked = ok.replace(",\"suppressed\":true,\"suppressed_by\":\"**/lib.rs\"", "");
+    if assess(&matched, &observe(&unmarked, "", None)).result != RowResult::WrongSubject {
+        return Err("positive counters without a marked changed finding must fail".to_string());
     }
 
     let excluded = case_named("glob-generated-star-in-segment")?;
