@@ -384,7 +384,8 @@ pub(crate) fn validate_repo_exposure_artifact(
                 ),
             };
             return format!(
-                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {recovery}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable (`ripr --version` must report {}; a stale `ripr` earlier on PATH would write the same legacy artifact). {recovery}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+                env!("CARGO_PKG_VERSION"),
                 env!("CARGO_PKG_VERSION")
             );
         }
@@ -1387,6 +1388,7 @@ mod tests {
         for text in [
             "legacy or unknown producer",
             env!("CARGO_PKG_VERSION"),
+            "a stale `ripr` earlier on PATH",
             expected.as_str(),
             "Replace this input",
         ] {
