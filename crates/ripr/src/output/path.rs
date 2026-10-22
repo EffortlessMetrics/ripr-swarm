@@ -70,6 +70,18 @@ pub(crate) fn path_identity_key_on(
     key
 }
 
+/// Display-only spelling of a path for LSP messages and editor globs: lossy
+/// for non-UTF-8 and `\` shown as `/` only on Windows. This is NOT an
+/// identity key; use [`path_identity_key`] to compare or fingerprint paths.
+pub(crate) fn path_display_lossy(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 /// [`path_identity_key_on`] with the host rules: `\` separates only on Windows
 /// and case folds per [`host_paths_case_insensitive`].
 pub(crate) fn path_identity_key(path: &Path) -> String {
@@ -358,6 +370,8 @@ fn require_lossless_command_path(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     #[test]
     fn path_identity_key_is_one_rule_for_separator_case_and_bytes() {
         let upper = Path::new("Src/A\\B.rs");
@@ -399,8 +413,6 @@ mod tests {
             path_identity_key_on(Path::new("/w/a\u{fffd}"), true, true)
         );
     }
-
-    use std::path::Path;
 
     use super::{
         display_path, display_path_text, human_path_text, path_identity_key_on,
