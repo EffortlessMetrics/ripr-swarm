@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_pytest_oracle_shapes/input
 config: <cwd>/fixtures/python_pytest_oracle_shapes/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
 Changed file(s) by language: python = 1
 
@@ -12,35 +12,29 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  Safe next action: static limitation `unsupported_syntax` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/notifications.py:6
   Language: python
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/notifications.py:warn_coupon:call_or_output_effect:side_effect:logger.warning_coupon_expired
+  Static exposure: unknown (severity: note, confidence 0.20)
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: logger.warning("coupon expired")
-  Missing discriminator (1 of 2): Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed output/log/call effect
-  Related test: tests/test_notifications.py:4 test_warn_coupon_logs_expired_message (assertion too weak to tell the old behavior from the new)
-  Suggested test file: tests/test_notifications.py
-  Suggested test: test_warn_coupon_logs_expired_message
-  Test node: tests/test_notifications.py::test_warn_coupon_logs_expired_message
-  Verify command: python -m pytest tests/test_notifications.py::test_warn_coupon_logs_expired_message (high)
-  Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `log contains "coupon expired"`
-  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+  Analyzer limit: Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted…
+  Related test: tests/test_notifications.py:4 test_warn_coupon_logs_expired_message
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `warn_coupon`
-    - infection yes: Changed Python call or output effect can alter observable side effects: `logger.warning("coupon expired")`
-    - 5 more detail line(s) in --format human-full
+    - infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast probe:src_notifications.py:python_preview:5ec908f0
   ripr context --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast --at probe:src_notifications.py:python_preview:5ec908f0
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/notifications.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_notifications.py:python_preview:5ec908f0 --root <cwd>/fixtures/python_pytest_oracle_shapes/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

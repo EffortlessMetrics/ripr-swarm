@@ -108,7 +108,7 @@ fn operands(line: &str) -> Option<(Vec<String>, char)> {
     Some((vec![left.to_string(), right.to_string()], operator))
 }
 
-fn is_plain_identifier(text: &str) -> bool {
+pub(crate) fn is_plain_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()

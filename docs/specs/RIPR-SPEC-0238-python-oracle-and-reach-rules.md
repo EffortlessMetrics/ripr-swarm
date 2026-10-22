@@ -677,6 +677,32 @@ mutant calibrates the rule; ripr reports only the static shape.
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
 
+21. **An explicit `approx` band abstains on a numeric edit.** Rule 12
+    reads `pytest.approx(expected)` at its default tolerance as pinning
+    the value. When the assertion the row selects passes an explicit band,
+    `approx(expected, rel=...)`, `abs=...`, a positional second or third
+    argument, or a `*` or `**` spread that may carry one (a literal `None`
+    counts as absent), static evidence cannot tell whether the band
+    excludes the pre-change value. On a changed line that contains a
+    digit the finding is `static_unknown` with the static limit
+    `unsupported_syntax` naming the band. ripr does not evaluate the band,
+    so a change outside it (`py-idioms-approx-constant-outside-tolerance`)
+    abstains as well as one inside it
+    (`py-idioms-approx-constant-within-tolerance`, whose old reading as
+    `exposed` was a false exposed).
+22. **A `caplog.text` membership check on a changed log call abstains.**
+    When the changed line is a logging call (`<receiver>.debug`, `.info`,
+    `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
+    string literal) and the selected assertion is `<text> in caplog.text`
+    sharing a word of three or more characters with that literal, the
+    finding is `static_unknown` with `unsupported_syntax`. The check
+    compares against `%`-formatted text and a runtime level filter, neither
+    of which the adapter evaluates, so a message edit
+    (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
+    both abstain instead of reading a weak gap. An assertion about unrelated
+    text keeps its verdict. `caplog.messages` and `caplog.records` are not
+    read by this rule.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only

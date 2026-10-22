@@ -566,7 +566,7 @@ Updated:
 ## Pending — python_no_projectable_owner (21)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0245 module-level constant edit related only by filename stem now abstains as static_unknown, issue 9423
 
 Command:
 `cargo xtask goldens bless python_no_projectable_owner --reason "..."`
@@ -576,6 +576,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — python_no_projectable_owner (22)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless python_no_projectable_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_no_projectable_owner (23)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs

@@ -41,7 +41,7 @@ Updated:
 ## Pending — ts_dead_assertion_after_try_finally (4)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0247 rule 5 (#9532): a truthiness assertion on a literal call to a boolean-declared owner is an exact pin, so the live toBeTruthy reads exact_value instead of smoke_only; verdict state unchanged except typescript_jest_vitest_assertion_facts isReady(1), which now credits the boundary pin
 
 Command:
 `cargo xtask goldens bless ts_dead_assertion_after_try_finally --reason "..."`
@@ -52,6 +52,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — ts_dead_assertion_after_try_finally (5)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless ts_dead_assertion_after_try_finally --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_dead_assertion_after_try_finally (6)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
