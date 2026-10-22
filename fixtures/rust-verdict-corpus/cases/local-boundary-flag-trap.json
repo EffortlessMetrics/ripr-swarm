@@ -1,0 +1,51 @@
+{
+  "case_id": "local-boundary-flag-trap",
+  "subject_id": "authored-local-boundary",
+  "diff": "cases/local-boundary-flag-trap.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": "The boundary operand is a local selected by a flag parameter, so the comparison is decided only after the flag and the same-file constants are read (#9276).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unit < bytes",
+        "mutated_line": "unit < bytes",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tier_trap(1_024, true) becomes \"byte\""
+      },
+      {
+        "replacement": "unit > bytes",
+        "mutated_line": "unit > bytes",
+        "outcome": "tests_failed",
+        "failing_test": "tests::each_flag_is_checked_at_the_other_flags_boundary",
+        "equivalence_review": "not equivalent: tier_trap(1_000, true) becomes \"unit\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The tests pass each flag the other flag's boundary (1_000 with si, 1_024 without), so no input sits on `unit`: it is 1_024 for the first call and 1_000 for the second, and neither input equals it. Crediting either would be false credit from a constant that only appears in an arm. 1 of 2 listed mutants fails cargo test, and the one that survives is the boundary one. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "393e229",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

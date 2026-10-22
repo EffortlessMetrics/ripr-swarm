@@ -70,8 +70,9 @@ npm package, or native runtime compatibility floor.
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape
 must be checked before any publication decision. It requires an immutable
-40-character `candidate_sha`; an optional `candidate_tag` must use the
-`ripr-release-MAJOR.MINOR.PATCH` format and may be lightweight or annotated,
+40-character `candidate_sha`; an optional `candidate_ref` must be exactly
+`refs/tags/ripr-release-<version>-<candidate_sha>` (the grammar the Windows
+packaged lane also requires) and may be lightweight or annotated,
 but must resolve to the same commit. Every matrix job fetches that
 SHA, builds the existing five-target server matrix, verifies the archive
 checksum, extracts the flat package, and checks both the archive label and the
@@ -86,7 +87,7 @@ Dispatch with the already selected candidate identity:
 ```bash
 gh workflow run server-archive-qualification.yml \
   -f candidate_sha=<40-character-candidate-sha> \
-  -f candidate_tag=<optional-immutable-tag> \
+  -f candidate_ref=<optional-refs/tags/ripr-release-version-sha> \
   -f version=<version>
 ```
 
@@ -102,7 +103,7 @@ unavailable. Its only writes are scoped
 GitHub Actions artifacts containing the archives, manifest, checksums, and
 qualification receipt. An Actions artifact is rehearsal evidence, not a
 GitHub Release asset and not publication proof. The swarm
-`release-server-binaries.yml` entrypoint uses this same qualification receipt;
+`release-server-binaries.yml` entrypoint forwards its optional `candidate_ref` input and uses this same qualification receipt;
 the source repository's separate release workflow owns publication.
 
 

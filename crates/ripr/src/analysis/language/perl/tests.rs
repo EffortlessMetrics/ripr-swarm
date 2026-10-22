@@ -5071,6 +5071,7 @@ fn partial_packet_outcome(
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;

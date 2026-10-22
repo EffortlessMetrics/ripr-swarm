@@ -21,6 +21,9 @@ mod artifact_mode_precedence;
 mod baseline_path_values;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/candidate_config_recovery.rs"]
+mod candidate_config_recovery;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
@@ -1912,6 +1915,77 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #9346: the issue's diff shape end to end — the actual two-probe
+/// shape from the live witness. The signature line of the production
+/// function changes (seeding a whole-function `static_unknown` probe at
+/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// reaches a decisive `exposed` verdict for the same function, and the
+/// discriminating test is added in `tests/` in the same working tree.
+/// Both production probes cover `discounted_total`, so Start here must
+/// lead with the decisive line-2 finding, not the limitation state.
+#[test]
+fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Result<(), String> {
+    let root = unique_temp_workspace("start-here-production");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create fixture root: {err}"))?;
+    let result = (|| {
+        init_producer_fixture_repo(&root).map_err(|err| format!("init producer fixture: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&lib).map_err(|err| format!("read lib: {err}"))?;
+        let changed = source
+            .replacen(
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                1,
+            )
+            .replacen(">= discount_threshold", "> discount_threshold", 1);
+        if changed == source || !changed.contains("> discount_threshold") {
+            return Err("fixture boundary must be present".to_string());
+        }
+        std::fs::write(&lib, changed).map_err(|err| format!("write lib: {err}"))?;
+        let tests = root.join("tests/pricing.rs");
+        let mut test_source =
+            std::fs::read_to_string(&tests).map_err(|err| format!("read tests: {err}"))?;
+        test_source.push_str(
+            "\n#[test]\nfn discount_at_threshold_keeps_full_amount() {\n    assert_eq!(discounted_total(100, 100), 100);\n}\n",
+        );
+        std::fs::write(&tests, test_source).map_err(|err| format!("write tests: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&["check", "--root", &root_arg]);
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    let stdout = result?;
+    let start_here = stdout
+        .split("Start here:")
+        .nth(1)
+        .ok_or_else(|| format!("check output omitted the Start-here block:\n{stdout}"))?;
+    let block = start_here
+        .split("\nHidden:")
+        .next()
+        .unwrap_or(start_here)
+        .split("\nMore:")
+        .next()
+        .unwrap_or(start_here);
+    assert!(
+        stdout.contains("1 unknown"),
+        "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
+    );
+    assert!(
+        !block.contains("limited by static analysis"),
+        "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
+    );
+    assert!(
+        block.contains("State: no gap selected for repair"),
+        "Start here must name the production finding's state:\n{block}"
+    );
+    assert!(
+        block.contains("src/lib.rs:2"),
+        "Start here must name the decisive line-2 production finding, not the fn-level unknown at line 1:\n{block}"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() -> sample_output::TestResult {
     // #4946(a): keep the real CLI and both recall notes on a small owned root.
@@ -3393,6 +3467,151 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #9277: a diff with one real edit and one file that alone trips the line cap,
+/// run from a throwaway workspace so no git history is involved.
+fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        dir.join("src/lib.rs"),
+        "pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    let big: String = (0..12)
+        .map(|index| format!("pub fn big_{index}() -> u32 {{ {index} }}\n"))
+        .collect();
+    std::fs::write(dir.join("src/big.rs"), &big).map_err(|err| format!("write big: {err}"))?;
+    let mut diff = String::from(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n\
+         -pub fn gate(a: i32) -> bool { a > 3 }\n+pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    );
+    diff.push_str(
+        "diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,12 @@\n",
+    );
+    for line in big.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    let diff_path = dir.join("change.diff");
+    std::fs::write(&diff_path, diff).map_err(|err| format!("write diff: {err}"))?;
+    Ok((dir, diff_path))
+}
+
+#[test]
+fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
+{
+    let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
+    let root = dir.display().to_string();
+    let diff = diff.display().to_string();
+    let cap = [("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")];
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ];
+        args.extend_from_slice(extra);
+        run_ripr_with_env(&args, &cap)
+    };
+
+    // The cap still fires with its own text, and now names the way out.
+    let refused = run(&[]);
+    assert_failure(&refused);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
+    assert!(stderr.contains("--path <glob>"), "{stderr}");
+
+    for flags in [
+        vec!["--exclude", "src/big.rs"],
+        vec!["--path", "src/lib.rs"],
+    ] {
+        let output = run(&flags);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let value: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
+        let outcome = &value["analysis_outcome"];
+        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        assert_eq!(
+            outcome["outcome"]["kind"], "partial_with_limitations",
+            "{flags:?}"
+        );
+        let limitations = outcome["outcome"]["limitations"]
+            .as_array()
+            .ok_or("limitations array")?;
+        assert!(
+            limitations.iter().any(|limitation| {
+                limitation["kind"] == "language_scope_unsupported"
+                    && limitation["bounded_detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("src/big.rs"))
+            }),
+            "{flags:?}: skipped file must be named: {outcome}"
+        );
+        let findings = value["findings"].as_array().ok_or("findings array")?;
+        assert!(!findings.is_empty(), "{flags:?}: the lib.rs finding stays");
+        assert!(
+            findings
+                .iter()
+                .all(|finding| !finding.to_string().contains("src/big.rs")),
+            "{flags:?}: a skipped file must never carry a finding"
+        );
+    }
+
+    // A scope that matches nothing is an error, not a clean result.
+    let nothing = run(&["--path", "nowhere/**"]);
+    assert_eq!(nothing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&nothing.stderr).contains("scope_filter_matched_nothing"),
+        "{}",
+        String::from_utf8_lossy(&nothing.stderr)
+    );
+
+    // A scope that keeps the oversized file still trips the guard.
+    let still_big = run(&["--path", "src/big.rs"]);
+    assert_failure(&still_big);
+    assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
+
+    // Reusable whole-diff outputs cannot carry a scoped result.
+    let artifact = dir.join("scoped-artifact.json").display().to_string();
+    let saved = run(&["--path", "src/lib.rs", "--write-artifact", &artifact]);
+    assert_eq!(saved.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&saved.stderr).contains("--write-artifact"),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    assert!(!std::path::Path::new(&artifact).exists());
+
+    // Malformed patterns and repo-scoped formats are refused up front.
+    let bad = run(&["--path", "../escape"]);
+    assert_eq!(bad.status.code(), Some(2));
+    let repo_format = run_ripr_with_env(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--format",
+            "repo-exposure-json",
+            "--path",
+            "src/lib.rs",
+        ],
+        &cap,
+    );
+    assert_eq!(repo_format.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&repo_format.stderr).contains("repo-scoped"),
+        "{}",
+        String::from_utf8_lossy(&repo_format.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// #6834: shared shape assertions for a `check --json` refusal document —
 /// the one non-consumable envelope the scope guards already use, with the
 /// typed identity selecting run_status/category/limitation/basis.
@@ -3603,6 +3822,16 @@ fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("canary_config_secret_6834") {
         return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
+    }
+    // #9033: stderr also names the way out; the machine message stays the
+    // one-line summary.
+    if !stderr.contains("removing it makes ripr use the next ripr.toml it finds") {
+        return Err(format!("stderr must name how to recover: {stderr}"));
+    }
+    if message.contains("built-in defaults") {
+        return Err(format!(
+            "the recovery hint must not enter the machine message: {message}"
+        ));
     }
     ignore_remove_dir_all(&root);
     Ok(())
@@ -11666,6 +11895,45 @@ fn doctor_exit_codes_distinguish_findings_usage_and_clean() -> Result<(), String
 }
 
 #[test]
+fn doctor_json_from_cargo_build_output_suppresses_path_mismatch_warning() -> Result<(), String> {
+    // #9097: the harness runs the Cargo-built binary; a different installed
+    // `ripr` earlier on PATH is the normal contributor setup, so the public
+    // doctor surface must not emit the PATH-mismatch warning.
+    let workspace = make_temp_workspace(None)?;
+    let fake_bin = workspace.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).map_err(|error| error.to_string())?;
+    let fake_name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+    std::fs::write(fake_bin.join(fake_name), b"not a real ripr\n")
+        .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            fake_bin.join(fake_name),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    let path = std::env::join_paths(std::iter::once(fake_bin.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .map_err(|error| error.to_string())?;
+    let path = path.to_string_lossy().into_owned();
+    let root = workspace.display().to_string();
+    let output = run_ripr_with_env(&["doctor", "--json", "--root", &root], &[("PATH", &path)]);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("fake-bin"),
+        "doctor must report the PATH ripr it found:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("not the running binary"),
+        "cargo build output must not warn about a PATH mismatch:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
@@ -13463,6 +13731,28 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     Ok(())
 }
 
+/// #9033: the loader's recovery line is for `check`/`explain`; verbose doctor
+/// already prints its own `Fix:` line and must not repeat it as an `error:` line.
+#[test]
+fn doctor_verbose_malformed_config_omits_the_loader_recovery_line() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(workspace.join("ripr.toml"), "[bogus\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("  Fix: correct ") {
+        return Err(format!("doctor must keep its own Fix line:\n{stdout}"));
+    }
+    if !stdout.contains("error: ") || stdout.contains("built-in defaults") {
+        return Err(format!(
+            "verbose doctor must show the parser error but not the loader hint:\n{stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #8168: an otherwise healthy committed Cargo repo with malformed `ripr.toml`
 /// must name a config correction, not `ripr check`.
 #[test]
@@ -13797,7 +14087,9 @@ fn perl_doctor_workspace_with_exporter_stub(
         "#!/bin/sh\necho 'cwd-hijack 0.0.0'\nexit 0\n",
         "@echo off\r\necho cwd-hijack 0.0.0\r\nexit /b 0\r\n",
     )?;
-    let shim_dir = root.join("exporter-shims");
+    // #5349: the shim dir must live outside the analyzed root, or doctor
+    // rightly refuses to execute a PATH hit inside the checkout.
+    let shim_dir = unique_temp_workspace(&format!("{label}-shims"));
     std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
     write_probe_stub(
         &shim_dir.join("perl-ripr-facts"),
@@ -13945,6 +14237,7 @@ fn doctor_reports_version_only_perl_exporter_as_incompatible() -> Result<(), Str
         "doctor must not recommend installing perllsp:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
     Ok(())
 }
 
@@ -13968,7 +14261,7 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
     assert!(
         exporter_line.contains("exporter: compatible")
             && exporter_line.contains("perllsp 9.9.9")
-            && exporter_line.contains("exporter-shims/perllsp"),
+            && exporter_line.contains(&shim_dir.join("perllsp").display().to_string()),
         "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
     );
     assert!(
@@ -13980,6 +14273,318 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
         "compatible control must not be reported incompatible:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #5349: a marker-writing `perllsp` exporter. Every invocation creates
+/// `marker`, so a test can prove doctor did (or did not) execute it.
+fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    let name = if cfg!(windows) {
+        "perllsp.bat"
+    } else {
+        "perllsp"
+    };
+    let marker_text = marker.display().to_string();
+    // The marker write uses only shell builtins: the probe runs with the
+    // test's PATH (often just `bin`), where external `touch` may not resolve.
+    let unix = format!(
+        "#!/bin/sh\n: > '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 9.9.9'; exit 0; fi\necho 'Usage: perllsp ripr-facts --schema X'\nexit 0\n"
+    );
+    let windows = format!(
+        "@echo off\r\necho ran> \"{marker_text}\"\r\nif \"%1\"==\"--version\" echo perllsp 9.9.9\r\nif \"%1\"==\"ripr-facts\" echo Usage: perllsp ripr-facts --schema X\r\nexit /b 0\r\n"
+    );
+    write_probe_stub(&dir.join(name), &unix, &windows)
+}
+
+fn write_marker_exporter_named(dir: &Path, marker: &Path, base_name: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    let name = if cfg!(windows) {
+        format!("{base_name}.bat")
+    } else {
+        base_name.to_string()
+    };
+    let marker_text = marker.display().to_string();
+    let unix = format!(
+        "#!/bin/sh\n: > '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo '{base_name} 9.9.9'; exit 0; fi\necho 'Usage: {base_name} ripr-facts --schema X'\nexit 0\n"
+    );
+    let windows = format!(
+        "@echo off\r\necho ran> \"{marker_text}\"\r\nif \"%1\"==\"--version\" echo {base_name} 9.9.9\r\nif \"%1\"==\"ripr-facts\" echo Usage: {base_name} ripr-facts --schema X\r\nexit /b 0\r\n"
+    );
+    write_probe_stub(&dir.join(name), &unix, &windows)
+}
+
+fn perl_hostile_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
+        .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+        .map_err(|err| err.to_string())?;
+    Ok(root)
+}
+
+fn doctor_stdout_with_path_env(
+    cwd: &Path,
+    root: &Path,
+    path: &str,
+    extra: &[(&str, &str)],
+) -> Result<String, String> {
+    let root_str = root.display().to_string();
+    let mut env: Vec<(&str, &str)> = vec![("PATH", path)];
+    env.extend_from_slice(extra);
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        cwd,
+        &["--verbose", "doctor", "--root", &root_str],
+        &env,
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[test]
+fn doctor_refuses_repo_local_perl_exporter_on_relative_path() -> Result<(), String> {
+    // #5349 (a): PATH=bin hits a checkout-controlled exporter; doctor must
+    // report it refused and never execute it (no marker file).
+    let root = perl_hostile_root("doctor-perl-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused") && stdout.contains("inside the analyzed checkout"),
+        "repo-local exporter must be reported refused:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1") && stdout.contains("outside the repo"),
+        "refusal must name the next step:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_runs_repo_local_perl_exporter_with_opt_in() -> Result<(), String> {
+    // #5349 (b): the same setup with the opt-in executes as before.
+    let root = perl_hostile_root("doctor-perl-opt-in")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "1")],
+    )?;
+    assert!(
+        marker.exists(),
+        "opted-in exporter must execute (no marker)"
+    );
+    assert!(
+        stdout.contains("exporter: compatible") && stdout.contains("perllsp 9.9.9"),
+        "opted-in exporter must be probed compatible:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("exporter: refused"),
+        "opted-in exporter must not be refused:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_runs_perl_exporter_outside_root_via_relative_path() -> Result<(), String> {
+    // #5349 (c): a relative PATH entry resolving outside the analyzed root
+    // keeps working (deliberate `PATH=bin:$PATH` behavior for real tools).
+    let parent = unique_temp_workspace("doctor-perl-outside-parent");
+    let root = parent.join("repo");
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::write(root.join("Makefile.PL"), "use ExtUtils::MakeMaker;\n")
+        .map_err(|err| err.to_string())?;
+    std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+        .map_err(|err| err.to_string())?;
+    let marker = parent.join("PWNED");
+    write_marker_perl_exporter(&parent.join("bin"), &marker)?;
+    let stdout = doctor_stdout_with_path_env(
+        &parent,
+        &root,
+        "bin",
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(marker.exists(), "outside exporter must execute (no marker)");
+    assert!(
+        stdout.contains("exporter: compatible"),
+        "outside exporter via relative PATH must be compatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&parent);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_refuses_perl_exporter_symlinked_into_root() -> Result<(), String> {
+    // #5349 (d): a symlink under PATH pointing into the root is refused by
+    // canonicalization, not textual prefix.
+    let root = perl_hostile_root("doctor-perl-symlink")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let outside = unique_temp_workspace("doctor-perl-symlink-bin");
+    std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+    std::os::unix::fs::symlink(root.join("bin/perllsp"), outside.join("perllsp"))
+        .map_err(|err| err.to_string())?;
+    let outside_str = outside.display().to_string();
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        &outside_str,
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused"),
+        "symlinked-into-root exporter must be refused:\n{stdout}"
+    );
+    // Finding 2: the refusal names the canonical target that was
+    // judged, not the outside symlink spelling.
+    let canonical =
+        std::fs::canonicalize(root.join("bin/perllsp")).map_err(|err| err.to_string())?;
+    let refused_line = stdout
+        .lines()
+        .find(|line| line.contains("exporter: refused"))
+        .unwrap_or("");
+    assert!(
+        refused_line.contains(&canonical.display().to_string()),
+        "refusal must name the canonical resolved path {canonical:?}: {refused_line}\n{stdout}"
+    );
+    assert!(
+        !refused_line.contains(&outside.join("perllsp").display().to_string()),
+        "refusal must not name the symlink spelling: {refused_line}"
+    );
+    assert!(
+        !marker.exists(),
+        "symlinked refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
+    Ok(())
+}
+
+#[test]
+fn doctor_json_refuses_repo_local_perl_exporter() -> Result<(), String> {
+    // Finding 4: the --json refusal is exercised end to end.
+    let root = perl_hostile_root("doctor-perl-json-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let root_str = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["doctor", "--json", "--root", &root_str],
+        &[("PATH", "bin"), ("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )
+    .map_err(|err| format!("run doctor --json: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("doctor --json did not parse: {err}\n{stdout}"))?;
+    let exporter = &report["perl_preview"]["exporter"];
+    assert_eq!(
+        exporter["state"], "refused",
+        "json exporter must be refused: {exporter}\n{stdout}"
+    );
+    assert!(
+        exporter["executable"]
+            .as_str()
+            .is_some_and(|exe| !exe.is_empty()),
+        "refused json exporter must name the judged path: {exporter}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused json exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_refuses_repo_local_perl_exporter_on_default_screen() -> Result<(), String> {
+    // Finding 1: without --verbose, the refusal still surfaces.
+    let root = perl_hostile_root("doctor-perl-default-refused")?;
+    let marker = root.join("PWNED");
+    write_marker_perl_exporter(&root.join("bin"), &marker)?;
+    let root_str = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["doctor", "--root", &root_str],
+        &[("PATH", "bin"), ("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("exporter: refused") && stdout.contains("inside the analyzed checkout"),
+        "default doctor must surface the exporter refusal:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("- Perl preview:"),
+        "full Perl preview stays behind --verbose:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_refused_perl_exporter_takes_precedence_over_incompatible() -> Result<(), String> {
+    // Finding 3: a refused perl-ripr-facts must not be masked by an
+    // incompatible perllsp found outside the root.
+    let root = perl_hostile_root("doctor-perl-refusal-precedence")?;
+    let marker = root.join("PWNED");
+    write_marker_exporter_named(&root.join("bin"), &marker, "perl-ripr-facts")?;
+    let outside = unique_temp_workspace("doctor-perl-incompatible-outside");
+    std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+    let perllsp_name = if cfg!(windows) {
+        "perllsp.bat"
+    } else {
+        "perllsp"
+    };
+    write_probe_stub(
+        &outside.join(perllsp_name),
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 0.17.0'; exit 0; fi\necho 'error: unexpected argument' >&2\nexit 1\n",
+        "@echo off\r\nif \"%1\"==\"--version\" echo perllsp 0.17.0\r\nexit /b 1\r\n",
+    )?;
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let path = format!("bin{separator}{}", outside.display());
+    let stdout = doctor_stdout_with_path_env(
+        &root,
+        &root,
+        &path,
+        &[("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "0")],
+    )?;
+    assert!(
+        stdout.contains("exporter: refused"),
+        "refusal must take precedence over incompatible:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("does not accept `ripr-facts`"),
+        "incompatible hit must not mask the refusal:\n{stdout}"
+    );
+    assert!(
+        !marker.exists(),
+        "refused exporter must not execute (marker exists)"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
     Ok(())
 }
 
@@ -22674,7 +23279,92 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
         !stdout.contains("no analysis scope was provided"),
         "check --base HEAD must NOT show no-scope disclosure; got stdout:\n{stdout}"
     );
+    // #9033: the empty range is still explained, naming the compared base.
+    assert!(
+        stdout.contains("`HEAD...HEAD` has no analyzable changed files"),
+        "check --base HEAD on an empty range must name the range as having no analyzable changed files; got stdout:\n{stdout}"
+    );
     ignore_remove_dir_all(&root);
+}
+
+/// #9033: a range that only deletes a file lands in `no_scope` with zero changed
+/// files, so the note must not assure the reader that no behavior changed.
+#[test]
+fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() -> Result<(), String>
+{
+    let root = unique_temp_workspace("base-deletion-only");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(root.join("src/old.rs"), "pub fn two() -> i32 { 2 }\n")
+        .map_err(|e| format!("write old: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"deletion-only\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    run_git(&root, &["rm", "src/old.rs"])?;
+    run_git(&root, &["commit", "-m", "delete"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("`HEAD~1...HEAD` has no analyzable changed files") {
+        return Err(format!("expected the range note:\n{stdout}"));
+    }
+    if !stdout.contains("does NOT mean no behavior changed")
+        || stdout.contains("means no behavior changed against it")
+    {
+        return Err(format!(
+            "a deletion-only range must not claim no behavior changed:\n{stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #9033: `--diff <file>` wins over `--base`; the retained base must not be
+/// reported as an analyzed Git range in either human format.
+#[test]
+fn check_diff_file_with_base_does_not_report_a_git_range_note() -> Result<(), String> {
+    let root = unique_temp_workspace("diff-file-with-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"diff-file-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let patch = root.join("empty.patch");
+    std::fs::write(&patch, "").map_err(|e| format!("write patch: {e}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+    for format in ["human", "human-full"] {
+        let output = run_ripr(&[
+            "check", "--root", &root_str, "--diff", &patch_str, "--base", "HEAD", "--format",
+            format,
+        ]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains("HEAD...HEAD") || stdout.contains("has no analyzable changed files") {
+            return Err(format!(
+                "{format}: a supplied diff file must not be reported as a Git range:\n{stdout}"
+            ));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
@@ -30888,5 +31578,91 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
         "status must report no repair in progress:\n{status_out}\n{status_err}"
     );
     std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #9308: a Rust file over the nesting budget and outside the diff must show
+/// as a typed limitation in `check` JSON and in the pilot artifacts, on a cold
+/// and a warm run, instead of reading complete.
+#[test]
+fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), String> {
+    let root = unique_temp_workspace("declined-rust-file");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"declined_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub mod deep;\npub fn add(a: i32, b: i32) -> i32 {\n    if a > b { a } else { b }\n}\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    std::fs::write(
+        root.join("src/deep.rs"),
+        format!(
+            "pub fn deep() -> i32 {{ {}1{} }}\n",
+            "(".repeat(10_000),
+            ")".repeat(10_000)
+        ),
+    )
+    .map_err(|err| format!("write deep: {err}"))?;
+    let diff = root.join("change.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub mod deep;\n pub fn add(a: i32, b: i32) -> i32 {\n-    if a >= b { a } else { b }\n+    if a > b { a } else { b }\n }\n",
+    )
+    .map_err(|err| format!("write diff: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let diff_str = diff.to_string_lossy().into_owned();
+
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &diff_str, "--format", "json",
+    ]);
+    let check: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|err| format!("check JSON: {err}"))?;
+    assert_eq!(
+        check["analysis_outcome"]["analysis_complete"], false,
+        "{check}"
+    );
+    let detail = check["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        detail.contains("src/deep.rs (rust_nesting_budget)"),
+        "{detail}"
+    );
+
+    for run in ["cold", "warm"] {
+        let output = run_ripr(&["pilot", "--root", &root_str, "--format", "json"]);
+        let summary: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("pilot {run} JSON: {err}"))?;
+        assert_eq!(
+            summary["declined_rust_files"]["file_count"], 1,
+            "{run}: {summary}"
+        );
+        let exposure: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|err| format!("read exposure {run}: {err}"))?,
+        )
+        .map_err(|err| format!("exposure {run} JSON: {err}"))?;
+        assert_eq!(exposure["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(
+            exposure["limitations"][0]["category"],
+            "rust_files_declined"
+        );
+        assert_eq!(
+            summary["actionable_seams_total_is_lower_bound"], true,
+            "{run}: {summary}"
+        );
+        let packets: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))
+                .map_err(|err| format!("read packets {run}: {err}"))?,
+        )
+        .map_err(|err| format!("packets {run} JSON: {err}"))?;
+        assert_eq!(packets["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(packets["limitations"][0]["category"], "rust_files_declined");
+    }
+    ignore_remove_dir_all(&root);
     Ok(())
 }
