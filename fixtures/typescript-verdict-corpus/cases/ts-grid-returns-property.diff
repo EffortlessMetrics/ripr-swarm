@@ -1,0 +1,12 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -7,7 +7,7 @@
+ }
+ 
+ export function normalize(text: string): string {
+-  return text.trim();
++  return text.replace(/^\s+|\s+$/g, "");
+ }
+ 
+ export function shout(text: string): string {

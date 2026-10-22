@@ -17,6 +17,7 @@ use super::owner_pin::closure_adaptor::{
     AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
 };
 use super::reveal::assertion_comparison_operands;
+use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
@@ -346,6 +347,7 @@ fn loan_pairs_boundary_call(
         }
         activation.observed_values.iter().any(|fact| {
             fact.line == *line
+                && fact.file.as_ref().is_none_or(|file| *file == test.file)
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
                 && fact.text.contains(&*helper_call.text)
@@ -1100,10 +1102,21 @@ fn owner_call_arguments_admit_activation_fallback(
     } else {
         compared
     };
+    // A `slice.len()` operand over a parameter reads the cardinality of a
+    // literal `&[..]` argument. Other literal slices in the call carry no
+    // scalar for activation to mistake for the boundary, so they stay
+    // admissible; the witness row itself is keyed to the receiver's position.
+    let slice_len_operand = [left.as_str(), right.as_str()].into_iter().any(|operand| {
+        operand
+            .strip_suffix(".len()")
+            .is_some_and(|receiver| parameter_index(&parameters, receiver).is_some())
+    });
     indices.iter().all(|&idx| {
-        arguments
-            .get(idx)
-            .is_some_and(|argument| argument_is_activation_fallback_shape(argument.trim()))
+        arguments.get(idx).is_some_and(|argument| {
+            let argument = argument.trim();
+            argument_is_activation_fallback_shape(argument)
+                || (slice_len_operand && literal_slice_length(argument).is_some())
+        })
     })
 }
 
@@ -3102,6 +3115,18 @@ mod tests {
             ),
             "a line at the budget may have dropped another owner call"
         );
+    }
+
+    #[test]
+    fn a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line() {
+        let (test, assertion, loan, mut activation) = loan_case(CHECK, "check(10, true);", 2);
+        // A fact that names its source file pairs only inside that file: a
+        // second file's call on the same line with the same text is a
+        // different call (#9509 review).
+        activation.observed_values[0].file = Some(test.file.clone());
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+        activation.observed_values[0].file = Some(std::path::PathBuf::from("tests/other.rs"));
+        assert!(!loan_pairs(&test, &assertion, &loan, &activation));
     }
 
     #[test]

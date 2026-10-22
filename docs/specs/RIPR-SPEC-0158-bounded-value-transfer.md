@@ -48,6 +48,22 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Flag-selected locals (#9276): `if flag { A } else { B }` and
+  `if !flag { A } else { B }` evaluate to the arm an exact boolean input
+  selects, and the other arm is never read. A local's initializer may
+  name same-file constants (`let unit = if si { KIB } else { KB };`);
+  each joins the row's exact inputs only when its file declares it once
+  with a plain decimal value, so an imported, duplicated or opaque
+  constant leaves the name unresolved. Two plain decimal integers
+  compare by digits, so a test's `1_024` meets the evaluated `1024`. The
+  flag and every constant the initializer names must not be rebound in
+  the owner (`let si = !si;`, a local `KB`, an assignment or `mut`
+  binding); a rebound name leaves the local unresolved. A flag the
+  owner mentions anywhere before the initializer (a `for si in ..`, an
+  `if let Some(si)`, a closure or match-arm binding) is declined too, as
+  scope is not tracked, and a constant the file also imports with `use`
+  is never read from a same-named declaration. Braces inside char and
+  string literals do not end an arm.
 
 ## Required Evidence
 
@@ -83,6 +99,23 @@ exercised boundary from a missing one.
   literal `"ab"`. The normalization is pre-existing and applies
   identically to parameter operands.
 
+- A local that folds to a plain integer is compared only against an
+  integer cell of the other operand's parameter. A string cell is the
+  literal inside a call argument (`to_string(parse("128.000 GiB"), true)`),
+  not the compared number, so that row leaves the local unresolved and
+  the boundary reads `infection_unknown` instead of a missing
+  discriminator (#9276).
+- An equality fact whose one side is an owner parameter and whose other
+  side is a local that evaluated to a plain integer names the value, not
+  the local (`bytes == 1024`, not `bytes == unit`), on either side of the
+  comparison. A test helper that forwards its parameters
+  (`fn expect_tier(want, bytes, si) { assert_eq!(want, tier(bytes, si)) }`)
+  then pairs the call with its exact assertion through the same-test
+  pairing, which matches `parameter == literal` terms against the
+  literals the call feeds. A helper that computes an argument
+  (`tier(bytes + 1, si)`) or asserts only that the result is non-empty
+  still does not pair (#9509).
+
 ## Acceptance Examples
 
 - Accept: `end = input.rfind(delim).map_or(1, |idx| idx)` with
@@ -92,12 +125,36 @@ exercised boundary from a missing one.
   evaluated default.
 - Reject: exactness from a method outside the families, a non-identity
   closure, a dynamic input, or a shadowed/out-of-scope binding.
+- Accept: `let unit = if si { KIB } else { KB };` with `KIB = 1_024` and a
+  related test calling the owner with `(1_024, true)`: `unit` is `1024`
+  under that row, equals `bytes`, and the boundary is observed
+  (`local-boundary-flag-hit`, `local-boundary-flag-negated`).
+- Reject: the same local with tests at `(1_000, true)` and `(1_024,
+  false)`: each input is the other flag's boundary, no row sits on
+  `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
+- Reject: `let si = !si;` before the same local, with tests at
+  `(1_024, true)`: the flag the local reads is the opposite of the
+  caller's literal, so the pinned 1_024 is not the boundary and the
+  verdict stays unresolved (`local-boundary-flag-shadowed`).
+- Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
+  with tests at `(1_024, true)` (`local-boundary-flag-loop`), and a
+  function-local `const KB: u64 = 2_000;` shadowing the file's `KB`
+  (`local-boundary-flag-alias`).
+- Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
+  whose only direct row binds `bytes` to a string literal: the verdict
+  stays `infection_unknown` (`bytesize-format-unit-first-run`).
 
 ## Test Mapping
 
 `analysis/classify/value_transfer.rs` `tests`;
 `analysis/classify/activation.rs`
-`activation_evidence_resolves_computed_local_boundary_operands`;
+`activation_evidence_resolves_computed_local_boundary_operands`,
+`exact_values_compare_plain_decimals_by_digits_only` and
+`an_integer_local_meets_only_an_integer_counterpart_cell`;
+`rust-verdict-corpus` cases `local-boundary-flag-hit`,
+`local-boundary-flag-trap`, `local-boundary-flag-negated`,
+`local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
+`local-boundary-flag-alias`;
 `analysis/language/rust/mod.rs` end-to-end retarget+evaluation tests;
 fixtures `binding_predicate_equality_boundary` (re-blessed flip) and
 the #3295 family fixtures.

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The LSP receipt-command fallback test now demonstrates the fallback on every host: its first candidate uses the `--root=.` spelling the binder withholds everywhere, and the original backslash-escape scenario keeps its POSIX expectation while pinning the deliberate Windows console behavior, where a backslash is literal and the route binds instead of falling back (#8499, #8153).

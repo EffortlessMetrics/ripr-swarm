@@ -60,6 +60,8 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+#[cfg(test)]
+mod capability_disposition_tests;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -69,11 +71,13 @@ mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod guard_entry_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
 mod lookup_table_guard;
+mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -101,11 +105,16 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod repo;
+#[cfg(test)]
+mod repo_tests;
+mod returned_state_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
 mod table_rows;
+mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
@@ -143,6 +152,7 @@ pub(crate) use error_payload_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
+pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
@@ -153,10 +163,12 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use returned_state_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
 pub(crate) use table_rows::*;
+pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
@@ -210,35 +222,27 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // The stub still returns an empty result, but it now discloses
-        // the partial run through `partial_reason` so the pipeline
-        // records a `Partial` language run on the shared `language_runs`
-        // channel (adapter.rs): human/JSON output renders the limitation
-        // and gates fail closed on the partial denominator. Without this
-        // disclosure the empty adapter result was silent — and in a mixed
-        // Rust+TypeScript repo the render-side `typescript_diff_first`
-        // guidance (output/render.rs) never fires because it requires an
-        // empty seam inventory AND no Rust files. See
-        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
-        // the limitation contract.
-        Ok(LanguageRepoResult {
-            findings: Vec::new(),
-            harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
-            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
-            rust_diagnostic_origins: Default::default(),
-            rust_consumed_sources: Default::default(),
-        })
+        // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
+        // unreadable or partially indexed run discloses itself through
+        // `partial_reason` on the shared `language_runs` channel.
+        repo::analyze_repo(options, &[])
     }
 }
 
 impl TypeScriptAdapter {
+    /// [`LanguageAdapter::analyze_repo`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386), so repo mode admits the same
+    /// declared hand-written sources diff mode does.
+    pub(crate) fn analyze_repo_with_handwritten_env(
+        options: &AnalysisOptions,
+        handwritten: &[String],
+    ) -> Result<LanguageRepoResult, String> {
+        repo::analyze_repo(options, handwritten)
+    }
+
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the read caps injected (mirrors
     /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves

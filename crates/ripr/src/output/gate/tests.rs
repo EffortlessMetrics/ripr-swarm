@@ -828,6 +828,143 @@ fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     })));
 }
 
+/// #9010: `document_complete: false` is the only-when-bounded disclosure inside
+/// `analysis_outcome`; `analysis_complete` keeps the analysis verdict.
+#[test]
+fn bounded_analysis_document_is_incomplete_but_unbounded_control_is_not() {
+    let bounded = json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}
+        }
+    });
+    assert!(discloses_incomplete_analysis_outcome(&bounded));
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&bounded),
+        "findings_document_bounded"
+    );
+    let unbounded = json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }
+    });
+    assert!(!discloses_incomplete_analysis_outcome(&unbounded));
+    // A corrupt (non-boolean) member fails closed instead of reading complete.
+    assert!(discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {"analysis_complete": true, "document_complete": "false"}
+    })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {"analysis_complete": true, "document_complete": true}
+    })));
+}
+
+#[test]
+fn gate_pr_guidance_refusal_names_findings_document_bounded_kind() -> Result<(), String> {
+    // #9010: a bounded PR-guidance input without run_limitations is refused by
+    // the shared predicate and labelled with the bounded kind, not the
+    // producer's `complete_with_findings` outcome kind.
+    let dir = temp_dir("gate-bounded-pr-guidance-kind")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "status": "advisory",
+          "comments": [],
+          "analysis_outcome": {
+            "analysis_complete": true,
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}
+          }
+        }"#,
+    )?;
+    let (_fixture, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("(findings_document_bounded)")
+                && !error.contains("complete_with_findings")),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_inputs_refuse_bounded_analysis_document_without_run_limitations() -> Result<(), String> {
+    let dir = temp_dir("gate-bounded-document-outcome")?;
+    // Deliberately omits `run_limitations[]`: only the analysis_outcome
+    // disclosure is present, so the shared predicate is the sole refusal.
+    let bounded = r#"{
+      "findings": [],
+      "analysis_outcome": {
+        "analysis_complete": true,
+        "document_complete": false,
+        "findings_rendered": 1,
+        "findings_total": 3,
+        "outcome": {"kind": "complete_with_findings"}
+      }
+    }"#;
+    let control = r#"{
+      "findings": [],
+      "analysis_outcome": {
+        "analysis_complete": true,
+        "outcome": {"kind": "complete_with_findings"}
+      }
+    }"#;
+
+    for (name, document, refused) in [("bounded", bounded, true), ("control", control, false)] {
+        let ledger = write_temp_json(&dir, &format!("ledger-{name}.json"), document)?;
+        let (_gap_fixture, mut gap_input) = fixture_input(GateMode::VisibleOnly)?;
+        gap_input.pr_guidance = None;
+        gap_input.gap_ledger = Some(ledger);
+        let gap_report = build_gate_decision_report(&gap_input)?;
+        let gap_refused = gap_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("findings_document_bounded"));
+        assert_eq!(
+            gap_refused, refused,
+            "gap-ledger {name}: {:?}",
+            gap_report.config_errors
+        );
+
+        let baseline = write_temp_json(&dir, &format!("baseline-{name}.json"), document)?;
+        let (_base_fixture, mut base_input) = fixture_input(GateMode::CalibratedGate)?;
+        base_input.pr_guidance = None;
+        base_input.baseline = Some(baseline);
+        let base_report = build_gate_decision_report(&base_input)?;
+        let base_refused = base_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("findings_document_bounded"));
+        assert_eq!(
+            base_refused, refused,
+            "baseline {name}: {:?}",
+            base_report.config_errors
+        );
+        if refused {
+            assert_eq!(gap_report.status, "config_error");
+            assert_eq!(base_report.status, "config_error");
+        }
+    }
+
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_blocks_new_supported_candidate() -> Result<(), String> {
     let dir = temp_dir("gate-calibrated")?;
@@ -932,6 +1069,207 @@ fn given_baseline_of_unrecognized_kind_when_gate_evaluated_then_config_error() -
         );
         ignore_remove_dir_all(dir);
     }
+    Ok(())
+}
+
+#[test]
+fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    // #9301 F3: the gate shares `baseline diff`'s schema/root contract.
+    let (_fixture, probe) = fixture_input(GateMode::BaselineCheck)?;
+    let own_root = display_path(&probe.root).replace('\\', "/");
+    let foreign = [
+        (
+            "schema-99.json",
+            r#"{"schema_version":"99.0","kind":"gate_baseline","entries":[]}"#.to_string(),
+            "unsupported schema_version",
+        ),
+        (
+            "root-top.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":"/elsewhere/other","entries":[]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-decisions.json",
+            r#"{"schema_version":"0.1","decisions":[{"root":"/elsewhere/other","seam_id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-comments.json",
+            r#"{"schema_version":"0.1","comments":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-summary.json",
+            r#"{"schema_version":"0.1","summary_only":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-suppressed.json",
+            r#"{"schema_version":"0.1","suppressed":[{"root":"/elsewhere/other","id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+        (
+            "root-numeric.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":7,"entries":[]}"#.to_string(),
+            "different repository",
+        ),
+        (
+            "root-entry.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"root":"/elsewhere/other","canonical_gap_id":"a"}]}"#
+                .to_string(),
+            "different repository",
+        ),
+    ];
+    for (name, contents, expected) in foreign {
+        let dir = temp_dir("gate-baseline-foreign")?;
+        let baseline = write_temp_json(&dir, name, &contents)?;
+        let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{name}");
+        assert!(
+            report.config_errors.iter().any(|e| e.contains(expected)),
+            "{name}: {:?}",
+            report.config_errors
+        );
+        ignore_remove_dir_all(dir);
+    }
+    // Positive controls: own/unknown roots and absent schema stay accepted AND
+    // the baseline is actually loaded (the fixture seam is honored as baselined).
+    let seam = r#""identity":{"seam_id":"8f7fa8644fd12280","source_id":"ripr-review-8f7fa8644fd12280","id":"ripr-gate-8f7fa8644fd12280","dedupe_key":null,"fallback":"src/pricing.rs:88:weakly_gripped"}"#;
+    let with_slash = format!("{own_root}/");
+    let spellings: Vec<(&str, String)> = vec![
+        ("own", format!("{own_root:?}")),
+        ("own-trailing-slash", format!("{with_slash:?}")),
+        ("dot", "\".\"".to_string()),
+        ("dot-slash", "\"./\"".to_string()),
+        ("relative", "\"crates/other\"".to_string()),
+        ("blank", "\"\"".to_string()),
+        ("null", "null".to_string()),
+    ];
+    for (label, root) in spellings {
+        for shape in ["entries", "decisions"] {
+            let item = if shape == "entries" {
+                format!(r#"{{"root":{root},{seam}}}"#)
+            } else {
+                format!(r#"{{"root":{root},"seam_id":"8f7fa8644fd12280"}}"#)
+            };
+            let contents =
+                format!(r#"{{"schema_version":"0.1","root":{root},"{shape}":[{item}]}}"#);
+            let dir = temp_dir("gate-baseline-own-root")?;
+            let baseline = write_temp_json(&dir, "own.json", &contents)?;
+            let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+            input.baseline = Some(baseline);
+            let report = build_gate_decision_report(&input)?;
+            assert!(
+                report.config_errors.is_empty(),
+                "{label}/{shape}: {:?}",
+                report.config_errors
+            );
+            assert_eq!(report.summary.advisory, 1, "{label}/{shape}");
+            assert!(
+                report.decisions[0]
+                    .gate_reason
+                    .contains("explicit baseline"),
+                "{label}/{shape}: baseline must be honored"
+            );
+            ignore_remove_dir_all(dir);
+        }
+    }
+    // Absent schema_version and absent root stay accepted (compat window).
+    let dir = temp_dir("gate-baseline-absent")?;
+    let baseline = write_temp_json(
+        &dir,
+        "absent.json",
+        r#"{"decisions":[{"seam_id":"8f7fa8644fd12280"}]}"#,
+    )?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("explicit baseline")
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn relative_gate_root_accepts_and_honors_absolute_recorded_root() -> Result<(), String> {
+    // The realistic `--root .` CI case: the gate root is relative, so an
+    // absolute recorded root is unknown, not positively foreign (#9301).
+    let contents = r#"{"schema_version":"0.1","root":"/elsewhere/other","decisions":[{"root":"/elsewhere/other","seam_id":"8f7fa8644fd12280"}]}"#;
+    let dir = temp_dir("gate-baseline-relative-root")?;
+    let baseline = write_temp_json(&dir, "abs.json", contents)?;
+    let (fixture, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    // Relative inputs resolve against the gate root, so pin the guidance
+    // input to the hermetic copy while the root itself stays the relative `.`.
+    input.pr_guidance = input
+        .pr_guidance
+        .take()
+        .map(|relative| fixture.path().join(relative));
+    input.root = PathBuf::from(".");
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("explicit baseline"),
+        "baseline must be honored"
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn rootless_gate_decision_baseline_create_round_trips_through_gate_evaluate() -> Result<(), String>
+{
+    // Real production path: `baseline create` writes `"root": null` for a
+    // rootless gate decision; the gate must accept that baseline (#9301).
+    let decision = r#"{"schema_version":"0.1","mode":"visible-only","decisions":[{
+      "decision":"advisory","id":"ripr-gate-old","seam_id":"old","source_id":"ripr-review-old",
+      "static_class":"weakly_gripped","placement":{"path":"src/old.rs","line":7},
+      "evidence_record":{"canonical_gap_id":"pricing::discount::threshold_equality"},
+      "evidence":{"missing_discriminator":"amount == threshold"}}]}"#;
+    let report = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        decision,
+    )?;
+    let rendered = crate::output::baseline::render_baseline_create_json(&report)?;
+    let parsed: Value = serde_json::from_str(&rendered).map_err(|e| e.to_string())?;
+    assert!(
+        parsed["root"].is_null(),
+        "premise: created baseline carries root null"
+    );
+    let dir = temp_dir("gate-baseline-roundtrip")?;
+    let baseline = write_temp_json(&dir, "created.json", &rendered)?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
     Ok(())
 }
 
@@ -1179,7 +1517,6 @@ fn gate_baseline_fallback_only_match_discloses_warning_and_match_kind() -> Resul
               "entries": [
                 {
                   "identity": {
-                    "canonical_gap_id": "gap:stale-reviewed-debt",
                     "fallback": "src/pricing.rs:88:weakly_gripped"
                   }
                 }
@@ -1231,6 +1568,124 @@ fn gate_baseline_fallback_only_match_discloses_warning_and_match_kind() -> Resul
     assert!(
         markdown.contains("matched baseline evidence by fallback path/line/static_class"),
         "fallback disclosure must be visible in human output"
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_fallback_match_with_divergent_canonical_id_blocks() -> Result<(), String> {
+    // Issue #1964 / audit B1-F1: a canonical-bearing entry whose canonical id
+    // differs from the candidate's must not suppress it through the shared
+    // `path:line:class` fallback. Same gate/delta divergence rule.
+    let dir = temp_dir("gate-baseline-fallback-divergent")?;
+    let with_fallback = write_temp_json(
+        &dir,
+        "with-fallback.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"identity":{
+              "canonical_gap_id":"gap:stale-reviewed-debt",
+              "fallback":"src/pricing.rs:88:weakly_gripped"}}]}"#,
+    )?;
+    let stripped = write_temp_json(
+        &dir,
+        "stripped.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"identity":{
+              "canonical_gap_id":"gap:stale-reviewed-debt"}}]}"#,
+    )?;
+    for baseline in [with_fallback, stripped] {
+        let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert!(report.decisions[0].is_baseline_new);
+        assert_eq!(report.decisions[0].baseline_match_kind, None);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.blocking, 1);
+    }
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_shared_fallback_joins_when_any_entry_canonical_agrees() -> Result<(), String> {
+    let dir = temp_dir("gate-baseline-fallback-shared")?;
+    let baseline = write_temp_json(
+        &dir,
+        "baseline.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[
+              {"identity":{"canonical_gap_id":"gap:stale-reviewed-debt",
+                "fallback":"src/pricing.rs:88:weakly_gripped"}},
+              {"identity":{"canonical_gap_id":"gap:dedf923a13a00573",
+                "fallback":"src/pricing.rs:88:weakly_gripped"}}]}"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(!report.decisions[0].is_baseline_new);
+    assert_eq!(report.summary.blocking, 0);
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_evidence_record_canonical_id_diverges_and_blocks() -> Result<(), String> {
+    // Same lookup as `ripr baseline diff`: a canonical id carried only under
+    // evidence_record still counts for the fallback divergence rule.
+    let dir = temp_dir("gate-baseline-fallback-evidence-record")?;
+    let baseline = write_temp_json(
+        &dir,
+        "baseline.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[
+              {"identity":{"fallback":"src/pricing.rs:88:weakly_gripped"},
+               "evidence_record":{"canonical_gap_id":"gap:stale-reviewed-debt"}}]}"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(report.decisions[0].is_baseline_new);
+    assert_eq!(report.summary.blocking, 1);
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_candidate_without_canonical_id_joins_canonical_fallback_with_disclosure()
+-> Result<(), String> {
+    // Same as `baseline diff`: a candidate with no canonical id carries no
+    // divergence evidence, so the fallback join holds and is disclosed.
+    let dir = temp_dir("gate-baseline-candidate-no-canonical")?;
+    let baseline = write_temp_json(
+        &dir,
+        "baseline.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"identity":{
+              "canonical_gap_id":"gap:reviewed",
+              "fallback":"src/pricing.rs:88:weakly_gripped"}}]}"#,
+    )?;
+    let fixture = hermetic_gate_fixture_root()?;
+    let input = GateEvaluateInput {
+        root: fixture.path().to_path_buf(),
+        repo_exposure: None,
+        pr_guidance: Some(PathBuf::from(
+            "fixtures/gate_baseline_fallback_disclosure/expected/gate-baseline/missing-canonical-identity/pr-guidance.json",
+        )),
+        gap_ledger: None,
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: Some(baseline),
+        mode: GateMode::BaselineCheck,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+    let report = build_gate_decision_report(&input)?;
+    assert!(report.decisions[0].canonical_gap_id.is_none());
+    assert!(!report.decisions[0].is_baseline_new);
+    assert_eq!(
+        report.decisions[0].baseline_match_kind.as_deref(),
+        Some("legacy_path_line_class")
     );
     ignore_remove_dir_all(dir);
     Ok(())

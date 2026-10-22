@@ -161,7 +161,7 @@ fn perl_static_limit_missing_runner_does_not_invent_observation() -> Result<(), 
         .changes
         .first_mut()
         .ok_or_else(|| "missing control change".to_string())?;
-    change.changed_observable = None;
+    change.changed_observable = Default::default();
     change.changed_text_digest = "discriminator:assert the changed return value".to_string();
     let before = finding(&packet)?;
     assert_eq!(before.class, ExposureClass::WeaklyExposed);

@@ -530,6 +530,12 @@ id = "RIPR-SPEC-0279"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust doc examples and diffs, so a Python case cannot label them"
 
+# Rust mock call-count side flip
+[[spec]]
+id = "RIPR-SPEC-0305"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
+
 # TypeScript strict custom matcher
 [[spec]]
 id = "RIPR-SPEC-0262"
@@ -593,3 +599,170 @@ reason = "acceptance examples are bullet prose, not numbered; no corpus case cit
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+# Release ledger direct-main contract
+[[spec]]
+id = "RIPR-SPEC-0301"
+scope = "out"
+reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+[[known_false]]
+case = "py-shapes-async-default"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-context-exit-record"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dataclass-classmethod-free"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-decorator-retry-count"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dunder-add"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dunder-eq-type-guard"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-generator-bound"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-match-wildcard-arm"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-relative-import-missing-tier"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-idioms-caplog-message"
+issue = 9424
+reason = "caplog text assertions pin log messages but are graded weak (#9424)."
+
+[[known_false]]
+case = "py-idioms-caplog-level"
+issue = 9424
+reason = "caplog level edit; abstain with a typed limit (#9424)."
+
+[[known_false]]
+case = "py-idioms-approx-constant-within-tolerance"
+issue = 9428
+reason = "pytest.approx credited as an exact-value oracle for a within-tolerance edit (#9428)."
+
+[[known_false]]
+case = "py-idioms-unittest-setup-sign"
+issue = 9412
+reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
+
+[[known_false]]
+case = "py-grid-boundary-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-grid-equality-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-grid-logical-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-hostile-builtin-name-shadow"
+issue = 9426
+reason = "False actionable: boundary check fires on a reversing comparison flip (#9426)."
+
+[[known_false]]
+case = "py-hostile-crlf-test-helper-assert"
+issue = 9419
+reason = "False actionable: an assertion inside a helper function in another file reads as reach-only (#9419)."
+
+[[known_false]]
+case = "py-hostile-live-version-branch"
+issue = 9423
+reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
+
+[[known_false]]
+case = "py-hostile-module-constant-pinned"
+issue = 9423
+reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
+
+[[known_false]]
+case = "py-hostile-star-import-exported"
+issue = 9415
+reason = "False actionable: `from m import *` is not resolved to public names (#9415)."
+
+[[known_false]]
+case = "py-grid-arithmetic-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-arithmetic-table"
+issue = 9594
+reason = "False actionable: table-loop assertion not credited for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-delete-helper"
+issue = 9594
+reason = "False actionable: field update read through a same-file helper is not credited (#9594)."
+
+[[known_false]]
+case = "py-grid-returns-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for a returns edit (#9594)."

@@ -1,0 +1,10 @@
+diff --git a/src/equality.ts b/src/equality.ts
+--- a/src/equality.ts
++++ b/src/equality.ts
+@@ -1,5 +1,5 @@
+ export function isAdmin(role: string): boolean {
+-  return role === "admin";
++  return "admin" === role;
+ }
+ 
+ export function isSaturday(day: number): boolean {
