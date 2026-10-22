@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-method-hop",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22; boundary reached through a receiver method and a tuple-struct field read (#9329)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "1b0e6ebbac81389235a880c2b1bc247d6f8a8ec5fceeaa1e29e14e424f00643c"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "18bf1ad56350344d942978a12dba6a26e275ed49830400c37db822ef3a665251"
+    }
+  ]
+}

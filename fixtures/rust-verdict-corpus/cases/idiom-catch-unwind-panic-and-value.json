@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-catch-unwind-panic-and-value",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-catch-unwind-panic-and-value.diff",
+  "anchor": {
+    "file": "src/unwinding.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "catch_unwind_is_err_plus_value",
+  "hard_case": "One test asserts the empty case panics through `catch_unwind(..).is_err()`; another reads only the returned value.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "values.remove(1)",
+        "mutated_line": "values.remove(1)",
+        "outcome": "tests_failed",
+        "failing_test": "unwinding::tests::pops_the_first",
+        "equivalence_review": "not equivalent: `Vec::remove(values, 0)` becomes `values.remove(1)`"
+      },
+      {
+        "replacement": "values.pop().unwrap()",
+        "mutated_line": "values.pop().unwrap()",
+        "outcome": "tests_failed",
+        "failing_test": "unwinding::tests::pops_the_first",
+        "equivalence_review": "not equivalent: `Vec::remove(values, 0)` becomes `values.pop().unwrap()`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Removing index 1 or popping the end returns 5 and fails pops_the_first. Shape: `catch_unwind` panic check plus a return-value pin.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -127,6 +127,7 @@ static_limit_kind|rust_call_fact_budget|Typed static limitation value.
 static_limit_kind|rust_framework_oracle_unresolved|Typed static limitation value.
 static_limit_kind|rust_implicit_call_unresolved|Typed static limitation value.
 static_limit_kind|rust_indirect_owner_call_unresolved|Typed static limitation value.
+static_limit_kind|rust_caller_loop_selector_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.

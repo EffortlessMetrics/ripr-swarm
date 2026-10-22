@@ -23,7 +23,8 @@ Linux and macOS (Bash or zsh):
 ```bash
 v=0.10.0; case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
-  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;; esac
+  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;;
+  *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
@@ -41,6 +42,12 @@ Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile
 if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
 Expand-Archive $f -DestinationPath ripr-bin; $env:PATH="$PWD\ripr-bin;$env:PATH"   # ripr.exe is now first on PATH for this session
 ```
+
+The PATH change in either snippet lasts only for the current shell (PowerShell:
+the current session). To keep `ripr` available across sessions, add the
+extracted directory to your permanent PATH — for example move `ripr` to
+`~/.local/bin/` (adding it to PATH in your shell profile if needed) on Linux or
+macOS, or add the directory under Settings → Environment Variables on Windows.
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -122,7 +129,8 @@ file, first use `git add -N PATH` so it enters the tracked diff. See
 [Choose the change](#choose-the-change) for explicit diff selection.
 
 Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
-required first step. To explore a clean repository without making a change,
+required first step. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) To explore a clean repository without making a change,
 use the separate [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 

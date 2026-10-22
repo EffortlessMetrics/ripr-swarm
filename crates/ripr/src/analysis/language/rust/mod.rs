@@ -1356,6 +1356,10 @@ fn apply_probe_and_oracle_limits(
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
     classify::withhold_indirect_owner_gap(finding, index);
+    // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
+    // iterator's `next`, checked by a test that collects the iterator, is a
+    // selector domain ripr reads but does not run.
+    classify::withhold_caller_loop_selector_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

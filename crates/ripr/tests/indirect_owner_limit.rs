@@ -436,17 +436,31 @@ fn a_cfg_attr_that_introduces_test_is_an_ordinary_test() -> Result<(), String> {
     credited(CFG_ATTR_OWNER, BEFORE, AFTER, "cfg_attr(all(), test)")
 }
 
-#[test]
-fn a_cfg_attr_that_introduces_test_beside_ignore_does_not_credit() -> Result<(), String> {
-    let lib = CFG_ATTR_OWNER.replace("cfg_attr(all(), test)", "cfg_attr(all(), test, ignore)");
+fn assert_no_credit_for_cfg_attr(attribute: &str) -> Result<(), String> {
+    let lib = CFG_ATTR_OWNER.replace("cfg_attr(all(), test)", attribute);
     let findings = edited(&lib, BEFORE, AFTER)?;
     if findings
         .iter()
         .any(|finding| finding.class == ExposureClass::Exposed)
     {
-        return Err(format!("expected no credit, got {:?}", summary(&findings)));
+        return Err(format!(
+            "expected no credit for {attribute}, got {:?}",
+            summary(&findings)
+        ));
     }
     Ok(())
+}
+
+#[test]
+fn a_cfg_attr_that_introduces_test_beside_ignore_does_not_credit() -> Result<(), String> {
+    assert_no_credit_for_cfg_attr("cfg_attr(all(), test, ignore)")?;
+    assert_no_credit_for_cfg_attr("cfg_attr(all(), ignore, test)")
+}
+
+#[test]
+fn a_cfg_attr_that_introduces_test_beside_should_panic_does_not_credit() -> Result<(), String> {
+    assert_no_credit_for_cfg_attr("cfg_attr(all(), test, should_panic)")?;
+    assert_no_credit_for_cfg_attr("cfg_attr(all(), should_panic, test)")
 }
 
 #[test]

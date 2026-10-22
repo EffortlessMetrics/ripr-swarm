@@ -1404,3 +1404,31 @@ fn direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn cfg_attr_test_beside_ignore_or_should_panic_does_not_define_a_test() {
+    // `gap_admission` reads only literal `#[ignore]` / `#[should_panic]`, so a
+    // sibling introduced by `cfg_attr` must not turn the function into a live
+    // test fact that counts as a discriminator.
+    assert!(attributes_define_test(["#[cfg_attr(all(), test)]"]));
+    for attribute in [
+        "#[cfg_attr(all(), test, ignore)]",
+        "#[cfg_attr(all(), ignore, test)]",
+        "#[cfg_attr(all(), test, should_panic)]",
+        "#[cfg_attr(all(), should_panic, test)]",
+    ] {
+        assert!(!attributes_define_test([attribute]), "{attribute}");
+    }
+}
+
+#[test]
+fn syntax_adapter_does_not_make_cfg_attr_test_beside_ignore_a_test_fact() -> Result<(), String> {
+    let source = "#[cfg_attr(all(), test, ignore)]\nfn ignored() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test, should_panic)]\nfn panics() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test)]\nfn plain() { assert!(true); }\n";
+    let adapter = RaRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["plain"]);
+    Ok(())
+}

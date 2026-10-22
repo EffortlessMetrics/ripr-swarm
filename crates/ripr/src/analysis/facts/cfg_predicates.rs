@@ -195,19 +195,14 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
-/// Whether `#[cfg_attr(<predicate>, .., test, ..)]` introduces the bare `test`
-/// attribute in a test build: the predicate is known true there (`all()`,
-/// `test`, `not(any())`) and one introduced attribute is exactly `test`. A
+/// Whether `#[cfg_attr(<predicate>, test)]` makes the function a plain
+/// `#[test]` in a test build: the predicate is known true there (`all()`,
+/// `test`, `not(any())`) and `test` is the only attribute introduced. A
 /// feature, target or custom predicate stays unknown and does not count, so
-/// the function keeps whatever role it had without the attribute.
-pub(crate) fn attribute_introduces_test(attr_text: &str) -> bool {
-    true_cfg_attr_introduced(attr_text).is_some_and(|(_, has_test)| has_test)
-}
-
-/// [`attribute_introduces_test`] where `test` is the only attribute
-/// introduced, so the function is a plain `#[test]` in a test build. A
-/// sibling such as `ignore` or `should_panic` introduced beside it may
-/// change how the test runs and does not qualify.
+/// the function keeps whatever role it had without the attribute. A sibling
+/// such as `ignore` or `should_panic` introduced beside `test` changes how
+/// the test runs, and the readers of a test's attributes only see literal
+/// `#[ignore]` / `#[should_panic]`, so it does not qualify either.
 pub(crate) fn attribute_introduces_only_test(attr_text: &str) -> bool {
     true_cfg_attr_introduced(attr_text).is_some_and(|(count, has_test)| count == 1 && has_test)
 }

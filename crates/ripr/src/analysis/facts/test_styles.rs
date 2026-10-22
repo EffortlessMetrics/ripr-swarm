@@ -186,7 +186,7 @@ pub(crate) fn attributes_define_test<'attribute>(
             .as_deref()
             .is_some_and(is_test_attribute_path)
             // `#[cfg_attr(all(), test)]` is a `#[test]` in a test build.
-            || cfg_predicates::attribute_introduces_test(attribute)
+            || cfg_predicates::attribute_introduces_only_test(attribute)
     })
 }
 

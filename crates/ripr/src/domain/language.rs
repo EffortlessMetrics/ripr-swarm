@@ -469,6 +469,13 @@ pub enum StaticLimitKind {
     /// observes the changed behavior is not established, so the gap is
     /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240.
     RustIndirectOwnerCallUnresolved,
+    /// The changed match arm's selector is fed to its owner by a bounded `for`
+    /// loop inside an `Iterator::next`, and a related test collects the
+    /// iterator and compares the whole collection. ripr reads the loop's
+    /// selector domain but does not prove the loop runs for the test's input
+    /// or that the arm's value reaches the compared items. The gap is
+    /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #5503.
+    RustCallerLoopSelectorUnresolved,
 }
 
 impl StaticLimitKind {
@@ -534,6 +541,9 @@ impl StaticLimitKind {
             StaticLimitKind::RustImplicitCallUnresolved => "rust_implicit_call_unresolved",
             StaticLimitKind::RustIndirectOwnerCallUnresolved => {
                 "rust_indirect_owner_call_unresolved"
+            }
+            StaticLimitKind::RustCallerLoopSelectorUnresolved => {
+                "rust_caller_loop_selector_unresolved"
             }
         }
     }
@@ -673,8 +683,9 @@ impl StaticLimitKind {
             StaticLimitKind::RustFrameworkOracleUnresolved => {
                 "A related Rust test checks this code through a test-framework idiom that ripr \
                  does not evaluate (an environment variable the test sets or removes, a mockall \
-                 closure that reads the call's arguments, an expect-test debug literal, or an \
-                 insta snapshot kept outside the source), so ripr cannot say whether the check \
+                 closure that reads the call's arguments, an expect-test debug literal, an \
+                 insta snapshot kept outside the source, a helper-built receiver under a changed \
+                 closure, or a hand-written recording double), so ripr cannot say whether the check \
                  notices the change. ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
             }
@@ -691,6 +702,13 @@ impl StaticLimitKind {
                  expand, or is called as the argument of an executor helper such as `block_on`. \
                  Whether the test's assertion observes the changed behavior is not established, so \
                  ripr does not claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustCallerLoopSelectorUnresolved => {
+                "This match arm is selected by a bounded loop inside an iterator's `next`, and a \
+                 related Rust test collects that iterator and compares the whole collection. \
+                 ripr reads the loop's selector range but does not prove the loop runs for the \
+                 test's input or that the arm's value reaches the compared items, so it does not \
+                 claim a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1076,6 +1094,7 @@ mod tests {
             StaticLimitKind::RustFrameworkOracleUnresolved,
             StaticLimitKind::RustImplicitCallUnresolved,
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
+            StaticLimitKind::RustCallerLoopSelectorUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
