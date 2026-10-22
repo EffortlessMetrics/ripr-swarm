@@ -3581,6 +3581,17 @@ validated by the same identity, commitment and Git-provenance authority as
 and unique gap ids with a non-empty classification, file and line. Movement is
 compared per canonical gap id.
 
+`ripr agent verify --gap-id <canonical gap id>` binds the result to one gap in
+two such snapshots. The gap must be present and not `exposed` in the before
+snapshot and present and `exposed` in the after snapshot. Absence from the
+after snapshot is never closure: a shrunk diff or a moved base also removes a
+gap. On success the verify document gains one additive member,
+`bound_gap` (`gap_id`, `before_classification`, `after_classification`,
+`file`, `line`, `closed: true`); without `--gap-id` the document is unchanged.
+Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
+exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
+an operational error (exit `2`).
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
