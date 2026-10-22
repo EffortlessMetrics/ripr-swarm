@@ -143,6 +143,12 @@ fn windows_console_words_decode_the_printed_console_form() -> Result<(), String>
             r"ripr doctor --root 'srv\x\it'\''s $'",
             vec!["ripr", "doctor", "--root", r"srv\x\it's $"],
         ),
+        // A recovery hint's `<ref>` placeholder stays one word, as
+        // `posix_words` reads it (#9272 run 39819783344).
+        (
+            "ripr first-pr --base <ref> --head HEAD",
+            vec!["ripr", "first-pr", "--base", "<ref>", "--head", "HEAD"],
+        ),
     ] {
         assert_eq!(windows_console_words(printed)?, expected, "{printed}");
     }
