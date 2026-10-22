@@ -3585,7 +3585,7 @@ mod tests {
     }
 
     fn scoped_gate_decision(changed_files: &[&str]) -> String {
-        json!({
+        serde_json::json!({
             "schema_version": "0.1",
             "decisions": [],
             "analysis_scope": {
