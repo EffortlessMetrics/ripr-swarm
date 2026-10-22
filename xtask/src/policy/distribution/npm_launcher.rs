@@ -283,13 +283,13 @@ pub(super) fn validate_publish_tag(
 /// Joins shell `\`-continued lines so a command split across physical lines is
 /// evaluated as one logical command. Returns each logical line with the
 /// one-based number of its first physical line.
-fn logical_lines(text: &str) -> Vec<(usize, String)> {
+fn logical_lines(physical: &[(usize, String)]) -> Vec<(usize, String)> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut start = 0;
-    for (index, raw) in text.lines().enumerate() {
+    for (number, raw) in physical {
         if current.is_empty() {
-            start = index + 1;
+            start = *number;
         }
         let code = raw.trim_end_matches('\r');
         if let Some(stripped) = code.strip_suffix('\\') {
@@ -304,6 +304,68 @@ fn logical_lines(text: &str) -> Vec<(usize, String)> {
         lines.push((start, current));
     }
     lines
+}
+
+fn is_block_scalar_header(value: &str) -> bool {
+    let value = value.trim();
+    (value.starts_with('|') || value.starts_with('>'))
+        && value[1..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '+' || c == '-')
+}
+
+/// Splits a YAML line into `(key, value)` when it is a mapping entry such as
+/// `name: x`, `- run: npm publish` or `run: |`.
+fn yaml_key_value(content: &str) -> Option<(&str, &str)> {
+    let colon = content.find(':')?;
+    let key = &content[..colon];
+    let rest = &content[colon + 1..];
+    let key_like = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    let value_boundary = rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t');
+    (key_like && value_boundary).then(|| (key, rest.trim_start()))
+}
+
+/// Extracts only text the shell can run from workflow YAML: the value of a
+/// `run:` key, the body of a `run:` block scalar, and plain non-key lines.
+/// Other keys (`name:`, `description:`, `if:`, `env:` values, ...) and their
+/// block-scalar bodies are skipped. Returns one-based physical line numbers.
+fn workflow_script_lines(text: &str) -> Vec<(usize, String)> {
+    let mut scripts = Vec::new();
+    // (indent of the block header line, whether the body is shell script)
+    let mut block: Option<(usize, bool)> = None;
+    for (index, raw) in text.lines().enumerate() {
+        let number = index + 1;
+        let indent = raw.len() - raw.trim_start().len();
+        let trimmed = raw.trim();
+        if let Some((header_indent, is_script)) = block {
+            if trimmed.is_empty() || indent > header_indent {
+                if is_script {
+                    scripts.push((number, raw.to_string()));
+                }
+                continue;
+            }
+            block = None;
+        }
+        let mut content = raw.trim_start();
+        while let Some(rest) = content.strip_prefix("- ") {
+            content = rest.trim_start();
+        }
+        match yaml_key_value(content) {
+            Some((key, value)) => {
+                let is_run = key == "run";
+                if is_block_scalar_header(value) {
+                    block = Some((indent, is_run));
+                } else if is_run {
+                    scripts.push((number, value.to_string()));
+                }
+            }
+            None => scripts.push((number, content.to_string())),
+        }
+    }
+    scripts
 }
 
 /// A dist-tag is acceptable only when it is a literal, valid, non-`latest`
@@ -412,7 +474,7 @@ const VALUE_FLAGS: &[&str] = &[
 /// workflows have no npm publish step; this keeps it that way. Out of scope:
 /// `pnpm`/`yarn publish`, `NPM_CONFIG_TAG`, and composite or reusable actions.
 pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mut Vec<String>) {
-    for (number, line) in logical_lines(text) {
+    for (number, line) in logical_lines(&workflow_script_lines(text)) {
         let mut command: Vec<String> = Vec::new();
         let mut commands: Vec<Vec<String>> = Vec::new();
         for token in shell_tokens(&line) {

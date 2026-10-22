@@ -819,3 +819,23 @@ fn prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive() 
     assert!(!publish_tag_violations("1.0.0-rc.1", Some("LATEST")).is_empty());
     assert!(publish_tag_violations("1.0.0", Some("Latest")).is_empty());
 }
+
+#[test]
+fn workflow_scan_only_reads_script_text_not_yaml_metadata() {
+    let metadata = "steps:\n  - name: Verify npm publish gating\n    description: runs npm publish checks\n    if: contains(github.event.head_commit.message, 'npm publish')\n    env:\n      NOTE: npm publish\n    run: echo ok\n  - name: note\n    with:\n      body: |\n        npm publish should be gated\n";
+    assert!(
+        workflow_violations(metadata).is_empty(),
+        "{:?}",
+        workflow_violations(metadata)
+    );
+    let inline = "steps:\n  - name: Verify npm publish gating\n    run: npm publish\n";
+    assert!(has_violation(&workflow_violations(inline), "wf.yml:3"));
+    let list_form = "steps:\n  - run: npm publish\n";
+    assert!(has_violation(&workflow_violations(list_form), "wf.yml:2"));
+    let block = "steps:\n  - name: Verify npm publish gating\n    run: |\n      echo start\n      npm publish --access public\n  - name: after\n    run: echo done\n";
+    assert!(has_violation(&workflow_violations(block), "wf.yml:5"));
+    let folded = "steps:\n  - run: >-\n      npm publish\n";
+    assert!(has_violation(&workflow_violations(folded), "wf.yml:3"));
+    let after_block = "steps:\n  - run: |\n      echo hi\n  - name: npm publish docs\n    description: npm publish\n";
+    assert!(workflow_violations(after_block).is_empty());
+}

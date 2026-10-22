@@ -74,6 +74,8 @@ The package `@effortlessmetrics/ripr`:
 - rejects any in-tree workflow `npm publish` that lacks exactly one literal
   non-`latest` `--tag` (including `\`-continued, chained, interpolated or
   repeated forms) and any `npm dist-tag add/set` of a non-literal or `latest` tag;
+- scans only workflow script text (`run:` values and block bodies), not YAML
+  metadata such as `name:`, `description:` or `if:`;
 - scopes the workflow scan to `npm publish` and `npm dist-tag(s)` commands only:
   `pnpm`/`yarn publish`, `NPM_CONFIG_TAG` and composite or reusable actions are
   out of scope, and `npm publish --dry-run` is exempt;
@@ -223,5 +225,6 @@ The package `@effortlessmetrics/ripr`:
 - `xtask/src/policy/distribution/tests.rs::workflow_directory_scan_reports_multiline_publish_and_read_failures`
 - `xtask/src/policy/distribution/tests.rs::workflow_global_flags_dry_run_comments_and_glued_separators`
 - `xtask/src/policy/distribution/tests.rs::prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive`
+- `xtask/src/policy/distribution/tests.rs::workflow_scan_only_reads_script_text_not_yaml_metadata`
 - `xtask/src/version.rs::npm_launcher_version_tests::stable_to_prerelease_adds_next_tag_and_back_removes_it`
 - `xtask/src/version.rs::npm_launcher_version_tests::compact_manifest_prerelease_bump_round_trips`
