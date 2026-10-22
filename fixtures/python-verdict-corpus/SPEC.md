@@ -63,7 +63,9 @@ this repository's license, one per test library or library feature:
   handling. Non-ASCII identifiers and strings, tab indentation, a file with no
   final newline, a 488-character line, a function named like a builtin, a
   conditional definition (live and dead branch), `from m import *` through a
-  module whose `__all__` exports one name and omits another, a test that asserts nothing, a CRLF test file asserting
+  module whose `__all__` exports one name and omits another, a second module
+  without `__all__` whose public name is imported and underscore name is not,
+  a test that asserts nothing, a CRLF test file asserting
   through a helper in another file, a module-level lambda, `globals()`
   dispatch, a module constant read by a test class, the same function name in
   two modules, a nested function, and an unrelated unparseable module.
@@ -76,6 +78,10 @@ Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
 The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
 and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
+The two no-`__all__` star-import cases were labeled under Python 3.12.14 and
+pytest 9.1.1. The public-name edit fails its exact-value assertion; the
+underscore-name edit leaves the tests passing, including the assertion that
+the underscore name is absent from the star-import namespace.
 
 ## When
 
