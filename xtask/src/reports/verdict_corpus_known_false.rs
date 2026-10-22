@@ -6,6 +6,10 @@
 //! with the issue that owns its fix, and a listed row that is no longer false
 //! must be removed. A fixed row therefore leaves the ledger, and its return
 //! fails `check` as an unlisted false verdict.
+//!
+//! Each entry is its own file, `known-false/<case>.toml` in the corpus
+//! directory, the way cases are split: a fix deletes one file and a new false
+//! row adds one, so parallel PRs never edit neighbouring lines of one list.
 
 use super::coverage::Ledger;
 use super::{CaseRow, Outcome, coverage};
@@ -20,6 +24,51 @@ pub(crate) struct KnownFalse {
     /// The ripr-swarm issue that owns the fix.
     pub(crate) issue: u64,
     pub(crate) reason: String,
+}
+
+/// The directory of entry files inside a corpus directory.
+pub(crate) const KNOWN_FALSE_DIR: &str = "known-false";
+
+/// Read every `known-false/<case>.toml`. The file stem must equal the `case`
+/// it holds, so one case has one path and a duplicate cannot be added.
+pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String> {
+    let dir = corpus_dir.join(KNOWN_FALSE_DIR);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|err| format!("read {}: {err}", dir.display()))?
+        .map(|entry| {
+            entry
+                .map(|e| e.path())
+                .map_err(|err| format!("read {}: {err}", dir.display()))
+        })
+        .collect::<Result<_, _>>()?;
+    paths.sort();
+    let mut entries = Vec::new();
+    for path in paths {
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            return Err(format!(
+                "{} is not a `.toml` known-false entry",
+                path.display()
+            ));
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read {}: {err}", path.display()))?;
+        let entry: KnownFalse =
+            toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem != entry.case {
+            return Err(format!(
+                "{} holds case `{}`; name the file `{}.toml`",
+                path.display(),
+                entry.case,
+                entry.case
+            ));
+        }
+        entries.push(entry);
+    }
+    Ok(entries)
 }
 
 fn is_false(outcome: Outcome) -> bool {
@@ -246,6 +295,46 @@ mod tests {
                 "{needle}: {found:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn entry_files_load_by_case_name_and_reject_a_mismatch() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("known-false-entry-files");
+        let entries = dir.join(KNOWN_FALSE_DIR);
+        std::fs::create_dir_all(&entries).map_err(|err| err.to_string())?;
+        std::fs::write(
+            entries.join("a.toml"),
+            "case = \"a\"\nissue = 7\nreason = \"why\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let loaded = load_entries(&dir)?;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].issue, 7);
+        std::fs::write(
+            entries.join("b.toml"),
+            "case = \"c\"\nissue = 7\nreason = \"why\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let err = load_entries(&dir).err().unwrap_or_default();
+        assert!(err.contains("name the file `c.toml`"), "{err}");
+        assert!(load_entries(&dir.join("absent"))?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn inline_known_false_tables_are_rejected() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("known-false-inline");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        std::fs::write(
+            dir.join(coverage::LEDGER_FILE),
+            format!(
+                "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n{ENTRY}"
+            ),
+        )
+        .map_err(|err| err.to_string())?;
+        let err = coverage::load_ledger(&dir).err().unwrap_or_default();
+        assert!(err.contains("one file per row"), "{err}");
         Ok(())
     }
 

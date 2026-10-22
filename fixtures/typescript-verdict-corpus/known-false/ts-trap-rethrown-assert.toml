@@ -1,0 +1,3 @@
+case = "ts-trap-rethrown-assert"
+issue = 9685
+reason = "False actionable: an assertion in a try whose catch rethrows reads as weak (#9685)."
