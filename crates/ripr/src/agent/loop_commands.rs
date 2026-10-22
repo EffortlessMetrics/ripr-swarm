@@ -523,9 +523,13 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   expands `$VAR`, `$(cmd)`, and `` `cmd` `` inside double quotes, and so
 ///   does PowerShell — pasting `"$(...)"` into either executes the embedded
 ///   expression (#8152 review, security), while single quotes stay literal
-///   in both. cmd.exe passes single quotes through as literal characters
-///   (the argument arrives quoted and fails closed), so those values paste
-///   in Git Bash or PowerShell, not cmd.exe. PowerShell would escape an
+///   in both. cmd.exe does not treat `'` as a quote: the quotes arrive as
+///   literal characters, and a `>`, `<`, `&`, `|` or `^` inside the value
+///   still acts as a cmd.exe operator, so those values paste in Git Bash or
+///   PowerShell, not cmd.exe (#9738; the editor refuses such a span on
+///   Windows). No form is literal in all three shells for a value holding
+///   both `$` and a cmd.exe operator, so PowerShell, the VS Code and Windows
+///   Terminal default, decides. PowerShell would escape an
 ///   interior quote with a backtick instead of doubling, and Git Bash drops
 ///   an interior quote in the `""` form; an interior `"` cannot occur in a
 ///   Windows filename, so the `""` doubling is the conservative choice for
@@ -533,8 +537,13 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   encoded (#9659): cmd.exe expands `%NAME%` inside double quotes (and
 ///   `!NAME!` when delayed expansion is on), and no quoting form prevents
 ///   that on an interactive cmd.exe line, so a value carrying `%` or `!`
-///   pastes literally in PowerShell and Git Bash but not in cmd.exe. The
-///   VS Code terminal and Windows Terminal default to PowerShell.
+///   pastes literally in PowerShell and Git Bash but not in cmd.exe. An
+///   interactive Git Bash likewise rewrites a `!` event designator inside
+///   double quotes (`"!!"`, `"a!-1"`), and Windows PowerShell 5.1 (not 7.3+)
+///   re-splits a value holding `""` when it passes it to a native program;
+///   both alter the argument without starting another command, so they are
+///   accepted limits too (#9738). The VS Code terminal and Windows Terminal
+///   default to PowerShell.
 ///
 /// The empty string must be quoted (`''` or `""`), or the argument disappears
 /// from the command line entirely.
