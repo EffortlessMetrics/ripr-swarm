@@ -1031,3 +1031,13 @@ commitments and receipt byte hashes bind those exact updated bytes. Semantic
 evidence, unchanged movement, incomplete receipt routing and all tamper
 controls remain unchanged. This is a portable negative-control input update,
 not a new execution receipt.
+
+### skip-guarded table rows classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.90 to 1.91 for table loops that open with a literal skip-list guard
+(RIPR-SPEC-0229). Only the generation and its content commitment changed; the
+dependent verify commitments and receipt byte hashes bind those exact updated
+bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
+all tamper controls remain unchanged. This is a portable negative-control
+input update, not a new execution receipt.

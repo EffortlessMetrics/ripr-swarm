@@ -1,0 +1,62 @@
+{
+  "case_id": "shape-from-impl-exact",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-from-impl-exact.diff",
+  "anchor": {
+    "file": "src/ops.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "from_impl_exact_pin",
+  "hard_case": "The owner is `From::from`, called as `Fahrenheit::from(..)` on a type that is not the function name.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Fahrenheit(c.0 * 9 / 5 + 31)",
+        "mutated_line": "Fahrenheit(c.0 * 9 / 5 + 31)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::boiling_point_converts",
+        "equivalence_review": "not equivalent: `Fahrenheit(32 + c.0 * 9 / 5)` becomes `Fahrenheit(c.0 * 9 / 5 + 31)`"
+      },
+      {
+        "replacement": "Fahrenheit(c.0 * 9 / 5 - 32)",
+        "mutated_line": "Fahrenheit(c.0 * 9 / 5 - 32)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::boiling_point_converts",
+        "equivalence_review": "not equivalent: `Fahrenheit(32 + c.0 * 9 / 5)` becomes `Fahrenheit(c.0 * 9 / 5 - 32)`"
+      },
+      {
+        "replacement": "Fahrenheit(c.0 * 5 / 9 + 32)",
+        "mutated_line": "Fahrenheit(c.0 * 5 / 9 + 32)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::boiling_point_converts",
+        "equivalence_review": "not equivalent: `Fahrenheit(32 + c.0 * 9 / 5)` becomes `Fahrenheit(c.0 * 5 / 9 + 32)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "boiling_point_converts pins Fahrenheit::from(Celsius(100)) to 212; each mutant gives a different number (211, 148 and 87). Shape: `impl From` conversion.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}
