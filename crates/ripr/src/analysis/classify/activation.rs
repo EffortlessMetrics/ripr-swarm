@@ -149,6 +149,9 @@ struct ParameterValue {
     value: String,
     line: usize,
     text: String,
+    /// The test file whose call produced the row, so a fact built from it
+    /// can be matched back to that test alone.
+    file: Option<std::path::PathBuf>,
 }
 
 /// `value_facts_for_test` per (related test, owner), computed at most once
@@ -428,8 +431,27 @@ fn observed_discriminator_values(
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && exact_values_equal(&left_value.value, &right_value.value)
         {
+            let (value, names_value) = equality_value(
+                &EqualitySide::new(
+                    &left,
+                    &left_value.value,
+                    left_parameter.as_deref(),
+                    left_resolved.as_ref(),
+                ),
+                &EqualitySide::new(
+                    &right,
+                    &right_value.value,
+                    right_parameter.as_deref(),
+                    right_resolved.as_ref(),
+                ),
+            );
             facts.push(ValueFact {
-                file: None,
+                // A fact that names the local's value carries its test file:
+                // same-test pairing matches it by line and call text, and a
+                // second file's call on the same line must not satisfy it.
+                file: names_value
+                    .then(|| row.first().and_then(|cell| cell.file.clone()))
+                    .flatten(),
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -439,20 +461,7 @@ fn observed_discriminator_values(
                     left_value.provenance,
                     right_value.provenance,
                 ),
-                value: equality_value(
-                    &EqualitySide::new(
-                        &left,
-                        &left_value.value,
-                        left_parameter.as_deref(),
-                        left_resolved.as_ref(),
-                    ),
-                    &EqualitySide::new(
-                        &right,
-                        &right_value.value,
-                        right_parameter.as_deref(),
-                        right_resolved.as_ref(),
-                    ),
-                ),
+                value,
                 context: ValueContext::FunctionArgument,
             });
             continue;
@@ -512,11 +521,15 @@ fn observed_discriminator_values(
 /// comparison it is: same-test pairing matches `parameter == literal` terms
 /// against the literals the call feeds, and a local's name carries nothing to
 /// match.
-fn equality_value(left: &EqualitySide<'_>, right: &EqualitySide<'_>) -> String {
+fn equality_value(left: &EqualitySide<'_>, right: &EqualitySide<'_>) -> (String, bool) {
     match (left.kind, right.kind) {
-        (SideKind::Parameter, SideKind::Local) => format!("{} == {}", left.text, right.value),
-        (SideKind::Local, SideKind::Parameter) => format!("{} == {}", right.text, left.value),
-        _ => format!("{} == {}", left.text, right.text),
+        (SideKind::Parameter, SideKind::Local) => {
+            (format!("{} == {}", left.text, right.value), true)
+        }
+        (SideKind::Local, SideKind::Parameter) => {
+            (format!("{} == {}", right.text, left.value), true)
+        }
+        _ => (format!("{} == {}", left.text, right.text), false),
     }
 }
 
@@ -3367,6 +3380,7 @@ fn owner_call_parameter_values_where(
                             value: value.clone(),
                             line: call.line,
                             text: call.text.to_string(),
+                            file: Some(test.file.clone()),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -3674,6 +3688,7 @@ fn helper_transferred_rows(
                         .first()
                         .map(|cell| cell.text.clone())
                         .unwrap_or_default(),
+                    file: row.first().and_then(|cell| cell.file.clone()),
                 });
             }
             bound_rows.push(bound);
@@ -5167,14 +5182,14 @@ mod tests {
                 &side("bytes", "1024", Some("bytes"), None),
                 &side("unit", "1024", None, Some(&local)),
             ),
-            "bytes == 1024"
+            ("bytes == 1024".to_string(), true)
         );
         assert_eq!(
             equality_value(
                 &side("unit", "1024", None, Some(&local)),
                 &side("bytes", "1024", Some("bytes"), None),
             ),
-            "bytes == 1024"
+            ("bytes == 1024".to_string(), true)
         );
         // A boolean local, or two non-parameter operands, keep their text.
         let open = ResolvedOperand::Local("open".into(), "label.starts_with(\"p\")".into(), vec![]);
@@ -5183,14 +5198,14 @@ mod tests {
                 &side("open", "true", None, Some(&open)),
                 &side("want", "true", Some("want"), None),
             ),
-            "open == want"
+            ("open == want".to_string(), false)
         );
         assert_eq!(
             equality_value(
                 &side("a", "1", None, Some(&local)),
                 &side("b", "1", None, Some(&local)),
             ),
-            "a == b"
+            ("a == b".to_string(), false)
         );
     }
 
@@ -5227,6 +5242,7 @@ mod tests {
                 value: value.to_string(),
                 line: 1,
                 text: String::new(),
+                file: None,
             }]
         };
         assert!(counterpart_is_comparable(
