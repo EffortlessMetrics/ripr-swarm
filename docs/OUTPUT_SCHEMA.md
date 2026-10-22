@@ -3790,14 +3790,22 @@ this snapshot copy their stamps from it.
 The gap decision ledger built from a snapshot of this kind
 (`ripr reports gap-ledger --repo-exposure`) additionally carries an optional
 top-level `analysis_coverage` (#9599) only when the snapshot is a complete
-whole-Rust-workspace run (`run_status: complete`, no `limitations[]` entry other
-than TypeScript/Python guidance, a `source_subject.corpus` identity, and no
-`run_limitations`/incomplete `analysis_outcome`): `scope` (`rust_workspace`),
-`basis` (`repo_exposure_complete_run`), `run_status`, `corpus`, `records_total`
-and `records_digest` (a digest of the sorted `gap_id`s of the ledger's records).
-`gate evaluate --gap-ledger` honors it only while the ledger's records still
-match the count and digest; otherwise it is ignored. The field is omitted for
-every other source or a limited run, so existing ledgers are byte-stable.
+whole-Rust-workspace run of a producer-issued artifact (the `repo_exposure`
+envelope whose governed `content_sha256` still matches the bytes read;
+`run_status: complete`; no `limitations[]` entry other than TypeScript/Python
+guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
+present; every seam converted to a record; and a `source_subject.corpus` carrying
+the producer's `cache_schema_version` and 16-lowercase-hex `files_content_hash`):
+`scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
+`corpus`, `records_total` and `records_digest` (SHA-256 over every record's
+canonical serialization, ordered by `gap_id`). The digest is tamper-evident
+against filtering or editing the records, not authentication: a party who can
+rewrite the ledger and recompute it is out of scope.
+`gate evaluate --gap-ledger` honors the disclosure only while the records still
+match the count and digest and the disclosed corpus hash equals the corpus of
+the tree being gated (`--root`, loaded with its `ripr.toml`); a stale,
+unverifiable or rootless evaluation ignores it. The field is omitted for every
+other source or a limited run, so existing ledgers are byte-stable.
 
 ### Repo Exposure Summary JSON
 
@@ -10156,7 +10164,12 @@ Field contract:
   `gap_ledger_artifact` scope for `--gap-ledger`, or `rust_workspace_complete`
   (`run_status`, `basis = "repo_exposure_complete_run"`, the producer's `corpus`
   identity, `records_total`, `records_digest`; #9599) when the ledger carries a
-  verified `analysis_coverage` disclosure from a complete repo-exposure run.
+  verified `analysis_coverage` disclosure from a complete repo-exposure run and
+  its corpus is still current. Only that path can emit
+  `rust_workspace_complete`: a `rust_workspace_complete` scope arriving in a
+  `--pr-guidance` document is dropped (with a warning) and leaves baseline
+  entries `not_evaluated`. A hand-edited gate-decision file is out of scope: the
+  contract does not authenticate the producer.
   Omitted when the evaluation
   is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
   whether a baseline entry absent from `decisions` was actually analyzed. A
@@ -10167,7 +10180,9 @@ Field contract:
   `changed_production_files` counts as coverage; changed production files the
   parser declined (nesting budget, parse error, non-UTF-8: the lexical fallback
   extracts no seams) are excluded from it and listed in the optional
-  `parser_declined_files` (present only when non-empty). A gate decision without `analysis_scope` (a build before #9301),
+  `parser_declined_files` (present only when non-empty; the review-comments
+  Markdown summary also lists them as a `limitation: parser_declined_files`
+  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
@@ -10758,8 +10773,9 @@ Field contract:
   present only on a `stale_baseline_entry` item whose baseline entry is absent
   from current evidence but whose file the current `analysis_scope` does not
   cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
-  is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers Rust
-  paths only, #9599). `evaluation` is
+  is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers only
+  normalized relative `.rs` paths outside the directories the workspace walk
+  skips (`target`, `.git`, `.ripr`, `fixtures`, `node_modules`, ...), #9599). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`

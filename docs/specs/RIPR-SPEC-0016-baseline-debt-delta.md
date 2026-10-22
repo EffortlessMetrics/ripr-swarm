@@ -288,12 +288,19 @@ bucket:
   coverage disclosure (#9599): a ledger built from a complete `ripr check
   --format repo-exposure-json` run (`run_status: complete`, no seam limit, no
   parse-declined or skipped generated Rust files, and a stamped Rust-workspace
-  corpus identity) records `analysis_coverage` with the digest of its exact
-  record set. `gate evaluate` emits the `rust_workspace_complete` scope only
-  while that digest still matches the ledger's records, so a filtered or edited
-  ledger falls back to `gap_ledger_artifact`. Under `rust_workspace_complete`
-  an absent entry resolves when its path is a Rust source (`.rs`); every other
-  path stays `not_evaluated`.
+  corpus identity from a producer-issued, content-committed artifact) records
+  `analysis_coverage` with a digest of its exact, complete record set.
+  `gate evaluate` emits the `rust_workspace_complete` scope only on the
+  gap-ledger path, only while that digest still matches the ledger's records,
+  and only while the disclosed corpus hash equals the gated tree's corpus; a
+  filtered, edited or stale ledger, or an evaluation with no loadable root,
+  falls back to `gap_ledger_artifact`. A `rust_workspace_complete` scope in a
+  `--pr-guidance` document is dropped. Under `rust_workspace_complete` an absent
+  entry resolves only when its path is a normalized relative `.rs` path (no
+  `..`, `.`, empty, absolute, drive-prefixed, backslash or surrounding-space
+  spelling) outside the directories the producer's walk skips; every other path
+  stays `not_evaluated`. The digest is tamper-evident, not authentication, and a
+  hand-edited gate-decision is out of scope for this contract.
   Coverage is file-level by construction: the seam selector matches every seam in
   a working-set file (changed line, changed owner, related test, else same-file),
   so a seam in a covered file is either present in the decisions or counted in

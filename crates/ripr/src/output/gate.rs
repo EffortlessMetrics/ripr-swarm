@@ -237,10 +237,33 @@ pub(crate) fn build_gate_decision_report(
                     gap_ledger_coverage.as_ref(),
                 ),
             ),
-            None => pr_guidance
-                .get("analysis_scope")
-                .filter(|scope| scope.is_object())
-                .cloned(),
+            None => {
+                let scope = pr_guidance
+                    .get("analysis_scope")
+                    .filter(|scope| scope.is_object())
+                    .cloned();
+                // #9599: `rust_workspace_complete` is emitted only from a
+                // verified, fresh gap-ledger coverage disclosure. A PR
+                // guidance document never produced one, so a scope of that
+                // kind arriving here is dropped and the baseline stays
+                // fail-closed (not evaluated).
+                if scope
+                    .as_ref()
+                    .and_then(|scope| scope.get("scope"))
+                    .and_then(Value::as_str)
+                    == Some("rust_workspace_complete")
+                {
+                    warnings.push(
+                        "pr_guidance analysis_scope claimed rust_workspace_complete, which only \
+                         a verified fresh gap-ledger coverage disclosure may carry; the scope was \
+                         dropped and baselined gaps stay not evaluated"
+                            .to_string(),
+                    );
+                    None
+                } else {
+                    scope
+                }
+            }
         }
     } else {
         None

@@ -1628,32 +1628,63 @@ fn workspace_scope_not_evaluated_reason(scope: &Value, entry_path: Option<&str>)
         && scope
             .pointer("/corpus/files_content_hash")
             .and_then(Value::as_str)
-            .is_some()
+            .is_some_and(crate::output::gap_source_subject::is_corpus_hash_shape)
+        && scope
+            .pointer("/corpus/cache_schema_version")
+            .is_some_and(Value::is_string)
+        && scope.get("records_total").is_some_and(Value::is_u64)
         && scope
             .get("records_digest")
             .and_then(Value::as_str)
-            .is_some();
+            .is_some_and(|digest| digest.starts_with("sha256:"));
     if !well_formed {
         return Some(
             "the current gate decision's workspace coverage disclosure is malformed or incomplete, so file coverage is not established"
                 .to_string(),
         );
     }
-    let Some(path) = entry_path
-        .map(normalize_scope_path)
-        .filter(|p| !p.is_empty())
-    else {
+    let Some(raw) = entry_path.filter(|p| !p.is_empty()) else {
         return Some(
             "the baseline entry has no path to join against the analyzed scope".to_string(),
         );
     };
-    if path.ends_with(".rs") {
-        None
-    } else {
-        Some(format!(
-            "`{path}` is not a Rust file, and the complete workspace run covered Rust sources only"
-        ))
+    workspace_path_coverage_gap(raw).map(|why| {
+        format!("`{raw}` is not established as a file the complete workspace run analyzed: {why}")
+    })
+}
+
+/// Why a baseline path cannot be assumed covered by a complete whole-workspace
+/// Rust run; `None` when it is a normalized relative `.rs` path the producer's
+/// walk would have entered. Fail closed on every spelling that could name a
+/// different file than the run saw.
+fn workspace_path_coverage_gap(raw: &str) -> Option<&'static str> {
+    if raw != raw.trim() {
+        return Some("the path has surrounding whitespace");
     }
+    if raw.contains('\\') {
+        return Some("the path is not a normalized `/`-separated path");
+    }
+    if raw.starts_with('/')
+        || raw
+            .split('/')
+            .next()
+            .is_some_and(|first| first.contains(':'))
+    {
+        return Some("the path is absolute or carries a drive prefix");
+    }
+    if raw
+        .split('/')
+        .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Some("the path is not normalized (empty, `.` or `..` component)");
+    }
+    if !raw.ends_with(".rs") {
+        return Some("the run covered Rust sources only");
+    }
+    if crate::analysis::path_enters_ignored_dir(raw) {
+        return Some("the producer's workspace walk skips that directory");
+    }
+    None
 }
 
 fn normalize_scope_path(path: &str) -> String {
@@ -4043,11 +4074,39 @@ mod tests {
             "scope": "rust_workspace_complete",
             "run_status": "complete",
             "basis": "repo_exposure_complete_run",
-            "corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"},
+            "corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "0123456789abcdef"},
+            "records_total": 1,
             "records_digest": "sha256:00",
         });
         assert!(reason(&workspace, Some("src/anywhere/new.rs")).is_none());
-        assert!(reason(&workspace, Some("./src\\win.rs")).is_none());
+        assert!(reason(&workspace, Some("crates/a/src/lib.rs")).is_none());
+        // Spellings that could name a different file than the run saw, and
+        // directories the producer's walk never enters, are not covered.
+        for odd in [
+            "../outside/x.rs",
+            "src/../x.rs",
+            "/abs/y.rs",
+            "vol:/abs/y.rs",
+            "vol:\\abs\\y.rs",
+            "./src/win.rs",
+            "src\\win.rs",
+            "src/./a.rs",
+            "src//a.rs",
+            "src/lib.rs ",
+            " src/lib.rs",
+            "target/debug/build/gen.rs",
+            "crates/a/target/gen.rs",
+            "fixtures/case/src/lib.rs",
+            "node_modules/pkg/x.rs",
+            ".git/hooks/x.rs",
+            ".ripr/x.rs",
+            "src/",
+            "x.rs/",
+        ] {
+            assert!(reason(&workspace, Some(odd)).is_some(), "{odd:?}");
+        }
+        // A file *named* like an ignored directory is still a file.
+        assert!(reason(&workspace, Some("src/target.rs")).is_none());
         assert!(reason(&workspace, Some("scripts/tool.py")).is_some_and(|r| r.contains("Rust")));
         assert!(reason(&workspace, None).is_some());
         for broken in [
@@ -4055,6 +4114,10 @@ mod tests {
             json!({"basis": "other"}),
             json!({"corpus": {"scope": "other", "files_content_hash": "x"}}),
             json!({"corpus": {"scope": "rust_workspace"}}),
+            json!({"corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}}),
+            json!({"corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "DEADBEEF"}}),
+            json!({"records_total": "1"}),
+            json!({"records_digest": "deadbeef"}),
             json!({"corpus": {"scope": "rust_workspace", "files_content_hash": "x", "unavailable": "root"}}),
             json!({"records_digest": 7}),
         ] {

@@ -435,22 +435,49 @@ pub(crate) struct SafeGatePredicate {
     pub(crate) static_unknown_only: bool,
 }
 
-/// Digest of the ledger's record identities, so a consumer can tell a ledger
-/// that still holds every record the coverage disclosure was made for from one
-/// filtered or edited afterwards (#9599).
+/// Tamper-evident digest of the ledger's complete record set (#9599): every
+/// record's canonical JSON serialization, ordered by `gap_id` then content, so a
+/// consumer can tell a ledger that still holds exactly the records the coverage
+/// disclosure was made for from one filtered, edited or re-labelled afterwards.
+/// It detects accidental or casual change; it is not an authenticated
+/// signature, so a party who can rewrite the ledger and recompute it is out of
+/// scope.
 pub(crate) fn gap_records_digest(records: &[GapRecord]) -> String {
     use sha2::{Digest, Sha256};
-    let mut ids = records
+    let mut canonical = records
         .iter()
-        .map(|record| record.gap_id.as_str())
+        .map(|record| {
+            (
+                record.gap_id.as_str(),
+                serde_json::to_value(record)
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            )
+        })
         .collect::<Vec<_>>();
-    ids.sort_unstable();
+    canonical.sort_unstable();
     let mut hasher = Sha256::new();
-    for id in ids {
-        hasher.update(id.as_bytes());
-        hasher.update(b"\n");
+    for (gap_id, body) in canonical {
+        hasher.update(gap_id.len().to_le_bytes());
+        hasher.update(gap_id.as_bytes());
+        hasher.update(body.len().to_le_bytes());
+        hasher.update(body.as_bytes());
     }
     format!("sha256:{:x}", hasher.finalize())
+}
+
+/// The corpus identity a coverage disclosure may carry: a complete
+/// `rust_workspace` corpus stamped by this build's cache schema, with the
+/// producer's hash spelling and no `unavailable` marker.
+fn corpus_identity_is_well_formed(corpus: &Value) -> bool {
+    corpus.get("scope").and_then(Value::as_str) == Some("rust_workspace")
+        && corpus.get("unavailable").is_none()
+        && corpus.get("cache_schema_version").and_then(Value::as_str)
+            == Some(crate::analysis::seam_cache::CACHE_SCHEMA_VERSION)
+        && corpus
+            .get("files_content_hash")
+            .and_then(Value::as_str)
+            .is_some_and(crate::output::gap_source_subject::is_corpus_hash_shape)
 }
 
 /// `run_status` / limitation categories that do not narrow Rust coverage.
@@ -462,8 +489,29 @@ const COVERAGE_NEUTRAL_LIMITATIONS: [&str; 2] = ["typescript_diff_first", "pytho
 /// identity the producer stamped and to this ledger's exact record set.
 /// `None` for any other source state, which keeps the ledger fail-closed for
 /// baseline resolution.
-fn repo_exposure_analysis_coverage(source: Option<&Value>, records: &[GapRecord]) -> Option<Value> {
+fn repo_exposure_analysis_coverage(
+    source: Option<&Value>,
+    content_committed: bool,
+    records: &[GapRecord],
+) -> Option<Value> {
     let source = source?;
+    // Producer envelope: a repo-exposure artifact whose governed content
+    // commitment still matches the bytes read. A hand-written minimal
+    // document has neither.
+    if !content_committed
+        || source.pointer("/artifact/kind").and_then(Value::as_str) != Some("repo_exposure")
+        || source
+            .pointer("/artifact/producer/tool")
+            .and_then(Value::as_str)
+            != Some("ripr")
+    {
+        return None;
+    }
+    // A seam the converter could not turn into a record would leave the
+    // record set smaller than the run's population.
+    if source.get("seams").and_then(Value::as_array).map(Vec::len) != Some(records.len()) {
+        return None;
+    }
     if source.get("scope").and_then(Value::as_str) != Some("repo")
         || source.get("run_status").and_then(Value::as_str) != Some("complete")
     {
@@ -487,13 +535,7 @@ fn repo_exposure_analysis_coverage(source: Option<&Value>, records: &[GapRecord]
         return None;
     }
     let corpus = source.pointer("/source_subject/corpus")?;
-    if corpus.get("scope").and_then(Value::as_str) != Some("rust_workspace")
-        || corpus.get("unavailable").is_some()
-        || corpus
-            .get("files_content_hash")
-            .and_then(Value::as_str)
-            .is_none()
-    {
+    if !corpus_identity_is_well_formed(corpus) {
         return None;
     }
     Some(serde_json::json!({
@@ -516,11 +558,9 @@ pub(crate) fn verified_analysis_coverage(document: &Value, records: &[GapRecord]
         || coverage.get("records_total").and_then(Value::as_u64) != Some(records.len() as u64)
         || coverage.get("records_digest").and_then(Value::as_str)
             != Some(gap_records_digest(records).as_str())
-        || coverage
+        || !coverage
             .get("corpus")
-            .and_then(|corpus| corpus.get("scope"))
-            .and_then(Value::as_str)
-            != Some("rust_workspace")
+            .is_some_and(corpus_identity_is_well_formed)
     {
         return None;
     }
@@ -541,9 +581,18 @@ pub(crate) fn build_gap_decision_ledger_report(
     // project, and it must be distinguishable by `status` alone.
     let mut parsed_cleanly = false;
     let mut source_value_snapshot = None;
+    let mut source_content_committed = false;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
+            source_content_committed = source_value
+                .as_ref()
+                .and_then(|value| value.pointer("/artifact/content_sha256"))
+                .and_then(Value::as_str)
+                .is_some_and(|declared| {
+                    crate::agent::artifact::recompute_content_commitment(&contents)
+                        .is_ok_and(|recomputed| recomputed == declared)
+                });
             analysis_outcome = source_value
                 .as_ref()
                 .and_then(|value| value.get("analysis_outcome").cloned());
@@ -644,7 +693,11 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
     let analysis_coverage =
         if parsed_cleanly && input.source_kind == GapDecisionLedgerSourceKind::RepoExposure {
-            repo_exposure_analysis_coverage(source_value_snapshot.as_ref(), &records)
+            repo_exposure_analysis_coverage(
+                source_value_snapshot.as_ref(),
+                source_content_committed,
+                &records,
+            )
         } else {
             None
         };
@@ -7777,19 +7830,32 @@ mod tests {
         }
     }
 
+    const SCHEMA: &str = crate::analysis::seam_cache::CACHE_SCHEMA_VERSION;
+
+    fn test_corpus() -> Value {
+        serde_json::json!({
+            "scope": "rust_workspace",
+            "cache_schema_version": SCHEMA,
+            "files_content_hash": "0123456789abcdef",
+        })
+    }
+
     #[test]
     fn analysis_coverage_is_verified_against_the_exact_record_set() {
         let records = vec![record_with_id("gap:a"), record_with_id("gap:b")];
-        let document = serde_json::json!({
-            "analysis_coverage": {
-                "scope": "rust_workspace",
-                "basis": "repo_exposure_complete_run",
-                "run_status": "complete",
-                "corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"},
-                "records_total": records.len(),
-                "records_digest": gap_records_digest(&records),
-            }
-        });
+        let coverage = |records: &[GapRecord]| {
+            serde_json::json!({
+                "analysis_coverage": {
+                    "scope": "rust_workspace",
+                    "basis": "repo_exposure_complete_run",
+                    "run_status": "complete",
+                    "corpus": test_corpus(),
+                    "records_total": records.len(),
+                    "records_digest": gap_records_digest(records),
+                }
+            })
+        };
+        let document = coverage(&records);
         assert!(verified_analysis_coverage(&document, &records).is_some());
         // Reordered records keep the same digest; a dropped, added or renamed
         // record does not.
@@ -7801,6 +7867,29 @@ mod tests {
         let mut extra = records.clone();
         extra.push(record_with_id("gap:c"));
         assert!(verified_analysis_coverage(&document, &extra).is_none());
+        // Same ids and count, but a non-id field edited: the digest covers the
+        // whole record, so this is rejected.
+        let mut edited = records.clone();
+        edited[0].gap_state = "closed".to_string();
+        assert!(
+            verified_analysis_coverage(&document, &edited).is_none(),
+            "a record edited without changing id or count must not verify"
+        );
+        // A digest-matching document with a wrong `records_total` is rejected.
+        let mut wrong_total = coverage(&records);
+        wrong_total["analysis_coverage"]["records_total"] = serde_json::json!(99);
+        assert!(verified_analysis_coverage(&wrong_total, &records).is_none());
+        // A corpus identity the producer could not have stamped is rejected.
+        for corpus in [
+            serde_json::json!({"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": "0.0", "files_content_hash": "0123456789abcdef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "deadbeef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789ABCDEF"}),
+        ] {
+            let mut forged = coverage(&records);
+            forged["analysis_coverage"]["corpus"] = corpus;
+            assert!(verified_analysis_coverage(&forged, &records).is_none());
+        }
         // No disclosure, or a non-object one, is no coverage.
         assert!(verified_analysis_coverage(&serde_json::json!({}), &records).is_none());
         assert!(
@@ -7809,15 +7898,27 @@ mod tests {
         );
     }
 
+    fn complete_source(seams: usize) -> Value {
+        serde_json::json!({
+            "artifact": {"kind": "repo_exposure", "producer": {"tool": "ripr"}},
+            "scope": "repo",
+            "run_status": "complete",
+            "seams": vec![serde_json::json!({}); seams],
+            "source_subject": {"corpus": test_corpus()},
+        })
+    }
+
     #[test]
     fn repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity() {
         let records = vec![record_with_id("gap:a")];
-        let complete = serde_json::json!({
-            "scope": "repo",
-            "run_status": "complete",
-            "source_subject": {"corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}},
-        });
-        assert!(repo_exposure_analysis_coverage(Some(&complete), &records).is_some());
+        let complete = complete_source(1);
+        assert!(repo_exposure_analysis_coverage(Some(&complete), true, &records).is_some());
+        // The governed content commitment must still hold for the bytes read.
+        assert!(repo_exposure_analysis_coverage(Some(&complete), false, &records).is_none());
+        // A seam the converter dropped leaves records smaller than the run.
+        assert!(
+            repo_exposure_analysis_coverage(Some(&complete_source(2)), true, &records).is_none()
+        );
         let with = |patch: Value| {
             let mut value = complete.clone();
             if let (Some(target), Some(extra)) = (value.as_object_mut(), patch.as_object()) {
@@ -7835,26 +7936,74 @@ mod tests {
                 serde_json::json!({"limitations": [{"category": "generated_rust_source_skipped"}]}),
             ),
             with(serde_json::json!({"limitations": [{"category": "rust_files_declined"}]})),
+            with(serde_json::json!({"limitations": [{}]})),
             with(serde_json::json!({"limitations": "none"})),
             with(serde_json::json!({"run_limitations": [{"kind": "x"}]})),
             with(serde_json::json!({"analysis_outcome": {"analysis_complete": false}})),
+            with(serde_json::json!({"analysis_outcome": "complete"})),
             with(serde_json::json!({"source_subject": {}})),
             with(
-                serde_json::json!({"source_subject": {"corpus": {"unavailable": "x", "scope": "rust_workspace", "files_content_hash": "a"}}}),
+                serde_json::json!({"artifact": {"kind": "check_findings", "producer": {"tool": "ripr"}}}),
+            ),
+            with(serde_json::json!({"artifact": {"kind": "repo_exposure"}})),
+            with(serde_json::json!({"seams": "none"})),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"unavailable": "x", "scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789abcdef"}}}),
             ),
             with(
-                serde_json::json!({"source_subject": {"corpus": {"scope": "other", "files_content_hash": "a"}}}),
+                serde_json::json!({"source_subject": {"corpus": {"scope": "other", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789abcdef"}}}),
+            ),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}}}),
+            ),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "deadbeef"}}}),
             ),
         ] {
             assert!(
-                repo_exposure_analysis_coverage(Some(&limited), &records).is_none(),
+                repo_exposure_analysis_coverage(Some(&limited), true, &records).is_none(),
                 "{limited}"
             );
         }
         // Language guidance entries do not narrow Rust coverage.
         let guided = with(serde_json::json!({"limitations": [{"category": "python_diff_first"}]}));
-        assert!(repo_exposure_analysis_coverage(Some(&guided), &records).is_some());
-        assert!(repo_exposure_analysis_coverage(None, &records).is_none());
+        assert!(repo_exposure_analysis_coverage(Some(&guided), true, &records).is_some());
+        assert!(repo_exposure_analysis_coverage(None, true, &records).is_none());
+    }
+
+    #[test]
+    fn a_hand_written_minimal_repo_exposure_document_earns_no_coverage() {
+        let forged = serde_json::json!({
+            "schema_version": "0.3",
+            "scope": "repo",
+            "run_status": "complete",
+            "seams": [],
+            "source_subject": {"corpus": {
+                "scope": "rust_workspace",
+                "files_content_hash": "deadbeef",
+            }},
+        });
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "now".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+            records_path: "forged.json".to_string(),
+            records_json: Ok(forged.to_string()),
+        });
+        assert!(report.analysis_coverage.is_none());
+        // Same forgery with an envelope and a well-formed corpus, but no valid
+        // content commitment, is also refused.
+        let mut enveloped = complete_source(0);
+        enveloped["artifact"]["content_sha256"] =
+            serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "now".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+            records_path: "forged.json".to_string(),
+            records_json: Ok(enveloped.to_string()),
+        });
+        assert!(report.analysis_coverage.is_none());
     }
 }
 

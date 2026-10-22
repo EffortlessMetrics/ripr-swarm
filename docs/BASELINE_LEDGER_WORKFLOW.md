@@ -225,9 +225,12 @@ policy keeps every absent entry `not_evaluated`. A gate decision built from
 `analysis_coverage` disclosure: `ripr reports gap-ledger --repo-exposure` over a
 complete `ripr check --format repo-exposure-json` run (no seam limit, no
 parser-declined or generated-skipped Rust files) records that the whole Rust
-workspace was analyzed, bound to the ledger's exact records. With it, an absent
-baseline entry on a Rust path resolves; a filtered or edited ledger, a limited
-run, and non-Rust paths stay `not_evaluated` (#9599). Without it, use a
+workspace was analyzed, bound to the ledger's exact records and to the corpus of
+the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate on
+the same checkout). With it, an absent baseline entry on a normalized relative
+Rust path outside `target`/`fixtures`/`.git`-style directories resolves; a
+filtered, edited or stale ledger, a limited run, and other paths stay
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication. Without it, use a
 `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.

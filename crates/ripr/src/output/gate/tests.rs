@@ -5022,7 +5022,37 @@ fn e2e_delta_and_update(
 }
 
 fn e2e_gate_json(pr_guidance: Option<&str>, gap_ledger: Option<&str>) -> Result<String, String> {
+    e2e_gate_json_in(pr_guidance, gap_ledger, None)
+}
+
+/// The two Rust files `e2e_real_ledger` analyzes, so a gate run can sit on the
+/// same (fresh) or a different (stale) tree than the ledger it reads.
+fn e2e_write_project(root: &std::path::Path, lib_source: &str) -> Result<(), String> {
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn e2e_gate_json_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+) -> Result<String, String> {
     let dir = temp_dir("gate-e2e-9301")?;
+    if let Some(lib_source) = project_lib_source {
+        e2e_write_project(&dir, lib_source)?;
+    }
     let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
         let path = write_temp_json(&dir, name, body)?;
         Ok(path
@@ -5058,7 +5088,16 @@ fn e2e_delta_and_update_with(
     gap_ledger: Option<&str>,
     baseline_template: &str,
 ) -> Result<(Value, usize, String), String> {
-    let gate_json = e2e_gate_json(pr_guidance, gap_ledger)?;
+    e2e_delta_and_update_in(pr_guidance, gap_ledger, baseline_template, None)
+}
+
+fn e2e_delta_and_update_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+    project_lib_source: Option<&str>,
+) -> Result<(Value, usize, String), String> {
+    let gate_json = e2e_gate_json_in(pr_guidance, gap_ledger, project_lib_source)?;
 
     // Stamp the baseline with the producing build so the same-build rule
     // applies and only scope decides resolved vs not_evaluated.
@@ -5284,6 +5323,10 @@ fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), Stri
 /// one-file project, then gate evaluate, baseline delta and update against a
 /// baseline holding one reviewed gap at `src/lib.rs:2`.
 fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
+    e2e_real_review_render(lib_source, false)
+}
+
+fn e2e_real_review_render(lib_source: &str, markdown: bool) -> Result<String, String> {
     use crate::app::agent_brief::{
         AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
     };
@@ -5330,8 +5373,17 @@ fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
         mode: &crate::app::Mode::Draft,
         config: &config,
     };
-    let doc =
-        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let doc = if markdown {
+        crate::output::review_comments::render_review_comments_markdown_with_scope(
+            &context,
+            &working_set,
+            &selection,
+            &scope,
+            None,
+        )
+    } else {
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?
+    };
     ignore_remove_dir_all(root);
     Ok(doc)
 }
@@ -5412,6 +5464,27 @@ fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Res
     Ok(())
 }
 
+/// #9734: the real review-comments Markdown names a parser-declined file, and
+/// stays silent when every changed file parsed.
+#[test]
+fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
+    let declined = format!(
+        "pub fn early(n: i32) -> bool {{ n >= 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let markdown = e2e_real_review_render(&declined, true)?;
+    assert!(
+        markdown.contains(
+            "- limitation: `parser_declined_files`; no seams were extracted from: `src/lib.rs`"
+        ),
+        "{markdown}"
+    );
+    let clean = e2e_real_review_render("pub fn unrelated() {}\n", true)?;
+    assert!(!clean.contains("parser_declined_files"), "{clean}");
+    Ok(())
+}
+
 // ---- #9599: gap-ledger path with a producer coverage disclosure ----
 
 /// Real chain for one project: full Rust inventory -> repo-exposure JSON
@@ -5422,19 +5495,7 @@ fn e2e_real_ledger(lib_source: &str) -> Result<String, String> {
         render_gap_decision_ledger_json,
     };
     let root = temp_dir("gate-e2e-ledger-9599")?;
-    for (path, text) in [
-        ("src/lib.rs", lib_source),
-        (
-            "tests/boundary.rs",
-            "#[test] fn boundary() { assert!(early(10)); }\n",
-        ),
-    ] {
-        let full = root.join(path);
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        fs::write(&full, text).map_err(|err| err.to_string())?;
-    }
+    e2e_write_project(&root, lib_source)?;
     let config = crate::config::RiprConfig::default();
     let report = crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
     let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
@@ -5489,7 +5550,7 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
     // Baseline entries derived from the real gate decision over this ledger
     // (repo-scoped records are not gate candidates, so `baseline create`
     // would skip them; the identity fields are copied, not authored).
-    let gate0 = e2e_gate_json(None, Some(&ledger0))?;
+    let gate0 = e2e_gate_json_in(None, Some(&ledger0), Some(shallow))?;
     let gate0_value: Value = serde_json::from_str(&gate0).map_err(|err| err.to_string())?;
     let entries = gate0_value["decisions"]
         .as_array()
@@ -5518,7 +5579,9 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
     // Analyzed fixed gap: the file is gone from the records but the producer
     // disclosed whole-workspace coverage, so every captured entry resolves.
     let fixed = e2e_real_ledger("pub fn unrelated() {}\n")?;
-    let (delta, after, updated) = e2e_delta_and_update_with(None, Some(&fixed), &baseline)?;
+    let unrelated = "pub fn unrelated() {}\n";
+    let (delta, after, updated) =
+        e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(unrelated))?;
     assert_eq!(
         delta["analysis_scope"]["scope"], "rust_workspace_complete",
         "{delta}"
@@ -5531,7 +5594,8 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
     let mut filtered: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
     filtered["records"] = json!([]);
     let filtered = serde_json::to_string(&filtered).map_err(|err| err.to_string())?;
-    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&filtered), &baseline)?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&filtered), &baseline, Some(shallow))?;
     assert_eq!(
         delta["analysis_scope"]["scope"], "gap_ledger_artifact",
         "{delta}"
@@ -5550,7 +5614,8 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
     let declined_value: Value =
         serde_json::from_str(&declined_ledger).map_err(|err| err.to_string())?;
     assert!(declined_value.get("analysis_coverage").is_none());
-    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&declined_ledger), &baseline)?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&declined_ledger), &baseline, Some(&declined))?;
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(after, captured);
 
@@ -5563,8 +5628,73 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
         }
     }
     let python_baseline = serde_json::to_string(&python_baseline).map_err(|err| err.to_string())?;
-    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&fixed), &python_baseline)?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&fixed), &python_baseline, Some(unrelated))?;
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(after, captured);
+
+    // Rust-looking paths the producer's walk never read, or that name a
+    // different file than the run saw, are not evaluated either.
+    for path in [
+        "../outside/x.rs",
+        "/abs/y.rs",
+        "target/debug/build/gen.rs",
+        "fixtures/case/src/lib.rs",
+        "src/lib.rs ",
+        "src/./lib.rs",
+    ] {
+        let mut odd: Value = serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+        if let Some(entries) = odd["entries"].as_array_mut() {
+            for entry in entries {
+                entry["path"] = json!(path);
+            }
+        }
+        let odd = serde_json::to_string(&odd).map_err(|err| err.to_string())?;
+        let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &odd, Some(unrelated))?;
+        assert_eq!(delta["delta"]["resolved"], 0, "{path}: {delta}");
+        assert_eq!(after, captured, "{path}");
+    }
+
+    // Stale corpus: the ledger describes an older tree than the one being
+    // gated, so the disclosure is not upgraded and nothing resolves.
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(shallow))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A tampered ledger (same ids and count, one record field edited) loses
+    // its coverage even on the matching tree.
+    let mut tampered: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+    tampered["analysis_coverage"]["records_digest"] = json!("sha256:00");
+    let tampered = serde_json::to_string(&tampered).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&tampered), &baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A pr-guidance document cannot carry the workspace scope: a hand-written
+    // `rust_workspace_complete` is dropped and the baseline stays retained.
+    let guidance = e2e_real_review_doc(unrelated)?;
+    let mut forged: Value = serde_json::from_str(&guidance).map_err(|err| err.to_string())?;
+    forged["analysis_scope"] = json!({
+        "scope": "rust_workspace_complete",
+        "run_status": "complete",
+        "basis": "repo_exposure_complete_run",
+        "corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "0123456789abcdef"},
+        "records_total": 0,
+        "records_digest": "sha256:00",
+        "downstream_consumable": true,
+    });
+    let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(Some(&forged), None, &baseline, None)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+    assert_ne!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
     Ok(())
 }

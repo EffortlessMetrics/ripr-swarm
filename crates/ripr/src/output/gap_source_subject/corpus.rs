@@ -6,6 +6,14 @@ use crate::config::RiprConfig;
 use serde_json::Value;
 use std::path::Path;
 
+/// The producer's corpus content-hash spelling: 16 lowercase hex digits.
+pub(crate) fn is_corpus_hash_shape(hash: &str) -> bool {
+    hash.len() == 16
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// A corpus mismatch is distinct from a named-file mismatch: a newly added
 /// test can change a gap while every file in its old repair route is intact.
 pub(crate) enum CorpusSubjectCheck {
@@ -45,11 +53,7 @@ pub(crate) fn check_rust_corpus_subject(
     if schema != CACHE_SCHEMA_VERSION {
         return CorpusSubjectCheck::Unverifiable("source_subject_corpus_unsupported_schema");
     }
-    if hash.len() != 16
-        || !hash
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if !is_corpus_hash_shape(hash) {
         return CorpusSubjectCheck::Unverifiable("source_subject_corpus_malformed");
     }
     match workspace_cache_key_at_with_config(root, config) {

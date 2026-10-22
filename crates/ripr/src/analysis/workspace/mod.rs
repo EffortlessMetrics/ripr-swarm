@@ -29,6 +29,7 @@ pub(crate) use source_role::{
 pub(crate) use classify::{normalize_path, package_root};
 pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
+pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
     discover_python_test_files, discover_unanalyzed_source_files,

@@ -20,7 +20,7 @@
 mod corpus;
 mod shared;
 
-pub(crate) use corpus::{CorpusSubjectCheck, check_rust_corpus_subject};
+pub(crate) use corpus::{CorpusSubjectCheck, check_rust_corpus_subject, is_corpus_hash_shape};
 
 pub(crate) use shared::{
     GapSourceSubject, GapSourceSubjectFile, SOURCE_SUBJECT_DIGEST_ALGORITHM,
