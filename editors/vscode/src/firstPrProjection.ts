@@ -20,6 +20,7 @@ import {
   stringValues,
   rootMatchesWorkspace,
   hasUnsafeShellMetacharacter,
+  isWindowsHost,
   redirectStaysInWorkspace,
   TEST_RUNNER_VERIFY_COMMAND_PREFIXES,
   testRunnerCommandLeavesScope
@@ -410,9 +411,9 @@ const FIRST_PR_PACKET_SELECTED_STATES = new Set([
 export function firstPrCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
   const normalized = command.trim().replace(/\s+/g, ' ');
   return normalized !== ''
-    && !hasUnsafeShellMetacharacter(normalized)
+    && !hasUnsafeShellMetacharacter(normalized, isWindowsHost())
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, isWindowsHost())
     && FIRST_PR_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
