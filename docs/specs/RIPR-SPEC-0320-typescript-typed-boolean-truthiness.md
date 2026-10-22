@@ -83,8 +83,9 @@ exact pin.** An assertion pins the owner's result as `=== true` (or
 - the observed expression is one call to the owner, optionally awaited and
   optionally under one `!`, reached through a binding the test imports from
   the owner's module, as for the typed loose-number amendment;
-- every argument of that call is a number, string, boolean or `null`
-  literal.
+- every argument of that call is a decimal number, string, boolean or `null`
+  literal (a comma inside a string is part of the string; `inf` and `NaN`
+  are identifiers, not numbers).
 
 A credited assertion is treated as an exact-value oracle by the boundary
 witness, which still decides whether its inputs reach the changed boundary.
@@ -149,7 +150,10 @@ documented decisions (2026-10-04).
   `truthiness_on_a_boolean_owner_with_literal_arguments_is_credited` pins
   examples 1 and 2, and
   `truthiness_stays_smoke_unless_the_owner_declares_boolean` pins the
-  annotation rule.
+  annotation rule, `a_string_argument_with_a_comma_stays_one_literal` pins
+  the argument split, and
+  `truthiness_on_both_sides_of_the_boundary_reads_exposed` reads the Jest and
+  chai matchers through the adapter to a final verdict.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `ts-grid-boundary-exact`, `ts-grid-equality-exact` and
   `ts-grid-logical-exact` read `credited`; `ts-grid-equality-property` and

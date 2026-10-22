@@ -17905,6 +17905,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::boolean_return_annotation_reads_only_an_exact_boolean",
   "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::truthiness_on_a_boolean_owner_with_literal_arguments_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::truthiness_stays_smoke_unless_the_owner_declares_boolean",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::a_string_argument_with_a_comma_stays_one_literal",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::truthiness_on_both_sides_of_the_boundary_reads_exposed",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",

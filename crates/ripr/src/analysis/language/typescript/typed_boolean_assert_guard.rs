@@ -64,13 +64,38 @@ fn observed_call_has_literal_arguments(observed: &str) -> bool {
     };
     let arguments = arguments.trim();
     arguments.is_empty()
-        || arguments
-            .split(',')
+        || top_level_arguments(arguments)
+            .iter()
             .all(|argument| is_literal_argument(argument.trim()))
 }
 
+/// Splits an argument list at the commas outside quotes and brackets, so a
+/// string such as `"admin,root"` stays one argument.
+fn top_level_arguments(arguments: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (index, c) in arguments.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '(' | '[' | '{') => depth += 1,
+            (None, ')' | ']' | '}') => depth = depth.saturating_sub(1),
+            (None, ',') if depth == 0 => {
+                parts.push(&arguments[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&arguments[start..]);
+    parts
+}
+
 fn is_literal_argument(argument: &str) -> bool {
-    if matches!(argument, "true" | "false" | "null") || argument.parse::<f64>().is_ok() {
+    if matches!(argument, "true" | "false" | "null") || is_number_literal(argument) {
         return true;
     }
     let mut chars = argument.chars();
@@ -81,4 +106,17 @@ fn is_literal_argument(argument: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// A decimal number literal: an optional `-`, digits with at most one `.`,
+/// and an optional exponent. Rust's `f64` parser also accepts `inf` and
+/// `NaN`, which are identifiers in TypeScript, so the shape is checked
+/// before parsing.
+fn is_number_literal(argument: &str) -> bool {
+    let unsigned = argument.strip_prefix('-').unwrap_or(argument);
+    unsigned.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        && unsigned
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
+        && unsigned.parse::<f64>().is_ok()
 }

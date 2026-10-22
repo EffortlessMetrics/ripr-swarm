@@ -634,3 +634,10 @@ reason = "check --path/--exclude diff-scope filter for oversized diffs; not an e
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+
+# TypeScript typed boolean truthiness
+[[spec]]
+id = "RIPR-SPEC-0320"
+scope = "out"
+reason = "TypeScript analyzer rules; a non-TypeScript case cannot label them"
