@@ -36,14 +36,24 @@ pub(crate) const fn host_paths_case_insensitive() -> bool {
     cfg!(any(windows, target_os = "macos"))
 }
 
+/// Whether this host's default filesystem also treats canonically equivalent
+/// Unicode spellings (NFC/NFD) of a name as one file: macOS APFS. Windows
+/// NTFS and Linux preserve the exact code points, so they stay distinct.
+pub(crate) const fn host_paths_normalization_insensitive() -> bool {
+    cfg!(target_os = "macos")
+}
+
 /// Shared owner of path-identity keys: two paths name the same file for a
 /// path-string comparator exactly when their keys are equal.
 /// `backslash_is_separator` rewrites `\` to `/` and is `true` only where `\` is
 /// a separator (Windows, or a drive/UNC spelling); on Unix `\` is an ordinary
 /// filename byte, so `a\b.rs` and `a/b.rs` stay distinct. `case_insensitive`
-/// folds ASCII case only, the same rule at every call site; it never claims
-/// that non-ASCII case variants or NFC/NFD forms are one file, which fails
-/// closed. A path that is not valid UTF-8 keys on its exact encoded bytes
+/// folds case per code point (Unicode lowercase, only where it maps to exactly
+/// one code point), the same rule at every call site; on a host that also
+/// ignores normalization ([`host_paths_normalization_insensitive`], macOS) it
+/// additionally folds canonically equivalent NFC/NFD spellings through the
+/// narrow table in `path_unicode`. A case-sensitive caller never folds either.
+/// A path that is not valid UTF-8 keys on its exact encoded bytes
 /// behind a NUL marker (a path cannot contain NUL, so it cannot collide with a
 /// UTF-8 path's key) and is never folded or rewritten, so two distinct
 /// non-UTF-8 paths never collapse.
@@ -52,6 +62,22 @@ pub(crate) fn path_identity_key_on(
     backslash_is_separator: bool,
     case_insensitive: bool,
 ) -> String {
+    path_identity_key_with(
+        path,
+        backslash_is_separator,
+        case_insensitive,
+        case_insensitive && host_paths_normalization_insensitive(),
+    )
+}
+
+/// [`path_identity_key_on`] with canonical-equivalence folding explicit, so
+/// the macOS rule is testable on every host.
+pub(crate) fn path_identity_key_with(
+    path: &Path,
+    backslash_is_separator: bool,
+    case_insensitive: bool,
+    normalization_insensitive: bool,
+) -> String {
     let Some(text) = path.to_str() else {
         let mut key = String::from("\0");
         for byte in path.as_os_str().as_encoded_bytes() {
@@ -59,13 +85,35 @@ pub(crate) fn path_identity_key_on(
         }
         return key;
     };
-    let mut key = if backslash_is_separator {
+    let text = if backslash_is_separator {
         text.replace('\\', "/")
     } else {
         text.to_string()
     };
-    if case_insensitive {
-        key.make_ascii_lowercase();
+    if !case_insensitive && !normalization_insensitive {
+        return text;
+    }
+    let mut key = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let mut piece = String::new();
+        if normalization_insensitive {
+            super::path_unicode::decompose_into(ch, &mut piece);
+        } else {
+            piece.push(ch);
+        }
+        for part in piece.chars() {
+            if case_insensitive {
+                let mut lower = part.to_lowercase();
+                match (lower.next(), lower.next()) {
+                    (Some(single), None) => key.push(single),
+                    // Multi-code-point lowercase (e.g. U+0130) is not a
+                    // simple fold; keep the original (fail closed).
+                    _ => key.push(part),
+                }
+            } else {
+                key.push(part);
+            }
+        }
     }
     key
 }
@@ -393,11 +441,51 @@ mod tests {
             path_identity_key_on(Path::new("a\\b.rs"), false, true),
             path_identity_key_on(Path::new("a/b.rs"), false, true)
         );
-        // Non-ASCII case variants are not folded on any host (fail closed).
-        assert_ne!(
+        // Non-ASCII case variants fold only where the host is case-insensitive.
+        assert_eq!(
             path_identity_key_on(Path::new("\u{c9}.rs"), true, true),
             path_identity_key_on(Path::new("\u{e9}.rs"), true, true)
         );
+        assert_ne!(
+            path_identity_key_on(Path::new("\u{c9}.rs"), false, false),
+            path_identity_key_on(Path::new("\u{e9}.rs"), false, false)
+        );
+    }
+
+    #[test]
+    fn nfc_nfd_fold_only_when_normalization_insensitive() {
+        let nfc = Path::new("caf\u{e9}/\u{c5}.rs");
+        let nfd = Path::new("cafe\u{301}/A\u{30a}.rs");
+        // macOS rule (explicit seam): equivalent spellings share a key,
+        // including combined with case folding.
+        assert_eq!(
+            path_identity_key_with(nfc, false, true, true),
+            path_identity_key_with(nfd, false, true, true)
+        );
+        assert_eq!(
+            path_identity_key_with(Path::new("CAF\u{c9}.rs"), false, true, true),
+            path_identity_key_with(Path::new("cafe\u{301}.rs"), false, true, true)
+        );
+        // Linux/Windows rule: distinct files keep distinct keys.
+        assert_ne!(
+            path_identity_key_with(nfc, false, false, false),
+            path_identity_key_with(nfd, false, false, false)
+        );
+        assert_ne!(
+            path_identity_key_with(nfc, true, true, false),
+            path_identity_key_with(nfd, true, true, false)
+        );
+        // Genuinely different names never merge under the macOS rule.
+        assert_ne!(
+            path_identity_key_with(Path::new("\u{e9}.rs"), false, true, true),
+            path_identity_key_with(Path::new("e.rs"), false, true, true)
+        );
+        // U+0130 has a multi-code-point lowercase: not folded to plain `i`.
+        assert_ne!(
+            path_identity_key_with(Path::new("\u{130}.rs"), false, true, false),
+            path_identity_key_with(Path::new("i.rs"), false, true, false)
+        );
+        assert!(super::super::path_unicode::table_is_sorted_and_unique());
     }
 
     #[cfg(unix)]
@@ -419,7 +507,8 @@ mod tests {
 
     use super::{
         display_path, display_path_text, human_path_text, path_identity_key_on,
-        repository_display_path, repository_relative_path_text_on, same_output_leaf,
+        path_identity_key_with, repository_display_path, repository_relative_path_text_on,
+        same_output_leaf,
     };
 
     #[test]
