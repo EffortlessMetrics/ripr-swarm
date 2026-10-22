@@ -1,0 +1,3 @@
+case = "idiom-display-string-pin"
+issue = 9608
+reason = "A Display impl pinned through to_string() reads as a weak gap (#9608)."

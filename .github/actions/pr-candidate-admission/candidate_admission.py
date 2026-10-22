@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -71,6 +72,9 @@ GENERATED_DECLARATION_ALLOWED = (
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
 BLOB_READ_TIMEOUT_SECONDS = 30
+# Resolved through PATHEXT so Windows finds gh.exe or a gh.cmd shim; a bare name
+# only matches gh.exe there (#9272).
+GH = shutil.which("gh") or "gh"
 MAX_BLOB_BYTES = 2_000_000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
@@ -963,7 +967,7 @@ def gh_blob_lines(
         # or missing `gh` is a failed read, never an exception out of admission.
         try:
             return subprocess.run(
-                ["gh", "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
+                [GH, "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
             )
         except (subprocess.TimeoutExpired, OSError):
             return subprocess.CompletedProcess(args, 1, b"", b"unavailable")
@@ -1019,7 +1023,7 @@ def head_unmoved(repository: str, number: str, current: dict[str, Any]) -> bool:
         return False
     try:
         done = subprocess.run(
-            ["gh", "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
+            [GH, "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
             capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS,
         )
     except (subprocess.TimeoutExpired, OSError):
