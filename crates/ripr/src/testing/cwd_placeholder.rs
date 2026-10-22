@@ -161,10 +161,12 @@ fn project_bound_root_token(text: &str, prefix: &str, placeholder: &str) -> Stri
         return text.to_string();
     }
     let single = format!("'{}'", bare.replace('\'', r"'\''"));
-    let double = format!("\"{}\"", bare.replace('"', "\"\""));
+    // The Windows console form unquotes only as a `--root` value: a bare
+    // `"root"` elsewhere may be a JSON string whose quotes are delimiters.
+    let double = format!("--root \"{}\"", bare.replace('"', "\"\""));
     let text = text
         .replace(&single, placeholder)
-        .replace(&double, placeholder);
+        .replace(&double, &format!("--root {placeholder}"));
     let mut out = String::with_capacity(text.len());
     let mut rest = text.as_str();
     while let Some(at) = rest.find(bare) {
@@ -280,6 +282,11 @@ mod tests {
         assert_eq!(
             project_text_with_prefix("--root \"/srv/checkout with space\" --json", spaced),
             "--root <cwd> --json"
+        );
+        // Serialized JSON keeps its string delimiters around the placeholder.
+        assert_eq!(
+            project_text_with_prefix("{\"cwd\":\"/srv/checkout with space\"}", spaced),
+            "{\"cwd\":\"<cwd>\"}"
         );
     }
 

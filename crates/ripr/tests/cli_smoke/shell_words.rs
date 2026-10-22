@@ -100,39 +100,52 @@ fn posix_words_with_redirect_keep_quoted_gt_inside_the_root() -> Result<(), Stri
 fn windows_console_words_decode_the_printed_console_form() -> Result<(), String> {
     for (printed, expected) in [
         (
-            r#"ripr continue --root "D:/a/after test not run" --attempt repair-attempt-1"#,
+            r#"ripr continue --root "/srv/after test not run" --attempt repair-attempt-1"#,
             vec![
                 "ripr",
                 "continue",
                 "--root",
-                "D:/a/after test not run",
+                "/srv/after test not run",
                 "--attempt",
                 "repair-attempt-1",
             ],
         ),
         (
-            r#"ripr doctor --root "D:/a/selected répo it's""#,
-            vec!["ripr", "doctor", "--root", "D:/a/selected répo it's"],
+            r#"ripr doctor --root "/srv/selected répo it's""#,
+            vec!["ripr", "doctor", "--root", "/srv/selected répo it's"],
         ),
         // Interior `"` is doubled; a backslash run is literal unless a quote
         // follows, and a trailing run is doubled before the closing quote.
         (r#"x "a""b""#, vec!["x", r#"a"b"#]),
-        (r#"x "C:\a b\c""#, vec!["x", r"C:\a b\c"]),
-        (r#"x "C:\repo dir\\""#, vec!["x", r"C:\repo dir\"]),
-        (r#"x C:\plain\path"#, vec!["x", r"C:\plain\path"]),
+        (r#"x "srv\a b\c""#, vec!["x", r"srv\a b\c"]),
+        (r#"x "srv\repo dir\\""#, vec!["x", r"srv\repo dir\"]),
+        (r#"x srv\plain\path"#, vec!["x", r"srv\plain\path"]),
         (r#"x "" y"#, vec!["x", "", "y"]),
         (
-            r#"ripr check --root "D:/r x" > "D:/r x/out.json""#,
-            vec!["ripr", "check", "--root", "D:/r x", ">", "D:/r x/out.json"],
+            r#"ripr check --root "/srv/r x" > "/srv/r x/out.json""#,
+            vec![
+                "ripr",
+                "check",
+                "--root",
+                "/srv/r x",
+                ">",
+                "/srv/r x/out.json",
+            ],
+        ),
+        // `$` keeps the single-quote form on Windows, read as Git Bash does.
+        (
+            r"ripr doctor --root 'srv\x\it'\''s $'",
+            vec!["ripr", "doctor", "--root", r"srv\x\it's $"],
         ),
     ] {
         assert_eq!(windows_console_words(printed)?, expected, "{printed}");
     }
     for rejected in [
-        "ripr check --root 'a$b'",
+        r#"ripr check --root "a$b""#,
+        r#"ripr check --root 'a'"$(printf '\033')"'b'"#,
         r#"ripr check --root "open"#,
         "ripr check --root a & b",
-        r#"ripr check --root "D:/%USERNAME%/repo""#,
+        r#"ripr check --root "/srv/%USERNAME%/repo""#,
     ] {
         if let Ok(words) = windows_console_words(rejected) {
             return Err(format!(
@@ -148,15 +161,13 @@ fn windows_console_words_decode_the_printed_console_form() -> Result<(), String>
 #[test]
 fn printed_words_follow_the_host_quoting_form() -> Result<(), String> {
     let printed = if cfg!(windows) {
-        r#"ripr explain --root "D:/checkouts/my repo/it's""#
+        r#"ripr explain --root "/srv/checkouts/my repo/it's""#
     } else {
         r"ripr explain --root '/srv/checkouts/my repo/it'\''s'"
     };
-    let root = if cfg!(windows) {
-        "D:/checkouts/my repo/it's"
-    } else {
-        "/srv/checkouts/my repo/it's"
-    };
-    assert_eq!(printed_words(printed)?, ["ripr", "explain", "--root", root]);
+    assert_eq!(
+        printed_words(printed)?,
+        ["ripr", "explain", "--root", "/srv/checkouts/my repo/it's"]
+    );
     Ok(())
 }

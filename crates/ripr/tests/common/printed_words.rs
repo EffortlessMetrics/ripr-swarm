@@ -65,18 +65,24 @@ pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
     Ok(words)
 }
 
-/// Split `command` with the native Windows argv rules (the Microsoft C
-/// runtime rules Rust's `std::env::args` follows), which is what `ripr.exe`
-/// receives when the line is pasted into cmd.exe. These are the rules
-/// `windows_console_quote` encodes for: a double quote toggles quoting, `""`
-/// inside quotes is one literal quote, and a backslash run is literal unless a
-/// quote follows it (2n backslashes then `"` are n backslashes and a toggle,
-/// 2n+1 are n backslashes and a literal quote).
+/// Split `command` in the form `shell_arg` prints on Windows (#7729).
 ///
-/// Bytes the console form never prints are errors, so a producer regression
-/// fails here instead of decoding to a different argument: a single quote
-/// outside double quotes (the `$`/backtick and control-character forms are
-/// Git Bash or PowerShell source, not cmd.exe argv), cmd.exe operators
+/// The console form follows the native Windows argv rules (the Microsoft C
+/// runtime rules Rust's `std::env::args` follows), which is what `ripr.exe`
+/// receives when the line is pasted into cmd.exe: a double quote toggles
+/// quoting, `""` inside quotes is one literal quote, and a backslash run is
+/// literal unless a quote follows it (2n backslashes then `"` are n
+/// backslashes and a toggle, 2n+1 are n backslashes and a literal quote).
+///
+/// A value carrying `$` or backtick is printed in the single-quote form
+/// instead (Git Bash and PowerShell expand both inside double quotes), so a
+/// token that opens a single quote is decoded with the POSIX rules from
+/// there on, as Git Bash reads it.
+///
+/// Bytes neither form prints are errors, so a producer regression fails
+/// here instead of decoding to a different argument: `$` or backtick outside
+/// a single-quoted run, a double quote inside a single-quote token (the
+/// control-character `"$(printf …)"` form is bash source), cmd.exe operators
 /// (`&`, `|`, `<`, `^`) outside quotes, `%` anywhere (cmd.exe expands
 /// `%NAME%` even inside double quotes), and an unterminated quote.
 pub(crate) fn windows_console_words(command: &str) -> Result<Vec<String>, String> {
@@ -96,9 +102,31 @@ pub(crate) fn windows_console_words(command: &str) -> Result<Vec<String>, String
         }
         let mut word = String::new();
         let mut quoted = false;
+        // Set once the token opens a single quote: the rest is POSIX source.
+        let mut posix = false;
         while let Some(ch) = chars.next() {
             match ch {
                 ' ' | '\t' if !quoted => break,
+                '\'' if !quoted => {
+                    posix = true;
+                    loop {
+                        match chars.next() {
+                            Some('\'') => break,
+                            Some(inner) => word.push(inner),
+                            None => return Err(format!("unterminated quote in `{command}`")),
+                        }
+                    }
+                }
+                '\\' if posix => word.push(
+                    chars
+                        .next()
+                        .ok_or_else(|| format!("trailing backslash in `{command}`"))?,
+                ),
+                '"' if posix => {
+                    return Err(format!(
+                        "double quote inside a single-quote token is bash source: `{command}`"
+                    ));
+                }
                 '\\' => {
                     let mut run = 1;
                     while chars.peek() == Some(&'\\') {
@@ -120,9 +148,9 @@ pub(crate) fn windows_console_words(command: &str) -> Result<Vec<String>, String
                     word.push('"');
                 }
                 '"' => quoted = !quoted,
-                '\'' if !quoted => {
+                '$' | '`' => {
                     return Err(format!(
-                        "single-quoted form is not cmd.exe argv: `{command}`"
+                        "`{ch}` outside single quotes expands in Git Bash and PowerShell: `{command}`"
                     ));
                 }
                 '&' | '|' | '<' | '^' if !quoted => {
