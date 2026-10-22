@@ -72,6 +72,7 @@ mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod field_update_guard;
 mod guard_entry_guard;
 mod instance_class_guard;
 #[cfg(test)]
@@ -153,6 +154,7 @@ pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;

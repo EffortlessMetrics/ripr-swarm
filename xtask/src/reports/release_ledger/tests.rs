@@ -568,3 +568,68 @@ fn input_over_the_byte_cap_is_rejected_not_truncated() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn audited_ledger(path: &str, sha256: &str) -> Ledger {
+    let mut ledger = valid();
+    ledger.audit = Some(super::dto::AuditRef {
+        path: path.to_string(),
+        sha256: sha256.to_string(),
+    });
+    ledger
+}
+
+#[test]
+fn audit_file_digest_must_match_the_recorded_sha() -> Result<(), String> {
+    let recorded = "ab".repeat(32);
+    let ledger = audited_ledger("audit.md", &recorded);
+    for (current, expected) in [
+        (Ok(recorded.clone()), None),
+        (Ok("cd".repeat(32)), Some("not the recorded")),
+        (Err("no such file".to_string()), Some("cannot be re-read")),
+    ] {
+        let context = Context {
+            audit_file_sha256: Some(current),
+            ..Context::default()
+        };
+        let found = validate(&ledger, &context);
+        let hit = found.iter().any(|reason| reason.contains("audit file"));
+        match (expected, hit) {
+            (None, false) => {}
+            (Some(text), true) if found.iter().any(|reason| reason.contains(text)) => {}
+            _ => return Err(format!("unexpected audit reasons: {found:?}")),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn editing_the_audit_file_after_derivation_fails_validation() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-audit-bind-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let audit = dir.join("audit.md").to_string_lossy().to_string();
+    std::fs::write(&audit, "audited").map_err(|error| error.to_string())?;
+    let digest = format!("{:x}", Sha256::digest(b"audited"));
+    let input = dir.join("ledger.json").to_string_lossy().to_string();
+    let json = serde_json::to_string(&audited_ledger(&audit, &digest))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(&input, json).map_err(|error| error.to_string())?;
+    let base = sha(1);
+    let args = ["--input", input.as_str(), "--expected-base", base.as_str()]
+        .map(String::from)
+        .to_vec();
+    let before = super::release_ledger(&args);
+    std::fs::write(&audit, "audited, then edited").map_err(|error| error.to_string())?;
+    let after = super::release_ledger(&args);
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    before.map_err(|error| format!("an unedited audit should validate: {error}"))?;
+    match after {
+        Ok(()) => Err("an audit edited after derivation still validated".to_string()),
+        Err(error) if error.contains("audit file") || error.contains("invalid") => Ok(()),
+        Err(error) => Err(format!("unexpected error: {error}")),
+    }
+}
