@@ -523,7 +523,7 @@ pub(crate) fn resolve_effective_base_core_with_commit(
             let fetch = missing_ref_repair(root, explicit, "--base", git_timeout);
             Err(CoreError::base_unresolvable(format!(
                 "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                 run). {fetch} or pass `--base <ref>` for a ref this repository has."
+                 run). {fetch}, or pass `--base <ref>` for a ref this repository has."
             )))
         }
         Some(output) => {
@@ -1340,7 +1340,7 @@ fn verify_head_revision(
             .unwrap_or_else(|| {
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
-                     run). {} or pass `--head <ref>` for a ref this repository has.",
+                     run). {}, or pass `--head <ref>` for a ref this repository has.",
                     missing_ref_repair(root, head, "--head", git_timeout)
                 )
             })),
@@ -3526,6 +3526,12 @@ mod tests {
             err.contains("the analysis did not run"),
             "expected an explicit did-not-run boundary so an unresolvable base \
              is never read as an empty result, got: {err}"
+        );
+        // #9277: the repair sentence and the alternative join with a comma, not
+        // a bare "or" that fuses onto the previous clause.
+        assert!(
+            err.contains(", or pass `--base <ref>` for a ref this repository has."),
+            "expected the repair and the alternative to be separate clauses, got: {err}"
         );
         assert!(
             err.contains("--base <ref>"),

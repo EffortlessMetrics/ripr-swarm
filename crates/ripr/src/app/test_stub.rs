@@ -92,6 +92,9 @@ pub(crate) struct TestStubResolution {
     /// nearest gap in the same function was stubbed instead (#6298), so the
     /// substitution is stated rather than left to the generated comment.
     pub(crate) at_note: Option<String>,
+    /// The line of the seam this resolution stubs. It differs from a
+    /// requested `--at` line when the nearest gap was substituted.
+    pub(crate) seam_line: usize,
 }
 
 #[derive(Debug)]
@@ -123,7 +126,9 @@ pub(crate) fn resolve_test_stub(
             Ok(resolution_for(root, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
-            let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
+            let mut seam_index = None;
+            let mut resolution =
+                resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
             if resolution.grip_class.is_none() {
                 resolution.grip_class =
                     inventory_grip_class(root, config, file, &resolution.seam_id);
@@ -168,15 +173,15 @@ fn resolve_at_location(
     file: &str,
     line: usize,
     kind: Option<&str>,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Result<TestStubResolution, TestStubError> {
     let kind = kind.and_then(|family| {
         analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
     match (scoped_file(root, file), kind) {
         (Some(relative), Some(_)) => {
-            let seams =
-                analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
-                    .map_err(TestStubError::Operational)?;
+            let seams = analysis::scoped_file_seams(root, config, &relative, seam_index)
+                .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
             resolve_at(root, candidates, file, line, kind)
         }
@@ -231,6 +236,7 @@ impl<'a> AtCandidate<'a> {
                     outcome,
                     grip_class: None,
                     at_note: None,
+                    seam_line: seam.display_line(),
                 }
             }
             Self::Classified(entry) => resolution_for(root, entry, source),
@@ -317,17 +323,30 @@ pub(crate) fn stub_route_for_finding(
     root: &Path,
     config: &RiprConfig,
     finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
     if let Some(name) = finding.probe.changed_const_name() {
-        let decision = const_consumer_route(root, config, &file, line, name)?;
+        let decision = const_consumer_route(root, config, &file, line, name, seam_index)?;
         return Some(StubRoute {
             finding_id: finding.id.clone(),
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
+    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
     let decision = match resolution.outcome {
+        // `--at` stubs the nearest gap when the finding's line holds none
+        // (#6298). Print the line that stub is for, and only when asking for
+        // that line resolves to the same seam, so the command shown is the
+        // command that produces the stub it promises (#8444).
+        Ok(_) if resolution.at_note.is_some() => {
+            let seam_line = verified_seam_line(root, config, &file, kind, &resolution, seam_index)?;
+            StubRouteDecision::Stub {
+                file,
+                line: seam_line,
+                kind,
+            }
+        }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
             reason: refusal.reason(),
@@ -337,6 +356,24 @@ pub(crate) fn stub_route_for_finding(
         finding_id: finding.id.clone(),
         decision,
     })
+}
+
+/// The line to print for a substituted `--at` resolution: the seam's own line,
+/// only when asking for that line resolves to the same seam without a
+/// substitution note, so the printed command produces the stub it promises
+/// (#8444).
+fn verified_seam_line(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    kind: &str,
+    resolution: &TestStubResolution,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
+) -> Option<usize> {
+    let seam_line = resolution.seam_line;
+    resolve_at_location(root, config, file, seam_line, Some(kind), seam_index)
+        .is_ok_and(|exact| exact.seam_id == resolution.seam_id && exact.at_note.is_none())
+        .then_some(seam_line)
 }
 
 /// Seam kinds a constant's consumer is tried as, most common first.
@@ -356,6 +393,7 @@ fn const_consumer_route(
     file: &str,
     const_line: usize,
     name: &str,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
@@ -408,14 +446,28 @@ fn const_consumer_route(
             break;
         }
         for kind in CONSUMER_KINDS {
-            let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
+            let Ok(resolution) =
+                resolve_at_location(root, config, file, line, Some(kind), seam_index)
+            else {
                 continue;
             };
             match resolution.outcome {
                 Ok(_) => {
+                    // The reference line may not hold the seam; print the
+                    // seam's own line, or skip a consumer that cannot be
+                    // reproduced exactly (#8444).
+                    let stub_line = if resolution.at_note.is_some() {
+                        match verified_seam_line(root, config, file, kind, &resolution, seam_index)
+                        {
+                            Some(seam_line) => seam_line,
+                            None => continue,
+                        }
+                    } else {
+                        line
+                    };
                     return Some(StubRouteDecision::Stub {
                         file: file.to_string(),
-                        line,
+                        line: stub_line,
                         kind,
                     });
                 }
@@ -611,6 +663,7 @@ pub(crate) fn check_stub_route(
     root: &Path,
     check_config: &RiprConfig,
     output: &CheckOutput,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
     let (file, line, _) = stub_route_location(finding, root)?;
@@ -618,7 +671,7 @@ pub(crate) fn check_stub_route(
         return None;
     }
     let config = crate::config::load_for_root(root).ok()?;
-    stub_route_for_finding(root, &config, finding)
+    stub_route_for_finding(root, &config, finding, seam_index)
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -824,6 +877,7 @@ fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestSt
         outcome,
         grip_class: Some(entry.class),
         at_note: None,
+        seam_line: entry.seam.display_line(),
     }
 }
 
@@ -1750,13 +1804,10 @@ mod tests {
         .map_err(|error| error.to_string())?;
         let config = RiprConfig::default();
         let kind_of = |kind: Option<&str>| -> Result<(String, bool), String> {
-            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind)
+            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind, &mut None)
                 .map_err(|error| format!("{error:?}"))?;
-            let seams = analysis::file_seams_without_evidence_at_with_config(
-                &root,
-                &config,
-                Path::new("src/lib.rs"),
-            )?;
+            let seams =
+                analysis::scoped_file_seams(&root, &config, Path::new("src/lib.rs"), &mut None)?;
             let seam = seams
                 .iter()
                 .find(|seam| seam.id().as_str() == resolution.seam_id)

@@ -251,6 +251,12 @@ evidence-role fn open on one physical line, that opening line stays
 production-eligible (fail closed, no column attribution); later lines inside
 the evidence fn's body remain test evidence.
 
+A helper `fn` declared inside an evidence-role (`#[test]`) function is indexed
+with a production role of its own. It is still part of the test: a strictly
+enclosing evidence-role function makes its lines test evidence, so a diff that
+only adds such a helper yields no probe (#9177). A same-start-line sibling is
+not enclosing.
+
 ### Index normalization ownership
 
 Whole-index source-role normalization borrows its exact identity keys

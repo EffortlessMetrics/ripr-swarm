@@ -326,7 +326,11 @@ Relations, first match wins (rank, oracle-eligible):
   `alias.name(`, or a submodule receiver by full dotted path;
 - R3: `api_client_route_call` (4, eligible): `client.<verb>(` whose first
   argument is a string literal equal to one of the owner's static route
-  paths;
+  paths, ignoring any query string. A whole-segment path parameter
+  (braces or angle brackets, with or without a converter) matches one
+  concrete segment the router accepts for its converter: untyped and
+  `str` take any non-empty segment, `int`, `float` and `uuid` validate
+  the value, and `path` or any unknown converter stays unmatched;
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through

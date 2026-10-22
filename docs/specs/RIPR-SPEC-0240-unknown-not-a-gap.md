@@ -203,6 +203,53 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Profile-dependent `debug_assert_eq!`
+
+`debug_assert_eq!` runs under the default `cargo test` profile and is
+compiled out under `--release` (unless the profile turns debug assertions
+back on). A test that pins the owner's result only with it discriminates in
+the first profile and never in the second. The parser does not collect the
+`debug_` forms as assertion facts, so such a test reads as having no
+assertion and the finding as a certain gap.
+
+The decision belongs to the owner-return pin (RIPR-SPEC-0197). The owner-pin
+syntax pass records the assertion context of bare `debug_assert_eq!` calls
+beside `assert_eq!` and `assert!`, and
+`OwnerReturnPin::admits_debug_assert_eq` runs every gate `admits` applies to
+`assert_eq!` (owner-side return paths, operand shape, expected value, eager
+statement path, earlier returns, `#[should_panic]`, macro bindings) with the
+macro spelled `debug_assert_eq`. The classifier records each related
+`direct_owner_call` test without `#[ignore]` that it admits
+(`ClassifiedProbeEvidence::debug_assert_eq_pins`) and hands them to the
+post-pass as an evidence marker. `gap_admission::withhold_debug_assertion_gap`
+consumes the marker and withholds a `weakly_exposed` or
+`reachable_unrevealed` finding with no `static_limit_kind` under
+`rust_debug_assertion_profile_unresolved`, naming those tests. It runs after
+the `#[should_panic]` limit and before `withhold_unsupported_gap`. The
+admission never credits: the `debug_` facts never enter a test's assertions.
+
+Decision (#8051, reversible): withhold rather than credit. Crediting would
+claim a discriminator that a `--release` test run never executes, and ripr
+does not read the CI command or the profile settings; keeping the gap would
+claim a missing test the default run does have. This matches the corpus
+precedent for a production `debug_assert!` (`mined-debug-assert-only-oracle`,
+RIPR-SPEC-0219), which scores `static_unknown` as `abstained`.
+
+Two earlier cuts were rejected in review. Collecting `debug_` forms as
+parser oracles let predicate, match-arm and field-projection paths credit
+them as `exposed` and filled the empty assertion list the `#[should_panic]`
+rule requires. A hand-written mirror of the pin's gates read the test body
+and kept diverging from it (an `Ok(1)` pin of a changed early `Err` exit,
+checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
+`async` owners), withholding gaps the `assert_eq!` twin keeps. The
+`debug_assertion_limit` tests pin the twin contract: for each body, the
+`debug_assert_eq!` spelling reads as a profile limit exactly where the
+`assert_eq!` twin is credited, and keeps a gap otherwise, with one declared
+exception: a `std::`/`core::`-qualified `debug_assert_eq!` is not recognized,
+because the `std`-root proof (#7857) is spelled for `assert_eq` only, so it
+keeps its gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are
+not read.
+
 ### Call-fact budget of a related test line (#8600)
 
 `extract_call_facts` keeps at most 256 distinct callees per source line. A
@@ -330,8 +377,9 @@ and writes the finding the same way. Nothing is credited. Corpus effect:
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
-  oracles above: a credited weak oracle is read evidence even when a stronger
-  assertion was refused.
+  oracles above and the profile-dependent `debug_assert_eq!` above (which the
+  owner pin would credit as `assert_eq!`): a credited weak oracle is read
+  evidence even when a stronger assertion was refused.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm

@@ -1,0 +1,12 @@
+diff --git a/shapes/models.py b/shapes/models.py
+--- a/shapes/models.py
++++ b/shapes/models.py
+@@ -14,7 +14,7 @@
+ 
+     @property
+     def is_large(self):
+-        return self.amount >= 1000
++        return self.amount > 1000
+ 
+     @classmethod
+     def free(cls):
