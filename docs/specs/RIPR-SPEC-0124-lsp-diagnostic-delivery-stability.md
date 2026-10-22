@@ -50,8 +50,10 @@ advance on the saved-workspace open/save/close and explicit refresh paths.
 
 A `didSave` whose bytes match the last recorded save for that URI is
 deduplicated (#1908) only while a published snapshot covers that save. A
-failed refresh invalidates the recorded digests no published snapshot has
-covered yet, so an identical re-save retries (#9366); digests a successful
+refresh that ends without publishing and without a successor (failed,
+cancelled, deadline-exceeded or never started) invalidates the recorded
+digests no published snapshot has covered yet, so an identical re-save retries
+(#9366); digests a successful
 snapshot already covered still deduplicate, and a later successful refresh makes
 the next identical save deduplicate again.
 

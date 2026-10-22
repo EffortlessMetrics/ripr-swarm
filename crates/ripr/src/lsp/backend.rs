@@ -2072,19 +2072,7 @@ impl Backend {
         kind: AnalysisFailureKind,
         message: &str,
     ) {
-        // The save-dedup ledger (#1908) records a digest when a save is
-        // accepted, before its refresh runs. A failed refresh analyzed
-        // nothing, so some digests no longer prove "already analyzed": drop
-        // those not yet covered by a published snapshot so an identical
-        // re-save retries instead of being swallowed until the content
-        // happens to change. Digests a successful snapshot already covered
-        // stay: an unrelated unchanged save must not trigger a refresh.
-        let covered = self
-            .last_published_workspace_revision
-            .load(Ordering::Acquire);
-        if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.retain(|_, (_, revision)| *revision <= covered);
-        }
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -2157,13 +2145,17 @@ impl Backend {
                 // `mark_attempt_failed` records the bounded error and preserves
                 // the completed snapshot. Keep that richer state here.
             }
-            RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
+            RefreshAttemptOutcome::Cancelled => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Cancelled;
+            }
             // A deadline-expired attempt is a fail-closed dropped refresh
             // (#1972, #5093). Keep `state` on the existing `cancelled`
             // allowlist so fail-closed clients (including VS Code) still parse
             // the payload, and distinguish it from a user or superseded cancel
             // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
+                self.invalidate_uncovered_save_digests();
                 health.state = AnalysisAttemptState::Cancelled;
                 health.failure = Some(AnalysisFailure {
                     kind: AnalysisFailureKind::DeadlineExceeded,
@@ -2173,7 +2165,10 @@ impl Backend {
                 });
             }
             RefreshAttemptOutcome::Superseded => health.state = AnalysisAttemptState::Superseded,
-            RefreshAttemptOutcome::NotStarted => health.state = AnalysisAttemptState::Stopped,
+            RefreshAttemptOutcome::NotStarted => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Stopped;
+            }
         }
     }
 
@@ -3924,11 +3919,37 @@ impl Backend {
             .is_some_and(|recorded| recorded == digest)
     }
 
-    fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, digest: String) {
+    /// Record a save digest and advance the workspace revision as one step,
+    /// stamping the digest with the exact revision this advance produces. The
+    /// record lands before any refresh for the revision can be scheduled, so a
+    /// fast failure cannot precede it, and a concurrent advance cannot make
+    /// the stamp an under-estimate.
+    fn record_saved_content_digest_and_advance(
+        &self,
+        uri: &tower_lsp_server::ls_types::Uri,
+        digest: String,
+    ) {
+        let Ok(mut revision) = self.workspace_revision.lock() else {
+            return;
+        };
+        let next = revision.saturating_add(1);
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            // The save about to advance the revision produces `current + 1`.
-            let revision = self.workspace_revision().saturating_add(1);
-            digests.insert(uri.clone(), (digest, revision));
+            digests.insert(uri.clone(), (digest, next));
+        }
+        *revision = next;
+    }
+
+    /// Drop the save digests no published snapshot has covered. Called when a
+    /// refresh ends without publishing and without a successor (failed,
+    /// cancelled, deadline-exceeded, never started): nothing analyzed those
+    /// bytes, so an identical re-save must retry (#9366). Digests a published
+    /// snapshot covered stay, so unrelated unchanged saves still dedup.
+    fn invalidate_uncovered_save_digests(&self) {
+        let covered = self
+            .last_published_workspace_revision
+            .load(Ordering::Acquire);
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered);
         }
     }
 
@@ -6340,12 +6361,12 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
-        if let Some(digest) = digest {
-            self.record_saved_content_digest(&uri, digest);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
         }
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
-        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)

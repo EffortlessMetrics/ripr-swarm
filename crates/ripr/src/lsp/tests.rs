@@ -9357,6 +9357,70 @@ fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Res
 }
 
 #[tokio::test]
+async fn non_published_terminal_outcomes_invalidate_uncovered_save_digests() -> Result<(), String> {
+    // Cancelled, deadline-exceeded and never-started attempts end without a
+    // successor snapshot just like a failure, so an identical re-save must
+    // retry; a published or superseded attempt must keep deduplicating.
+    for (outcome, retries) in [
+        (RefreshAttemptOutcome::Cancelled, true),
+        (RefreshAttemptOutcome::DeadlineExceeded, true),
+        (RefreshAttemptOutcome::NotStarted, true),
+        (RefreshAttemptOutcome::Superseded, false),
+        (RefreshAttemptOutcome::Published, false),
+    ] {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    uri.clone(),
+                    "rust".to_string(),
+                    1,
+                    "fn same() {}".to_string(),
+                ),
+            })
+            .await;
+        let save = || DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        };
+        backend.did_save(save()).await;
+        let saved_revision = backend.workspace_revision();
+        let request = RefreshRequest {
+            generation: 11,
+            authority_epoch: 0,
+            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                PathBuf::from("/workspace"),
+                1,
+                &LspAnalysisConfig::default(),
+            ),
+            git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
+                Path::new("/workspace"),
+                None,
+                None,
+            ),
+            root: PathBuf::from("/workspace"),
+            config: LspAnalysisConfig::default(),
+            workspace_revision: saved_revision,
+            scope: RefreshScope::Interactive,
+            reason: RefreshReason::DidSave,
+            cancellation: AnalysisCancellationToken::new(),
+        };
+        backend.record_health_outcome(&request, outcome);
+        backend.did_save(save()).await;
+        let advanced = backend.workspace_revision() == saved_revision + 1;
+        if advanced != retries {
+            return Err(format!(
+                "{outcome:?}: expected retry={retries}, revision {saved_revision} -> {}",
+                backend.workspace_revision()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));

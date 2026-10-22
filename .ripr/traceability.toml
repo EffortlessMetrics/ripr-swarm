@@ -10113,6 +10113,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_after_root_change_publishes_no_duplicates",
   "crates/ripr/src/lsp/tests.rs::did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire",
   "crates/ripr/src/lsp/tests.rs::failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire",
+  "crates/ripr/src/lsp/tests.rs::non_published_terminal_outcomes_invalidate_uncovered_save_digests",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
