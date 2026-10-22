@@ -1674,7 +1674,8 @@ mod seam_hover_tests {
         ));
         diagnostic.message =
             "Some current diagnostics were omitted; re-run with --verbose.".to_string();
-        let md = extract_markup(&diagnostic_hover_response(&diagnostic))?;
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
         if md.contains("finding: unknown") || md.contains("finding:") {
             return Err(format!(
                 "limitation diagnostic must not masquerade as a finding:\n{md}"
