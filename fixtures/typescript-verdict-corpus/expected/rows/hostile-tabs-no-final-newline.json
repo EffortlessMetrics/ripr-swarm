@@ -1,10 +1,10 @@
 {
-  "case_id": "hostile-bom-body-edit",
+  "case_id": "hostile-tabs-no-final-newline",
   "subject_id": "authored-ts-vitest-hostile",
   "origin": "authored",
-  "anchor": "src/bom.ts:2",
+  "anchor": "src/tabs.ts:2",
   "behavior_family": "arithmetic_operator",
-  "test_shape": "vitest_bom_prefixed_source_tobe",
+  "test_shape": "vitest_tab_indented_source_without_final_newline",
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",

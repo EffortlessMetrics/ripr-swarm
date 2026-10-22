@@ -1,14 +1,14 @@
 {
-  "case_id": "hostile-bom-body-edit",
+  "case_id": "hostile-tabs-no-final-newline",
   "subject_id": "authored-ts-vitest-hostile",
-  "diff": "cases/hostile-bom-body-edit.diff",
+  "diff": "cases/hostile-tabs-no-final-newline.diff",
   "anchor": {
-    "file": "src/bom.ts",
+    "file": "src/tabs.ts",
     "line": 2
   },
   "edit_kind": "behavior_change",
   "behavior_family": "arithmetic_operator",
-  "test_shape": "vitest_bom_prefixed_source_tobe",
+  "test_shape": "vitest_tab_indented_source_without_final_newline",
   "hard_case": null,
   "truth": {
     "state": "discriminated",
@@ -20,8 +20,8 @@
         "replacement": "return side + side;",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "test/bom.test.ts > squares the side",
-        "equivalence_review": "the edit itself: The source file starts with a byte order mark before its first line, which sits in the diff context."
+        "failing_test": "test/tabs.test.ts > squares the side",
+        "equivalence_review": "the edit itself: The source file is tab-indented and ends without a final newline, so the diff carries a no-newline marker for its last line."
       }
     ]
   },
@@ -33,9 +33,9 @@
       "silent"
     ]
   },
-  "reasoning": "The source file starts with a byte order mark before its first line, which sits in the diff context. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "reasoning": "The source file is tab-indented and ends without a final newline, so the diff carries a no-newline marker for its last line. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
   "labeling_observation": {
-    "ripr_commit": "3608bb9",
+    "ripr_commit": "74d5955",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

@@ -22,10 +22,6 @@
       "sha256": "0d6671bc0c8f06a295ee4b23f140503deed52cd689b099860b41626465ca4704"
     },
     {
-      "path": "src/bom.ts",
-      "sha256": "27c3a82484b1b1e8f7cb71e0695c145daa78aa89b69672119b9dcc4860514abe"
-    },
-    {
       "path": "src/broken.ts",
       "sha256": "dd2b138d607291d30826e6bc143d40a6be4168c74289bfa92302af66a5c634da"
     },
@@ -58,12 +54,12 @@
       "sha256": "3e4a7fcd103a8b7ab288ba86f7a2d6e51b5e948d80524b1d763cceb50a5c4788"
     },
     {
-      "path": "src/unicode.ts",
-      "sha256": "d2f53e6b40f20abc1c76b7c797a37ff51c6a38fcc51a4ab5f3d1541076476277"
+      "path": "src/tabs.ts",
+      "sha256": "56e83c26818217efae7849b93787bb9d776c57bac405ef250e900604499f803b"
     },
     {
-      "path": "test/bom.test.ts",
-      "sha256": "f1e3b5867beeb2c382e986abfc0ff56de2c3aa7a17c88fa2b687e8305c0656cc"
+      "path": "src/unicode.ts",
+      "sha256": "d2f53e6b40f20abc1c76b7c797a37ff51c6a38fcc51a4ab5f3d1541076476277"
     },
     {
       "path": "test/commented.test.ts",
@@ -96,6 +92,10 @@
     {
       "path": "test/skipped.test.ts",
       "sha256": "611bc58cbe7d06e4ab2cfe9765905a7fab7ff2d0354d4887ec6872aec49dada2"
+    },
+    {
+      "path": "test/tabs.test.ts",
+      "sha256": "b9eb0bbe689b51e5277430ae4f9428ba6d7efbcf5bbfa85804d3b24dc964c410"
     },
     {
       "path": "test/unicode.test.ts",

@@ -29,7 +29,7 @@ under this repository's license, grouped by test runner:
   `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,
   `as const` tables, nullish chains, default parameters, private helpers,
   generators, arrow-function exports and `reduce`) and
-  `authored-ts-vitest-hostile` (CRLF and byte-order-mark sources, non-ASCII
+  `authored-ts-vitest-hostile` (a CRLF source, a tab-indented source with no final newline, non-ASCII
   identifiers and literals, a single minified line, `it.skip` and
   `describe.skip` pins, assertions that only exist in comments or an uncalled
   helper, a same-named function in an unimported module, a source file that

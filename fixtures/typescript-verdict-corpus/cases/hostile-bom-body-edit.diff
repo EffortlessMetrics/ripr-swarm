@@ -1,9 +1,0 @@
-diff --git a/src/bom.ts b/src/bom.ts
-index 0000000..1111111 100644
---- a/src/bom.ts
-+++ b/src/bom.ts
-@@ -1,3 +1,3 @@
- ﻿export function areaOfSquare(side: number): number {
--  return side * side;
-+  return side + side;
- }
