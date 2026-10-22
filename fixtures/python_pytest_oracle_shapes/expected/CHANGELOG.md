@@ -550,3 +550,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_oracle_shapes (20)
+
+Reason:
+RIPR-SPEC-0238 rule 22: a caplog.text membership check on the changed log call abstains (static_unknown) instead of reading a weak gap (#9424)
+
+Command:
+`cargo xtask goldens bless python_pytest_oracle_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
