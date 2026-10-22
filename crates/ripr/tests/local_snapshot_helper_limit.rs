@@ -2,7 +2,10 @@
 
 #![cfg(feature = "lang-rust")]
 
-use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
+use ripr::{
+    CheckInput, CheckOutput, ExposureClass, Finding, Mode, OutputFormat, check_workspace,
+    render_check,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -86,7 +89,7 @@ impl Fixture {
         Ok(fixture)
     }
 
-    fn finding(&self) -> Result<Finding, String> {
+    fn checked_output(&self) -> Result<CheckOutput, String> {
         let output = check_workspace(CheckInput {
             root: self.0.clone(),
             diff_file: Some(self.0.join("diff.patch")),
@@ -95,9 +98,8 @@ impl Fixture {
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
-        let mut findings = output.findings;
-        assert_eq!(findings.len(), 1, "nonempty changed-owner subject");
-        let finding = findings.remove(0);
+        assert_eq!(output.findings.len(), 1, "nonempty changed-owner subject");
+        let finding = &output.findings[0];
         assert_eq!(finding.class, ExposureClass::WeaklyExposed);
         assert!(
             finding
@@ -111,7 +113,11 @@ impl Fixture {
                 .iter()
                 .any(|test| { test.name == "separate_exact_oracle" && test.oracle.is_some() })
         );
-        Ok(finding)
+        Ok(output)
+    }
+
+    fn finding(&self) -> Result<Finding, String> {
+        Ok(self.checked_output()?.findings.remove(0))
     }
 }
 
@@ -122,11 +128,28 @@ impl Drop for Fixture {
 }
 
 fn limited(source: &str) -> Result<(), String> {
-    let finding = Fixture::new(source)?.finding()?;
+    let output = Fixture::new(source)?.checked_output()?;
+    let finding = &output.findings[0];
     assert_eq!(
         finding.static_limit_kind.map(|kind| kind.as_str()),
         Some("rust_macro_wrapped_assertion_unresolved")
     );
+    let next_step = "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.";
+    assert_eq!(finding.recommended_next_step.as_deref(), Some(next_step));
+    assert_eq!(finding.canonical_gap, None);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&output, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+    assert_eq!(json["findings"][0]["recommended_next_step"], next_step);
+    assert_eq!(json["findings"][0]["suggested_next_action"], next_step);
+    assert_eq!(
+        json["findings"][0]["static_limitation"]["kind"],
+        "rust_macro_wrapped_assertion_unresolved"
+    );
+    assert!(json["findings"][0]["canonical_gap"].is_null());
+    let human = render_check(&output, &OutputFormat::HumanFull)?;
+    assert!(human.contains(next_step.trim_end_matches('.')));
+    assert!(!human.contains("Replace broad assertions"));
     Ok(())
 }
 
@@ -190,4 +213,30 @@ fn only_owner_calls_outside_nested_macro_inputs_supply_the_limit() -> Result<(),
 #[test]
 fn a_literal_expected_operand_retains_its_existing_limit() -> Result<(), String> {
     limited(&replace_once(SOURCE, "snap_str![[\"-0.0\"]]", "\"-0.0\""))
+}
+
+#[test]
+fn complete_proximity_evidence_survives_the_display_cap() -> Result<(), String> {
+    let assertions = (0..12)
+        .map(|n| format!("assert_eq!(separate_owner(), 7, \"oracle {n}\");"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = replace_once(SOURCE, "assert_eq!(separate_owner(), 7);", &assertions);
+    let finding = Fixture::new(&source)?.finding()?;
+    assert!(finding.related_tests_total() > finding.related_tests.len());
+    limited(&source)?;
+    for body in [
+        "let _ = render_float(-0.0); assert_data_eq!(separate_float(-0.0), snap_str![[\"-0.0\"]]);",
+        "let _ = render_float(-0.0); assert_data_eq!(discard!(render_float(-0.0)), snap_str![[\"-0.0\"]]);",
+    ] {
+        let control = replace_once(
+            &source,
+            "assert_data_eq!(render_float(-0.0), snap_str![[\"-0.0\"]]);",
+            body,
+        );
+        let finding = Fixture::new(&control)?.finding()?;
+        assert!(finding.related_tests_total() > finding.related_tests.len());
+        assert_eq!(finding.static_limit_kind, None);
+    }
+    Ok(())
 }

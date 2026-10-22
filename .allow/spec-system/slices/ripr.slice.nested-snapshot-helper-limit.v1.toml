@@ -11,6 +11,9 @@ owner call outside nested macro inputs shares an argument list with an
 opaque expected-value macro. A sibling test's proximity oracle cannot turn
 that ungraded local snapshot helper into an actionable gap. This is a
 limitation witness, never assertion authority or an exact snapshot pin.
+The reveal producer retains only a complete oracle-scope boolean across
+the display cap; hidden rows do not become witnesses or repair targets.
+Unresolved-macro guidance directs inspection of the existing macro/test.
 """
 non_goals = [
   "Exact exposure credit for local snapshot helpers",
