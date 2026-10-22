@@ -19,6 +19,10 @@ pub(crate) const CHILD_PATH: &str = "/usr/bin:/bin";
 #[cfg(not(unix))]
 pub(crate) const CHILD_PATH: &str = "";
 
+/// Variables that point Git at a repository other than the one found from the
+/// working directory; a caller's values must not reach the child.
+const GIT_REDIRECT_ENV: [&str; 3] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
+
 /// Per-stream cap on one case's retained output. The largest real case writes
 /// a few kilobytes; a binary that emits more is failing, not being verbose.
 pub(crate) const CHILD_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -32,13 +36,15 @@ pub(crate) struct Binary {
 
 /// Environment variables the child inherits from the parent are limited to
 /// what the corpus does not set itself; `RIPR_*` is removed so ambient
-/// configuration cannot change a row.
+/// configuration cannot change a row, and so is every variable that points Git
+/// at a repository other than the one found from the working directory.
 pub(crate) fn removed_env() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars()
         .map(|(name, _)| name)
         .filter(|name| name.starts_with("RIPR_"))
         .collect();
     names.sort();
+    names.extend(GIT_REDIRECT_ENV.iter().map(|name| (*name).to_string()));
     names
 }
 
@@ -49,6 +55,8 @@ pub(crate) fn environment_boundary() -> Vec<String> {
             .to_string(),
         "NO_COLOR=1 and RUST_BACKTRACE=0".to_string(),
         "every RIPR_* variable present in the parent environment is removed from the child"
+            .to_string(),
+        "GIT_CEILING_DIRECTORIES is the case root's parent, and GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE are removed, so no repository above the case root is discovered"
             .to_string(),
         "other inherited variables are not scrubbed".to_string(),
     ]
@@ -243,6 +251,17 @@ fn launch(
     let cache = home.join("cache").to_string_lossy().to_string();
     let config = home.join("config").to_string_lossy().to_string();
     let data = home.join("data").to_string_lossy().to_string();
+    // Repository discovery stops at the case root's parent, so a repository
+    // above the owned root (the checkout this run lives in) is not found.
+    let ceiling = root
+        .canonicalize()
+        .ok()
+        .and_then(|owned| {
+            owned
+                .parent()
+                .map(|parent| parent.to_string_lossy().to_string())
+        })
+        .ok_or_else(|| format!("failed to resolve the parent of {}", root.display()))?;
     let envs: Vec<(&str, &str)> = vec![
         ("PATH", CHILD_PATH),
         ("HOME", &home_text),
@@ -250,6 +269,7 @@ fn launch(
         ("XDG_CACHE_HOME", &cache),
         ("XDG_CONFIG_HOME", &config),
         ("XDG_DATA_HOME", &data),
+        ("GIT_CEILING_DIRECTORIES", &ceiling),
         ("NO_COLOR", "1"),
         ("RUST_BACKTRACE", "0"),
     ];

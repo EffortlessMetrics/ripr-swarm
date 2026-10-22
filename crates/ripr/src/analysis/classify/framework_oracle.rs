@@ -1,6 +1,6 @@
 //! RIPR-SPEC-0240: a test-framework oracle ripr does not evaluate is not a gap.
 //!
-//! Four test idioms check a changed value through machinery ripr reads only
+//! Six test idioms check a changed value through machinery ripr reads only
 //! at the surface. Each leaves a related test whose oracle is real and whose
 //! reading here is `weakly_exposed`, a certain "assertion too weak" claim:
 //!
@@ -12,7 +12,15 @@
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
 //!   committed file ripr does not read, and no redaction names the changed
-//!   field.
+//!   field;
+//! - **fixture receiver**: the changed tail is a closure over a field of
+//!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
+//!   x.owner(..)` to a literal, so the closure runs over data ripr does not
+//!   read out of the helper;
+//! - **recording double**: the changed line calls a method on a `&mut`
+//!   parameter, and the test passes a local double (`&mut rec`) and compares
+//!   one of its fields exactly, so the recorded value reaches the assertion
+//!   through the double's own code, not the owner's return.
 //!
 //! ripr cannot tell whether those oracles notice the change, so it withholds
 //! the gap under `rust_framework_oracle_unresolved` and credits nothing. Like
@@ -44,6 +52,8 @@ enum Idiom {
     MockClosure,
     ExpectDebug,
     InstaSnapshot,
+    FixtureReceiver,
+    RecordingDouble,
 }
 
 impl Idiom {
@@ -60,6 +70,12 @@ impl Idiom {
             }
             Idiom::InstaSnapshot => {
                 "compares the owner's result with an insta snapshot kept outside the source, and no redaction names the changed field"
+            }
+            Idiom::FixtureReceiver => {
+                "pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over"
+            }
+            Idiom::RecordingDouble => {
+                "passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field"
             }
         }
     }
@@ -129,6 +145,18 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 Idiom::ExpectDebug
             } else if direct && insta_leaves_field_unredacted(test, changed_text, &owner.name) {
                 Idiom::InstaSnapshot
+            } else if strong
+                && direct
+                && family == ProbeFamily::ReturnValue
+                && fixture_receiver_pin(test, owner, changed_text, index)
+            {
+                Idiom::FixtureReceiver
+            } else if strong
+                && direct
+                && matches!(family, ProbeFamily::CallDeletion | ProbeFamily::SideEffect)
+                && recording_double_pin(test, owner, changed_text)
+            {
+                Idiom::RecordingDouble
             } else {
                 return None;
             };
@@ -303,6 +331,224 @@ fn split_arguments(code: &str) -> Vec<(usize, usize)> {
     }
     parts.push((start, code.len()));
     parts
+}
+
+/// The `assert_eq!` calls in masked `code`: each one's start offset and its
+/// top-level operand ranges (offsets of `code`, so they index the raw text).
+fn assert_eq_operands(code: &str) -> Vec<(usize, Vec<(usize, usize)>)> {
+    let mut found = Vec::new();
+    for (at, _) in code.match_indices("assert_eq!") {
+        if code[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !boundary(ch))
+        {
+            continue;
+        }
+        let Some((start, end)) = call_arguments(code, at + "assert_eq!".len()) else {
+            continue;
+        };
+        let operands = split_arguments(&code[start..end])
+            .into_iter()
+            .map(|(from, to)| (start + from, start + to))
+            .collect();
+        found.push((at, operands));
+    }
+    found
+}
+
+/// Whether `text` is a bare literal: one number token, one string, `true`
+/// or `false`. An expression that merely starts with one (`1 + n`) is not.
+fn is_literal(text: &str) -> bool {
+    let text = text.trim();
+    let number = text.strip_prefix('-').unwrap_or(text);
+    text == "true"
+        || text == "false"
+        || (text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains('"'))
+        || (number.starts_with(|ch: char| ch.is_ascii_digit())
+            && !number.contains("..")
+            && number
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+}
+
+/// Whether masked `text` holds a closure: a `|` or `||` that opens an
+/// argument (after `(`, `,`, `=` or `move`), not a boolean or bitwise operator.
+fn has_closure(text: &str) -> bool {
+    text.match_indices('|').any(|(at, _)| {
+        let before = text[..at].trim_end();
+        let opens = |ch: char| matches!(ch, '(' | ',' | '=');
+        !text[..at].ends_with('|')
+            && (before.chars().next_back().is_some_and(opens) || before.ends_with("move"))
+    })
+}
+
+/// The owner is a `&self` method whose changed line holds a closure, and a
+/// related test pins `helper().owner(..)` (or `let x = helper(); x.owner(..)`)
+/// to a literal with `assert_eq!`. The helper is a function of the test's own
+/// file other than the owner.
+fn fixture_receiver_pin(
+    test: &TestFact,
+    owner: &FunctionFact,
+    changed_text: &str,
+    index: &RustIndex,
+) -> bool {
+    let header = masked(&owner.body);
+    let header = header.split('{').next().unwrap_or("");
+    if !header.contains("&self") || !has_closure(&masked(changed_text)) {
+        return false;
+    }
+    let raw: &str = &test.body;
+    let code = masked(raw);
+    let method = format!(".{}(", owner.name);
+    let is_helper = |name: &str| {
+        name != owner.name
+            && index
+                .functions()
+                .iter()
+                .any(|function| function.name == name && function.file == test.file)
+    };
+    assert_eq_operands(&code).into_iter().any(|(at, operands)| {
+        let [(a_from, a_to), (b_from, b_to)] = operands.as_slice() else {
+            return false;
+        };
+        [
+            ((a_from, a_to), (b_from, b_to)),
+            ((b_from, b_to), (a_from, a_to)),
+        ]
+        .into_iter()
+        .any(|((call_from, call_to), (lit_from, lit_to))| {
+            if !is_literal(&raw[*lit_from..*lit_to]) {
+                return false;
+            }
+            let operand = code[*call_from..*call_to].trim().trim_start_matches('&');
+            let Some(receiver) = operand
+                .split(&method)
+                .next()
+                .filter(|r| r.len() < operand.len())
+            else {
+                return false;
+            };
+            let receiver = receiver.trim();
+            if let Some(helper) = receiver.strip_suffix("()") {
+                return is_ident(helper) && is_helper(helper);
+            }
+            is_ident(receiver)
+                && code[..at].lines().any(|line| {
+                    let line = line.trim();
+                    line.strip_prefix("let mut ")
+                        .or_else(|| line.strip_prefix("let "))
+                        .and_then(|rest| rest.strip_prefix(receiver))
+                        .and_then(|rest| rest.trim_start().strip_prefix('='))
+                        .and_then(|rest| rest.trim().strip_suffix("();"))
+                        .is_some_and(|helper| is_ident(helper.trim()) && is_helper(helper.trim()))
+                })
+        })
+    })
+}
+
+/// The changed line calls a method on a `&mut` parameter of the owner, and a
+/// related test hands the owner a local it declared (`&mut rec`) and then
+/// compares one of that local's fields with `assert_eq!`.
+fn recording_double_pin(test: &TestFact, owner: &FunctionFact, changed_text: &str) -> bool {
+    let changed = masked(changed_text);
+    let Some(receiver) = changed.trim().split('.').next().filter(|r| is_ident(r)) else {
+        return false;
+    };
+    let signature = masked(&owner.body);
+    let signature = signature.split('{').next().unwrap_or("");
+    let takes_mut_param = signature.split(',').any(|part| {
+        part.split_once(':').is_some_and(|(name, ty)| {
+            name.rsplit(|ch: char| ch == '(' || ch.is_whitespace())
+                .next()
+                == Some(receiver)
+                && ty.trim_start().starts_with("&mut dyn ")
+        })
+    });
+    if !takes_mut_param {
+        return false;
+    }
+    let code = masked(&test.body);
+    let mut start = 0;
+    while let Some(found) = code[start..].find(&format!("{}(", owner.name)) {
+        let at = start + found;
+        start = at + owner.name.len();
+        if code[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !boundary(ch) && ch != ' ')
+        {
+            continue;
+        }
+        let Some((from, to)) = call_arguments(&code, at + owner.name.len()) else {
+            continue;
+        };
+        for (arg_from, arg_to) in split_arguments(&code[from..to]) {
+            let Some(local) = code[from + arg_from..from + arg_to]
+                .trim()
+                .strip_prefix("&mut ")
+            else {
+                continue;
+            };
+            let local = local.trim();
+            if !is_ident(local) || !declared_struct_double(&code[..at], local) {
+                continue;
+            }
+            let field = format!("{local}.");
+            let compared = assert_eq_operands(&code[at..])
+                .into_iter()
+                .any(|(_, operands)| {
+                    operands.iter().any(|(o_from, o_to)| {
+                        code[at..][*o_from..*o_to]
+                            .trim()
+                            .trim_start_matches('&')
+                            .strip_prefix(&field)
+                            .is_some_and(is_field_access)
+                    })
+                });
+            if compared {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether `before` declares `let mut local = Type { .. }` with an uppercase
+/// `Type`: a struct literal, which a std collection constructor
+/// (`Vec::new()`, `vec![]`) is not.
+fn declared_struct_double(before: &str, local: &str) -> bool {
+    let marker = format!("let mut {local} =");
+    before.find(&marker).is_some_and(|decl| {
+        let rest = before[decl + marker.len()..].trim_start();
+        let name_end = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        rest.starts_with(|ch: char| ch.is_ascii_uppercase())
+            && rest[name_end..].trim_start().starts_with('{')
+    })
+}
+
+/// `rest` follows `local.` and names a field: an identifier that is not a
+/// method call and not read only through its length (`lines.len()` counts
+/// what was recorded, so it cannot notice a changed argument).
+fn is_field_access(rest: &str) -> bool {
+    let end = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    let after = &rest[end..];
+    end > 0
+        && !rest.starts_with(|ch: char| ch.is_ascii_digit())
+        && !after.starts_with('(')
+        && !["len", "is_empty", "count"].iter().any(|method| {
+            after
+                .strip_prefix('.')
+                .and_then(|call| call.strip_prefix(method))
+                .is_some_and(|tail| tail.starts_with('('))
+        })
 }
 
 /// A mockall expectation whose `returning` closure uses one of its named
@@ -533,6 +779,63 @@ mod tests {
             Some("a(\")\"), { \".x\" => \"y\" }")
         );
         assert_eq!(macro_arguments("unclosed("), None);
+    }
+
+    #[test]
+    fn a_literal_operand_is_a_number_string_or_bool() {
+        for literal in ["42", "-1", "\"a\"", "true", " false "] {
+            assert!(is_literal(literal), "{literal}");
+        }
+        for other in [
+            "expected",
+            "f(1)",
+            "x + 1",
+            "Some(1)",
+            "1 + n",
+            "0..n",
+            "1.max(f())",
+        ] {
+            assert!(!is_literal(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_closure_opens_an_argument_and_an_operator_does_not() {
+        assert!(has_closure("v.iter().map(|(_, p)| p).sum()"));
+        assert!(has_closure("v.iter().map(move |x| x)"));
+        assert!(has_closure("run(|| 1)"));
+        assert!(has_closure("let f = |x| x;"));
+        assert!(!has_closure("self.a || self.b"));
+        assert!(!has_closure("self.a | self.b"));
+    }
+
+    #[test]
+    fn a_recording_double_is_a_struct_literal_declared_mutable() {
+        let before = "let mut rec = Recorder { lines: vec![] };\n";
+        assert!(declared_struct_double(before, "rec"));
+        assert!(!declared_struct_double(before, "other"));
+        assert!(!declared_struct_double(
+            "let mut rec = Recorder::default();",
+            "rec"
+        ));
+        assert!(!declared_struct_double("let mut rec = Vec::new();", "rec"));
+        assert!(!declared_struct_double("let mut rec = vec![];", "rec"));
+        assert!(!declared_struct_double(
+            "let rec = Recorder { lines: vec![] };",
+            "rec"
+        ));
+    }
+
+    #[test]
+    fn a_field_access_is_an_identifier_that_is_not_called() {
+        assert!(is_field_access("lines"));
+        assert!(is_field_access("lines.clone()"));
+        assert!(is_field_access("é"));
+        assert!(!is_field_access("lines.len()"));
+        assert!(!is_field_access("lines.is_empty()"));
+        assert!(!is_field_access("recorded()"));
+        assert!(!is_field_access("0"));
+        assert!(!is_field_access(""));
     }
 
     fn test_named(source: &str, name: &str) -> Result<TestFact, String> {

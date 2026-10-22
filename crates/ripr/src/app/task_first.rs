@@ -968,8 +968,15 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
     } else {
         format!("this {language} finding in `{file}`")
     };
+    let verified_route = if language == "TypeScript" {
+        // The check-findings artifact kind makes the manual TypeScript route
+        // verifiable by gap id (#9103, RIPR-SPEC-0310).
+        "; to verify the repair by gap id, save `ripr check --base <base> --format check-findings-json` before and after the edit, then run `ripr agent verify --before <before> --after <after> --gap-id <canonical gap printed by check> --json`, which reports the gap closed only when it reads exposed in the after snapshot"
+    } else {
+        ""
+    };
     format!(
-        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command"
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command{verified_route}"
     )
 }
 
@@ -1642,6 +1649,24 @@ pub(crate) mod tests {
             Some(within.repair_attempt_id.as_str().to_string())
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0310: only TypeScript has a gap-bound verify route; Python
+    /// keeps the plain manual route of #9102.
+    #[test]
+    fn terminal_reason_names_gap_bound_verify_only_for_typescript() {
+        let typescript = no_seam_inventory_reason("TypeScript", "src/pricing.ts");
+        assert!(
+            typescript.contains("--format check-findings-json"),
+            "{typescript}"
+        );
+        assert!(typescript.contains("--gap-id"), "{typescript}");
+        let python = no_seam_inventory_reason("Python", "pricing/core.py");
+        assert!(!python.contains("check-findings-json"), "{python}");
+        assert!(
+            python.contains("run the printed verify command"),
+            "{python}"
+        );
     }
 
     /// #9102: a canonical gap id or preview finding id of a routed non-Rust

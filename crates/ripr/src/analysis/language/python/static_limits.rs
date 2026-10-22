@@ -1,11 +1,18 @@
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
-    PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
-    line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
+    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
+    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    test_may_reach_owner_class,
 };
+use super::source_facts::parse_module_result;
 use super::source_utils::SourceText;
-use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
+use super::{
+    PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
+    split_python_assignment,
+};
 use crate::domain::{OracleStrength, StaticLimitKind};
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
@@ -812,16 +819,56 @@ fn related_candidates_have_log_membership_limit(
                 .is_some_and(|assertion| {
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    assertion
-                        .gate_text
-                        .split_once(" in caplog.text")
-                        .is_some_and(|(checked, _)| {
-                            let checked = checked.trim_start();
-                            let checked = checked.strip_prefix("assert").unwrap_or(checked);
-                            words(checked).iter().any(|word| changed.contains(word))
-                        })
+                    caplog_membership_literals(&assertion.gate_text)
+                        .iter()
+                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
                 })
         })
+}
+
+/// The string literals an assertion checks for membership in `caplog.text`,
+/// read from the parsed expression so spacing, parentheses, line breaks and
+/// implicit literal concatenation do not change what is recognized.
+fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    let expression = gate_text.trim_start();
+    let expression = expression.strip_prefix("assert").unwrap_or(expression);
+    let source = format!("_ = (\n{expression}\n)\n");
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &source) else {
+        return Vec::new();
+    };
+    let mut literals = Vec::new();
+    for stmt in &module.body {
+        if let Stmt::Assign(assign) = stmt {
+            collect_caplog_membership_literals(assign.value.as_ref(), &mut literals);
+        }
+    }
+    literals
+}
+
+fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                collect_caplog_membership_literals(value, out);
+            }
+        }
+        Expr::Compare(compare)
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In)
+                && compare
+                    .comparators
+                    .first()
+                    .and_then(expr_full_name)
+                    .is_some_and(|name| name == "caplog.text") =>
+        {
+            if let Expr::Constant(constant) = compare.left.as_ref()
+                && let ast::Constant::Str(text) = &constant.value
+            {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
+    }
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(
@@ -879,6 +926,63 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
     }
 }
 
+/// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
+///
+/// - A dunder method owner whose related tests all relate only through
+///   `dunder_protocol`: the test builds an instance of the owner class and
+///   Python runs the dunder through operator or `with` syntax, but syntax alone
+///   cannot bind the protocol use to that instance, so the oracle is unread.
+/// - A module-level statement (`<module>` owner: a constant, a decorator
+///   argument, a conditional definition) related only by name proximity while a
+///   test imports the module: importing runs the top-level statements, which
+///   this adapter does not model, so a filename-stem link must not read as a gap.
+///
+/// Both abstain (`static_unknown`) instead of reporting `weakly_exposed`. The
+/// guard needs related tests and no oracle-eligible relation, so a direct call
+/// keeps its ordinary verdict.
+pub(super) fn heuristic_only_relation_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty()
+        || related_candidates
+            .iter()
+            .any(|candidate| candidate.relation.uses_oracle())
+    {
+        return None;
+    }
+    if let Some(class) = dunder_method_class(owner)
+        && related_candidates
+            .iter()
+            .all(|candidate| candidate.relation == PythonRelationKind::DunderProtocol)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: format!(
+                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax on a constructed instance",
+                owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through operator or `with` syntax; related tests build `{class}` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap.",
+                owner.qualified_name
+            ),
+        });
+    }
+    if owner.qualified_name == "<module>"
+        && related_candidates
+            .iter()
+            .any(|candidate| test_imports_owner_module(candidate.test, owner))
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: "static_limit missing_import_graph: module-level statement run at import time"
+                .to_string(),
+            missing: "Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap.".to_string(),
+        });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,6 +1019,7 @@ mod tests {
             route_paths: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
+            decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
             star_exported: false,

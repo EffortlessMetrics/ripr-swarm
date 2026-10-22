@@ -17413,6 +17413,8 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod boolean_pin_tests;
+mod catch_arm_tests;
 mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod custom_matcher_tests;
@@ -17434,15 +17436,19 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
+mod nullish_chain_tests;
 mod out_dir_specifier_tests;
+mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod returned_dataflow_tests;
+mod rounding_mode_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
 mod suite_factory_tests;
 mod table_case_tests;
+mod table_loop_tests;
 mod typed_loose_equality_tests;
 mod value_hiding_tests;
 

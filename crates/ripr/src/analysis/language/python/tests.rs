@@ -4238,6 +4238,44 @@ fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
 }
 
 #[test]
+fn caplog_membership_is_read_from_the_parsed_expression_not_the_layout() -> Result<(), String> {
+    // Spacing, parentheses, line breaks and implicit literal concatenation
+    // all spell the same membership check (RIPR-SPEC-0238 rule 22).
+    for assertion in [
+        "assert  \"low balance: 5\"   in   caplog.text",
+        "assert (\"low balance: 5\" in caplog.text)",
+        "assert (\n        \"low balance: 5\"\n        in caplog.text\n    )",
+        "assert \"low \" \"balance: 5\" in caplog.text",
+        "assert \"low balance: 5\" in caplog.text, \"log was not written\"",
+        "assert check_balance(5) is False and \"low balance: 5\" in caplog.text",
+    ] {
+        assert_eq!(
+            classify_log_edit(assertion)?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_layouts_about_unrelated_text_keep_their_verdict() -> Result<(), String> {
+    for assertion in [
+        "assert (\n        \"payment accepted\"\n        in caplog.text\n    )",
+        "assert  \"payment accepted\"   in   caplog.text",
+        "assert \"low balance: 5\" in other.text",
+    ] {
+        let (class, limit) = classify_log_edit(assertion)?;
+        assert_ne!(class, ExposureClass::StaticUnknown, "{assertion}");
+        assert_eq!(limit, None, "{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
 fn caplog_membership_about_unrelated_text_keeps_its_verdict() -> Result<(), String> {
     let (class, limit) = classify_log_edit("assert \"payment accepted\" in caplog.text")?;
     assert_ne!(class, ExposureClass::StaticUnknown);
@@ -7323,7 +7361,7 @@ fn empty_sink_tokens_keep_ordinary_module_imports_conservative() -> Result<(), S
             finding.related_tests[0].oracle_strength,
             OracleStrength::Unknown
         );
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(finding.oracle_alignment.as_deref(), Some("unknown"));
         assert_eq!(
             finding.alignment_reason.as_deref(),
@@ -7948,5 +7986,102 @@ fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), Str
         .ok_or_else(|| format!("filter change should classify for {cases}"))?;
         assert_eq!(finding.class, class, "{cases}");
     }
+    Ok(())
+}
+
+const MONEY_SRC: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __add__(self, other):\n        return Money(self.cents - other.cents)\n";
+
+#[test]
+fn dunder_operator_edit_with_constructed_operands_abstains_instead_of_gap() -> Result<(), String> {
+    // #9421: `Money(5) + Money(7) == Money(12)` relates only as `dunder_protocol`.
+    // The adapter cannot read that assertion against `__add__`, so it abstains.
+    let file = Path::new("shapes/money.py");
+    let owners = extract_owners(file, MONEY_SRC);
+    let tests = extract_tests(
+        Path::new("tests/test_money.py"),
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5) + Money(7) == Money(12)\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let owner = flat_owner(&owners, "Money.__add__")?;
+    assert_eq!(
+        candidate_relations(owner, &tests),
+        vec![("test_add_sums_cents".to_string(), "dunder_protocol")]
+    );
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        return Money(self.cents - other.cents)",
+        Some("        return Money(self.cents + other.cents)"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "dunder edit must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn dunder_edit_with_explicit_call_keeps_its_ordinary_verdict() -> Result<(), String> {
+    // Discriminating negative: a syntactic `__add__` call is oracle-eligible, so
+    // the heuristic-only abstention does not apply.
+    let file = Path::new("shapes/money.py");
+    let owners = extract_owners(file, MONEY_SRC);
+    let tests = extract_tests(
+        Path::new("tests/test_money.py"),
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5).__add__(Money(7)).cents == 12\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        return Money(self.cents - other.cents)",
+        Some("        return Money(self.cents + other.cents)"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "dunder edit must produce a finding".to_string())?;
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn module_level_edit_with_importing_test_abstains_instead_of_gap() -> Result<(), String> {
+    // #9423: `LIMIT = 10` -> `12` has no callable owner; the importing test is
+    // linked only by filename stem.
+    let file = Path::new("hostile/settings.py");
+    let owners = extract_owners(
+        file,
+        "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_settings.py"),
+        "from hostile.settings import over_limit\n\n\ndef test_above():\n    assert over_limit(11)\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding =
+        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests)
+            .ok_or_else(|| "module-level edit must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), String> {
+    // Discriminating negative: with no import of the module the abstention's
+    // guard fails; the verdict is never the new abstention or `exposed`.
+    let file = Path::new("hostile/settings.py");
+    let owners = extract_owners(file, "LIMIT = 12\n");
+    let tests = extract_tests(
+        Path::new("tests/test_settings.py"),
+        "def test_above():\n    assert 11 > 10\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding =
+        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests)
+            .ok_or_else(|| "module-level edit must still produce a finding".to_string())?;
+    assert!(!matches!(
+        finding.class,
+        ExposureClass::StaticUnknown | ExposureClass::Exposed
+    ));
     Ok(())
 }
