@@ -245,6 +245,20 @@ pub(super) fn is_gap_diagnostic(diagnostic: &Diagnostic) -> bool {
         == Some("gap_decision_ledger")
 }
 
+/// The hover header leads with the plain word for the class, not the raw
+/// schema token (#9367): the token stays available on `Diagnostic.code` for
+/// the Problems panel and LLM consumers, while a human reading the hover meets
+/// governed vocabulary (`ExposureClass::plain_label`).
+fn class_header_label(classification: &str) -> &'static str {
+    match classification {
+        "exposed" => "exposed",
+        "weakly_exposed" => "weak",
+        "reachable_unrevealed" => "unrevealed",
+        "no_static_path" => "no path",
+        _ => "unknown",
+    }
+}
+
 fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
     if is_gap_diagnostic(diagnostic)
         && let Some(data) = &diagnostic.data
@@ -257,7 +271,7 @@ fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
     let mut lines = vec![
-        format!("**ripr** `{classification}`"),
+        format!("**ripr** finding: {}", class_header_label(&classification)),
         String::new(),
         diagnostic.message.clone(),
     ];
