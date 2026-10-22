@@ -1,3 +1,0 @@
-case = "ts-grid-logical-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
