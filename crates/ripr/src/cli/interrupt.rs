@@ -92,8 +92,18 @@ impl Drop for SignalRegistration {
 mod tests {
     use super::{InterruptFlags, SignalRegistration, check};
     use crate::cli::CommandError;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    // SIGINT handlers are process-wide: a signal raised by one test would also set the flags of
+    // any registration alive in a parallel test, so tests that register hold this guard.
+    static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
+
+    fn serialized() -> MutexGuard<'static, ()> {
+        SIGNAL_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     fn flags() -> (InterruptFlags, Arc<AtomicBool>, Arc<AtomicBool>) {
         let interrupted = Arc::new(AtomicBool::new(false));
@@ -129,6 +139,7 @@ mod tests {
 
     #[test]
     fn registration_leaves_flags_clear_until_drop_arms_native_termination() -> Result<(), String> {
+        let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
         assert!(!interrupted.load(Ordering::SeqCst));
@@ -147,6 +158,7 @@ mod tests {
 
     #[test]
     fn first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String> {
+        let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
         // Construction: nothing is requested or armed before the signal.
