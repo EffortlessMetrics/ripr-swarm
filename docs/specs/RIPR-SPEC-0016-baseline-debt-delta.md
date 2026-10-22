@@ -271,9 +271,11 @@ bucket:
   including analyzer-version identity discontinuity across an upgrade. A
   baseline entry absent from current evidence whose path is not covered by the
   current decision's disclosed `diff_scoped_changed_files` `analysis_scope`
-  (`changed_files` and `changed_production_files`), or whose current decision
+  (`changed_production_files` only: `changed_files` also names non-Rust files the
+  seam analysis never read), or whose current decision
   discloses no, a malformed, or an unrecognized scope, skipped seams
-  (`unevaluated_seams`), brief-cap-omitted seams (`cap_omitted_seams`), or
+  (`unevaluated_seams`), brief-cap-omitted or policy-omitted seams (`cap_omitted_seams`,
+  `omitted_by_policy`; a missing key means an older producer), or
   lists the path in `absent_changed_files`, is also `stale_baseline_entry` and
   carries `"evaluation": "not_evaluated"` plus `not_evaluated_reason`
   (issue #9301). It is never `resolved`, and `baseline update

@@ -8974,7 +8974,10 @@ Field contract:
   route. When seams on changed lines and in changed owners fill every review
   slot, the rest of the scope is skipped: `classified_seams_considered` counts
   only the evaluated seams, the optional `unevaluated_seams` (present only
-  then) counts the skipped ones, a warning says the same, and the brief-cap
+  then) counts the skipped ones, `cap_omitted_seams` and `omitted_by_policy` (always emitted, 0 when none; #9301) count
+  visible seams dropped by the brief cap and working-set seams dropped by policy
+  (configured off, static limitation), which baseline diff must not read as
+  resolved, a warning says the same, and the brief-cap
   warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =

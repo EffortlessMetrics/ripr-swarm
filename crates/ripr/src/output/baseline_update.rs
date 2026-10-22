@@ -801,7 +801,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
-          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/gone.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/gone.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": [
             {"decision": "advisory", "seam_id": "same", "static_class": "weakly_gripped", "placement": {"path": "src/same.rs", "line": 1}, "evidence": {}},
             {"decision": "blocking", "seam_id": "new", "static_class": "weakly_gripped", "placement": {"path": "src/new.rs", "line": 9}, "evidence": {}}
@@ -1032,7 +1032,7 @@ mod tests {
         let current = r#"{
           "schema_version": "0.1",
           "root": ".",
-          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/gone.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/gone.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": [
             {
               "decision": "advisory",
@@ -1402,7 +1402,7 @@ mod tests {
             r#"{{
           "schema_version": "0.1",
           "subject": {{ "analyzer_version": {version} }},
-          "analysis_scope": {{"scope": "diff_scoped_changed_files", "changed_files": ["src/pricing.rs"]}},
+          "analysis_scope": {{"scope": "diff_scoped_changed_files", "changed_production_files": ["src/pricing.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0}},
           "decisions": []
         }}"#
         )

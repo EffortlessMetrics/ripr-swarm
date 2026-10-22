@@ -401,6 +401,7 @@ mod tests {
             top_seams: Vec::new(),
             warnings: vec!["configured-off seam omitted".to_string()],
             omitted_by_cap: 0,
+            omitted_by_policy: 0,
         };
 
         let json = render_agent_brief_json(&root, &Mode::Fast, &config, &working_set, &selection)?;

@@ -236,6 +236,7 @@ impl<'a> BoundedAgentBrief<'a> {
                 .collect(),
             warnings,
             omitted_by_cap: omitted,
+            omitted_by_policy: self.omission_counts.iter().map(|item| item.count).sum(),
         })
     }
 }

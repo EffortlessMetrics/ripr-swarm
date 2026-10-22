@@ -1485,24 +1485,47 @@ pub(super) fn absence_not_evaluated_reason(
             "the current gate decision's analysis scope `{kind}` is not recognized, so file coverage is not established"
         ));
     }
-    // Counters must be absent or a nonnegative integer; anything else is a
-    // malformed disclosure and fails closed.
-    for key in ["unevaluated_seams", "cap_omitted_seams"] {
-        match scope.get(key) {
-            None => {}
-            Some(value) => match value.as_u64() {
-                Some(0) => {}
-                Some(_) => {
-                    return Some(format!(
-                        "the current analysis did not evaluate every seam in its scope (`{key}` > 0), so absence is not evidence of resolution"
-                    ));
-                }
-                None => {
-                    return Some(format!(
-                        "the current gate decision's analysis scope has a malformed `{key}`, so coverage is not established"
-                    ));
-                }
-            },
+    // `unevaluated_seams` is emitted only when above zero, so absent means
+    // zero; present must be a nonnegative integer.
+    match scope.get("unevaluated_seams") {
+        None => {}
+        Some(value) => match value.as_u64() {
+            Some(0) => {}
+            Some(_) => {
+                return Some(
+                    "the current analysis did not evaluate every seam in its scope (`unevaluated_seams` > 0), so absence is not evidence of resolution"
+                        .to_string(),
+                );
+            }
+            None => {
+                return Some(
+                    "the current gate decision's analysis scope has a malformed `unevaluated_seams`, so coverage is not established"
+                        .to_string(),
+                );
+            }
+        },
+    }
+    // These two are always emitted by a current producer (0 when nothing was
+    // dropped); a missing key means the document predates the disclosure, so
+    // dropped seams cannot be ruled out.
+    for key in ["cap_omitted_seams", "omitted_by_policy"] {
+        match scope.get(key).map(Value::as_u64) {
+            Some(Some(0)) => {}
+            Some(Some(_)) => {
+                return Some(format!(
+                    "the current analysis dropped seams (`{key}` > 0), so absence is not evidence of resolution"
+                ));
+            }
+            Some(None) => {
+                return Some(format!(
+                    "the current gate decision's analysis scope has a malformed `{key}`, so coverage is not established"
+                ));
+            }
+            None => {
+                return Some(format!(
+                    "the current gate decision's analysis scope does not disclose `{key}` (produced by an older build), so dropped seams cannot be ruled out; regenerate it"
+                ));
+            }
         }
     }
     let Some(path) = entry_path
@@ -1513,31 +1536,34 @@ pub(super) fn absence_not_evaluated_reason(
             "the baseline entry has no path to join against the analyzed scope".to_string(),
         );
     };
+    // Coverage is the set of production files the seam analysis evaluated.
+    // `changed_files` also lists non-Rust and test files the Rust-seam
+    // analysis never read, so it is not a coverage claim.
+    if scope.get("changed_files").is_some_and(|v| !v.is_array()) {
+        return Some(
+            "the current gate decision's analysis scope has a malformed `changed_files`, so coverage is not established"
+                .to_string(),
+        );
+    }
+    let Some(production) = scope
+        .get("changed_production_files")
+        .and_then(Value::as_array)
+    else {
+        return Some(
+            "the current gate decision's analysis scope has no usable `changed_production_files`, so coverage is not established"
+                .to_string(),
+        );
+    };
     let mut covered = false;
-    for key in ["changed_files", "changed_production_files"] {
-        let Some(value) = scope.get(key) else {
-            if key == "changed_files" {
-                return Some(
-                    "the current gate decision's analysis scope has no `changed_files`, so coverage is not established"
-                        .to_string(),
-                );
-            }
-            continue;
+    for item in production {
+        let Some(file) = item.as_str() else {
+            return Some(
+                "the current gate decision's analysis scope has a non-string entry in `changed_production_files`, so coverage is not established"
+                    .to_string(),
+            );
         };
-        let Some(array) = value.as_array() else {
-            return Some(format!(
-                "the current gate decision's analysis scope has a malformed `{key}`, so coverage is not established"
-            ));
-        };
-        for item in array {
-            let Some(file) = item.as_str() else {
-                return Some(format!(
-                    "the current gate decision's analysis scope has a non-string entry in `{key}`, so coverage is not established"
-                ));
-            };
-            if normalize_scope_path(file) == path {
-                covered = true;
-            }
+        if normalize_scope_path(file) == path {
+            covered = true;
         }
     }
     let absent_hit = match scope.get("absent_changed_files") {
@@ -2082,7 +2108,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
-          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/gone.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/gone.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": [
             {
               "decision": "advisory",
@@ -2341,7 +2367,7 @@ mod tests {
             }
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/legacy.rs"]}}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/legacy.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -2500,7 +2526,7 @@ mod tests {
             {"identity": {"seam_id": "identity-only"}}
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/line.rs", "src/class.rs", "src/path.rs"]}}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/line.rs", "src/class.rs", "src/path.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -3619,13 +3645,13 @@ mod tests {
         assert!(baseline_with_version.contains("0.11.0+same"));
         let unversioned_current = r#"{
           "schema_version": "0.1",
-          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/fixed.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/fixed.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": []
         }"#;
         let versioned_current = r#"{
           "schema_version": "0.1",
           "subject": {"analyzer_version": "0.11.0+same"},
-          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/fixed.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/fixed.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": []
         }"#;
 
@@ -3693,6 +3719,8 @@ mod tests {
                 "run_status": "limited_diff_scope",
                 "changed_files": changed_files,
                 "changed_production_files": changed_files,
+                "cap_omitted_seams": 0,
+                "omitted_by_policy": 0,
             },
         })
         .to_string()
@@ -3812,7 +3840,10 @@ mod tests {
         let scope = |extra: Value| {
             let mut base = json!({
                 "scope": "diff_scoped_changed_files",
-                "changed_files": ["src/a.rs"],
+                "changed_files": ["src/a.rs", "src/a.py", "README.md"],
+                "changed_production_files": ["src/a.rs"],
+                "cap_omitted_seams": 0,
+                "omitted_by_policy": 0,
             });
             if let (Some(b), Some(e)) = (base.as_object_mut(), extra.as_object()) {
                 for (k, v) in e {
@@ -3828,7 +3859,7 @@ mod tests {
         assert!(reason(&scope(json!({})), Some("src\\a.rs")).is_none());
         assert!(
             reason(
-                &scope(json!({"changed_files": ["./src/a.rs"]})),
+                &scope(json!({"changed_production_files": ["./src/a.rs"]})),
                 Some("src/a.rs")
             )
             .is_none()
@@ -3841,6 +3872,28 @@ mod tests {
             )
             .is_none()
         );
+        // Non-Rust changed files are listed in `changed_files` but were never
+        // evaluated by the Rust-seam analysis: not covered (#9301).
+        assert!(reason(&scope(json!({})), Some("src/a.py")).is_some());
+        assert!(reason(&scope(json!({})), Some("README.md")).is_some());
+        // `changed_files` alone is not a coverage claim.
+        assert!(
+            reason(
+                &json!({"scope": "diff_scoped_changed_files", "changed_files": ["src/a.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0}),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        // Missing or nonzero producer-drop counters fail closed.
+        for key in ["cap_omitted_seams", "omitted_by_policy"] {
+            let mut missing = scope(json!({}));
+            if let Some(object) = missing.as_object_mut() {
+                object.remove(key);
+            }
+            assert!(reason(&missing, Some("src/a.rs")).is_some(), "{key}");
+            assert!(reason(&scope(json!({ key: 1 })), Some("src/a.rs")).is_some());
+            assert!(reason(&scope(json!({ key: "0" })), Some("src/a.rs")).is_some());
+        }
         // Negatives.
         assert!(reason(&scope(json!({})), Some("src/other.rs")).is_some());
         assert!(reason(&scope(json!({})), None).is_some());
@@ -3872,7 +3925,7 @@ mod tests {
         );
         assert!(
             reason(
-                &scope(json!({"changed_files": "src/a.rs"})),
+                &scope(json!({"changed_production_files": "src/a.rs"})),
                 Some("src/a.rs")
             )
             .is_some()

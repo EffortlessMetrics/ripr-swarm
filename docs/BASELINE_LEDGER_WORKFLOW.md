@@ -216,8 +216,11 @@ A gate decision built from a PR-diff-scoped `review-comments` document only
 covers the changed files. A baselined gap in any other file is reported as
 `stale_baseline_entry` with `"evaluation": "not_evaluated"`, never `resolved`,
 and `--remove-resolved` keeps it. A gate decision with no `analysis_scope`
-disclosure (an older build) fails closed the same way. Seams dropped by the brief cap, skipped scoped seams, and any
-malformed scope disclosure fail closed too. A gate decision built from
+disclosure (an older build) fails closed the same way. Seams dropped by the brief cap or by policy (configured off), skipped
+scoped seams, entries in non-Rust changed files, a scope missing the
+`cap_omitted_seams`/`omitted_by_policy` disclosure, and any malformed scope
+fail closed too. A gate decision whose review-comments source drops any seam by
+policy keeps every absent entry `not_evaluated`. A gate decision built from
 `--gap-ledger` currently always yields `not_evaluated`, because the ledger
 disclosure lists only surviving records' anchor files (limitation tracked in
 #9599); use a `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed

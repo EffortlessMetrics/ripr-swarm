@@ -247,6 +247,10 @@ pub(crate) struct AgentBriefSelection<'a> {
     /// Visible seams dropped by the brief cap. Absence of such a seam from
     /// the rendered guidance is not evidence that it was resolved (#9301).
     pub(crate) omitted_by_cap: usize,
+    /// Working-set seams dropped by policy (configured off, static
+    /// limitation, not agent-visible). Like cap omissions, their absence is
+    /// not evidence of resolution (#9301).
+    pub(crate) omitted_by_policy: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -337,6 +341,7 @@ pub(crate) fn select_agent_brief_seams<'a>(
         top_seams: direct.candidates,
         warnings,
         omitted_by_cap,
+        omitted_by_policy: direct.omitted_by_policy,
     }
 }
 
@@ -351,6 +356,7 @@ fn normalize_requested_max(requested: usize) -> usize {
 struct AgentBriefCandidateSelection<'a> {
     candidates: Vec<AgentBriefSelectedSeam<'a>>,
     allow_fallback: bool,
+    omitted_by_policy: usize,
 }
 
 fn direct_candidates<'a>(
@@ -363,12 +369,14 @@ fn direct_candidates<'a>(
         return AgentBriefCandidateSelection {
             candidates: explicit_seam_candidate(classified, seam_id, policy, warnings),
             allow_fallback: false,
+            omitted_by_policy: 0,
         };
     }
 
     let mut candidates = Vec::new();
     let mut matched_working_set = false;
     let mut named_omissions = 0;
+    let mut omitted_by_policy = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
     let normalized_working_set = NormalizedAgentBriefWorkingSet::new(working_set);
     for entry in classified {
@@ -377,6 +385,7 @@ fn direct_candidates<'a>(
         };
         matched_working_set = true;
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
+            omitted_by_policy += 1;
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
             if named_omissions < AGENT_BRIEF_MAX_NAMED_OMISSIONS {
@@ -409,6 +418,7 @@ fn direct_candidates<'a>(
     AgentBriefCandidateSelection {
         candidates,
         allow_fallback: !matched_working_set,
+        omitted_by_policy,
     }
 }
 

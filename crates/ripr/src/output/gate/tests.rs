@@ -4793,6 +4793,7 @@ fn e2e_review_comments_doc(
         top_seams: Vec::new(),
         warnings: Vec::new(),
         omitted_by_cap,
+        omitted_by_policy: 0,
     };
     let config = crate::config::RiprConfig::default();
     let context = ReviewCommentsRenderContext {
@@ -4910,6 +4911,9 @@ fn e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String>
     // `src/fixed.rs` must not read as resolved.
     let doc = e2e_review_comments_doc(&["src/fixed.rs", "src/elsewhere.rs"], 2, |_| {})?;
     let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    // The cap disclosure passed through gate evaluation into the delta's copy of
+    // the scope before any downstream claim is made.
+    assert_eq!(delta["analysis_scope"]["cap_omitted_seams"], 2, "{delta}");
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
     assert_eq!(after, 2);
@@ -4920,27 +4924,61 @@ fn e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String>
 #[test]
 fn e2e_malformed_scope_counters_and_lists_fail_closed() -> Result<(), String> {
     type Mutation = fn(&mut Value);
-    let mutations: [(&str, Mutation); 5] = [
-        ("string unevaluated_seams", |v| {
+    let mutations: [(&str, &str, Mutation); 7] = [
+        ("string unevaluated_seams", "unevaluated_seams", |v| {
             v["analysis_scope"]["unevaluated_seams"] = json!("1");
         }),
-        ("negative unevaluated_seams", |v| {
+        ("negative unevaluated_seams", "unevaluated_seams", |v| {
             v["analysis_scope"]["unevaluated_seams"] = json!(-1);
         }),
-        ("non-array changed_files", |v| {
-            v["analysis_scope"]["changed_files"] = json!("src/fixed.rs");
-        }),
-        ("non-string changed_files entry", |v| {
-            v["analysis_scope"]["changed_files"] = json!(["src/fixed.rs", 7]);
-        }),
-        ("malformed cap_omitted_seams", |v| {
+        (
+            "non-array changed_production_files",
+            "changed_production_files",
+            |v| {
+                v["analysis_scope"]["changed_production_files"] = json!("src/fixed.rs");
+            },
+        ),
+        (
+            "non-string changed_production_files entry",
+            "changed_production_files",
+            |v| {
+                v["analysis_scope"]["changed_production_files"] = json!(["src/fixed.rs", 7]);
+            },
+        ),
+        ("malformed cap_omitted_seams", "cap_omitted_seams", |v| {
             v["analysis_scope"]["cap_omitted_seams"] = json!("2");
         }),
+        ("missing cap_omitted_seams", "cap_omitted_seams", |v| {
+            if let Some(object) = v["analysis_scope"].as_object_mut() {
+                object.remove("cap_omitted_seams");
+            }
+        }),
+        ("missing omitted_by_policy", "omitted_by_policy", |v| {
+            if let Some(object) = v["analysis_scope"].as_object_mut() {
+                object.remove("omitted_by_policy");
+            }
+        }),
     ];
-    for (label, mutate) in mutations {
+    for (label, key, mutate) in mutations {
         let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, mutate)?;
         let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+        // The mutated value reached the delta (via the gate decision), so
+        // the entry is retained for the malformed key rather than because the
+        // scope was dropped.
+        assert!(
+            delta["analysis_scope"].is_object()
+                && (label.starts_with("missing") || delta["analysis_scope"].get(key).is_some()),
+            "{label}: {delta}"
+        );
         assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        let named = delta["items"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["not_evaluated_reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(key))
+            })
+        });
+        assert!(named, "{label}: {delta}");
         assert_eq!(after, 2, "{label}");
         assert!(updated.contains("gap:fixed"), "{label}: {updated}");
     }
@@ -4987,5 +5025,50 @@ fn e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated() -> Result<(),
     assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
     assert_eq!(after, 1);
     assert!(updated.contains("gap:omitted"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_non_rust_changed_files_are_not_covered_by_seam_analysis() -> Result<(), String> {
+    // The diff touched `src/pricing.py` and `README.md`, but the Rust-seam
+    // analysis evaluated only `src/fixed.rs`. Absence of Python/Markdown
+    // baseline entries must stay not_evaluated; the `.rs` control resolves.
+    let baseline = r#"{
+      "schema_version": "0.1",
+      "kind": "gate_baseline",
+      "entries": [
+        {"identity": {"canonical_gap_id": "gap:fixed"}, "path": "src/fixed.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"},
+        {"identity": {"canonical_gap_id": "gap:py"}, "path": "src/pricing.py", "line": 4, "static_class": "weakly_gripped", "decision": "advisory"},
+        {"identity": {"canonical_gap_id": "gap:md"}, "path": "README.md", "line": 5, "static_class": "weakly_gripped", "decision": "advisory"}
+      ]
+    }"#;
+    let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, |v| {
+        v["analysis_scope"]["changed_files"] =
+            json!(["src/fixed.rs", "src/pricing.py", "README.md"]);
+    })?;
+    let (delta, after, updated) = e2e_delta_and_update_with(Some(&doc), None, baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(
+        updated.contains("gap:py") && updated.contains("gap:md"),
+        "{updated}"
+    );
+    assert!(!updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String> {
+    // A baselined seam later configured off is dropped by policy and absent
+    // from decisions; it must not read as resolved.
+    let doc = e2e_review_comments_doc(&["src/fixed.rs", "src/elsewhere.rs"], 0, |v| {
+        v["analysis_scope"]["omitted_by_policy"] = json!(1);
+    })?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    assert_eq!(delta["analysis_scope"]["omitted_by_policy"], 1, "{delta}");
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
     Ok(())
 }

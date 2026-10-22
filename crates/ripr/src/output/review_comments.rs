@@ -195,9 +195,10 @@ pub(crate) fn render_review_comments_json_with_scope(
     let mut scope_json = analysis_scope_json(analysis_scope);
     // Seams dropped by the brief cap are absent from this document without
     // being evaluated as resolved (#9301).
-    if selection.omitted_by_cap > 0 {
-        scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
-    }
+    // Always emitted (0 when none) so a consumer can tell "nothing omitted"
+    // from a producer that predates the disclosure.
+    scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
+    scope_json["omitted_by_policy"] = json!(selection.omitted_by_policy);
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -1971,6 +1972,7 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
             omitted_by_cap: 0,
+            omitted_by_policy: 0,
         }
     }
 
@@ -2803,6 +2805,7 @@ mod tests {
             }],
             warnings: Vec::new(),
             omitted_by_cap: 0,
+            omitted_by_policy: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -4157,6 +4160,7 @@ mod tests {
                 exact_seams[0].seam.id().as_str()
             )],
             omitted_by_cap: 0,
+            omitted_by_policy: 0,
         };
         assert_json_fixture(
             "configured-off",

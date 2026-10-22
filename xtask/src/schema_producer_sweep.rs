@@ -134,6 +134,7 @@ const BINDINGS: &[Binding] = &[
         edge_fixtures: &[
             "tests/fixtures/verification/ripr/review-comments.valid.json",
             "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
+            "tests/fixtures/verification/ripr/review-comments.capped.valid.json",
         ],
         excluded: &[],
     },

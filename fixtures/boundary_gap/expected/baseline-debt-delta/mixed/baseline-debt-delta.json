@@ -1,8 +1,10 @@
 {
   "analysis_scope": {
-    "changed_files": [
+    "cap_omitted_seams": 0,
+    "changed_production_files": [
       "src/gone.rs"
     ],
+    "omitted_by_policy": 0,
     "scope": "diff_scoped_changed_files"
   },
   "baseline": {
