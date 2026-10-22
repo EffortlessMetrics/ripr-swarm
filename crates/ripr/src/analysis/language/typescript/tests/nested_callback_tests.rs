@@ -868,7 +868,7 @@ fn done_settled_callback_assertions_are_the_tests_own() {
     );
 }
 
-/// Discriminating negatives for rule 5: each shape lets the test pass
+/// Discriminating negatives for rule 7: each shape lets the test pass
 /// without the asserting statements, or reads `done` as something else.
 #[test]
 fn done_callback_shapes_that_can_skip_the_assertion_collect_nothing() {
