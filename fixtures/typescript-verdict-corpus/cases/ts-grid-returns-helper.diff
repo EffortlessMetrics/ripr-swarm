@@ -6,7 +6,7 @@ diff --git a/src/returns.ts b/src/returns.ts
  
  export function shout(text: string): string {
 -  return text.toUpperCase();
-+  return text.toLocaleUpperCase();
++  return String(text.toUpperCase());
  }
  
  export function banner(title: string): string {
