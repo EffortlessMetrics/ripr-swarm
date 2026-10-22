@@ -330,6 +330,45 @@ jobs:
 }
 
 #[test]
+fn workflow_review_thread_mutation_policy_rejects_token_split_across_lines() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          R='__head__'
+          T='__tail__'
+          gh api graphql -f query="mutation { $R$T }"
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
+
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_accepts_unrelated_adjacent_strings() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          echo '__head__'
+          echo '__tail__'
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    assert!(
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow)
+            .is_empty()
+    );
+}
+
+#[test]
 fn workflow_review_thread_mutation_policy_accepts_adjudication_guidance() {
     let workflow = r#"
 name: Review guidance
@@ -1698,12 +1737,17 @@ fn publish_jobs_run_locked_tools_without_the_registry_latest() -> Result<(), Str
             block.contains("npm ci --ignore-scripts"),
             "{job} must install the locked graph"
         );
+        let code: String = block
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            block.contains("npx --no-install"),
-            "{job} must not fetch tools at run time"
+            code.contains("node_modules/.bin/") || code.contains("npx --no-install"),
+            "{job} must run the lockfile-installed tool, not fetch one at run time"
         );
         assert!(
-            !block.contains("npx -y"),
+            !code.contains("npx -y") && !code.contains("npx @"),
             "{job} must not run registry-latest tools"
         );
     }

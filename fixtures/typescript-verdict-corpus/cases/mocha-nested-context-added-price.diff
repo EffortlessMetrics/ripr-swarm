@@ -1,0 +1,13 @@
+diff --git a/src/basket.ts b/src/basket.ts
+index 0000000..1111111 100644
+--- a/src/basket.ts
++++ b/src/basket.ts
+@@ -2,7 +2,7 @@
+   private items: number[] = [];
+ 
+   add(price: number): void {
+-    this.items.push(price);
++    this.items.push(price + 1);
+   }
+ 
+   total(): number {

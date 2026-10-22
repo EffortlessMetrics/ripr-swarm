@@ -1,0 +1,22 @@
+{
+  "case_id": "py-idioms-parametrize-top-boundary",
+  "subject_id": "authored-py-pytest-idioms",
+  "origin": "authored",
+  "anchor": "idioms/grading.py:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_parametrize_ids_boundary_unpinned",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
