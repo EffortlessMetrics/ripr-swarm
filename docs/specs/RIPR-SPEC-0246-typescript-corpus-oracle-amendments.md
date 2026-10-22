@@ -205,6 +205,31 @@ discriminator is not established either way, and a stop reason
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.
 
+**Rule 5. An edit to a fallback `??` operand needs an input that reaches it.**
+(Added 2026-10-22, #9437.) When the changed line's removed and added text are
+both `return a ?? b ?? ...;` (operands are `param?.prop`, `param.prop` or a
+literal; no `||`, `&&`, ternary, call or bracket; at least two operands) and
+exactly one operand after the first differs, the change decides the result
+only for an input whose earlier operands are all nullish. Every earlier
+operand and the property reads of the changed operand must be reads of one
+owner parameter that is never rebound or written (the rule 3 stability
+check). The rule reads every owner call whose whole result a strong
+`exact_value`, `whole_object_equality` or snapshot assertion observes. Its
+argument for that parameter is read when it is an object literal (inline or
+a once-bound local, as in rule 3), `undefined` or `null`. An input reaches
+the changed operand when each earlier property is absent, `null` or
+`undefined`; it tells the versions apart when the old and new operands then
+read different values (absent, `null` and `undefined` all read as nullish).
+If one observed input tells them apart, or any observed input cannot be read
+(a spread, a non-literal value, a non-literal argument, a non-optional read
+of `undefined`), the ladder result stands. Otherwise, when at least one
+whole-result call is observed, an `exposed` ladder result reads
+`weakly_exposed` with the missing line that no related test passes an input
+that reaches the changed operand. With no observed whole-result call the
+ladder result stands. `||` chains are not read (falsy values differ from
+nullish ones) and keep the ladder result. Rule 5 runs after rule 3 and before
+RIPR-SPEC-0248 rule 1, on the same value seams, and removes credit only.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -260,6 +285,12 @@ and the rejected alternative.
    three true-gap corpus rows to `limited`. The textual span match errs
    toward abstaining, never toward credit. Rejected: crediting the shapes,
    which rule 2 refuses on purpose. Recorded on #9290.
+
+8. **Fallback operand (rule 5, 2026-10-22).** Adopted: demote only when
+   every observed input is readable and none reaches the changed operand
+   with a differing value; anything unreadable fails open. Rejected: also
+   reading `||` chains, whose falsy semantics need a separate input model.
+   Recorded on #9437.
 
 ## Required Evidence
 

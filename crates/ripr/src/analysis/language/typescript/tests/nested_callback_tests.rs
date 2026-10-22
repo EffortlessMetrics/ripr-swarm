@@ -191,7 +191,7 @@ fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, S
 }
 
 /// `settings_finding` with another owner source and changed line.
-fn settings_finding_in(
+pub(super) fn settings_finding_in(
     label: &str,
     source: &str,
     line: (usize, &str),
