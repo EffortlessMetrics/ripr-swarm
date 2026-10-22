@@ -238,7 +238,8 @@ valid-ledger control that yields no reasons.
   `hunks_must_sit_inside_a_span_on_every_side_that_has_lines`,
   `only_product_rust_files_are_candidates`,
   `a_span_sharing_a_line_with_other_code_is_not_a_span`,
-  `touching_a_span_boundary_line_is_a_product_change`.
+  `touching_a_span_boundary_line_is_a_product_change`,
+  `an_escaped_quote_char_literal_is_blanked_whole`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,

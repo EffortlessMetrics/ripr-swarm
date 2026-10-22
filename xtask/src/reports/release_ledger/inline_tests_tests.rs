@@ -257,3 +257,19 @@ fn touching_a_span_boundary_line_is_a_product_change() -> Result<(), String> {
         "editing the closing line",
     )
 }
+
+#[test]
+fn an_escaped_quote_char_literal_is_blanked_whole() -> Result<(), String> {
+    let source = "\
+#[cfg(test)]
+mod tests {
+    const Q: char = '\\'';
+    const B: char = '{';
+}
+fn after() {}
+";
+    require(
+        test_spans(source) == vec![(1, 5)],
+        &format!("{:?}", test_spans(source)),
+    )
+}

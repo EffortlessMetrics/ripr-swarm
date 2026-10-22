@@ -88,11 +88,15 @@ fn blank_non_code(source: &str) -> Vec<char> {
         } else if here == '\'' {
             // A char literal closes within a few characters; a lifetime does not.
             let end = if next == Some('\\') {
-                chars[index + 2..]
+                // The escaped character itself may be a quote (`'\''`), so the
+                // closing quote is searched for after it.
+                chars
+                    .get(index + 3..)
+                    .unwrap_or_default()
                     .iter()
                     .take(10)
                     .position(|c| *c == '\'')
-                    .map(|offset| index + 2 + offset + 1)
+                    .map(|offset| index + 3 + offset + 1)
             } else if chars.get(index + 2) == Some(&'\'') {
                 Some(index + 3)
             } else {
