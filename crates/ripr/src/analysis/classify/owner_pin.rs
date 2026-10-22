@@ -118,6 +118,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
     /// meaning on it (trap-ceiling-wide-min-control).
     returns_integer: bool,
+    /// A masked integer tail needs an individually discriminating literal
+    /// pointer input; the direct-call mask guard reads original owner names.
+    pointer_mask_gate: super::mask_pin::PointerMaskGate,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -2751,6 +2754,12 @@ impl OwnerReturnPin {
             returns_integer: returns_primitive_scalar(owner, index)
                 && declared_return_type(&owner.body)
                     .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::for_owner(
+                &probe.expression,
+                name,
+                &owner.body,
+                index,
+            ),
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -2877,6 +2886,7 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -2979,6 +2989,7 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3073,6 +3084,7 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3347,6 +3359,7 @@ impl OwnerReturnPin {
                         assertion.line.checked_sub(test.start_line)?,
                     )?;
                     self.awaited_call_shape(&call, &self.name)?;
+                    self.pointer_mask_gate.admits(&call).then_some(())?;
                     Some((at, call))
                 })
             })

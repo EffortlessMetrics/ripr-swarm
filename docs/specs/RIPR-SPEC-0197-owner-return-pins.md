@@ -355,6 +355,12 @@ rule only for an assertion whose context was admitted.
    assertion supply no pointer pin. A `fn(..)` type is not a nested function
    declaration; actual nested `fn` items retain the existing refusal. Async,
    associated, iterator and macro-generated owner credit is outside this rule.
+   For a masked integer-cast tail, the selected pointer call must itself pass
+   one unsigned literal that sets every nonzero mask bit the cast keeps. The
+   mask, parameter and unique owner must be readable by the existing mask
+   rules. Partial inputs are not combined across indirect calls, and an
+   unread mask, zero kept bits or nonliteral input supplies no pointer pin.
+   The ordinary direct-call mask guard retains its existing collective rule.
 
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
@@ -2248,6 +2254,10 @@ assertions. This repair shares the existing callback without that larger migrati
   The scope-escape, raw-shadow, glob-shadow and cfg-disabled-binding controls
   also live in `fixtures/owner_return_pin_pointer_*` and the evidence-promotion
   honesty corpus, where none may promote the changed return.
+  `function_pointer_mask_pins_require_an_individually_discriminating_input`
+  and `function_pointer_mask_runtime_controls_match_the_selected_input`
+  keep partial-bit inputs uncredited while an all-bit input catches a narrower
+  mask, including qualified/reversed calls and additional unread aliases.
 
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,

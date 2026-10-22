@@ -170,3 +170,133 @@ fn function_pointer_runtime_controls_observe_the_same_value() -> Result<(), Stri
     }
     Ok(())
 }
+
+const MASK_CASES: &[(&str, &str, bool)] = &[
+    (
+        "partial",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(4660), 52);",
+        false,
+    ),
+    (
+        "qualified_partial",
+        "let f: fn(u32) -> u8 = crate::low_byte; assert_eq!(f(4660), 52);",
+        false,
+    ),
+    (
+        "reversed_partial",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(52, f(4660));",
+        false,
+    ),
+    (
+        "unread_other_alias",
+        "let unused: fn(u32) -> u8 = low_byte; let _ = unused(0); let f: fn(u32) -> u8 = low_byte; assert_eq!(f(4660), 52);",
+        false,
+    ),
+    (
+        "later_unread_partial",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(4660), 52); let _ = f(0);",
+        false,
+    ),
+    (
+        "later_partial_assertion",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(4660), 52); assert_eq!(f(0), 0);",
+        false,
+    ),
+    (
+        "two_partial_aliases",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(1), 1); let g: fn(u32) -> u8 = low_byte; assert_eq!(g(16), 16);",
+        false,
+    ),
+    (
+        "nonliteral",
+        "let word = 4660; let f: fn(u32) -> u8 = low_byte; assert_eq!(f(word), 52);",
+        false,
+    ),
+    (
+        "all_bits",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(255), 255);",
+        true,
+    ),
+    (
+        "qualified_all_bits",
+        "let f: fn(u32) -> u8 = crate::low_byte; assert_eq!(f(255), 255);",
+        true,
+    ),
+    (
+        "reversed_all_bits",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(255, f(255));",
+        true,
+    ),
+    (
+        "later_unread_all_bits",
+        "let f: fn(u32) -> u8 = low_byte; assert_eq!(f(255), 255); let _ = f(0);",
+        true,
+    ),
+];
+
+fn masked_source(body: &str) -> String {
+    format!(
+        "pub fn low_byte(n: u32) -> u8 {{\n    (n & 0xff) as u8\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pointer_mask() {{\n        {body}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn function_pointer_mask_pins_require_an_individually_discriminating_input() -> Result<(), String> {
+    for &(case, body, credited) in MASK_CASES {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"pointer-mask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), masked_source(body))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("change.diff"),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn low_byte(n: u32) -> u8 {\n-    n as u8\n+    (n & 0xff) as u8\n }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let changed: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 2
+            })
+            .collect();
+        assert_eq!(changed.len(), 1, "{case}: one changed masked return");
+        assert_eq!(
+            changed[0].class == ExposureClass::Exposed,
+            credited,
+            "{case}: {:?}",
+            changed[0]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn function_pointer_mask_runtime_controls_match_the_selected_input() -> Result<(), String> {
+    for &(case, body, catches_mutant) in MASK_CASES {
+        for (label, expression, should_fail) in [
+            ("neutral", "(n & 0xff) as u8", false),
+            ("narrower", "(n & 0x7f) as u8", catches_mutant),
+        ] {
+            source_runtime_control(
+                &masked_source(body).replacen("(n & 0xff) as u8", expression, 1),
+                &format!("function_pointer_mask_{case}_{label}"),
+                1,
+                should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}

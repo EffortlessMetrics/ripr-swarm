@@ -13,9 +13,108 @@ use super::operand_pin::{
     has_control_flow, is_identifier, matching_paren, top_level_items, whole_word_count,
 };
 use crate::domain::{OracleKind, RelationReason};
+use ra_ap_syntax::{AstNode, ast};
 
 /// Token carried in the discriminate summary when [`unexercised_mask_bits`] holds.
 pub(in crate::analysis) const MASK_BITS_UNEXERCISED: &str = "mask_bits_unexercised";
+
+/// An indirect pin cannot borrow the direct-call guard's all-test reading.
+/// Keep it bounded to one literal input that exercises every kept mask bit.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) enum PointerMaskGate {
+    Unmasked,
+    KeptBits(u64),
+    Refuse,
+}
+
+impl PointerMaskGate {
+    pub(in crate::analysis) fn for_owner(
+        expression: &str,
+        owner_name: &str,
+        owner_body: &str,
+        index: &RustIndex,
+    ) -> Self {
+        let Some((param, mask_text, width)) = masked_cast(expression) else {
+            return if contains_masked_cast(expression) {
+                Self::Refuse
+            } else {
+                Self::Unmasked
+            };
+        };
+        let Some(mask) = integer_literal(mask_text) else {
+            return Self::Refuse;
+        };
+        if !owner_has_param(owner_body, param)
+            || index
+                .functions()
+                .iter()
+                .filter(|function| function.name == owner_name)
+                .count()
+                != 1
+        {
+            return Self::Refuse;
+        }
+        let kept = mask & width_mask(width);
+        if kept == 0 {
+            Self::Refuse
+        } else {
+            Self::KeptBits(kept)
+        }
+    }
+
+    /// `call` comes from the shared pointer reader, before the normal owner
+    /// identity, expected-value and execution gates. This only refuses credit.
+    pub(in crate::analysis) fn admits(self, call: &str) -> bool {
+        let kept = match self {
+            Self::Unmasked => return true,
+            Self::Refuse => return false,
+            Self::KeptBits(kept) => kept,
+        };
+        let Some(open) = call.find('(') else {
+            return false;
+        };
+        let Some(arguments) = call[open + 1..].strip_suffix(')') else {
+            return false;
+        };
+        let arguments = top_level_items(arguments);
+        let [input] = arguments.as_slice() else {
+            return false;
+        };
+        integer_literal(input).is_some_and(|input| kept & !input == 0)
+    }
+}
+
+/// Formatting or an unread type/mask must not turn a masked cast into the
+/// unrestricted scalar branch. This recognizes the syntax, without deriving
+/// any value or changing the existing direct-call reader's bounds.
+fn contains_masked_cast(expression: &str) -> bool {
+    if !expression.contains('&') || !expression.contains("as") {
+        return false;
+    }
+    let source = format!("fn __ripr_mask_tail() {{ {expression} }}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return true;
+    };
+    parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::CastExpr::cast)
+        .filter_map(|cast| cast.expr())
+        .any(|operand| {
+            operand
+                .syntax()
+                .descendants()
+                .filter_map(ast::BinExpr::cast)
+                .any(|binary| {
+                    binary
+                        .syntax()
+                        .children_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .any(|token| token.text() == "&")
+                })
+        })
+}
 
 /// The mask bits no pinned input sets.
 #[derive(Debug, PartialEq, Eq)]
@@ -337,5 +436,40 @@ mod tests {
         assert_eq!(unexercised("(m & 0xff) as u8", &tests), None);
         assert_eq!(unexercised("(n & 0xff) as f32", &tests), None);
         assert_eq!(unexercised("(n & MASK) as u8", &tests), None);
+    }
+
+    #[test]
+    fn a_pointer_input_must_individually_set_every_kept_mask_bit() {
+        let gate = PointerMaskGate::for_owner("(n & 0xff) as u8", "low_byte", OWNER, &index());
+        assert!(!gate.admits("low_byte(0x1234)"));
+        assert!(!gate.admits("low_byte(word)"));
+        assert!(!gate.admits("low_byte(0xff, 0)"));
+        assert!(gate.admits("low_byte(0xff)"));
+        assert!(gate.admits("crate::low_byte(0xffffu32)"));
+        let truncating =
+            PointerMaskGate::for_owner("(n & 0x1ff) as u8", "low_byte", OWNER, &index());
+        assert!(truncating.admits("low_byte(0xff)"));
+    }
+
+    #[test]
+    fn unread_or_zero_masks_do_not_enter_the_unmasked_pointer_branch() {
+        for expression in [
+            "(n & MASK) as u8",
+            "(n&0xff) as u8",
+            "(n & 0) as u8",
+            "(n & 0x100) as u8",
+            "(r#n & 0xff) as u8",
+            "(n & 0xff) as Byte",
+        ] {
+            assert!(
+                !PointerMaskGate::for_owner(expression, "low_byte", OWNER, &index())
+                    .admits("low_byte(0xff)"),
+                "{expression}"
+            );
+        }
+        assert!(
+            PointerMaskGate::for_owner("n + 1", "low_byte", OWNER, &index())
+                .admits("low_byte(word)")
+        );
     }
 }
