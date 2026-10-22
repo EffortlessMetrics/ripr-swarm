@@ -53,6 +53,8 @@ fn ensure_default_output_contained_with(
         "target/ripr",
         "target/ripr/cache",
         "target/ripr/reports",
+        // `reports ci-packet` writes `target/ci/labels.json`.
+        "target/ci",
     ]
     .iter()
     .map(|relative| root.join(relative))
@@ -60,10 +62,30 @@ fn ensure_default_output_contained_with(
     // Every other output sub-tree (`review`, `workflow`, `receipts`, ...) is a
     // direct child of `target/ripr`; a committed link at any of them redirects
     // that command family just as `target` does.
-    if let Ok(entries) = std::fs::read_dir(root.join("target/ripr")) {
-        let mut children: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
-        children.sort();
-        candidates.extend(children);
+    // Fail closed: only a missing directory has nothing to enumerate.
+    let ripr_dir = root.join("target/ripr");
+    match std::fs::read_dir(&ripr_dir) {
+        Ok(entries) => {
+            let mut children = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "refusing to write ripr output: cannot enumerate {}: {error}",
+                        ripr_dir.display()
+                    )
+                })?;
+                children.push(entry.path());
+            }
+            children.sort();
+            candidates.extend(children);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "refusing to write ripr output: cannot enumerate {}: {error}",
+                ripr_dir.display()
+            ));
+        }
     }
     for path in candidates {
         match std::fs::symlink_metadata(&path) {
@@ -1004,6 +1026,39 @@ mod tests {
             ),
             "target/ripr/review link must refuse"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn default_output_guard_fails_closed_when_target_ripr_cannot_be_enumerated()
+    -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-enum-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        // Control: a missing target/ripr is nothing to enumerate.
+        ensure_default_output_contained_with(&ws, None)?;
+        // A regular file at target/ripr cannot be listed and is not "missing".
+        std::fs::write(ws.join("target/ripr"), "x").map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err_and(|e| e.contains("cannot enumerate")));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_a_target_ci_link() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-ci-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ci")).map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err());
         Ok(())
     }
 

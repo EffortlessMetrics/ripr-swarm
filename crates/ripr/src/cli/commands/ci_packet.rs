@@ -73,7 +73,7 @@ pub(super) struct CiPacketOptions {
 
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}"))?;
     let settings = CiSettings::from_env()?;
@@ -323,6 +323,12 @@ impl PacketRun {
         let bytes = fs::read(self.path(from))
             .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
         crate::output::file_write::write(&self.path(to), &bytes)
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+        // `fs::copy` carried the source's permission bits; so does this.
+        let permissions = fs::metadata(self.path(from))
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?
+            .permissions();
+        fs::set_permissions(self.path(to), permissions)
             .map_err(|err| format!("cannot copy {from} to {to}: {err}"))
     }
 
@@ -387,11 +393,18 @@ impl PacketRun {
         // regular file with an exclusive no-follow create.
         crate::output::file_write::validate_destination(&target)
             .map_err(|err| format!("cannot write {out}: {err}"))?;
+        // `File::create` kept an existing file's mode; keep it across the
+        // replace too.
+        let previous_permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
         if target.exists() {
             fs::remove_file(&target).map_err(|err| format!("cannot write {out}: {err}"))?;
         }
         let file = crate::output::file_write::create_exclusive(&target)
             .map_err(|err| format!("cannot write {out}: {err}"))?;
+        if let Some(permissions) = previous_permissions {
+            file.set_permissions(permissions)
+                .map_err(|err| format!("cannot write {out}: {err}"))?;
+        }
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
@@ -2440,6 +2453,59 @@ mod tests {
             let _ = fs::remove_dir_all(&base);
             assert!(refused.is_err(), "{planted}: planted link was followed");
             assert_eq!(kept?, "ORIG", "{planted}");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_to_and_copy_preserve_file_modes() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let (base, root, _sentinel) = link_scratch("modes")?;
+        let run = recording_run(&root);
+        let mode_of = |rel: &str| -> Result<u32, String> {
+            fs::metadata(root.join(rel))
+                .map(|meta| meta.permissions().mode() & 0o777)
+                .map_err(|e| e.to_string())
+        };
+        let out = root.join("target/ripr/reports/out.json");
+        fs::write(&out, "stale").map_err(|e| e.to_string())?;
+        fs::set_permissions(&out, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        run.ripr_to(&[], "target/ripr/reports/out.json")?;
+        let redirected = mode_of("target/ripr/reports/out.json");
+        let src = root.join("target/ripr/reports/src.json");
+        fs::write(&src, "x").map_err(|e| e.to_string())?;
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/dst.json",
+        )?;
+        let copied = mode_of("target/ripr/reports/dst.json");
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(redirected?, 0o600);
+        assert_eq!(copied?, 0o600);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_packet_refuses_target_ripr_review_and_target_ci_links() -> Result<(), String> {
+        for link in ["target/ripr/review", "target/ci"] {
+            let (base, root, _sentinel) = link_scratch("guard")?;
+            let external = base.join("external");
+            fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+            fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+            let link_path = root.join(link);
+            let _ = fs::remove_dir_all(&link_path);
+            std::os::unix::fs::symlink(&external, &link_path).map_err(|e| e.to_string())?;
+            let result = ci_packet(&["--root".to_string(), root.display().to_string()]);
+            let leaked = fs::read_dir(&external).map_err(|e| e.to_string())?.count();
+            let _ = fs::remove_dir_all(&base);
+            assert!(
+                result.is_err_and(|err| err.contains("refusing to write ripr output")),
+                "{link}"
+            );
+            assert_eq!(leaked, 0, "{link}");
         }
         Ok(())
     }
