@@ -10,11 +10,14 @@
 
 mod capture;
 mod dto;
+mod inline_tests;
 mod rule;
 mod validate;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod inline_tests_tests;
 #[cfg(test)]
 mod rule_tests;
 #[cfg(test)]
@@ -58,9 +61,7 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
         packet: args.packet.map(read_packet).transpose()?,
         markdown: args
             .markdown
-            .map(|path| {
-                fs::read_to_string(path).map_err(|error| format!("failed to read {path}: {error}"))
-            })
+            .map(|path| read_text(path, "markdown"))
             .transpose()?,
         manifest: args
             .manifest
@@ -139,8 +140,7 @@ fn run_derive(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let audit = audit
         .map(|path| {
-            let bytes =
-                fs::read(path).map_err(|error| format!("failed to read audit {path}: {error}"))?;
+            let bytes = read_bounded(path, "audit")?;
             Ok::<_, String>(dto::AuditRef {
                 path: path.to_string(),
                 sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -298,16 +298,47 @@ fn parse_args(args: &[String]) -> Result<Args<'_>, String> {
     Ok(parsed)
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &str, what: &str) -> Result<T, String> {
-    let text = fs::read_to_string(path)
+/// Largest input any release-ledger command reads. The 0.11 facts file (2,213
+/// commits) is about 4.6 MB, so this is more than ten times real use while
+/// still failing closed on a hostile or accidental huge file.
+const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads at most `MAX_INPUT_BYTES`; a larger file is an error, never truncated.
+fn read_bounded(path: &str, what: &str) -> Result<Vec<u8>, String> {
+    read_capped(path, what, MAX_INPUT_BYTES)
+}
+
+fn read_capped(path: &str, what: &str, cap: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file =
+        fs::File::open(path).map_err(|error| format!("failed to read {what} {path}: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(cap + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("failed to read {what} {path}: {error}"))?;
-    serde_json::from_str(&text).map_err(|error| format!("failed to parse {what} {path}: {error}"))
+    if bytes.len() as u64 > cap {
+        return Err(format!(
+            "{what} {path} exceeds the {cap}-byte release-ledger input limit"
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_text(path: &str, what: &str) -> Result<String, String> {
+    String::from_utf8(read_bounded(path, what)?)
+        .map_err(|error| format!("failed to read {what} {path}: {error}"))
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &str, what: &str) -> Result<T, String> {
+    let bytes = read_bounded(path, what)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("failed to parse {what} {path}: {error}"))
 }
 
 /// The packet digest is over the raw file bytes, so any edit to the packet is a
 /// different identity.
 fn read_packet(path: &str) -> Result<SelectionPacket, String> {
-    let bytes = fs::read(path).map_err(|error| format!("failed to read packet {path}: {error}"))?;
+    let bytes = read_bounded(path, "packet")?;
     let mut packet: SelectionPacket = serde_json::from_slice(&bytes)
         .map_err(|error| format!("failed to parse packet {path}: {error}"))?;
     packet.digest = format!("sha256:{:x}", Sha256::digest(&bytes));

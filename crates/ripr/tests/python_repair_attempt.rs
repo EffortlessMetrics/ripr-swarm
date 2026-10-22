@@ -796,7 +796,7 @@ fn published_schema_conformance_rejects_manifests_the_schema_forbids() -> Result
         "state": "awaiting_edit",
         "root": "/tmp/fixture",
         "repository_head": "0123456789abcdef0123456789abcdef01234567",
-        "producer_version": "0.11.0",
+        "producer_version": env!("CARGO_PKG_VERSION"),
         "seam_id": "seam:sample",
         "created_unix_ms": 1,
         "artifacts": [{

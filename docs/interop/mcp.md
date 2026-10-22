@@ -232,7 +232,23 @@ The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields require this version change. Strict v1 readers
 must rediscover `tools/list`, accept v2 explicitly and validate against the
 advertised `outputSchema`; callers may still omit all filter arguments.
-Other MCP document versions are unchanged.
+
+All MCP document `schema_version` identifiers, so a client can route and
+validate every document the server emits:
+
+| Document | `schema_version` | Producer |
+| --- | --- | --- |
+| Workspace status | `ripr-mcp-workspace-status-v1` | `ripr_workspace_status` result |
+| Session block | `ripr-mcp-session-v1` | workspace status/session documents |
+| Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
+| Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
+| Gap list | `ripr-mcp-gap-list-v2` | `ripr_list_gaps` result |
+| Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
+| Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
+| Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
+| Repair attempt | `ripr-mcp-repair-attempt-v1` | attempt documents |
+| Repair card | `ripr-mcp-repair-card-v1` | `ripr_get_repair_card` result |
+| Receipt status | `ripr-mcp-receipt-status-v1` | receipt status documents |
 
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
 `total` / `eligible` / `selected` / `filtered` counts, selected and complete

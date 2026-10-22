@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-result-test-sum-accumulate",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-result-test-sum-accumulate.diff",
+  "anchor": {
+    "file": "src/results.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "result_returning_test_question_mark",
+  "hard_case": "The pinning test returns `Result<(), ParseError>` and unwraps with `?` before asserting.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total += n * 2;",
+        "mutated_line": "total += n * 2;",
+        "outcome": "tests_failed",
+        "failing_test": "results::tests::sums_two",
+        "equivalence_review": "not equivalent: `total = total + n;` becomes `total += n * 2;`"
+      },
+      {
+        "replacement": "total = n;",
+        "mutated_line": "total = n;",
+        "outcome": "tests_failed",
+        "failing_test": "results::tests::sums_two",
+        "equivalence_review": "not equivalent: `total = total + n;` becomes `total = n;`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sums_two asserts parse_sum(\"2, 3\") == 5; doubling gives 10 and keeping only the last gives 3. Shape: test fn returning `Result` with `?`.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "grid-constant-helper",
+  "subject_id": "authored-grid-constants",
+  "diff": "cases/grid-constant-helper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "weight * 13",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::handling_for_two",
+        "equivalence_review": "not equivalent: weight 2 costs 26 instead of 24"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: constant x helper-wrapped assert. check_handling pins 24 at weight 2.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

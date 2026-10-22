@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-display-suffix-only",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-display-suffix-only.diff",
+  "anchor": {
+    "file": "src/display.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "display_ends_with_only",
+  "hard_case": "The only check is that the string ends with the digit, so the padding width is free.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "write!(f, \"{:>3}\", self.0)",
+        "mutated_line": "write!(f, \"{:>3}\", self.0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `write!(f, \"{:5}\", self.0)` becomes `write!(f, \"{:>3}\", self.0)`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "write!(f, \"{}\", self.0 + 1)",
+        "mutated_line": "write!(f, \"{}\", self.0 + 1)",
+        "outcome": "tests_failed",
+        "failing_test": "display::tests::padded_number_ends_with_digit",
+        "equivalence_review": "not equivalent: `write!(f, \"{:5}\", self.0)` becomes `write!(f, \"{}\", self.0 + 1)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A width of 3 keeps the last character; adding one changes the digit to 8 and fails ends_with('7'). Shape: `impl Display` with a suffix-only oracle.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

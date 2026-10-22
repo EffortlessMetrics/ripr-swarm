@@ -9638,6 +9638,127 @@ fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
     );
 }
 
+/// Raw string delimiters, rather than interior quotes or backslashes, bound a
+/// reason. Neither wrapper nesting nor ordinary attributes may lose a lint.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
+    let guarded = guarded_allow_attribute_lints();
+    for (hashes, body) in [
+        ("", "\\"),
+        ("#", "\" )"),
+        ("##", "\"# ) , [ ( \\"),
+        ("###", "🦀 \"## ], ( \\,"),
+    ] {
+        let reason = format!("r{hashes}\"{body}\"{hashes}");
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                reason
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "raw reason must retain both suppressions: {text}",
+            );
+        }
+    }
+}
+
+#[test]
+fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
+    let reason = "r#\"\"), allow(warnings), (\"#";
+    let text = format!(
+        concat!(
+            "#",
+            "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})))]"
+        ),
+        reason
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints()),
+        vec![(1, "allow(dead_code)".to_string())],
+    );
+}
+
+#[test]
+fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() -> Result<(), String>
+{
+    with_temp_cwd("allow-attributes-raw-reason", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        write(
+            &root.join("src/lib.rs"),
+            concat!(
+                "#",
+                "[cfg_attr(test, allow(dead_code, reason = r#\"\" )\"#), expect(warnings))]\nfn f() {}\n"
+            ),
+        );
+        badge_fixture_git(&["add", ".ripr/allow-attributes.txt", "src/lib.rs"])?;
+        let listed = super::tracked_files()?;
+        assert!(listed.iter().any(|path| path == "src/lib.rs"), "{listed:?}");
+
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("unbudgeted raw-reason suppressions must fail the gate")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read unbudgeted suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "src/lib.rs:1 contains `{attribute}` 1 time(s), allowed 0"
+                )),
+                "the gate must report the actual tracked suppression: {report}",
+            );
+        }
+
+        write(
+            &root.join(".ripr/allow-attributes.txt"),
+            "src/lib.rs|allow(dead_code)|1|deliberate gate fixture\nsrc/lib.rs|expect(warnings)|1|deliberate gate fixture\n",
+        );
+        super::check_allow_attributes_impl()?;
+
+        write(&root.join("src/lib.rs"), "fn f() {}\n");
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("removing raw-reason suppressions must leave stale budgets")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read stale suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "`{attribute}` allowlist count is stale: found 0, allowed 1"
+                )),
+                "the gate must retain exact budget enforcement: {report}",
+            );
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
     for text in [
