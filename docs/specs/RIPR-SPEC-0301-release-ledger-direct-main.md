@@ -151,15 +151,17 @@ Path classes: `product` is `crates/ripr/src/`, `editors/` and `schemas/` (the
 published wire contract), except that any `.md` is `docs`, `package-lock.json`
 is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`; `evidence` is any test path (`tests/`, `tests.rs`,
 `*_tests.rs`, `fixtures/`), `benchmarks/`, `metrics/`, `docs/specs/` and
-`.ripr/`; `docs` is `docs/`, `changelog.d/` and any `.md`; `control` is
+`.ripr/`; `docs` is `docs/`, `changelog.d/`, any `.md` and the root `LICENSE`,
+`LICENSE-MIT` and `LICENSE-APACHE`; `control` is
 `.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`, `xtask`,
-`policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and root
+`policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and other root
 files; anything else is unclassified.
 
 Order, first match wins:
 
-0. A first-parent commit with two parents, an empty diff, or any unclassified
-   path (even beside a classified one) is `blocking_unresolved`.
+0. A commit with an empty diff (first-parent or not), a first-parent commit with
+   two parents, or a first-parent commit with any unclassified path (even beside a
+   classified one) is `blocking_unresolved`.
 1. A commit reached only through a merge (not first-parent) is
    `included_historical_reachable_only`; its tree effect stays a separate field.
 2. `present_but_superseded` is `included_superseded_by_later_fix`.
