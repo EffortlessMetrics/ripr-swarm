@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_src_layout_package_import/input
 config: <cwd>/fixtures/python_src_layout_package_import/input/ripr.toml
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 1 no path); 2 of 2 findings unsuppressed
 
 Changed file(s) by language: python = 2
 
@@ -35,10 +35,11 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_src_layout_package_import/input --diff <cwd>/fixtures/python_src_layout_package_import/diff.patch --mode fast probe:src_pricing_discounts.py:python_preview:230c5b86
   ripr context --root <cwd>/fixtures/python_src_layout_package_import/input --diff <cwd>/fixtures/python_src_layout_package_import/diff.patch --mode fast --at probe:src_pricing_discounts.py:python_preview:230c5b86
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_pricing_discounts.py:python_preview:230c5b86 --root <cwd>/fixtures/python_src_layout_package_import/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - src/pricing/legacy.py:2 (weak)
+    - src/pricing/legacy.py:2 (no path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

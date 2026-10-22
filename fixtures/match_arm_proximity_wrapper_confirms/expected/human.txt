@@ -16,13 +16,14 @@ Start here:
   Changed behavior: Unit::Fortnight =>
   Related test (1 of 3 matched rows): src/lib.rs:36 seconds_total
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
-    - reach yes: Related tests appear to reach seconds: seconds_total, bridge_fortnight, from_str_fortnight
+    - reach yes: Related tests appear to reach seconds: seconds_total
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
   ripr context --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:9e71545f --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

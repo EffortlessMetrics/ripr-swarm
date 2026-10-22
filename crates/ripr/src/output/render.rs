@@ -158,9 +158,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
@@ -199,9 +200,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
                     &report.classified,
@@ -773,7 +775,7 @@ mod tests {
         let seams_md =
             render_check_with_config(&output, &OutputFormat::RepoSeamsMd, &RiprConfig::default())?;
 
-        assert!(seams_json.contains("\"schema_version\": \"0.2\""));
+        assert!(seams_json.contains("\"schema_version\": \"0.3\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
         remove_temp_root(&output.root)?;
@@ -855,7 +857,7 @@ mod tests {
         let sarif =
             render_check_with_config(&output, &OutputFormat::RepoSarif, &RiprConfig::default())?;
 
-        assert!(exposure_json.contains("\"schema_version\": \"0.4\""));
+        assert!(exposure_json.contains("\"schema_version\": \"0.5\""));
         assert!(exposure_json.contains("over_threshold"));
         let exposure_summary = render_check_with_config(
             &output,
@@ -1843,6 +1845,7 @@ fn happy_path_passes() {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,

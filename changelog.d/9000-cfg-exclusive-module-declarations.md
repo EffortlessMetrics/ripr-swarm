@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `rust_module_ambiguous_parent` no longer fires for `#[cfg(X)] mod m;` / `#[cfg(not(X))] mod m;` declarations in one file (mutually exclusive alternatives, as in `rust-lang/log` `src/kv/mod.rs`); non-complementary or compound cfgs stay ambiguous and fail closed. The ambiguity note no longer tells users to drop duplicate `#[path]` declarations and says a buildable multi-`#[path]` layout needs no change (#9000).

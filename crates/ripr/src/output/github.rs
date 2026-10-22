@@ -328,22 +328,46 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
     let mut warnings = Vec::new();
     if output.unanalyzed_working_tree {
         // #5258: mirrors the human note's wording decision — untracked
-        // files need the staging repair, not `--worktree`.
-        let message = if output.untracked_working_tree_source_paths.is_empty() {
+        // files need the staging repair, not `--worktree`. #7467: ignored
+        // files need the force intent-to-add repair (`git add -N` refuses
+        // them); the ignored sentence is appended, never interleaved, so
+        // the untracked-only message below stays byte-identical.
+        let message = if output.untracked_working_tree_source_paths.is_empty()
+            && output.ignored_working_tree_source_paths.is_empty()
+        {
             "Uncommitted source and test changes were not analyzed; this run read each file as committed at HEAD. An empty result here does NOT mean those changes are covered; drop `--committed` (or pass `--worktree`) to include staged and unstaged tracked edits (for example `ripr check --worktree`).".to_string()
         } else {
-            let listing = crate::output::analyzed_revisions::name_paths(
-                &output.untracked_working_tree_source_paths,
-                str::to_string,
-            );
-            format!(
+            let mut message =
                 "Uncommitted source and test changes were not analyzed; this run read each \
                  file as committed at HEAD, and `--worktree` adds staged and unstaged tracked \
-                 edits only. Untracked files ({listing}) are invisible to both; stage them first \
-                 (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
-                 visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
-                 `--diff PATH`. An empty result here does NOT mean those changes are covered."
-            )
+                 edits only."
+                    .to_string();
+            if !output.untracked_working_tree_source_paths.is_empty() {
+                let listing = crate::output::analyzed_revisions::name_paths(
+                    &output.untracked_working_tree_source_paths,
+                    str::to_string,
+                );
+                message.push_str(&format!(
+                    " Untracked files ({listing}) are invisible to both; stage them first \
+                     (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
+                     visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
+                     `--diff PATH`."
+                ));
+            }
+            if !output.ignored_working_tree_source_paths.is_empty() {
+                let listing = crate::output::analyzed_revisions::name_paths(
+                    &output.ignored_working_tree_source_paths,
+                    str::to_string,
+                );
+                message.push_str(&format!(
+                    " Gitignored files ({listing}) are invisible to both; stage them first with \
+                     `git add -f` (`git add -f -N <paths>` force intent-to-add makes a new file \
+                     visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
+                     `--diff PATH`."
+                ));
+            }
+            message.push_str(" An empty result here does NOT mean those changes are covered.");
+            message
         };
         // #5398 review: the message carries repository-supplied path names,
         // so it is workflow-command-escaped like the no-scope warning below —
@@ -368,6 +392,29 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             "::warning title=ripr untracked files not analyzed::{}\n",
             escape_data(&message)
         ));
+    }
+    // #7467: a run that excluded gitignored routed files names them, on a
+    // working-tree read and on a committed-history read alike — neither diff
+    // analyzes them. The unanalyzed-working-tree message above already names
+    // them when it fired, so this arm stays silent there.
+    if !output.unanalyzed_working_tree && !output.ignored_working_tree_source_paths.is_empty() {
+        let message = if crate::output::analyzed_revisions::is_working_tree_read(output) {
+            crate::output::analyzed_revisions::working_tree_ignored_message(
+                &output.ignored_working_tree_source_paths,
+                str::to_string,
+            )
+        } else {
+            crate::output::analyzed_revisions::committed_history_ignored_message(
+                &output.ignored_working_tree_source_paths,
+                str::to_string,
+            )
+        };
+        if let Some(message) = message {
+            warnings.push(format!(
+                "::warning title=ripr gitignored files not analyzed::{}\n",
+                escape_data(&message)
+            ));
+        }
     }
     if output.no_scope_provided {
         let message = if let Some(base) = output.base.as_deref()
@@ -612,6 +659,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1085,6 +1133,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1161,6 +1210,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1274,6 +1324,35 @@ mod tests {
             include_str!(
                 "../../../../fixtures/github_unanalyzed_states/expected/untracked_working_tree.txt"
             )
+        );
+    }
+
+    #[test]
+    fn render_names_the_force_repair_for_gitignored_files() {
+        // #7467: ignored files are invisible to both diffs like untracked
+        // files, but plain `git add -N` refuses them, so the warning must
+        // name the force intent-to-add repair instead of the plain one.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.ignored_working_tree_source_paths = vec![
+            "crates/alpha/src/ignored_gen.rs".to_string(),
+            "crates/alpha/target/bgen.rs".to_string(),
+        ];
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("::warning title=ripr gitignored files not analyzed::Gitignored files (crates/alpha/src/ignored_gen.rs, crates/alpha/target/bgen.rs) are not in the committed-history diff"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("git add -f -N <path>"), "{rendered}");
+        assert!(
+            !rendered.contains("untracked files not analyzed"),
+            "the gitignored warning is its own title: {rendered}"
         );
     }
 
@@ -1864,6 +1943,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2211,6 +2291,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,

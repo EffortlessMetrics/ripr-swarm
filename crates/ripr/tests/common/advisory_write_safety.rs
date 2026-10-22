@@ -47,7 +47,9 @@ fn case(surface: &str) -> Result<Case, Box<dyn std::error::Error>> {
                 root.join("src/lib.rs"),
                 "pub fn over(a: i32) -> bool { a > 1 }\n#[test]\nfn over_three() { assert!(over(3)); }\n",
             )?;
-            vec!["pilot".into()]
+            // #8767: the temp checkout can sit inside an enclosing repository;
+            // pin the root so implicit workspace resolution does not widen it.
+            vec!["pilot".into(), "--root".into(), root.display().to_string()]
         }
         "outcome" => {
             write_outcome_snapshots(root)?;

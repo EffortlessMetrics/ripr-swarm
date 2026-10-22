@@ -165,6 +165,8 @@ fn measurement_attempt(
         non_claims: Vec::new(),
         after: None,
         last_after_refusal: None,
+        after_refusal_count: 0,
+        after_refusal_history: Vec::new(),
         terminal_artifacts: Vec::new(),
     })
 }
@@ -229,6 +231,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         entry: &profile.entry,
         witness: profile.witness.as_ref(),
         finding_id,
+        finding_gap_id: None,
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: "abc123",

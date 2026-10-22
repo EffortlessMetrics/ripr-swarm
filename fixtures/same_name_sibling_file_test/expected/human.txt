@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/same_name_sibling_file_test/input --diff <cwd>/fixtures/same_name_sibling_file_test/diff.patch --mode fast probe:src_heaters.rs:match_arm:fad9d7d9
   ripr context --root <cwd>/fixtures/same_name_sibling_file_test/input --diff <cwd>/fixtures/same_name_sibling_file_test/diff.patch --mode fast --at probe:src_heaters.rs:match_arm:fad9d7d9
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_heaters.rs:match_arm:fad9d7d9 --root <cwd>/fixtures/same_name_sibling_file_test/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/same_name_sibling_file_test/input --at src/heaters.rs:9 --kind match_arm
 

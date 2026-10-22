@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast probe:src_lib.rs:return_value:8711762f
   ripr context --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast --at probe:src_lib.rs:return_value:8711762f
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:8711762f --root <cwd>/fixtures/rust_test_written_expected_file_bound/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --at src/lib.rs:2 --kind return_value
 

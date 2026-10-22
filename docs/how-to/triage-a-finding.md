@@ -46,7 +46,7 @@ including ones whose assertions did not match. Each line gives the test file, li
 test did not count as noticing the change being wrong, or what ripr could not confirm about it:
 
 ```text
-related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has no assertion
+related test tests/it.rs:3 discount_runs uses no oracle; misses: has no assertion
 ```
 
 `ripr explain` repeats the list under "Why this verdict". In JSON the same
@@ -69,7 +69,7 @@ already supplies the discriminator.
 | no call to the changed code found | `no_call_path` | The test is linked by name or file location only. Check that it is the right test; if it is, call the owner from it. |
 | has no assertion | `no_assertion` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then add an assertion on the changed value. If it does not reach the owner, fix the call or use the test that does. |
 | asserts, but not on the changed value | `assertion_not_observing` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then move or add the assertion so it observes the changed value, error or field. If it does not reach the owner, fix the call or use the test that does. |
-| assertion not credited: ripr could not establish that it runs as the standard macro | `assertion_not_credited` | An assertion exists, but ripr could not confirm it is the standard `assert!` family (a same-named local macro, for example), and it does not yet say whether the assertion is inert. Read the macro. If it expands to a real check, file an analyzer follow-up; if not, use the standard macro. |
+| assertion not credited: ripr could not establish that this assertion counts here | `assertion_not_credited` | An assertion exists, but ripr could not confirm it counts here: a same-named local macro or a feature cfg on the test, for example. It does not yet say whether the assertion is inert. The finding's note names the cause; if it is a macro, read it. If it expands to a real check, file an analyzer follow-up; if not, use the standard macro. |
 | assertion too weak to tell the old behavior from the new | `weak_assertion` | Replace `is_ok`, `unwrap` or a broad comparison with the exact expected value. |
 | ripr could not confirm that this assertion observes the changed behavior | `observation_unconfirmed` | This is an unknown, not a found miss: an assertion may already exist. Check by hand whether it observes the changed value before changing the test; if it does, treat it as an analyzer gap and file a follow-up. |
 | no test input reaches `<boundary>` | `missing_input` | Add a case whose input is the boundary value named. |

@@ -9,7 +9,7 @@ use crate::app::receipt::{
     check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
 
@@ -23,8 +23,10 @@ pub(in crate::cli) fn run_receipt(args: &[String]) -> Result<(), String> {
         }
         Some("write") => run_receipt_write(&args[1..]),
         Some("check") => run_receipt_check(&args[1..]),
-        Some(other) => Err(format!(
-            "unknown receipt subcommand {other:?}; expected `write` or `check`"
+        Some(other) => Err(unknown_value(
+            "receipt subcommand",
+            other,
+            &["write", "check"],
         )),
     }
 }
@@ -783,19 +785,22 @@ mod tests {
     // ── dispatch ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn run_receipt_unknown_subcommand_returns_error() -> Result<(), String> {
-        match run_receipt(&args(&["unknown"])) {
-            Ok(_) => Err("should have failed with unknown subcommand".to_string()),
-            Err(err) => {
-                if err.contains("unknown receipt subcommand") {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "expected 'unknown receipt subcommand' in error, got: {err}"
-                    ))
-                }
-            }
-        }
+    fn run_receipt_unknown_subcommand_returns_error() {
+        assert_eq!(
+            run_receipt(&args(&["unknown"])),
+            Err("unknown receipt subcommand \"unknown\". Accepted: write, check.".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_receipt_subcommand_suggests_write_for_writte() {
+        assert_eq!(
+            run_receipt(&args(&["writte"])),
+            Err(
+                "unknown receipt subcommand \"writte\". Did you mean `write`? Accepted: write, check."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

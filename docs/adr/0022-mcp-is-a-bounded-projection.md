@@ -79,6 +79,19 @@ beyond this status slice raises the SDK migration trigger rather than expanding
 a parallel framework. LSP and MCP remain peers over shared RIPR authority; one
 transport must not invoke or reinterpret the other.
 
+## Alternatives Considered
+
+- **Adopt the official Rust SDK in the first slice.** Not chosen then: it would
+  have made dependency adoption, lockfile regeneration, and conformance work
+  the dominant change (see Context). The SDK migration section below records
+  the successor that did adopt it.
+- **A local wire adapter as the long-term transport.** Superseded: the first
+  slice used one deliberately small adapter, and growth beyond status raised
+  the SDK migration trigger instead of expanding a parallel framework.
+- **Give MCP its own root discovery, evidence interpretation, or edit and
+  execution authority.** Rejected: MCP stays a projection over the shared
+  workspace-status producer, and LSP and MCP remain peers.
+
 ## SDK migration (#3088)
 
 The status-only successor uses pinned official `rmcp 3.5.0` with default
@@ -104,10 +117,13 @@ completed after resolving the new graph.
 | uuid 1.26.0 | Apache-2.0 OR MIT | 1.85.0 |
 
 Compatibility follows the SDK: unsupported or discovery-only initialize
-versions negotiate `2025-11-25`; syntax-invalid JSON is ignored, invalid typed
-shapes recover with Invalid Request, and unknown error IDs may be omitted.
-Readable IDs are never silently replaced: a response/fallback that cannot fit
-the 128-KiB output cap terminates with a bounded operational error. The raw
+versions negotiate `2025-11-25`; syntax-invalid JSON is answered with Parse
+error (`-32700`, null id), invalid typed shapes recover with Invalid Request
+(`-32600`), and unknown error IDs in SDK-dispatched responses may be omitted.
+Readable IDs are never silently replaced, but a request ID whose serialized
+form exceeds 16 KiB is rejected at receive with `-32600` and `id: null` (the
+ID is never echoed) and the session continues; a response/fallback that still
+cannot fit the 128-KiB output cap terminates with a bounded operational error. The raw
 client harness waits for correlated replies before EOF, rather than assuming
 prewritten requests remain active after SDK shutdown.
 
@@ -133,7 +149,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Prior control | Successor owner / disposition |
 | --- | --- |
 | CLI argument rejection | Existing `mcp::tests::parser_rejects_unknown_and_ambiguous_root_arguments`, unchanged |
-| Invalid JSON produces parse error | SDK syntax-ignore policy; typed-shape/recovery transport control replaces manual parse-error assertion |
+| Invalid JSON produces parse error | Transport answers syntax-invalid JSON with `-32700` (the SDK would drop it silently); typed-shape/recovery transport control covers `-32600` |
 | Unsupported initialize chooses default | Official client initialize-version control; handshake default corrected to SDK `LATEST_WITH_INITIALIZE` |
 | Repeated initialize stability | SDK lifecycle owner; no retained application session state or custom renegotiation gate |
 | Malformed discovery metadata | Public stdio discovery negative control through actual SDK |
@@ -141,7 +157,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Legacy resource miss | Official-client and public wire rejection controls; SDK maps resource-not-found code by negotiated version |
 | Discovery ping with older selected version | SDK lifecycle owner; public discovery ping rejection control |
 | Discovery exposes read-only surfaces | Official client exactly-one-tool/resource, status equality and authority-none controls |
-| Unknown tool | Official-client and public stdio Method Not Found with same request ID and available-tool data |
+| Unknown tool | Official-client and public stdio Invalid Params (-32602) with same request ID and available-tool data |
 | Nonempty status arguments | Official-client and public stdio Invalid Params |
 | Current resource miss | Same real-client/wire rejection; SDK performs version-dependent error mapping |
 | Initialize after discovery | SDK lifecycle owner; custom lifecycle-switch gate retired |
@@ -152,7 +168,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Fragmented message | Retained FrameReader and split public initialize controls |
 | Oversize discard/recovery | Retained bounded FrameReader cap/recovery control |
 | Over-cap response keeps known ID | Typed bounded writer fallback control |
-| Unreadable ID becomes null | Transport null-id Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3); SDK omission retained for dispatched errors, no arbitrary Value ID in production |
+| Unreadable ID becomes null; recoverable ID is echoed | Transport Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3): a frame with a `method` and a string or integer `id` but wrong-shape `params` echoes that ID verbatim; notifications and null, boolean, float or structured IDs answer `"id": null`. SDK omission retained for dispatched errors |
 
 All three original public stdio controls remain: legacy status/tool-resource
 equality, rejection arms, and discovery metadata/ping/unavailable recovery.

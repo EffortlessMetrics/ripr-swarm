@@ -26,6 +26,23 @@ pub(crate) fn source_value_evidence_line(fact: &ValueFact) -> String {
     )
 }
 
+/// The human-output spelling of [`source_value_evidence_line`]: the same
+/// sentence, with the test file named (`path:line`) when the producer recorded
+/// it. The value is read from a related test, which is usually not in the diff,
+/// so a bare line number cannot be found. Check JSON keeps the bare spelling.
+pub(crate) fn source_value_evidence_line_with_file(fact: &ValueFact) -> String {
+    let Some(file) = &fact.file else {
+        return source_value_evidence_line(fact);
+    };
+    format!(
+        "source {} value {} at {}:{}",
+        fact.context.as_str().replace('_', " "),
+        fact.value,
+        crate::output::path::display_path(file),
+        fact.line
+    )
+}
+
 /// Cap on observed values rendered per finding in check JSON and SARIF.
 /// The pre-cap count is disclosed as `observed_values_total` whenever the cap
 /// drops a value. Mirrors `MAX_RELATED_TESTS_PER_FINDING_JSON`.
@@ -74,6 +91,7 @@ mod tests {
 
     fn fact(line: usize, context: ValueContext) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: format!("assert_eq!(f({line}), {line});"),
             value: line.to_string(),

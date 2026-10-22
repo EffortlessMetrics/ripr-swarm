@@ -238,7 +238,12 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
 #5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. Side-effect, call-deletion,
+compiling test stub, or a named refusal. When the finding line holds no seam
+of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
+seam's own line rather than the finding line, and only when asking for that
+line resolves to the same seam with no substitution note; otherwise no route
+is printed. A changed constant routed through a consuming function follows the
+same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.
 
@@ -278,11 +283,21 @@ applied. If the file contains only other families, the suggestions are empty.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
-(`selector_ambiguous`). Both remain decisions (exit 3), with empty stdout,
-the schema `0.2` refused envelope then human guidance on stderr, and no stub
+(`selector_ambiguous`). Both remain decisions (exit 3), with the schema
+`0.2` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
+
+For an integration-file stub, `run_command` names the effective cargo test
+target (#8794): an explicit `[[test]]` entry for the file supplies the name,
+otherwise the auto-discovered name when discovery is enabled for the package
+edition. When the target name is not established (`autotests = false` without
+an entry, edition-2015 packages whose explicit entries disable discovery,
+`harness = false`, a name-only entry whose `tests/<n>.rs` and
+`tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
+`required-features`, which is omitted conservatively without default-feature
+resolution) the command is `null` and the human output says so.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -364,6 +379,18 @@ are removed, never a content line. Consecutive references preserve evidence
 order and repeated entries.
 No finding or evidence fact is removed to shorten the report (#7394).
 
+One presentation exception applies to a `no_static_path` finding: its Weakness
+list omits the three generic `missing` entries ("No static test path reaches
+the changed owner", "No relevant oracle was detected", "No strong
+discriminator was detected") while the matching Evidence stage (reach,
+observation, discriminator) reads `no`, because the Evidence block already
+states the same fact. A distinct entry, such as a missing boundary input, and
+any entry whose stage is not `no` stay. The finding's JSON `missing` list is
+unchanged. The default digest skips the same restated entries when it names its one
+`Missing discriminator` entry, and labels a `Typed static limitation (...)`
+entry as an `Analyzer limit`, so it never presents an analyzer limit as a test
+gap or names an entry the exhaustive form dropped as a restatement (#9033).
+
 Sharing requires established identical full source ownership, source file,
 language/status/owner kind, currentness and raw test context/counts. An evidence
 entry additionally retains exact producer facts, including stage confidence,
@@ -381,6 +408,26 @@ commands the bounded digest prints for its top finding (#4379). The digest
 sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
+
+The bounded digest's top-finding drill-down also names the repair-route
+omission instead of leaving it silent (#8729): when the producer-owned gate
+computes a refusal — no canonical gap to bind, an unreadable authority, a
+seam-limit-truncated candidate set, zero or several binding seams, or an
+ineligible seam — the drill-down prints one advisory line of the shape
+`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
+for the full gate's answer`. A static-limited finding never gets the runnable
+repair line (its limitation guidance is authoritative on the same screen),
+but a refusal the pipeline did compute is still named there, so "the gate
+refused this seam" cannot read as "analysis could not decide". A run with no
+selected finding prints nothing. The refusal vocabulary is producer-owned and
+JSON fields are unchanged; this is additive human output only.
+
+The same honesty rule bounds the no-eligible reason list on the repair start
+refusal (#8728): the list renders at most three distinct reasons, and when the
+inventory's distinct-reason total exceeds the list, the message discloses the
+remainder (`and N more`) plus the per-seam detail route (`ripr pilot`), so a
+bounded list never presents three reasons as the whole story. The total
+counts distinct reasons across the whole inventory, not one per seam.
 
 A canonical-shape probe's `after` is often its parser shape, which is narrower
 than the changed line (`string.len() >= MAX`). In that case the producer cuts
@@ -478,6 +525,14 @@ suggested write cannot fail on the same missing base.
   advisory)` for `exposed` findings with an observation rationale; `Missing
   discriminator` otherwise) and for both `preview_limited` safe-next-action
   arms (complete-but-advisory packet versus missing packet fields).
+- Tests for the held repair start (#8738): the default check screen does not
+  list `ripr repair <seam>` as a bare runnable action when the selected
+  edit target (an existing test target or a producer-proposed inline file)
+  is a production Rust file whose worktree or index copy differs from HEAD;
+  it prints one `Repair start (needs a committed ...)` line stating the
+  commit-or-stash requirement, naming the test route only when a stub is
+  rendered. The predicate is the edit cage's own committed-file law, deferring
+  (no hold) when it cannot be established.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
@@ -489,6 +544,7 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

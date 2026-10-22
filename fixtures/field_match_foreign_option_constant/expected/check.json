@@ -1,0 +1,103 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/field_match_foreign_option_constant/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:2852d195985cce976cb2150783066167b0162f960a7fc91f86d9772bdb9a2178","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:match_arm:c8726ad2",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:match_arm:c8726ad2",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "foreign::None =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: legacy_only"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: foreign::None =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach charge: legacy_only", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: foreign::None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: foreign::None => (line 5)", "related test src/lib.rs:12 legacy_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600);", "source assertion argument value 600 at line 13", "source function argument value lease = 600 at line 13"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"foreign::None =>","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: foreign::None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: legacy_only", "limitation_last_established_edge: owner parameter field `lease.settled_elapsed_ms` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.settled_elapsed_ms` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "13": "assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 13,
+            "value": "600",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 13,
+            "value": "lease = 600",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 13,
+          "value": "600",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 13,
+          "value": "lease = 600",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "legacy_only",
+          "file": "src/lib.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "suggested_next_action": "Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation.",
+      "language": "rust",
+      "static_limit_kind": "rust_field_match_selector_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-field-match-selector",
+        "first_unresolved_edge": "`lease.settled_elapsed_ms` value at the owner invocation and whether a related assertion observes that invocation's returned value",
+        "kind": "rust_field_match_selector_unresolved",
+        "last_established_edge": "owner parameter field `lease.settled_elapsed_ms` is the changed tail match selector",
+        "non_claim": "named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

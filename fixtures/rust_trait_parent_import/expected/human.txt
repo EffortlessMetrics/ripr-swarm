@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
   ripr context --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:b6bd8eab --root <cwd>/fixtures/rust_trait_parent_import/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

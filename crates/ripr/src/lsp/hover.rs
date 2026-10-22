@@ -563,9 +563,12 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                 (Some(why), None) => format!(" {label}: {why}"),
                 (why, Some(oracle)) => {
                     let mut text = format!(
-                        " \u{2014} {} {} oracle: {}",
-                        test.oracle_strength.as_str(),
-                        test.oracle_kind.as_str(),
+                        " \u{2014} {}: {}",
+                        crate::output::related_test_miss::oracle_projection(
+                            &test.oracle_strength,
+                            &test.oracle_kind,
+                            true,
+                        ),
                         oracle
                     );
                     if let Some(why) = why {
@@ -1414,6 +1417,7 @@ mod seam_hover_tests {
             observe: stage(StageState::Yes, "Exact value assertion exists"),
             discriminate: stage(StageState::Weak, "Equality boundary missing"),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),

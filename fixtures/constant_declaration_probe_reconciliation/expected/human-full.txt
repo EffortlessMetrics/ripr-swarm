@@ -19,18 +19,19 @@ Probe
   delta:  unknown
 
 Static exposure
-  static_unknown (note, confidence 0.20)
+  static_unknown (note, confidence 0.50)
 
 Evidence
-  - reach no: No static test path found for the changed owner
+  - reach yes: Related tests appear to reach changed owner: observation_schema_generation_matches_policy
   - infection unknown: Changed syntax is not mapped to a high-confidence probe family
   - propagation unknown: No propagation model is available for this changed syntax
-  - observation no: No reachable test oracle found
-  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
-  - local flow reaches unknown sink (line 1)
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator unknown: Assertions exist, but oracle strength is unknown
+  - local flow reaches unknown sink (line 1) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:34 observation_schema_generation_matches_policy uses exact value oracle, not graded against this probe: assert_eq!(OBSERVATION_SCHEMA_GENERATION, 3);
+  - source assertion argument value 3 at line 35
 
 Weakness
-  - No relevant oracle was detected
   - No strong discriminator was detected
   - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
@@ -38,14 +39,7 @@ Stop reasons:
   - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
 
 Next step
-  No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
   ripr context --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6
-
-
-Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
-  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
-  0 statically linked related test(s). This is not a coverage assessment. A test may already
-  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
-  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

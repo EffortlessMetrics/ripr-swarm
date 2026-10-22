@@ -60,7 +60,9 @@ impl Drop for Fixture {
 
 #[test]
 fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> Result<(), String> {
-    for fence in ["", "ignore", "no_run", "compile_fail", "text"] {
+    // A plain fence is a runnable doc example, indexed as a test since
+    // #6648 (RIPR-SPEC-0279); see `a_runnable_doc_example_is_indexed_and_pins_the_owner`.
+    for fence in ["ignore", "no_run", "compile_fail", "text"] {
         let fixture = Fixture::new(fence, "assert_eq!(2 + 2, 4);")?;
         let output = check_workspace(fixture.input())?;
         let finding = output
@@ -109,6 +111,28 @@ fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> R
         let words = explanation.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(words.contains(INSPECT_RENDERED), "{fence}: {explanation}");
     }
+    Ok(())
+}
+
+#[test]
+fn a_runnable_doc_example_is_indexed_and_pins_the_owner() -> Result<(), String> {
+    // Contrast for the refused fences above: rustdoc runs a plain fence, so
+    // its exact assertion is a related test that pins the changed return.
+    let fixture = Fixture::new("", "assert_eq!(2 + 2, 4);")?;
+    let output = check_workspace(fixture.input())?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("setup: expected a real return-value finding")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.name == "src/lib.rs - read_u16 (line 3)"),
+        "{finding:?}"
+    );
     Ok(())
 }
 

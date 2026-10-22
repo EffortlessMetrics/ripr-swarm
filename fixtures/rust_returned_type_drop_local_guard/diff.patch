@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ impl Drop for Guard {
+ 
+ pub fn compute(x: u32) -> u32 {
+     let _guard = Guard { n: 0 };
+-    x * 2
++    x * 3
+ }
+ 
+ #[cfg(test)]

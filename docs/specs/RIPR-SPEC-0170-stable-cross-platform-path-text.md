@@ -6,7 +6,7 @@ Owner: product-analysis
 
 Created: 2026-08-31
 
-Linked issues: #3609
+Linked issues: #3609, #8850
 
 Linked PRs: #3611
 
@@ -48,7 +48,10 @@ has ended. A header-looking pair still inside a declared hunk remains source
 payload. Unquoted paths with spaces are also file boundaries when a tab
 separates the path from optional metadata: Git emits ASCII space paths in
 this form without C-quoting them. Undelimited unquoted whitespace remains
-ambiguous with payload. Native path confinement remains in force.
+ambiguous with payload. Trailing whitespace before a tab delimiter belongs to
+the filename and must survive decoding, as must trailing whitespace in rename
+metadata. Distinct names such as `same.rs` and `same.rs ` must keep distinct
+file slots and scope-limit accounting. Native path confinement remains in force.
 
 The `%25` rule reserves `%XX` for the Unix invalid-byte representation. Thus a
 Unix raw byte `0xFF` renders as `%FF`, while a valid path literally containing
@@ -74,6 +77,9 @@ the three characters `%FF` renders as `%25FF`.
   source-subject entries name each exact path with the digest of its original
   CRLF bytes. Generic Rust predicate findings do not currently produce those
   stamp entries; the control checks their file and line locations separately.
+
+- Real Git edits retain separate ordinary and trailing-space filenames. Pure
+  renames of both empty and nonempty files retain their exact destination names.
 
 ## Non-Goals
 
@@ -101,6 +107,9 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/src/analysis/diff/path.rs::tests::quoted_control_header_pair_inside_declared_hunk_stays_source_payload`
 - `crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_plain_headers_keep_paths_and_line_coordinates`
 - `crates/ripr/src/analysis/diff/path.rs::tests::tab_delimited_header_pair_inside_declared_hunk_stays_source`
+- `crates/ripr/src/analysis/diff/path.rs::tests::unquoted_path_tokens_preserve_trailing_whitespace`
+- `crates/ripr/src/analysis/diff/path.rs::tests::trailing_whitespace_file_sections_keep_distinct_paths_and_scope`
+- `crates/ripr/src/analysis/diff/load/contract_tests.rs::git_patch_preserves_trailing_whitespace_paths_and_empty_renames`
 - `crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance`
 - `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
 

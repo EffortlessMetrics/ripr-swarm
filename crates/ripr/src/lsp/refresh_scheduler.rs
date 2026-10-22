@@ -488,6 +488,10 @@ impl RefreshScheduler {
         !state.stopping && state.next_generation == generation
     }
 
+    /// Test-only observation for the #8733 acceptance contract: production
+    /// code no longer parks on the scheduler going idle, so the only
+    /// remaining readers are tests asserting the return-early behavior.
+    #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
         let Ok(state) = self.state.lock() else {
             return true;

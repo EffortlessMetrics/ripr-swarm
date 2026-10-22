@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_unittest_list_equal_effectful_argument/input --diff <cwd>/fixtures/python_unittest_list_equal_effectful_argument/diff.patch --mode fast probe:src_labels.py:python_preview:a20a77e8
   ripr context --root <cwd>/fixtures/python_unittest_list_equal_effectful_argument/input --diff <cwd>/fixtures/python_unittest_list_equal_effectful_argument/diff.patch --mode fast --at probe:src_labels.py:python_preview:a20a77e8
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_labels.py:python_preview:a20a77e8 --root <cwd>/fixtures/python_unittest_list_equal_effectful_argument/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

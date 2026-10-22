@@ -68,6 +68,22 @@ Existing options:
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
+Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
+
+Summary options:
+  --pull-request N            Pull request the summary comment belongs to.
+  --head-sha SHA              Head commit the digest names.
+  --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
+  --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
+  --run-url URL               https link to the workflow run, shown as the full-report link.
+  --out-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+
+`summary` renders one short digest of the changed-behavior findings and writes
+summary.tsv (method, endpoint, payload file, message; empty when there is
+nothing to post) plus summary-request.json. It updates the marked comment that
+github-actions[bot] posted earlier, even when the findings are gone, and posts
+nothing for a clean pull request. It does not call GitHub or read a token.
+
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
 
 Requests options:

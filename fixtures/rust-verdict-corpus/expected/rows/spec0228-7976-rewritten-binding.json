@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-7976-rewritten-binding",
+  "subject_id": "authored-7976-rewritten-binding",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "side_effect_push",
+  "test_shape": "unit_test_argument_free_getter_rewritten_binding",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

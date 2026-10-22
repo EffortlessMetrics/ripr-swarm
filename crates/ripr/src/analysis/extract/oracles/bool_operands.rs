@@ -51,7 +51,30 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     if compares_test_with_non_literal(line) {
         return Some(BoolOperandReading::Capped);
     }
-    let (operand, mut positive, in_condition) = compared_with_bool_literal(line)?;
+    let (operand, mut positive, in_condition, literal_side) = compared_with_bool_literal(line)?;
+    // A value wrapper matched by one around the literal holds the operand
+    // (`Some(matches!(..))` against `Some(true)`), so it is no call that
+    // may discard a pattern. Against a bare literal the wrapper must
+    // compare with a `bool` itself, so it stays an unread call
+    // (`Wrapper(matches!(..))` against `true`; review of 5f6ffed).
+    let mut operand = operand.trim();
+    let mut literal_side = literal_side.trim();
+    loop {
+        if let Some(inner) = unwrapped_wrapper_argument(operand) {
+            operand = unwrap_parentheses(inner.trim());
+        } else if let Some(inner) = passthrough_receiver(operand) {
+            operand = unwrap_parentheses(inner.trim());
+        } else if let (Some((inner, shape)), Some((literal_inner, literal_shape))) = (
+            shaped_wrapper_argument(operand),
+            shaped_wrapper_argument(literal_side),
+        ) && shape == literal_shape
+        {
+            operand = unwrap_parentheses(inner.trim());
+            literal_side = unwrap_parentheses(literal_inner.trim());
+        } else {
+            break;
+        }
+    }
     // An operand that feeds a `matches!` to an unread call or operator, in
     // any conjunct, may invert it (`assert_eq!(f(matches!(r, Ok(3))), true)`).
     // The whole operand caps: unlike a boolean assertion, no conjunct drops.
@@ -268,7 +291,8 @@ fn literal_spelling_value(side: &str) -> Option<bool> {
             .strip_prefix('&')
             .or(cast)
             .or(from)
-            .or_else(|| unwrap_block(text))?
+            .or_else(|| unwrap_block(text))
+            .or_else(|| value_wrapper_argument(text))?
             .trim();
     }
 }
@@ -504,6 +528,9 @@ fn bool_preserving_operand(text: &str) -> Option<&str> {
     if let Some(inner) = conversion_call_argument(text) {
         return Some(unwrap_parentheses(inner.trim()));
     }
+    if let Some(inner) = value_wrapper_argument(text).or_else(|| passthrough_receiver(text)) {
+        return Some(unwrap_parentheses(inner.trim()));
+    }
     let masked = mask_comments_and_strings(text);
     let head = BOOL_CARRYING_TYPES.iter().find_map(|ty| {
         let head = masked.strip_suffix(ty)?.trim_end().strip_suffix("as")?;
@@ -541,6 +568,507 @@ fn conversion_call_argument(text: &str) -> Option<&str> {
     }
     let argument = super::arguments::parenthesized_contents(text.get(open..)?.trim_end())?;
     (super::arguments::split_top_level_commas(argument).len() == 1).then_some(argument)
+}
+
+/// The one element of a value wrapper around `text`'s whole expression: a
+/// constructor call (`Some(x)`, `Ok(x)`, `Wrapper(x)`, `E::V(x)`), a
+/// `new` or `from` path call (`Box::new(x)`, `Wrapper::from(x)`), a
+/// one-element array (`[x]`) or `vec![x]` (#8101). Comparing two such
+/// wrappers compares what they hold, so a test inside one is still a test,
+/// and a boolean literal inside one is still that literal
+/// (`Some(r == Err(E::Bad))` against `Some(expected)` or `Some(true)`).
+/// Reading an unknown constructor as a wrapper only lowers a reading.
+fn value_wrapper_argument(text: &str) -> Option<&str> {
+    wrapper_contents(text).and_then(single_element)
+}
+
+/// What a value wrapper around `text` holds, however many elements:
+/// the contents of an array or `vec!` literal, or the arguments of a
+/// constructor call (`Wrapper(..)`, `Foo::new(..)`).
+fn wrapper_contents(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let masked = masked.as_str();
+    let list = masked.strip_prefix("vec!").map_or(masked, str::trim_start);
+    if list.starts_with('[') {
+        let whole = super::arguments::delimited_contents_at(list, 0)
+            .is_some_and(|contents| contents.len() + 2 == list.len());
+        let open = masked.len() - list.len();
+        return whole.then(|| text.get(open + 1..text.len() - 1)).flatten();
+    }
+    let open = final_group_open(masked)?;
+    let callee = masked.get(..open)?.trim_end();
+    let callee = without_turbofish(callee).map_or(callee, str::trim_end);
+    let path = callee.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = callee.get(path.len()..)?;
+    let constructor = name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && (path.is_empty() || is_path_head(path));
+    let associated = matches!(name, "new" | "from") && is_path_head(path);
+    if !(constructor || associated) {
+        return None;
+    }
+    text.get(open + 1..text.len() - 1)
+}
+
+/// `text` without leading references (`&`, `&mut`) and grouping parentheses
+/// that hold one value: neither changes which value is compared (#8654). A
+/// tuple's parentheses stay.
+fn peel_references_and_groups(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        if let Some(rest) = text.strip_prefix('&') {
+            // `mut` is a keyword only when no name character follows it
+            // (`&mut(..)`, `&mut\nx`, but not `&mutable`).
+            let rest = rest.trim_start();
+            let after_mut = rest
+                .strip_prefix("mut")
+                .filter(|after| !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'));
+            text = after_mut.unwrap_or(rest).trim_start();
+        } else if let Some(inner) = grouped_value(text) {
+            text = inner.trim();
+        } else {
+            return text;
+        }
+    }
+}
+
+/// The value inside `text` when it is one parenthesized group with no
+/// top-level comma (not a tuple).
+fn grouped_value(text: &str) -> Option<&str> {
+    let contents = whole_group_contents(text)?;
+    // A trailing comma makes a one-element tuple, even before a comment
+    // (`(x == 1, /* note */)`).
+    let single = split_top_level_commas(contents)
+        .iter()
+        .filter(|element| !element.trim().is_empty())
+        .nth(1)
+        .is_none()
+        && !mask_comments_and_strings(contents)
+            .trim_end()
+            .ends_with(',');
+    single.then_some(contents)
+}
+
+/// The contents of a bare tuple (`(x == 1, y)`, `(x == 1,)`), which holds its
+/// elements like a wrapper does.
+fn tuple_contents(text: &str) -> Option<&str> {
+    let contents = whole_group_contents(text)?;
+    grouped_value(text).is_none().then_some(contents)
+}
+
+/// The contents of `text` when it is one parenthesized group.
+fn whole_group_contents(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let whole = masked.starts_with('(')
+        && super::arguments::delimited_contents_at(text, 0)
+            .is_some_and(|contents| contents.len() + 2 == text.len());
+    whole.then(|| text.get(1..text.len() - 1)).flatten()
+}
+
+/// Whether `side` is a value wrapper, a struct literal, or a passthrough
+/// method on one, that holds a test anywhere among its elements
+/// (`Wrapper(r == Err(E::Bad))`, `Foo { ok: x == 1 }`,
+/// `[matches!(r, Ok(3)); n]`, `vec![r == Err(E::Bad), x == 1]`). Unless the
+/// other side wraps `true` the same way, the wrapper's equality does not
+/// say the test held (reviews of ed1a892ca and #8615).
+fn holds_wrapped_test(side: &str) -> bool {
+    let side = peel_references_and_groups(side);
+    if let Some(receiver) = passthrough_receiver(side) {
+        return holds_wrapped_test(receiver);
+    }
+    let (contents, record) = match wrapper_contents(side) {
+        Some(contents) => (contents, false),
+        None => match record_contents(side) {
+            Some(contents) => (contents, true),
+            None => match tuple_contents(side) {
+                Some(contents) => (contents, false),
+                None => return false,
+            },
+        },
+    };
+    split_top_level_commas(contents).iter().any(|element| {
+        let element = element.trim();
+        let masked = mask_comments_and_strings(element);
+        let value = top_level_semicolon(&masked)
+            .and_then(|at| element.get(..at))
+            .unwrap_or(element);
+        let value = if record { field_value(value) } else { value };
+        let value = block_tail(value);
+        is_bool_test(value) || holds_wrapped_test(value)
+    })
+}
+
+/// Whether `side` reads a field or calls a method (other than a
+/// passthrough) on a wrapper or struct literal that holds a test
+/// (`Wrapper(x == 1).0`, `Some(x == 3).unwrap_or(false)`). The result need
+/// not be the test: a method may invert it, and a field may hold another
+/// element. A plain field read compared with `true` still pins the held
+/// test (#8615) unless the wrapper holds other elements, one of which the
+/// read may select instead.
+fn holds_member_test(side: &str, other_is_true: bool) -> bool {
+    let mut text = peel_references_and_groups(side);
+    let mut called = false;
+    let mut accessed = false;
+    loop {
+        if let Some(receiver) = passthrough_receiver(text) {
+            text = peel_references_and_groups(receiver);
+        } else if let Some((receiver, call)) = member_receiver(text) {
+            (text, called, accessed) = (peel_references_and_groups(receiver), called || call, true);
+        } else {
+            break;
+        }
+    }
+    accessed && holds_wrapped_test(text) && (called || !other_is_true || holds_other_elements(text))
+}
+
+/// Whether `text`, a wrapper or struct literal, holds more than one
+/// element, so a field read need not select the test it carries
+/// (`Foo { ok: x == 1, other: true }.other`).
+fn holds_other_elements(text: &str) -> bool {
+    let text = peel_references_and_groups(text);
+    let contents = wrapper_contents(text)
+        .or_else(|| record_contents(text))
+        .or_else(|| tuple_contents(text));
+    contents.is_some_and(|contents| {
+        split_top_level_commas(contents)
+            .iter()
+            .filter(|element| !element.trim().is_empty())
+            .nth(1)
+            .is_some()
+    })
+}
+
+/// The receiver of a trailing `.field`, `.0` or `.method(..)` access, and
+/// whether it is a call.
+fn member_receiver(text: &str) -> Option<(&str, bool)> {
+    let masked = mask_comments_and_strings(text);
+    let masked = masked.trim_end();
+    if let Some(receiver) = index_receiver(masked) {
+        return text.get(..receiver.len()).map(|receiver| (receiver, false));
+    }
+    let call = masked.ends_with(')');
+    let callee = if call {
+        let open = final_group_open(masked)?;
+        let callee = masked.get(..open)?.trim_end();
+        without_turbofish(callee).map_or(callee, str::trim_end)
+    } else {
+        masked
+    };
+    let (receiver, member) = callee.rsplit_once('.')?;
+    let receiver = receiver.trim_end();
+    let member = member.trim();
+    let is_member =
+        !member.is_empty() && member.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+    // `1.5` is a float, and `a..b` a range.
+    // A chain (`X.0.0`) ends its receiver in a name or digit.
+    let after_value = receiver.ends_with([')', ']', '}']) || call || receiver.contains('.');
+    (is_member && after_value && !receiver.is_empty() && !receiver.ends_with('.'))
+        .then(|| text.get(..receiver.len()).map(|receiver| (receiver, call)))?
+}
+
+/// The receiver of a trailing `[index]` read (`vec![x == 1, y][0]`), which
+/// selects one element, like a field. A bare array or `vec!` literal is not a
+/// read.
+fn index_receiver(masked: &str) -> Option<&str> {
+    if !masked.ends_with(']') {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    for index in (0..bytes.len()).rev() {
+        match bytes.get(index) {
+            Some(b')' | b']' | b'}') => depth += 1,
+            Some(b'(' | b'[' | b'{') => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let receiver = masked.get(..index)?.trim_end();
+                    let reads_a_value = receiver.ends_with(|ch: char| {
+                        ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}')
+                    });
+                    return (bytes.get(index) == Some(&b'[') && reads_a_value).then_some(receiver);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The contents of a struct literal (`Foo { ok: x == 1 }`): braces after
+/// a path whose last segment is capitalized, not a block after `if` or
+/// `match`.
+fn record_contents(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    if !masked.ends_with('}') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, byte) in masked.bytes().enumerate().rev() {
+        match byte {
+            b'}' => depth += 1,
+            b'{' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    open = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let head = masked.get(..open)?.trim_end();
+    let head = without_turbofish(head).map_or(head, str::trim_end);
+    let path = head.trim_end_matches(|ch: char| ch.is_alphanumeric() || ch == '_');
+    let name = head.get(path.len()..)?;
+    let capitalized = name.starts_with(|ch: char| ch.is_ascii_uppercase());
+    (capitalized && (path.is_empty() || is_path_head(path)))
+        .then(|| text.get(open + 1..text.len() - 1))?
+}
+
+/// The value of a struct literal's `field: value` element (`x == 1` in
+/// `ok: x == 1`); a shorthand field or `..base` is its own value.
+fn field_value(element: &str) -> &str {
+    let masked = mask_comments_and_strings(element);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b':' if depth == 0 => {
+                let separator = bytes.get(index + 1) == Some(&b':')
+                    || index.checked_sub(1).and_then(|before| bytes.get(before)) == Some(&b':');
+                let name = masked.get(..index).map(str::trim);
+                if !separator
+                    && name.is_some_and(|name| {
+                        !name.is_empty() && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+                    })
+                {
+                    return element.get(index + 1..).unwrap_or(element).trim();
+                }
+                return element;
+            }
+            _ => {}
+        }
+    }
+    element
+}
+
+/// The value a statement block ends in (`a == b` in `{ let a = 1; a == b }`);
+/// any other text is its own value.
+fn block_tail(value: &str) -> &str {
+    let value = value.trim();
+    let masked = mask_comments_and_strings(value);
+    let whole = masked.starts_with('{')
+        && super::arguments::delimited_contents_at(value, 0)
+            .is_some_and(|contents| contents.len() + 2 == value.len());
+    let Some(inner) = whole.then(|| value.get(1..value.len() - 1)).flatten() else {
+        return value;
+    };
+    let inner_masked = mask_comments_and_strings(inner);
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, byte) in inner_masked.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => start = index + 1,
+            _ => {}
+        }
+    }
+    block_tail(inner.get(start..).unwrap_or_default())
+}
+
+/// The receiver of a method that returns what it holds (`.unwrap()`,
+/// `.expect(..)`, `.clone()`, `.to_owned()`; #8101), when the receiver is
+/// one operand: `Some(r == Err(E::Bad)).unwrap()` still carries the test.
+fn passthrough_receiver(text: &str) -> Option<&str> {
+    let masked = mask_comments_and_strings(text);
+    let open = final_group_open(&masked)?;
+    let callee = masked.get(..open)?.trim_end();
+    let arguments = text.trim_end().get(open + 1..)?.strip_suffix(')')?;
+    let receiver = match callee.rsplit_once('.')? {
+        (receiver, "unwrap" | "clone" | "to_owned") if arguments.trim().is_empty() => receiver,
+        (receiver, "expect") if split_top_level_commas(arguments).len() == 1 => receiver,
+        _ => return None,
+    };
+    let receiver = text.get(..receiver.trim_end().len())?;
+    is_single_operand(receiver).then_some(receiver)
+}
+
+/// The argument of a value wrapper opened by `.unwrap()` or `.expect(..)`
+/// (`Some(matches!(..)).unwrap()`), which returns what the wrapper holds.
+fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
+    let receiver = passthrough_receiver(text)?;
+    let method = mask_comments_and_strings(text.get(receiver.len()..)?);
+    let method = method.trim_start();
+    if !(method.starts_with(".unwrap") || method.starts_with(".expect")) {
+        return None;
+    }
+    // Only the standard wrappers' `unwrap` is known to return what they
+    // hold (review of 6b1c3c4).
+    let callee = mask_comments_and_strings(receiver);
+    let callee = callee.trim_start();
+    let path = callee.get(..final_group_open(callee)?)?;
+    let path = strip_path_generics(path.trim());
+    // A longer path is standard only under `std::` or `core::`
+    // (`custom::Option::Some` may unwrap to something else).
+    let path = path.trim_start_matches("::");
+    let path = path
+        .strip_prefix("std::")
+        .or_else(|| path.strip_prefix("core::"))
+        .unwrap_or(path);
+    let standard = matches!(
+        path.split("::").map(str::trim).collect::<Vec<_>>()[..],
+        ["Some"]
+            | ["Option", "Some"]
+            | ["option", "Option", "Some"]
+            | ["Ok"]
+            | ["Result", "Ok"]
+            | ["result", "Result", "Ok"]
+    );
+    if !standard {
+        return None;
+    }
+    value_wrapper_argument(receiver)
+}
+
+/// The value a wrapper around `text` holds, with the wrapper's own text
+/// around it (whitespace dropped and the value replaced by `_`), so two
+/// sides can be checked for the same wrapper (`Some(_)`, `[_;2]`). A
+/// `new` or `from` call other than `Box`, `Rc` or `Arc` may discard its
+/// argument, so it is no such wrapper (review of 6b1c3c4).
+fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
+    let inner = value_wrapper_argument(text)?;
+    let start = (inner.as_ptr() as usize).checked_sub(text.as_ptr() as usize)?;
+    let before = mask_comments_and_strings(text.get(..start)?);
+    let after = mask_comments_and_strings(text.get(start + inner.len()..)?);
+    let squeeze = |part: &str| {
+        part.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    };
+    // A turbofish names the wrapper's type, not another wrapper
+    // (`Ok::<bool, ()>(_)` or `Box::<bool>::new(_)` against the plain
+    // spelling), and `Option::Some` is `Some`.
+    let head = replace_path(
+        &replace_path(
+            &strip_path_generics(&squeeze(&before)),
+            "Option::Some",
+            "Some",
+        ),
+        "Result::Ok",
+        "Ok",
+    );
+    let callee = head.trim_end_matches('(');
+    let associated = callee.ends_with("::new") || callee.ends_with("::from");
+    let standard = ["Box::new", "Rc::new", "Arc::new"]
+        .iter()
+        .any(|known| callee == *known || callee.ends_with(&format!("::{known}")));
+    if associated && !standard {
+        return None;
+    }
+    Some((inner, format!("{head}_{}", squeeze(&after))))
+}
+
+/// `text` with the path `from` (not the tail of a longer name) spelled `to`.
+fn replace_path(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut previous = None::<char>;
+    while let Some(at) = rest.find(from) {
+        let before = rest[..at].chars().next_back().or(previous);
+        out.push_str(&rest[..at]);
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+            out.push_str(from);
+        } else {
+            out.push_str(to);
+        }
+        previous = from.chars().next_back();
+        rest = &rest[at + from.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` without its `::<..>` generic arguments.
+fn strip_path_generics(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("::<") {
+        out.push_str(&rest[..at]);
+        let mut depth = 0usize;
+        let mut end = None;
+        for (index, byte) in rest.bytes().enumerate().skip(at + 2) {
+            match byte {
+                b'<' => depth += 1,
+                b'>' if rest.as_bytes().get(index.wrapping_sub(1)) != Some(&b'-') => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(end) => rest = &rest[end..],
+            None => return text.to_string(),
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The one expression `element` holds: no top-level comma, and the
+/// repeated value of a repeat array (`x` in `[x; 3]`).
+fn single_element(element: &str) -> Option<&str> {
+    let masked = mask_comments_and_strings(element);
+    let value = match top_level_semicolon(&masked) {
+        Some(_) => repeated_value(element)?,
+        None => element,
+    };
+    let value = value.trim_end();
+    let value = value.strip_suffix(',').unwrap_or(value);
+    (split_top_level_commas(value).len() == 1).then_some(value)
+}
+
+/// The repeated value of repeat-array contents (`x` in `x; 3`) when the
+/// count is a nonzero integer literal. An empty or unknown-length repeat
+/// may hold nothing, so it compares equal whatever the value is (review
+/// of 6b1c3c4).
+fn repeated_value(contents: &str) -> Option<&str> {
+    let at = top_level_semicolon(&mask_comments_and_strings(contents))?;
+    let count = contents.get(at + 1..)?.trim().replace('_', "");
+    let digits = [
+        "usize", "isize", "u64", "u32", "u16", "u8", "i64", "i32", "i16", "i8",
+    ]
+    .iter()
+    .find_map(|suffix| count.strip_suffix(suffix))
+    .unwrap_or(&count);
+    let nonzero = !digits.is_empty()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+        && digits.bytes().any(|byte| byte != b'0');
+    nonzero.then(|| contents.get(..at)).flatten()
+}
+
+/// Where masked `text` has a `;` outside any brackets (`[x; 3]`).
+fn top_level_semicolon(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The types a `bool` converts to without losing it, through `as` or
@@ -613,7 +1141,41 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
     loop {
-        (left, right) = (left.trim(), right.trim());
+        (left, right) = (
+            peel_references_and_groups(left),
+            peel_references_and_groups(right),
+        );
+        // A statement block is the value its tail holds
+        // (`{ let a = 1; a == b }`; #8615).
+        if block_tail(left) != left {
+            left = block_tail(left);
+            continue;
+        }
+        if block_tail(right) != right {
+            right = block_tail(right);
+            continue;
+        }
+        // `Some(..).unwrap()` and `Ok(..).expect(..)` return what they hold.
+        if let Some(inner) = unwrapped_wrapper_argument(left) {
+            left = inner;
+            continue;
+        }
+        if let Some(inner) = unwrapped_wrapper_argument(right) {
+            right = inner;
+            continue;
+        }
+        // The same wrapper shape around both sides compares what it holds
+        // (`Some(x == 3)` against `Some(true)`); any other wrapper around a
+        // test fails closed (`Wrapper(r == Err(E::Bad))` against `true`,
+        // `Foo::new(..)` against `Foo::new(true)`; review of ed1a892ca).
+        if let (Some((left_inner, left_shape)), Some((right_inner, right_shape))) = (
+            shaped_wrapper_argument(left),
+            shaped_wrapper_argument(right),
+        ) && left_shape == right_shape
+        {
+            (left, right) = (left_inner, right_inner);
+            continue;
+        }
         // The same constructor around both sides compares what it wraps
         // (`Some(r == Err(E::Bad))` against `Some(expected)`; #8101).
         if let Some(inner) = shared_constructor_arguments(left, right) {
@@ -624,11 +1186,35 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
         // pair is, so each pair is read on its own
         // (`vec![r == Err(E::Bad)]` against `vec![expected]`; #8101).
         if let (Some(left), Some(right)) = (sequence_elements(left), sequence_elements(right)) {
-            return left.len() == right.len()
-                && left
+            // Sequences of different lengths (a repeat array against a list)
+            // pair no elements, so any test in them fails closed (review of
+            // 6b1c3c4).
+            if left.len() != right.len() {
+                return left
                     .iter()
-                    .zip(&right)
-                    .any(|(left, right)| sides_compare_test_with_non_literal(left, right));
+                    .chain(&right)
+                    .any(|element| is_bool_test(element) || holds_wrapped_test(element));
+            }
+            // A test paired with anything but `true` may be asserted false
+            // (`[r == Err(E::Bad), x == 1]` against `[false, true]`).
+            let not_true =
+                |side: &str| literal_spelling_value(&mask_comments_and_strings(side)) != Some(true);
+            return left.iter().zip(&right).any(|(left, right)| {
+                (is_bool_test(left) && not_true(right))
+                    || (is_bool_test(right) && not_true(left))
+                    || sides_compare_test_with_non_literal(left, right)
+            });
+        }
+        // Any other wrapper around a test fails closed: its equality does
+        // not say the test held.
+        let true_literal =
+            |side: &str| literal_spelling_value(&mask_comments_and_strings(side)) == Some(true);
+        if holds_wrapped_test(left)
+            || holds_wrapped_test(right)
+            || holds_member_test(left, true_literal(right))
+            || holds_member_test(right, true_literal(left))
+        {
+            return true;
         }
         let other = match (literal(left), literal(right)) {
             (false, false) => {
@@ -660,8 +1246,23 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
     let side = side.trim();
     let array = side.strip_prefix("vec!").map_or(side, str::trim_start);
     let contents = super::arguments::delimited_contents_at(array, 0)
-        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
-    Some(super::arguments::split_top_level_commas(&contents))
+        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())
+        .or_else(|| tuple_contents(side).map(str::to_string))?;
+    // A repeat array holds one value (`[x; 2]`), compared with the other
+    // side's repeated value.
+    if let Some(value) = repeated_value(&contents) {
+        return Some(vec![value.to_string()]);
+    }
+    // An empty or unknown-length repeat has no elements to pair.
+    if top_level_semicolon(&mask_comments_and_strings(&contents)).is_some() {
+        return None;
+    }
+    let mut elements = super::arguments::split_top_level_commas(&contents);
+    // A trailing comma ends the list; it adds no element (`vec![true,]`).
+    if elements.len() > 1 && elements.last().is_some_and(|last| last.trim().is_empty()) {
+        elements.pop();
+    }
+    Some(elements)
 }
 
 /// Whether `side` indexes something by a test
@@ -886,11 +1487,11 @@ fn carries_test_through(head: &str) -> bool {
 /// the assertion states that operand is true, and whether the comparison is
 /// a boolean assertion's whole condition rather than an equality macro's
 /// operands.
-fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
+fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool, String)> {
     let literal = |side: &str| literal_spelling_value(&mask_comments_and_strings(side));
     let pick = |left: &str, right: &str, not_equal: bool| match (literal(left), literal(right)) {
-        (None, Some(value)) => Some((left.to_string(), value != not_equal)),
-        (Some(value), None) => Some((right.to_string(), value != not_equal)),
+        (None, Some(value)) => Some((left.to_string(), value != not_equal, right.to_string())),
+        (Some(value), None) => Some((right.to_string(), value != not_equal, left.to_string())),
         _ => None,
     };
     match assertion_comparison(line)? {
@@ -898,7 +1499,8 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
             not_equal,
             left,
             right,
-        } => pick(&left, &right, not_equal).map(|(operand, positive)| (operand, positive, false)),
+        } => pick(&left, &right, not_equal)
+            .map(|(operand, positive, literal)| (operand, positive, false, literal)),
         AssertionComparison::Condition(condition) => {
             let condition = unwrap_parentheses(condition.trim());
             // `a && b == true` compares only `b`; the chain rules read it.
@@ -914,7 +1516,7 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
                 condition.get(at + width..)?,
                 not_equal,
             )
-            .map(|(operand, positive)| (operand, positive, true))
+            .map(|(operand, positive, literal)| (operand, positive, true, literal))
         }
     }
 }
@@ -1412,8 +2014,13 @@ fn ends_with_keyword(text: &str) -> bool {
 /// Whether `text` ends with the `>` of a turbofish (`foo::<T>`,
 /// `Vec::<Vec<u8>>`): its matching `<` follows `::`.
 fn closes_turbofish(text: &str) -> bool {
+    without_turbofish(text).is_some()
+}
+
+/// `text` without the turbofish that ends it (`Ok::<bool, ()>` → `Ok`).
+fn without_turbofish(text: &str) -> Option<&str> {
     if !text.ends_with('>') {
-        return false;
+        return None;
     }
     let bytes = text.as_bytes();
     let mut depth = 0usize;
@@ -1429,15 +2036,13 @@ fn closes_turbofish(text: &str) -> bool {
             b'<' => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    return text
-                        .get(..index)
-                        .is_some_and(|head| head.trim_end().ends_with("::"));
+                    return text.get(..index)?.trim_end().strip_suffix("::");
                 }
             }
             _ => {}
         }
     }
-    false
+    None
 }
 
 fn unread_operator_before(before: &str) -> bool {

@@ -223,27 +223,12 @@ pub(crate) fn render_human_triage(
                         ) && typescript_named_limitation_why(finding).is_some() =>
                     {
                         if let Some(why) = typescript_named_limitation_why(finding) {
-                            // #7384 review: only claim "not by missing fields"
-                            // when the shared packet authority confirms the
-                            // field list is empty; a finding can carry a named
-                            // limitation AND still miss packet fields, and
-                            // naming only one blocker misdirects the repair.
-                            let missing_fields = not_ready
-                                .as_ref()
-                                .map(|actionability| {
-                                    actionability.missing_actionability_fields.as_slice()
-                                })
-                                .unwrap_or(&[]);
-                            if missing_fields.is_empty() {
-                                out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting\n"
-                                ));
-                            } else {
-                                out.push_str(&format!(
-                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting\n",
-                                    missing_fields.join(", ")
-                                ));
-                            }
+                            // #8630: named limitations refuse projection before
+                            // packet validation. Internal missing fields are
+                            // diagnostics, not inputs the operator can fill.
+                            out.push_str(&format!(
+                                "  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: {why}; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`\n"
+                            ));
                         }
                     }
                     Some(finding) if let Some(actionability) = not_ready.as_ref() => {
@@ -270,6 +255,12 @@ pub(crate) fn render_human_triage(
             {
                 out.push_str(&format!(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
+                ));
+            } else if let Some(base) = output.base.as_deref()
+                && head_is_on_branch(&output.root, base)
+            {
+                out.push_str(&format!(
+                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
@@ -314,21 +305,7 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
-            // #8166 Slice C: an eligible top finding also gets the repair
-            // start, naming the seam identity the check pipeline's
-            // producer-owned gate established. No route, no line: an
-            // ineligible or unbound finding keeps only explain/context.
-            if let Some(route) = navigation.repair_route_for(&finding.id) {
-                let command = navigation.repair_command(&route.seam_id);
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
-            }
-            // #5355: a Rust gap gets the one-step route to a runnable test.
-            // A gap withheld because ripr could not read the related
-            // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
-            // no test-writing route either, and neither does a weak finding
-            // whose reach witness ripr could not trace (#7071).
-            if finding.class != ExposureClass::Exposed
+            let stub_eligible = finding.class != ExposureClass::Exposed
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && !super::sections::untraced_reach_weak_finding(finding)
@@ -339,8 +316,64 @@ pub(crate) fn render_human_triage(
                     .file
                     .extension()
                     .and_then(|ext| ext.to_str())
-                    == Some("rs")
-            {
+                    == Some("rs");
+            // The test route is mentioned beside a held repair start only
+            // when a runnable stub is actually rendered below.
+            let stub_rendered = stub_eligible
+                && matches!(
+                    navigation.stub_route_for(&finding.id),
+                    Some(StubRouteDecision::Stub { .. })
+                );
+            // #8166 Slice C: an eligible top finding also gets the repair
+            // start, naming the seam identity the check pipeline's
+            // producer-owned gate established. No route, no line: an
+            // ineligible or unbound finding keeps only explain/context.
+            // #8166 residual (F3): a static-limited finding never prints the
+            // runnable repair line, even if a route was computed for it; the
+            // limitation guidance above is its only next action.
+            // #8729: a finding offered no repair start prints one advisory
+            // line naming the refusal's state — a bounded route, a budget
+            // truncation, an ineligible seam — so the silent gap between
+            // "static limitation" and "analysis could not decide" closes.
+            // The refusal advisory is not gated on the static-limited state:
+            // a static-limited finding whose seam the gate concretely
+            // refused must name that refusal, not merge into the limitation.
+            match navigation.repair_route_for(&finding.id) {
+                Some(route) => {
+                    if !is_static_limited(finding) {
+                        let command = navigation.repair_command(&route.seam_id);
+                        if let Some(file) = route.uncommitted_target.as_deref() {
+                            // `ripr repair` would refuse this start: its
+                            // inline test module target begins from the
+                            // committed file. State the requirement instead
+                            // of a command that exits 2.
+                            let alternative = if stub_rendered {
+                                ", or use the test route below"
+                            } else {
+                                ""
+                            };
+                            out.push_str(&format!(
+                                "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
+                            ));
+                        } else {
+                            out.push_str(&format!("  {command}\n"));
+                            super::push_powershell_variant(out, "  ", &command);
+                        }
+                    }
+                }
+                None => {
+                    if let Some(refusal) = navigation.repair_route_refusal() {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
+                    }
+                }
+            }
+            // #5355: a Rust gap gets the one-step route to a runnable test.
+            // A gap withheld because ripr could not read the related
+            // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
+            // no test-writing route either, and neither does a weak finding
+            // whose reach witness ripr could not trace (#7071).
+            if stub_eligible {
                 // #5471: only when the check pipeline ran the stub's own
                 // resolver for this finding and it produced a stub; a refusal
                 // prints its reason, and no decision prints nothing.
@@ -575,6 +608,20 @@ pub(crate) fn canonical_next_action_for_triage(
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// True when `HEAD` is the symbolic ref of local branch `base` (a detached
+/// HEAD or any other branch is not), so the empty comparison is the base
+/// compared with itself.
+fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
 }
 
 /// The probed `--base` candidate for an empty result whose analyzed base
@@ -1111,6 +1158,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1473,6 +1521,7 @@ mod tests {
             git(&["add", "."])?;
             git(&["commit", "-m", "init"])?;
             git(&["branch", "base-candidate"])?;
+            git(&["checkout", "-q", "--detach"])?;
             std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
             git(&["add", "."])?;
             git(&["commit", "-m", "second"])?;
@@ -1519,6 +1568,48 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn head_is_on_branch_matches_only_the_checked_out_branch() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-triage-on-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output = crate::git::run_git_output_with_deadline_and_env(
+                &dir,
+                args,
+                &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed"))
+            }
+        };
+        let result = (|| -> Result<(), String> {
+            git(&["init", "-b", "master"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "init"])?;
+            if !head_is_on_branch(&dir, "master") {
+                return Err("HEAD on master must match base master".to_string());
+            }
+            if head_is_on_branch(&dir, "main") {
+                return Err("HEAD on master must not match base main".to_string());
+            }
+            git(&["checkout", "-q", "--detach"])?;
+            if head_is_on_branch(&dir, "master") {
+                return Err("a detached HEAD is not on the base branch".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
     }
 
     #[test]
