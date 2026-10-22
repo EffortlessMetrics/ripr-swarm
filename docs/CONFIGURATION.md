@@ -477,11 +477,16 @@ ripr config validate --root .
 ```
 
 This uses the same ancestor-aware loader as analysis. A valid file prints
-`✓ ripr.toml valid`; a malformed or policy-invalid file returns its
-path-qualified validation error. A missing `ripr.toml` prints
-`✓ no ripr.toml found; built-in defaults apply` and follows the normal
-built-in-defaults path, including any existing root-level language detection
-rules, because that remains the normal first-run configuration.
+`✓ ripr.toml valid (<path>)`, naming the discovered file so an ancestor's
+config cannot silently stand in for a missing local one; a malformed or
+policy-invalid file returns its path-qualified validation error. A missing
+`ripr.toml` prints `✓ no ripr.toml found; built-in defaults apply` and
+follows the normal built-in-defaults path, including any existing root-level
+language detection rules, because that remains the normal first-run
+configuration. When those detection rules would refuse the root (for
+example, Python project markers in a binary built without the `lang-python`
+feature), validate still succeeds and carries the detection note in its
+output, because there is no user-written file to fail.
 
 ### `ripr lsp`
 
