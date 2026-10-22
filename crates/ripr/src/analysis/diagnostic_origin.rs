@@ -303,7 +303,9 @@ fn coarse_cr_origin(
     span: Option<ParserByteSpan>,
 ) -> EncodedOrigin {
     let source = captured.source.as_ref();
-    let mut analyzer_lines = source.split_inclusive('\n');
+    let mut analyzer_lines = source
+        .split_inclusive('\n')
+        .chain(source.ends_with('\n').then_some(""));
     let analyzer_start: usize = analyzer_lines
         .by_ref()
         .take(finding.probe.location.line.saturating_sub(1))
@@ -944,6 +946,44 @@ mod tests {
             require_origin(&origins, &finding.id)?,
             &missing_input_origin()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_cr_deleted_eof_preserves_the_terminal_editor_row() -> Result<(), String> {
+        for source in ["pub fn a() {}\r// note\n", "pub fn a() {}\r// note\r\n"] {
+            let finding = finding_on(
+                "probe:deleted-eof",
+                "src/lib.rs",
+                2,
+                "pub fn removed() {}",
+                SourceCurrentness::BaseDeleted,
+            );
+            let origins = origins_for(&finding, source, None, None);
+            let origin = require_origin(&origins, &finding.id)?;
+            assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+            assert_eq!(origin.line, 2);
+            assert_eq!(origin.utf8.start, origin.utf8.end);
+            assert_eq!(origin.utf16.start, origin.utf16.end);
+            assert_eq!(origin.utf32.start, origin.utf32.end);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_cr_duplicate_expression_uses_the_parser_anchor() -> Result<(), String> {
+        let source = "fn price() {\r    if montant_é > discount_threshold {}\r    if montant_é > discount_threshold {}\r}\r";
+        let (_, second) = require_second(source, PREDICATE)?;
+        let finding = current_finding("probe:cr-duplicate", 1, PREDICATE);
+        let origins = origins_for(
+            &finding,
+            source,
+            Some(ParserByteSpan { start_byte: second }),
+            None,
+        );
+        let origin = require_origin(&origins, &finding.id)?;
+        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+        assert_eq!(origin.line, 2);
         Ok(())
     }
 

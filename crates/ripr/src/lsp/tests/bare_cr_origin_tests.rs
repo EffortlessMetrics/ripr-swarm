@@ -1,6 +1,95 @@
 use super::*;
 
 #[test]
+fn rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row() -> Result<(), String> {
+    use crate::analysis::diagnostic_origin::OriginKind;
+    use crate::domain::SourceCurrentness;
+
+    for ending in ["\n", "\r\n"] {
+        let fixture = unique_lsp_test_root("deleted-eof-origin")?;
+        let root = fixture.path();
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"deleted_eof_origin\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        run_lsp_scope_git(root, &["init", "-q"])?;
+        let path = root.join("src/lib.rs");
+        let after = format!("pub fn a() {{}}\r// note{ending}");
+        let before = format!(
+            "{after}pub fn removed(amount: i32, threshold: i32) -> bool {{ amount > threshold }}{ending}"
+        );
+        fs::write(&path, &before).map_err(|error| error.to_string())?;
+        run_lsp_scope_git(root, &["add", "Cargo.toml", "src/lib.rs"])?;
+        run_lsp_scope_git(
+            root,
+            &[
+                "-c",
+                "user.email=ripr-test@example.com",
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qm",
+                "deleted EOF baseline",
+            ],
+        )?;
+        fs::write(&path, &after).map_err(|error| error.to_string())?;
+        let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+        let (output, origins, _) =
+            crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress(
+                config.check_input(root),
+                config.repo_config(),
+                &BTreeSet::new(),
+                None,
+            )?;
+        let deleted = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.source_currentness == SourceCurrentness::BaseDeleted
+                    && finding.probe.location.file.ends_with("src/lib.rs")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !deleted.is_empty(),
+            "analysis must produce removed-only EOF evidence"
+        );
+        for finding in deleted {
+            assert_eq!(
+                finding.probe.location.line, 2,
+                "removed-only new-side analyzer row"
+            );
+            let origin = origins
+                .for_finding(finding)
+                .ok_or("deleted finding must retain a Rust origin")?;
+            assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+            let grouped = finding_diagnostics_by_uri_with_profile(
+                root,
+                std::slice::from_ref(finding),
+                &crate::config::SeverityConfig::default(),
+                true,
+                FindingDiagnosticProjection::new(
+                    crate::config::LspDiagnosticProfile::Full,
+                    &PositionEncodingKind::UTF16,
+                    &origins,
+                ),
+            )?;
+            let diagnostic = grouped
+                .values()
+                .flatten()
+                .next()
+                .ok_or("deleted finding must project in Full profile")?;
+            assert_eq!(diagnostic.range.start, Position::new(2, 0));
+            assert_eq!(diagnostic.range.end, Position::new(2, 120));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn rust_analysis_origins_project_editor_rows_for_bare_cr() -> Result<(), String> {
     use crate::analysis::diagnostic_origin::OriginKind;
 

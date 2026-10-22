@@ -6610,6 +6610,11 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_origins_project_editor_rows_for_bare_cr",
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row",
+  "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_bounds_untrusted_or_missing_anchors",
+  "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_deleted_eof_preserves_the_terminal_editor_row",
+  "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_duplicate_expression_uses_the_parser_anchor",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
   "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",
@@ -6642,6 +6647,8 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/diagnostic_origin.rs",
+  "crates/ripr/src/lsp/position.rs",
   "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
     "crates/ripr/src/lsp/capabilities.rs",
