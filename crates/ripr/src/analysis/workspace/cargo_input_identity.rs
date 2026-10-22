@@ -252,20 +252,57 @@ mod tests {
     }
 
     fn home_authority_fixture_root(stamp: u128) -> Result<PathBuf, String> {
-        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::atomic::AtomicU64;
 
         static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+        claim_home_authority_root(stamp, &NEXT_ROOT)
+    }
+
+    fn claim_home_authority_root(
+        stamp: u128,
+        next_suffix: &std::sync::atomic::AtomicU64,
+    ) -> Result<PathBuf, String> {
+        use std::sync::atomic::Ordering;
+
         let parent = std::env::temp_dir();
         std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-        let root = parent.join(format!(
-            "ripr-home-authority-{}-{stamp}-{}",
-            std::process::id(),
-            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        // Parallel controls can observe the same timestamp, and an interrupted
+        // earlier process may have left a same-PID root behind. Claim each root
+        // exclusively, moving to the next suffix when the name is taken.
+        for _ in 0..1024 {
+            let root = parent.join(format!(
+                "ripr-home-authority-{}-{stamp}-{}",
+                std::process::id(),
+                next_suffix.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&root) {
+                Ok(()) => return Ok(root),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err("no free cargo-home authority fixture root after 1024 attempts".to_string())
+    }
+
+    #[test]
+    fn cargo_home_authority_fixture_skips_a_stale_leftover_root() -> Result<(), String> {
+        // A private counter and stamp make the occupied name deterministic: the
+        // first suffix (0) is a leftover from an "interrupted" run.
+        let stamp = 7_u128 << 100;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        let stale = std::env::temp_dir().join(format!(
+            "ripr-home-authority-{}-{stamp}-0",
+            std::process::id()
         ));
-        // Parallel controls can observe the same timestamp. Claim each root
-        // exclusively before creating or editing its configuration files.
-        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
-        Ok(root)
+        let _ = std::fs::remove_dir_all(&stale);
+        std::fs::create_dir_all(&stale).map_err(|error| error.to_string())?;
+        let live = claim_home_authority_root(stamp, &counter);
+        let cleanup = std::fs::remove_dir_all(&stale).map_err(|error| error.to_string());
+        let live = live?;
+        assert_ne!(live, stale, "a taken name must not be reused");
+        assert!(live.is_dir());
+        std::fs::remove_dir_all(live).map_err(|error| error.to_string())?;
+        cleanup
     }
 
     #[test]
