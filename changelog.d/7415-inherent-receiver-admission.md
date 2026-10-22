@@ -27,3 +27,8 @@
   complete test/owner/type-or-trait answers. Executable callers and assertion
   operands reuse immutable syntax while retaining original lexical anchors and
   conservative execution and binding refusals (#7415, #8004).
+- The inherent-receiver check now reads a declared nominal parameter type
+  (`fn t(account: Account)`, including an `#[rstest]` fixture injection) and a
+  bare enum variant brought in by a single `use Enum::*` as visible receiver
+  bindings, so those tests keep their credit; aliases, prelude spellings,
+  shadowing items and ambiguous imports still withhold (#9676).

@@ -12642,6 +12642,16 @@ fn qualified_standard_assertion_operands_give_receiver_identity() {
             "std::assert_eq!(1, 1, \"{}\", Widget::new().read());",
             false,
         ),
+        // Source rebinding of the root (#9611 review): a macro that discards
+        // its tokens, re-exported as `fake::assert_eq`, then `use fake as std;`.
+        (
+            "mod fake { macro_rules! assert_eq { ($a:expr, $b:expr) => {}; } pub(crate) use assert_eq; }\nuse fake as std;\nstd::assert_eq!(Widget::new().read(), 4);",
+            false,
+        ),
+        (
+            "mod fake { macro_rules! assert_eq { ($a:expr, $b:expr) => {}; } pub(crate) use assert_eq; }\nuse fake as core;\ncore::assert_eq!(Widget::new().read(), 4);",
+            false,
+        ),
     ] {
         assert_eq!(
             widget_owner_call("read", WIDGET_LIB, body, &OwnerPinSyntax::default()),
@@ -12751,4 +12761,73 @@ fn receiver_checks_over_many_owners_share_one_workspace_scan() {
         1,
         "six pair checks over one index must share one workspace scan"
     );
+}
+
+/// #9676: a declared nominal parameter type (an `#[rstest]` fixture injection)
+/// and a bare enum variant imported by one `use Enum::*` are visible receiver
+/// bindings; shadowing, aliasing, prelude spellings and other types are not.
+#[test]
+fn parameter_types_and_imported_variants_give_receiver_identity() {
+    let params = [
+        ("fn t(w: Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(mut w: Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(w: &Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(w: Other) {\n assert_eq!(w.read(), 4);\n}", false),
+        ("fn t(w: impl Sized) {\n assert_eq!(w.read(), 4);\n}", false),
+        ("fn t(w: Widget) {\n let w = other();\n assert_eq!(w.read(), 4);\n}", false),
+        ("fn t() {\n assert_eq!(w.read(), 4);\n}", false),
+    ];
+    for (function, expected) in params {
+        let tests = format!("use demo::Widget;\n\n#[test]\n{function}\n");
+        let index = index(&[(LIB, WIDGET_LIB), (TESTS, &tests)]);
+        let owner = index.functions().iter().find(|f| f.name == "read");
+        let test = index.tests().iter().find(|test| test.name == "t");
+        assert!(owner.is_some() && test.is_some(), "{function}");
+        let (Some(owner), Some(test)) = (owner, test) else {
+            return;
+        };
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(
+                test,
+                owner,
+                &index,
+                &OwnerPinSyntax::default()
+            ),
+            expected,
+            "{function}"
+        );
+    }
+    let mode_lib = "pub enum Mode {\n    Fast,\n    Slow,\n}\n\nimpl Mode {\n    pub fn label(&self) -> u32 {\n        1\n    }\n}\n";
+    let variants = [
+        ("use demo::Mode::*;\n", "assert_eq!(Fast.label(), 1);", true),
+        ("use demo::Mode::Fast;\n", "assert_eq!(Fast.label(), 1);", true),
+        ("use demo::Mode::*;\n", "for x in [1] { assert_eq!(Fast.label(), x); }", true),
+        ("use demo::Mode::*;\n", "for Fast in [1] { assert_eq!(Fast.label(), 1); }", false),
+        ("use demo::Mode::*;\n", "assert_eq!(Slow.other(), 1);", false),
+        ("use demo::Mode::Fast as Quick;\n", "assert_eq!(Fast.label(), 1);", false),
+        ("", "assert_eq!(Fast.label(), 1);", false),
+        ("use demo::Mode::*;\nuse other::Fast;\n", "assert_eq!(Fast.label(), 1);", false),
+        ("use demo::Mode::*;\nconst Fast: u32 = 1;\n", "assert_eq!(Fast.label(), 1);", false),
+        ("use demo::Mode::*;\n", "assert_eq!(None.label(), 1);", false),
+    ];
+    for (uses, body, expected) in variants {
+        let tests = format!("{uses}\n#[test]\nfn t() {{\n    {body}\n}}\n");
+        let index = index(&[(LIB, mode_lib), (TESTS, &tests)]);
+        let owner = index.functions().iter().find(|f| f.name == "label");
+        let test = index.tests().iter().find(|test| test.name == "t");
+        assert!(owner.is_some() && test.is_some(), "{body}");
+        let (Some(owner), Some(test)) = (owner, test) else {
+            return;
+        };
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(
+                test,
+                owner,
+                &index,
+                &OwnerPinSyntax::default()
+            ),
+            expected,
+            "{uses}{body}"
+        );
+    }
 }

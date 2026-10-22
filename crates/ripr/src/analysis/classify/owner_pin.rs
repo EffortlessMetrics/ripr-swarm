@@ -800,10 +800,24 @@ impl OwnerPinSyntax {
                         index.files().get(path).is_some_and(|facts| {
                             crate::analysis::syntax::parse_clean_source_file(&facts.source)
                                 .is_some_and(|file| {
+                                    // Cargo identity does not prove the source
+                                    // root: `use fake as std;` or a module named
+                                    // `std` re-exporting a non-asserting macro
+                                    // must not receive the qualified credit.
                                     crate::analysis::syntax::ra::assertion_root_is_available(
                                         name,
                                         file.tree().syntax(),
-                                    )
+                                    ) && if matches!(root, "std" | "core") {
+                                        crate::analysis::syntax::ra::std_macro_root_is_unrebound(
+                                            name,
+                                            file.tree().syntax(),
+                                        )
+                                    } else {
+                                        crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(
+                                            name,
+                                            file.tree().syntax(),
+                                        )
+                                    }
                                 })
                         })
                     })
@@ -12293,6 +12307,86 @@ pub(super) fn unit_struct_value(
         }
     }
     declared_in_test_file == 1
+}
+
+/// Whether bare `name` in `test_file` is a variant of the one workspace enum
+/// `enum_name`, brought in by exactly one non-aliased `use` of that enum's
+/// glob or of the variant itself (#9676). Fail-closed: a prelude spelling,
+/// another import of `name`, a same-named local item or a `macro_rules!` in
+/// the file, or an enum that is not the single declaration all refuse.
+pub(super) fn imported_enum_variant_value(
+    name: &str,
+    enum_name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+) -> bool {
+    if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let declaring: Vec<_> = index
+        .files()
+        .values()
+        .filter(|facts| {
+            facts.source.contains(enum_name)
+                && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
+        })
+        .collect();
+    let [declaring] = declaring.as_slice() else {
+        return false;
+    };
+    if !local_type_equality(&declaring.source, enum_name)
+        .is_some_and(|facts| facts.variants.iter().any(|variant| variant == name))
+    {
+        return false;
+    }
+    let Some(file) = index.files().get(test_file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&file.source);
+    if masked.contains("macro_rules") {
+        return false;
+    }
+    let enum_glob = format!("{enum_name}::*");
+    let enum_variant = format!("{enum_name}::{name}");
+    let rooted = |path: &str, tail: &str| {
+        path.strip_suffix(tail).is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix
+                    .strip_suffix("::")
+                    .is_some_and(|prefix| prefix.split("::").all(|segment| {
+                        matches!(segment, "self" | "super" | "crate")
+                    }))
+        })
+    };
+    let mut admitted = 0usize;
+    for import in flattened_use_paths(&file.source) {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        let binds_name = last == name || import.alias.as_deref() == Some(name);
+        if import.alias.is_none()
+            && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
+        {
+            admitted += 1;
+        } else if binds_name {
+            return false;
+        }
+    }
+    if admitted != 1 {
+        return false;
+    }
+    // A same-named item (other than the enum's own variant list) would shadow
+    // the glob; refuse any item keyword directly before the spelling.
+    !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        let before = masked[..offset].trim_end();
+        ["const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let", "mut"]
+            .iter()
+            .any(|keyword| {
+                before.ends_with(keyword)
+                    && before[..before.len() - keyword.len()]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            })
+    })
 }
 
 /// The prelude's value-namespace names a unit struct could share.

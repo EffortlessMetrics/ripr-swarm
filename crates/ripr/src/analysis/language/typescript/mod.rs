@@ -92,6 +92,7 @@ mod owners;
 mod package;
 #[cfg(test)]
 mod predicate_activation_tests;
+mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
@@ -177,6 +178,7 @@ pub(crate) use tsconfig::{
 };
 pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
+pub(crate) use value_hiding_guard::*;
 
 /// TypeScript / JavaScript preview adapter.
 ///
