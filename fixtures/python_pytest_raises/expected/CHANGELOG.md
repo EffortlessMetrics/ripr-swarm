@@ -598,3 +598,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_raises (20)
+
+Reason:
+RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
+
+Command:
+`cargo xtask goldens bless python_pytest_raises --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
