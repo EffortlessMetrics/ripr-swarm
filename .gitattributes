@@ -85,3 +85,4 @@ package-lock.json linguist-generated
 Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
+fixtures/perl-verdict-corpus/packets/** linguist-generated
