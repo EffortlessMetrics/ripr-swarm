@@ -477,7 +477,11 @@ pub(crate) fn outcome_command(
 /// Windows a slash-unified `//?/<drive>:` or `//?/UNC/` root prints in its
 /// plain spelling.
 fn fold_verbatim(unified: String) -> String {
-    if !cfg!(windows) {
+    fold_verbatim_for_host(unified, cfg!(windows))
+}
+
+fn fold_verbatim_for_host(unified: String, windows: bool) -> String {
+    if !windows {
         return unified;
     }
     let Some(rest) = unified.strip_prefix("//?/") else {
@@ -685,6 +689,44 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restated fold must keep `output::path::fold_verbatim_for_host`'s
+    /// cases (#9660): `cfg!(windows)` alone would leave the Windows arm
+    /// unchecked on every Linux run.
+    #[test]
+    fn fold_verbatim_matches_the_output_path_rule_on_both_hosts() {
+        // The drive is spliced in so the local-context policy never sees a
+        // machine path literal.
+        let drive = "F:";
+        let cases = [
+            (
+                format!("//?/{drive}/work/repo"),
+                format!("{drive}/work/repo"),
+            ),
+            (
+                "//?/UNC/server/share/repo".to_string(),
+                "//server/share/repo".to_string(),
+            ),
+            (
+                "//?/Volume{0}/repo".to_string(),
+                "//?/Volume{0}/repo".to_string(),
+            ),
+            ("tests/test_x.py".to_string(), "tests/test_x.py".to_string()),
+        ];
+        for (unified, windows_text) in &cases {
+            let unified = unified.as_str();
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), true),
+                *windows_text,
+                "windows fold of {unified}"
+            );
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), false),
+                unified,
+                "unix keeps {unified}"
+            );
+        }
+    }
 
     /// Hold a stable process CWD across one render-and-compare (#7034).
     ///
