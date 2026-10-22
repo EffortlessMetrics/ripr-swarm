@@ -61,6 +61,19 @@ pub(super) fn python_message_pin_gap(
             if !is_strong_error_variant(assertion) || !focus.admits(assertion) {
                 continue;
             }
+            // A comparison joined after the `with` (rule 14, `assert
+            // str(exc.value) == "..."`) is a second discriminator this gate
+            // does not evaluate, so it fails open.
+            if assertion
+                .gate_text
+                .strip_prefix(assertion.text.as_str())
+                .is_some_and(|rest| {
+                    rest.lines()
+                        .any(|line| line.trim_start().starts_with("assert "))
+                })
+            {
+                return None;
+            }
             let pattern = literal_message_pattern(&assertion.text)?;
             if !pattern_matches(&pattern, &old_message) || !pattern_matches(&pattern, &new_message)
             {

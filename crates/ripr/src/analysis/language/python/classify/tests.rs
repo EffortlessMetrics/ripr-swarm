@@ -1692,6 +1692,19 @@ fn message_only_change_fails_open_on_unreadable_patterns_and_assertions() -> Res
 }
 
 #[test]
+fn message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_message()
+-> Result<(), String> {
+    // The pattern fits both messages, but the joined `str(exc.value) == ...`
+    // comparison (rule 14) pins the new text: the gate must fail open.
+    let finding = classify_message_change(
+        CHECK_SOURCE,
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\") as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
     let file = Path::new("src/subject.py");
     let source = "def check(x):\n    if x < 0:\n        raise TypeError(\"negative value: must be at most zero\")\n    return x\n";
