@@ -2384,8 +2384,6 @@ fn common_across_tests(
         .collect()
 }
 
-/// Identifiers that appear in so many Rust bodies that naming one in a test
-/// name says nothing about which code the test reaches.
 /// Strict and reserved Rust keywords: syntax, never a behavior name.
 const RUST_KEYWORDS: &[&str] = &[
     "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
@@ -2395,6 +2393,8 @@ const RUST_KEYWORDS: &[&str] = &[
     "typeof", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
 ];
 
+/// Identifiers that appear in so many Rust bodies that naming one in a test
+/// name says nothing about which code the test reaches.
 const GENERIC_PROBE_TOKENS: &[&str] = &[
     "String",
     "Result",
