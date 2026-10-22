@@ -191,6 +191,8 @@ fn scan_memo_insert(text: &str, scan: &RustModuleTreeScan) {
 }
 
 fn scan_module_tree(text: &str) -> RustModuleTreeScan {
+    #[cfg(test)]
+    tests::UNCACHED_SCANS.with(|count| count.set(count.get() + 1));
     let Some(parse) = parse_clean_source_file(text) else {
         return RustModuleTreeScan::default();
     };
@@ -547,6 +549,12 @@ mod tests {
     /// a parallel restart cannot evict the entry another test is checking.
     static MEMO_RESET_LOCK: Mutex<()> = Mutex::new(());
 
+    thread_local! {
+        /// Uncached scans run on the observing thread, so parallel tests
+        /// never pollute each other's count.
+        pub(super) static UNCACHED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     fn default(inline: &[&str], name: &str) -> RustModuleTreeEdge {
         RustModuleTreeEdge::Default {
             inline: inline.iter().map(|segment| segment.to_string()).collect(),
@@ -574,8 +582,17 @@ mod tests {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let source = "mod served_from_memo;\n";
-        let fresh = rust_module_tree_scan(source);
-        assert_eq!(scan_memo_lookup(source), Some(fresh));
+        let before = UNCACHED_SCANS.with(std::cell::Cell::get);
+        let first = rust_module_tree_scan(source);
+        let second = rust_module_tree_scan(source);
+        let third = rust_module_tree_scan(source);
+        assert_eq!(first, second);
+        assert_eq!(first, third);
+        assert_eq!(
+            UNCACHED_SCANS.with(std::cell::Cell::get) - before,
+            1,
+            "three asks of one exact text must parse it once"
+        );
     }
 
     #[test]
