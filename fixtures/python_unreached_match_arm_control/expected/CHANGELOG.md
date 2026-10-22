@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unreached_match_arm_control (3)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 legend composed with newer main fixture; preserve every other output byte
+
+Command:
+`cargo xtask goldens bless python_unreached_match_arm_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
