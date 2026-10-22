@@ -643,27 +643,44 @@ fn parameter_rebound_before(
         if line_rebinds_parameter(trimmed, name) {
             return true;
         }
-        if let Some(targets) = trimmed
-            .strip_prefix("for ")
-            .and_then(|rest| rest.split(" in ").next())
-        {
-            // `for name in ..` / `for a, name in ..` rebinds the name, and
-            // so do parenthesized or bracketed tuple targets and star
-            // targets: Python binds every target before the body runs, so
-            // decoration around the name must not hide it
-            // (`for (other, total) in ..`).
-            if targets.split(',').any(|target| {
+        if for_target_rebinds(trimmed, name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when a `for` header's targets bind `name`: `for name in ..`,
+/// `for a, name in ..`, and parenthesized, bracketed or star targets. Python
+/// binds every target before the body runs, so decoration around the name
+/// must not hide it (`for (other, total) in ..`).
+fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
+    trimmed
+        .strip_prefix("for ")
+        .and_then(|rest| rest.split(" in ").next())
+        .is_some_and(|targets| {
+            targets.split(',').any(|target| {
                 let normalized = target
                     .trim()
                     .trim_start_matches(['(', '[', '*'])
                     .trim_end_matches([')', ']']);
                 normalized == name
-            }) {
-                return true;
-            }
-        }
-    }
-    false
+            })
+        })
+}
+
+/// True when the owner body (after the `def` header, nested scopes
+/// included) binds `name` anywhere. A comparison operand rebound inside the
+/// owner (a loop counter such as `start -= 1`) no longer holds the value the
+/// call bound, so a call-argument boundary read is unknown. Over-refuses by
+/// design; it never awards credit.
+pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
+    owner_source
+        .lines()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .map(str::trim)
+        .any(|line| line_rebinds_parameter(line, name) || for_target_rebinds(line, name))
 }
 
 /// One `left <op> right` comparison under a row's literal bindings, or None
