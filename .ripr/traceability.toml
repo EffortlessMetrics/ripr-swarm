@@ -7138,6 +7138,8 @@ id = "RIPR-SPEC-0084"
 name = "default base resolution"
 spec = "docs/specs/RIPR-SPEC-0084-default-base-resolution.md"
 tests = [
+  "crates/ripr/tests/cli_smoke.rs::pr_evidence_with_missing_artifacts_writes_packet",
+  "crates/ripr/tests/cli_smoke.rs::pr_evidence_without_default_base_in_shallow_checkout_writes_nothing",
   "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_origin_master_when_symbolic_ref_points_there",
   "crates/ripr/src/analysis/diff/load.rs::tests::resolve_default_base_uses_local_main_when_no_remote",
