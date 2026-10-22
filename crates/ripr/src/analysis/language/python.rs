@@ -292,6 +292,10 @@ struct PythonOwner {
     /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
     /// which keeps every consumer fail-closed.
     class_facts: related_tests::PythonClassFacts,
+    /// Writes to module attributes found in the workspace's other Python
+    /// files; only filled for the module owner of a changed file
+    /// (`module_value.rs`, #9423).
+    foreign_writes: module_value::ForeignWrites,
 }
 
 /// One declared parameter of a Python function owner.
@@ -951,6 +955,36 @@ impl PythonAdapter {
             .iter()
             .map(|path| normalized_path(path))
             .collect::<BTreeSet<_>>();
+
+        // Module-value reads (#9423) need what the rest of the workspace can
+        // do to a changed module's attributes, and which tests the diff also
+        // edits. Both are filled once per changed file, before classification.
+        let workspace_incomplete = refused_files > 0
+            || !workspace_read.limits.is_empty()
+            || !workspace_read.io_failures.is_empty();
+        for changed in &python_changed_files {
+            for owner in all_owners
+                .iter_mut()
+                .filter(|owner| owner.is_module_owner() && owner.file == changed.path)
+            {
+                owner.foreign_writes = module_value::ForeignWrites::scan(
+                    &changed.path,
+                    workspace_read
+                        .sources
+                        .iter()
+                        .map(|(file, source)| (file.as_path(), source.as_str())),
+                    workspace_incomplete,
+                );
+            }
+        }
+        for test in &mut all_tests {
+            if python_changed_files
+                .iter()
+                .any(|changed| changed.path == test.file)
+            {
+                test.constant_rebinding.edited_in_diff = true;
+            }
+        }
 
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;

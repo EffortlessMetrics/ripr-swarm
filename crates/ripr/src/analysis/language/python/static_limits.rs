@@ -1130,6 +1130,7 @@ mod tests {
             class_path: String::new(),
             term_facts: Default::default(),
             class_facts: Default::default(),
+            foreign_writes: Default::default(),
         }
     }
 

@@ -25,7 +25,8 @@
 
 use super::bool_oracle::count_bindings;
 use super::module_constants::{
-    ModuleBindingFacts, PythonModuleConstant, mentions_identifier, module_literal_constants,
+    ModuleBindingFacts, PythonModuleConstant, assigned_attributes, mentions_identifier,
+    module_literal_constants,
 };
 use super::related_tests::{
     import_source_module_matches_owner, owner_module_callees, submodule_receivers,
@@ -36,6 +37,94 @@ use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
+
+/// Words that mark a file able to rewrite another module's attribute at
+/// runtime without an assignment statement.
+const DYNAMIC_WRITERS: [&str; 10] = [
+    "setattr",
+    "patch",
+    "monkeypatch",
+    "reload",
+    "importlib",
+    "__import__",
+    "__dict__",
+    "globals",
+    "vars",
+    "exec",
+];
+
+/// What the workspace's other Python files can do to a module's attributes:
+/// assigned attribute names, and every word of a file that holds a dynamic
+/// writer (`setattr`, `patch`, `monkeypatch`, `importlib.reload`,
+/// `sys.modules`, ...). Filled for the module owner of a changed file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ForeignWrites {
+    attributes: Vec<String>,
+    dynamic_words: Vec<String>,
+    /// A workspace file could not be read or the scan hit its bound, so the
+    /// absence of a write is unknown.
+    unknown: bool,
+}
+
+/// Most distinct words kept from files with a dynamic writer.
+const MAX_DYNAMIC_WORDS: usize = 200_000;
+
+impl ForeignWrites {
+    /// The writes in every source but `own`, with `unknown` when some
+    /// workspace file went unread.
+    pub(super) fn scan<'a>(
+        own: &Path,
+        sources: impl Iterator<Item = (&'a Path, &'a str)>,
+        unread_files: bool,
+    ) -> Self {
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut words = std::collections::BTreeSet::new();
+        let mut unknown = unread_files;
+        for (file, source) in sources {
+            if file == own {
+                continue;
+            }
+            attributes.extend(assigned_attributes(source));
+            let dynamic = DYNAMIC_WRITERS
+                .iter()
+                .any(|writer| mentions_identifier(source, writer))
+                || source.contains("sys.modules");
+            if dynamic {
+                words.extend(
+                    source
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .filter(|word| !word.is_empty())
+                        .map(str::to_string),
+                );
+                if words.len() > MAX_DYNAMIC_WORDS {
+                    unknown = true;
+                    words.clear();
+                }
+            }
+        }
+        Self {
+            attributes: attributes.into_iter().collect(),
+            dynamic_words: words.into_iter().collect(),
+            unknown,
+        }
+    }
+
+    /// Whether another file may rebind `name` of the module at `module_file`:
+    /// it assigns an attribute of that name, or holds a dynamic writer and
+    /// mentions the name or the module's file stem. An unfilled value (a
+    /// context that never scanned) rebinds nothing it knows of; the diff
+    /// pipeline always fills it.
+    fn may_rebind(&self, name: &str, module_file: &Path) -> bool {
+        let stem = module_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        self.unknown
+            || self.attributes.iter().any(|attribute| attribute == name)
+            || self.dynamic_words.iter().any(|word| word == name)
+            || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
+    }
+}
 
 /// One assertion that fails when the constant takes its new value.
 pub(super) struct ModuleValueCredit<'a> {
@@ -148,6 +237,12 @@ fn credits<'a>(
         return None;
     };
     literal_constant(new_source, &new_module.body, &name, line)?;
+    // Another workspace file (production code, a conftest, a helper module)
+    // that writes the attribute or patches the module can rebind it for every
+    // test.
+    if module_owner.foreign_writes.may_rebind(&name, file) {
+        return None;
+    }
     // Another test file writing the attribute can rebind it for every test.
     if all_tests
         .iter()
@@ -189,7 +284,10 @@ fn credits<'a>(
 
     let mut out = Vec::new();
     for test in all_tests {
+        // A test file edited in the same diff may assert the new value; only
+        // an assertion the diff leaves alone is read as a pre-existing oracle.
         if super::test_activation::activation_control(test).is_some()
+            || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&name)
         {
             continue;
@@ -514,7 +612,12 @@ const GUARDING_STATEMENTS: [&str; 22] = [
 ];
 
 /// Words that end or skip a test when called.
-const LEAVING_CALLS: [&str; 7] = [
+const LEAVING_CALLS: [&str; 12] = [
+    "skipTest",
+    "SkipTest",
+    "quit",
+    "pytest_exit",
+    "Exit",
     "skip",
     "xfail",
     "importorskip",
@@ -558,7 +661,7 @@ fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bo
         return false;
     };
     let target = lines[index];
-    if indent(target) != base || !target.trim_start().starts_with("assert") {
+    if indent(target) != base || !target.trim_start().starts_with("assert ") {
         return false;
     }
     lines[header + 1..index].iter().all(|line| {
@@ -566,11 +669,17 @@ fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bo
         if !statement(line) {
             return true;
         }
-        let first_word: String = trimmed
-            .chars()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-            .collect();
-        let guarding = indent(line) == base && GUARDING_STATEMENTS.contains(&first_word.as_str());
+        // Every `;`-joined statement of a base-indent line is a statement of
+        // the body (`x = 1; return`).
+        let guarding = indent(line) == base
+            && trimmed.split(';').any(|part| {
+                let first_word: String = part
+                    .trim_start()
+                    .chars()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect();
+                GUARDING_STATEMENTS.contains(&first_word.as_str())
+            });
         !guarding
             && !LEAVING_CALLS
                 .iter()

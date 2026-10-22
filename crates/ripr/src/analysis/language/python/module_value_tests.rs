@@ -473,3 +473,220 @@ fn the_dead_conditional_definition_keeps_the_module_abstention() -> Check {
     assert_abstains(&finding);
     Ok(())
 }
+
+fn classify_in_workspace(
+    others: &[(&str, &str)],
+    unread_files: bool,
+    edited_tests: bool,
+    test_source: &str,
+) -> Result<Finding, String> {
+    let mut owners = owners_of(SETTINGS);
+    let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
+    let own = Path::new("hostile/settings.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source)),
+        unread_files,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    for test in &mut tests {
+        test.constant_rebinding.edited_in_diff = edited_tests;
+    }
+    classify_change_with_context(
+        own,
+        1,
+        SETTINGS_NEW,
+        Some(SETTINGS_OLD),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(SETTINGS),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+const PINNING_TEST: &str =
+    "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n";
+
+#[test]
+fn files_that_only_read_the_constant_leave_the_credit() -> Check {
+    let finding = classify_in_workspace(
+        &[
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nprint(settings.LIMIT + 1)\nif settings.LIMIT == 3:\n    pass\n",
+            ),
+            (
+                "tests/conftest.py",
+                "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef quiet(monkeypatch):\n    monkeypatch.setenv('X', '1')\n",
+            ),
+        ],
+        false,
+        false,
+        PINNING_TEST,
+    )?;
+    assert_credited(&finding);
+    Ok(())
+}
+
+#[test]
+fn another_file_that_rewrites_the_constant_withholds_the_credit() -> Check {
+    for (label, file) in [
+        (
+            "production attribute write",
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nsettings.LIMIT = int(os.environ['L'])\n",
+            ),
+        ),
+        (
+            "production augmented write",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsettings.LIMIT += 100\n",
+            ),
+        ),
+        (
+            "production setattr",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsetattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "conftest autouse monkeypatch",
+            (
+                "tests/conftest.py",
+                "import pytest\nfrom hostile import settings\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "conftest string-target patch",
+            (
+                "tests/conftest.py",
+                "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr('hostile.settings.LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "helper module without tests",
+            (
+                "tests/support.py",
+                "from hostile import settings\n\n\ndef raise_limit():\n    setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "reload of the module",
+            (
+                "app/reloader.py",
+                "import importlib\nfrom hostile import settings\n\nimportlib.reload(settings)\n",
+            ),
+        ),
+        (
+            "sys.modules swap",
+            (
+                "app/swap.py",
+                "import sys\nimport types\n\nsys.modules['hostile.settings'] = types.ModuleType('settings')\n",
+            ),
+        ),
+    ] {
+        let finding = classify_in_workspace(&[file], false, false, PINNING_TEST)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dynamic_writer_that_names_neither_the_constant_nor_the_module_is_ignored() -> Check {
+    let finding = classify_in_workspace(
+        &[(
+            "app/other.py",
+            "from unittest.mock import patch\n\n\ndef run():\n    with patch('os.getcwd'):\n        pass\n",
+        )],
+        false,
+        false,
+        PINNING_TEST,
+    )?;
+    assert_credited(&finding);
+    Ok(())
+}
+
+#[test]
+fn an_unread_workspace_file_withholds_the_credit() -> Check {
+    let finding = classify_in_workspace(&[], true, false, PINNING_TEST)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_test_file_edited_in_the_same_diff_is_not_read_as_an_oracle() -> Check {
+    // The head assertion may have been written for the new value, so the
+    // pre-existing-oracle reading does not apply to a test the diff touches.
+    let finding = classify_in_workspace(&[], false, true, PINNING_TEST)?;
+    assert_abstains(&finding);
+    Ok(())
+}
+
+#[test]
+fn statements_that_leave_the_test_before_the_assertion_are_not_credited() -> Check {
+    for body in [
+        "    x = 1; return\n    assert over_limit(11)",
+        "    x = 1; raise RuntimeError\n    assert over_limit(11)",
+        "    self.skipTest('later')\n    assert over_limit(11)",
+        "    raise unittest.SkipTest('later')\n    assert over_limit(11)",
+        "    x = 1; self.fail('now')\n    assert over_limit(11)",
+        "    sys.exit(0)\n    assert over_limit(11)",
+    ] {
+        let finding = classify_limit(&limit_test(body))?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    // Plain setup statements before the assertion still credit.
+    assert_credited(&classify_limit(&limit_test(
+        "    x = 1; y = 2\n    assert over_limit(11)",
+    ))?);
+    Ok(())
+}
+
+#[test]
+fn same_line_guards_around_the_assertion_do_not_credit() -> Check {
+    for body in [
+        "    if flag: assert over_limit(11)",
+        "    x = 1; assert over_limit(11)",
+        "    flag and assert_it(over_limit(11))",
+        "    assertTrue(over_limit(11))",
+    ] {
+        let finding = classify_limit(&limit_test(body))?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn live_definitions_are_owners_exactly_once_in_every_arm_shape() -> Check {
+    let count = |source: &str, name: &str| {
+        extract_owners(Path::new("hostile/versioned.py"), source)
+            .iter()
+            .filter(|owner| owner.name == name)
+            .count()
+    };
+    let if_else = "import sys\n\nif sys.version_info >= (3, 0):\n    def live():\n        return 1\nelse:\n    def dead():\n        return 2\n";
+    assert_eq!((count(if_else, "live"), count(if_else, "dead")), (1, 0));
+    let else_live = "import sys\n\nif sys.version_info < (3,):\n    def dead():\n        return 2\nelse:\n    def live():\n        return 1\n";
+    assert_eq!((count(else_live, "live"), count(else_live, "dead")), (1, 0));
+    let elif = "import sys\n\nif sys.version_info < (3,):\n    def dead_a():\n        return 0\nelif sys.version_info >= (3, 0):\n    def live():\n        return 1\nelse:\n    def dead_b():\n        return 2\n";
+    assert_eq!(
+        (
+            count(elif, "live"),
+            count(elif, "dead_a"),
+            count(elif, "dead_b")
+        ),
+        (1, 0, 0)
+    );
+    Ok(())
+}

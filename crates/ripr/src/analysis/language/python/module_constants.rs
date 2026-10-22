@@ -162,6 +162,9 @@ pub(super) struct PythonTestRebinding {
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
+    /// The test's file is also changed in this diff, so its assertions may
+    /// have been written for the new value (`module_value.rs`, #9423).
+    pub(super) edited_in_diff: bool,
 }
 
 impl PythonTestRebinding {
@@ -198,6 +201,7 @@ pub(super) fn python_test_rebinding(
         module_bound: Vec::new(),
         module_opaque: false,
         attributes: Vec::new(),
+        edited_in_diff: false,
     }
 }
 
@@ -335,7 +339,7 @@ fn writes_namespace_dynamically(source: &str) -> bool {
 
 /// Attribute names assigned as `<expr>.NAME = ...` or `<expr>.NAME += ...`
 /// anywhere in `source`.
-fn assigned_attributes(source: &str) -> Vec<String> {
+pub(super) fn assigned_attributes(source: &str) -> Vec<String> {
     let mut attributes = Vec::new();
     for (dot, _) in source.match_indices('.') {
         let rest = &source[dot + 1..];

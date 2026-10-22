@@ -251,6 +251,7 @@ fn owner_from_function(
             direct_statements: direct_expression_statements(context.source, body),
             ..Default::default()
         },
+        foreign_writes: Default::default(),
     }
 }
 
@@ -350,6 +351,7 @@ fn owner_from_class(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
     }
 }
 
@@ -384,6 +386,7 @@ pub(super) fn module_owner(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
     }
 }
 
