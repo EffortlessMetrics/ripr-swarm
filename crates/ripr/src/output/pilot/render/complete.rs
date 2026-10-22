@@ -25,10 +25,18 @@ use crate::output::pilot::{
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
-/// The actual ranking order, stated once for the Ranked Seams header; the
-/// full [`RANKING_ORDER_NOTE`] embeds the same sentence, and tests pin both
-/// so they cannot drift (#9368 item 3).
-const RANKING_ORDER_SENTENCE: &str = "Order: grip class, then missing-discriminator evidence, related tests, and assertion readiness; one pick per owning function, change-touched seams first.";
+/// The actual ranking order, stated once and shared by both constants
+/// through the macro so the header and the note cannot drift at compile
+/// time (#9368 item 3): change-touched seams first, then grip class, then
+/// owner rounds — every function's first seam ranks before any function's
+/// second, whatever its evidence (`spread_across_owners`, #5770) — and the
+/// evidence key breaks ties inside each round.
+macro_rules! ranking_order_sentence {
+    () => {
+        "Order: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness."
+    };
+}
+const RANKING_ORDER_SENTENCE: &str = ranking_order_sentence!();
 
 /// Pilot picks are ordered by static evidence (grip class, a missing
 /// value, a related test, a suggested assertion), not by measured mutant
@@ -37,7 +45,10 @@ const RANKING_ORDER_SENTENCE: &str = "Order: grip class, then missing-discrimina
 /// and its limit where it presents a pick as a recommendation (#9368 item
 /// 3), so the order is neither a mystery nor read as "highest-value test
 /// first". Structured (JSON) output is unchanged.
-const RANKING_ORDER_NOTE: &str = "Order: grip class, then missing-discriminator evidence, related tests, and assertion readiness; one pick per owning function, change-touched seams first. Static evidence, not measured fault yield: unproven against real faults, so treat each pick as a place to inspect, not as the highest-value test to add.";
+const RANKING_ORDER_NOTE: &str = concat!(
+    ranking_order_sentence!(),
+    " Static evidence, not measured fault yield: unproven against real faults, so treat each pick as a place to inspect, not as the highest-value test to add."
+);
 
 const PYTHON_PREVIEW_SUPPORTED_FEATURES: &[&str] = &[
     "project_detection",

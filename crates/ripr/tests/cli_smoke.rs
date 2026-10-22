@@ -19622,9 +19622,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout.contains(
-            "Top recommendation:\n  Order: grip class, then missing-discriminator evidence, related tests, and"
-        ),
+        stdout
+            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
         "{stdout}"
     );
     assert!(
