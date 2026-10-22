@@ -2922,6 +2922,35 @@ fn builtin_property_owner_is_not_decorator_indirection() -> Result<(), String> {
 }
 
 #[test]
+fn builtin_property_getter_without_a_related_test_stays_limited_not_no_static_path()
+-> Result<(), String> {
+    // An attribute read in an unrelated test file is not a modeled relation;
+    // `no_static_path` would claim no test reaches the getter.
+    let source = "class Holder:\n    @property\n    def v(self):\n        return 2\n";
+    let owners = extract_owners(Path::new("src/holder.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_api.py"),
+        "from src.holder import Holder\n\n\ndef test_result():\n    assert Holder().v == 2\n",
+    );
+    let Some(finding) = classify_change_with_old(
+        Path::new("src/holder.py"),
+        4,
+        "        return 2",
+        Some("        return 1"),
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed @property body should classify".to_string());
+    };
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::DecoratorIndirection)
+    );
+    Ok(())
+}
+
+#[test]
 fn rebound_property_owner_keeps_decorator_indirection() -> Result<(), String> {
     let source = "from helpers import property\n\nclass Holder:\n    @property\n    def v(self):\n        return 2\n";
     let owners = extract_owners(Path::new("src/holder.py"), source);

@@ -91,6 +91,28 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A plain `@property` getter runs on an attribute read (`holder.v`), a
+    // shape the call-based relations do not model. With no related test the
+    // absence of a path is not established, so keep the old limit instead of
+    // reading `no_static_path` (#6585 review); related-test evidence classifies
+    // the finding normally.
+    if related_candidates.is_empty()
+        && let Some(decorator) = owner
+            .decorators
+            .iter()
+            .find(|decorator| is_builtin_property_decorator(decorator, &owner.imports))
+    {
+        // Same wording as the generic decorator limit: this is the pre-existing
+        // reading for an unreached property getter, not a new limit.
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: format!("static_limit decorator_indirection: `{decorator}`"),
+            missing: format!(
+                "Static limit `decorator_indirection`: owner `{}` is decorated with `{decorator}`; syntax-first preview evidence does not resolve decorator-modified call behavior.",
+                owner.qualified_name
+            ),
+        });
+    }
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.

@@ -830,7 +830,13 @@ Expected static evidence:
   a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
   `decorator_indirection`. This is a lexical fail-closed screen, not a scope
   analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
-  `contextlib.contextmanager` and `property` also stay limited.
+  `contextlib.contextmanager` also stay limited. A plain built-in `@property`
+  (bare, `builtins.property`, or `from builtins import property`, none of them
+  rebound) is a transparent accessor when at least one related test exists; its
+  `@v.setter` / `@v.deleter`, a called `@property(...)` and any rebound
+  `property` stay `decorator_indirection`. A plain getter with no related test
+  keeps `decorator_indirection` rather than `no_static_path`, because a getter
+  runs on an attribute read that the call-based relations do not model (#6585).
 
 Simple route decorator repair:
 
