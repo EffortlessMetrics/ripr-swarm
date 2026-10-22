@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Perl verdict corpus: 3 more runtime-labeled cases (authored-perl-hostile-source, authored-perl-idioms-toolkit), part 6 of the batch tracked in #9447.
