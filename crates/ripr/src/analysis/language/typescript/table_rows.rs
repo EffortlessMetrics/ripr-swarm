@@ -99,6 +99,14 @@ fn literal_table_rows(
     let oxc_ast::ast::Argument::ArrayExpression(table) = table else {
         return None;
     };
+    literal_array_rows(table, source)
+}
+
+/// The cell texts of an inline array of arrays of one-line literals.
+pub(crate) fn literal_array_rows(
+    table: &oxc_ast::ast::ArrayExpression<'_>,
+    source: &SourceText<'_>,
+) -> Option<Vec<Vec<String>>> {
     if table.elements.is_empty() || table.elements.len() > MAX_TABLE_ROWS {
         return None;
     }
@@ -187,7 +195,7 @@ const BINDING_KEYWORDS: [&str; 6] = ["const", "let", "var", "catch", "function",
 
 /// The body with every read of a parameter replaced by its row cell, or
 /// `None` when any occurrence is not a plain read (see the module docs).
-fn substitute_row(body: &str, params: &[String], row: &[String]) -> Option<String> {
+pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> Option<String> {
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());
     let mut brackets: Vec<u8> = Vec::new();
@@ -334,7 +342,7 @@ fn is_identifier_part(byte: u8) -> bool {
 /// Re-parse one row's callback in place so assertion lines stay the
 /// original lines: every byte before the callback becomes a space (newlines
 /// kept) with `(` just before it, then the callback text and `);`.
-fn reparse_row_assertions(
+pub(crate) fn reparse_row_assertions(
     original: &str,
     callback_start: usize,
     callback_text: &str,

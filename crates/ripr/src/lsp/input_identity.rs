@@ -169,7 +169,7 @@ impl LspAnalysisInputIdentity {
     }
 
     fn canonical_root_spelling(root: &Path) -> String {
-        root.to_string_lossy().replace('\\', "/")
+        crate::output::path::path_identity_key_on(root, cfg!(windows), false)
     }
 
     /// Semantic identity text. Deadlines, position encoding, PID, client
@@ -296,6 +296,22 @@ mod tests {
         let without_duplicate = identity("workspace-root", [LanguageId::Rust]);
 
         assert_eq!(with_duplicate, without_duplicate);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_root_spellings_that_differ_do_not_share_an_input_fingerprint() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let spell = |bytes: &[u8]| {
+            LspAnalysisInputIdentity::canonical_root_spelling(Path::new(OsStr::from_bytes(bytes)))
+        };
+        // Negative experiment: a blanket `\` rewrite or `to_string_lossy`
+        // collapses each pair to one fingerprint input.
+        assert_ne!(spell(b"/w/a\\b"), spell(b"/w/a/b"));
+        assert_ne!(spell(b"/w/a\xFF"), spell(b"/w/a\xFE"));
+        assert_ne!(spell(b"/w/a\xFF"), spell("/w/a\u{fffd}".as_bytes()));
+        assert_eq!(spell(b"/w/a"), spell(b"/w/a"));
     }
 
     #[test]
@@ -615,11 +631,16 @@ mod tests {
         let slash = identity("workspace/root", [LanguageId::Rust]);
         let mut backslash = identity("workspace/root", [LanguageId::Rust]);
         backslash.effective_root = PathBuf::from("workspace\\root");
-        assert_eq!(slash.stable_id(), backslash.stable_id());
-        assert_eq!(
-            slash.canonical_identity_text(),
-            backslash.canonical_identity_text()
-        );
+        if cfg!(windows) {
+            assert_eq!(slash.stable_id(), backslash.stable_id());
+            assert_eq!(
+                slash.canonical_identity_text(),
+                backslash.canonical_identity_text()
+            );
+        } else {
+            // On Unix `workspace\root` is a different directory name.
+            assert_ne!(slash.stable_id(), backslash.stable_id());
+        }
     }
 
     #[test]

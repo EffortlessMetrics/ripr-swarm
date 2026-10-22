@@ -44,12 +44,12 @@ Evidence
   - reach yes: 1 related test(s) found for owner `isEligible`
   - infection unknown: TypeScript preview adapter does not yet model infection
   - propagation unknown: TypeScript preview adapter does not yet model propagation
-  - observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `age == 18`
-  - related test tests/eligibility.test.ts:3 eligibility uses smoke only oracle: expect(...).toBeTruthy(...); misses: assertion too weak to tell the old behavior from the new
+  - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
+  - discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `age == 18`
+  - related test tests/eligibility.test.ts:3 eligibility uses strong exact value oracle: expect(...).toBeTruthy(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
-  - Related test reaches `isEligible` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet
+  - Related tests reach `isEligible` with a strong oracle, but no strong assertion observes a `isEligible(...)` call at the changed predicate boundary `age == 18`; inputs on one side of the boundary do not discriminate the changed comparison
   - missing discriminator age == 18: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator
 
 TypeScript preview card (advisory)
@@ -59,9 +59,9 @@ TypeScript preview card (advisory)
   owner kind: function
   changed behavior: predicate changed at src/eligibility.ts:2: `return age > 18;`
   related test: tests/eligibility.test.ts:3 eligibility
-  oracle: smoke_only (smoke)
+  oracle: exact_value (strong)
   missing discriminator: age == 18
-  suggested assertion shape: Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   repair packet ready: false
   why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
@@ -76,7 +76,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_dead_assertion_after_try_empty_catch/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_empty_catch/diff.patch --mode fast probe:src_eligibility.ts:typescript_preview:013a8947
   ripr context --root <cwd>/fixtures/ts_dead_assertion_after_try_empty_catch/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_empty_catch/diff.patch --mode fast --at probe:src_eligibility.ts:typescript_preview:013a8947

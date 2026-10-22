@@ -37,7 +37,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master"
         } else {
-            "v1"
+            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
         };
         let prepared = |text: &str, command: &str| {
             let setup = format!(
@@ -1571,6 +1571,23 @@ jobs:
             .any(|v| v.contains("create-pull-request@5f6978f"))
     );
     assert!(violations.iter().any(|v| v.contains("rust-cache@main")));
+}
+
+#[test]
+fn full_action_commit_sha_has_exact_lowercase_sha1_boundaries() {
+    assert!(is_full_commit_sha(
+        "0123456789abcdef0123456789abcdef01234567"
+    ));
+    for reference in [
+        "0123456".to_string(),
+        "a".repeat(39),
+        "a".repeat(41),
+        "a".repeat(64),
+        "A".repeat(40),
+        "g".repeat(40),
+    ] {
+        assert!(!is_full_commit_sha(&reference), "{reference}");
+    }
 }
 
 #[test]
