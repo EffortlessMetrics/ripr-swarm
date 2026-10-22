@@ -59,11 +59,13 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
 
+      # nextest colors its status rows; strip the escapes for the filter only, the
+      # uploaded log stays raw.
       - name: Summarize failures
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" target/shard-${{ matrix.shard }}.log 2>/dev/null | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload shard logs
         if: ${{ !cancelled() }}
