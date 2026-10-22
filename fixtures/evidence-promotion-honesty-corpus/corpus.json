@@ -5,51 +5,26 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
-      "id": "typescript_enum_wrong_export",
-      "language": "typescript",
+      "id": "rust_sibling_parser_cannot_observe_aggregation_effect",
+      "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/typescript_enum_wrong_export",
-      "vector": "same_module_wrong_export_is_not_canonical_enum_identity",
-      "probe_family": "predicate",
+      "source_fixture": "fixtures/rust_sibling_effect_oracle",
+      "vector": "parser_only_equalities_cannot_lend_aggregation_discrimination",
+      "probe_family": "side_effect",
       "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
         {
           "type": "must_not_promote"
         },
         {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
           "type": "expected_class",
           "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
-        }
-      ]
-    },
-    {
-      "id": "typescript_enum_canonical_alias",
-      "language": "typescript",
-      "tier": "pure",
-      "source_fixture": "fixtures/typescript_enum_canonical_alias",
-      "vector": "renamed_local_retains_the_canonical_enum_member",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
         }
       ]
     },
@@ -230,6 +205,55 @@
         },
         {
           "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "typescript_enum_wrong_export",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_enum_wrong_export",
+      "vector": "same_module_wrong_export_is_not_canonical_enum_identity",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_enum_canonical_alias",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_enum_canonical_alias",
+      "vector": "renamed_local_retains_the_canonical_enum_member",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
         }
       ]
     },
@@ -10666,6 +10690,78 @@
         },
         {
           "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_computed_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_computed",
+      "vector": "field_update_computed_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_alias_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_alias",
+      "vector": "field_update_alias_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_object_assign_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_assign",
+      "vector": "field_update_object_assign_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
         }
       ]
     }
