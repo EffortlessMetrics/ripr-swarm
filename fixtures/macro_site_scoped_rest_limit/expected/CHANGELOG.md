@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (3)
+
+Reason:
+RIPR-SPEC-0240: re-bless after merging main; wording only (assertion-not-credited reason, no-oracle phrasing, repair-start line), classes remain static_unknown with no gap IDs (#8265)
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

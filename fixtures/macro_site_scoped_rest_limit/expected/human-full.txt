@@ -12,7 +12,7 @@ Shared evidence and guidance
   E2 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E3 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E4 [findings 1, 2]: local flow reaches returned value: 10 <= value (line 4)
-  E5 [findings 1, 2]: related test tests/buf_tests.rs:10 pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  E5 [findings 1, 2]: related test tests/buf_tests.rs:10 pins uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   E6 [findings 1, 2]: source assertion argument value true at line 11
   E7 [findings 1, 2]: source function argument value value = 10 at line 11
   E8 [findings 1, 2]: source function argument value value == 10 at line 11

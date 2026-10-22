@@ -18,7 +18,7 @@ Start here:
     `assert_eq!`
   Changed behavior: 10 <= value
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
-  Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
     standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
     value; add a test only if none does
@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
   ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:d545be08 --root <cwd>/fixtures/macro_site_scoped_rest_limit/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
