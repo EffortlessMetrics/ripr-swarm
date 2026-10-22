@@ -155,7 +155,12 @@ pub(super) struct Backend {
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
     documents: Mutex<DocumentStore>,
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Highest workspace revision a published snapshot analyzed.
+    last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     /// Negotiated session-configuration transport (#2031, RIPR-SPEC-0136).
@@ -345,6 +350,7 @@ impl Backend {
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
             documents: Mutex::new(DocumentStore::default()),
             saved_content_digests: Mutex::new(BTreeMap::new()),
+            last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
@@ -2068,11 +2074,16 @@ impl Backend {
     ) {
         // The save-dedup ledger (#1908) records a digest when a save is
         // accepted, before its refresh runs. A failed refresh analyzed
-        // nothing, so those digests no longer prove "already analyzed": drop
-        // them so an identical re-save retries instead of being swallowed
-        // until the content happens to change.
+        // nothing, so some digests no longer prove "already analyzed": drop
+        // those not yet covered by a published snapshot so an identical
+        // re-save retries instead of being swallowed until the content
+        // happens to change. Digests a successful snapshot already covered
+        // stay: an unrelated unchanged save must not trigger a refresh.
+        let covered = self
+            .last_published_workspace_revision
+            .load(Ordering::Acquire);
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.clear();
+            digests.retain(|_, (_, revision)| *revision <= covered);
         }
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
@@ -2113,6 +2124,8 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
+                self.last_published_workspace_revision
+                    .fetch_max(request.workspace_revision, Ordering::AcqRel);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -3907,13 +3920,15 @@ impl Backend {
         self.saved_content_digests
             .lock()
             .ok()
-            .and_then(|digests| digests.get(uri).cloned())
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
             .is_some_and(|recorded| recorded == digest)
     }
 
     fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, digest: String) {
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), digest);
+            // The save about to advance the revision produces `current + 1`.
+            let revision = self.workspace_revision().saturating_add(1);
+            digests.insert(uri.clone(), (digest, revision));
         }
     }
 
