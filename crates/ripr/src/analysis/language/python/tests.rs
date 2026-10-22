@@ -4316,6 +4316,29 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
             "{old} -> {new} under {assertion}"
         );
     }
+    // An integer beyond what `f64` holds exactly, a nested call as the asserted
+    // operand and `rel=None` with no `abs` (no band at all) are not decided.
+    for (new, assertion) in [
+        (
+            "9007199254740993 * radius",
+            "assert circle_area(2) == pytest.approx(18014398509481986, rel=1e-3)",
+        ),
+        (
+            "3.2 * radius * radius",
+            "assert circle_area(abs(2)) == pytest.approx(12.566, rel=1e-3)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", "9007199254740992 * radius"),
+                "9007199254740992 * radius",
+                new,
+                assertion
+            )?,
+            unread,
+            "{new} under {assertion}"
+        );
+    }
     // A longer body or a method receiver is not the bounded shape either.
     assert_eq!(
         classify_band_edit(

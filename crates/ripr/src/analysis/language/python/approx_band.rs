@@ -26,6 +26,11 @@ use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// The largest magnitude `f64` holds every integer up to exactly. Python
+/// ints are exact, so a literal or intermediate result beyond this is not
+/// evaluated.
+const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
+
 /// Relative distance to the band edge below which the outcome is not trusted:
 /// evaluation runs in `f64`, pytest's runs in Python floats and ints.
 const EDGE_MARGIN: f64 = 1e-9;
@@ -386,7 +391,13 @@ fn bind_arguments(owner: &PythonOwner, call: &ast::ExprCall) -> Option<BTreeMap<
 fn evaluate(expr: &Expr, names: &BTreeMap<String, f64>) -> Option<f64> {
     let value = match expr {
         Expr::Constant(constant) => match &constant.value {
-            ast::Constant::Int(number) => number.to_string().parse::<f64>().ok()?,
+            ast::Constant::Int(number) => {
+                let value = number.to_string().parse::<f64>().ok()?;
+                if value.abs() > EXACT_INTEGER_LIMIT {
+                    return None;
+                }
+                value
+            }
             ast::Constant::Float(number) => *number,
             _ => return None,
         },
@@ -412,7 +423,7 @@ fn evaluate(expr: &Expr, names: &BTreeMap<String, f64>) -> Option<f64> {
         }
         _ => return None,
     };
-    value.is_finite().then_some(value)
+    (value.is_finite() && value.abs() <= EXACT_INTEGER_LIMIT).then_some(value)
 }
 
 /// The expression of `text`, read the way the surrounding source would, so
