@@ -1,3 +1,8 @@
+# ripr.toml — every value below is the built-in default. Missing ripr.toml is
+# the normal first-run state and behaves identically, so you can ignore or
+# delete this file; edit only the settings you actually want to change.
+# Validate edits with `ripr config validate`; `ripr doctor` reports the state.
+
 [analysis]
 # Default analysis mode when CLI flags or LSP initialization options do not
 # set one explicitly. Valid: instant, draft, fast, deep, ready.
