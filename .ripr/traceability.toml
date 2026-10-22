@@ -15064,6 +15064,9 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_writes_the_serial_bytes",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_stops_on_cancellation_without_a_manifest",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_falls_back_to_the_caller_when_no_worker_spawns",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_matches_the_serial_plan",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_replans_a_shard_the_encode_rejects",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::concurrent_single_entry_probe_agrees_with_the_serial_decision",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded",
@@ -15828,6 +15831,15 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::receiver_scrutinee_reads_glob_imported_variants",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_skip_guard_over_a_literal_list_drops_only_the_listed_rows",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_listed_row_is_dropped_from_every_column",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::the_plain_column_reader_still_refuses_a_guarded_loop",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_loop_without_the_guard_is_not_a_skipping_table",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_glob_import_leaves_the_list_unestablished",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::only_the_exact_guard_shape_is_read",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::the_skip_list_must_be_one_plain_literal_const",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_key_cell_that_is_not_a_plain_string_cannot_be_compared",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_column_is_never_read_for_a_loop_that_skips_for_another_reason",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::char_literal_arms_compare_by_value",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_scrutinee_arithmetic_evaluates_the_input",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_value_equal_literal_respelling_reads_as_unchanged",
@@ -15901,6 +15913,9 @@ tests = [
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_head_edit_drops_the_unchanged_return_value",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_respelled_arm_value_drops_the_return_value_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_changed_or_unreadable_arm_value_keeps_the_return_value_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::integer_respelling_compares_values_and_nothing_else",
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_body_edit_keeps_the_changed_return_value",
   "crates/ripr/src/analysis/probes/diff.rs::tests::unchanged_return_value_stays_when_no_other_shape_holds_the_edit",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_return_value_containing_the_edit_stays",
@@ -16322,6 +16337,8 @@ tests = [
   "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0265_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refuses_an_empty_literal_argument",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
@@ -16800,7 +16817,9 @@ metrics = [
 id = "RIPR-SPEC-0237"
 name = "Pilot seam ranking"
 spec = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
-tests = []
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_discloses_actionable_total_and_max_seams_escape",
+]
 fixtures = []
 code = [
   "crates/ripr/src/output/pilot/ranking.rs",
