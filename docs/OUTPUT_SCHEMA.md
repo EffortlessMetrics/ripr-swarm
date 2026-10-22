@@ -14172,6 +14172,9 @@ Field contract:
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
   a complete pilot summary that ranked no seam because it withheld every
   seam as a static limitation (`withheld_static_limitations_total` > 0),
+  a complete pilot summary that ranked no seam and recorded no repair start
+  while `declined_rust_files.file_count` > 0 (a parse limit declined Rust
+  files, so a rerun declines them again),
   or a complete pilot summary that ranked no seam, recorded no repair card
   (`python_first_use` absent, `null`, or status `no_python_findings` or
   `no_repair_cards`) and routed the code to `ripr check`
@@ -14180,6 +14183,7 @@ Field contract:
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
   `pilot_found_no_repair_target`,
   `pilot_withheld_static_limitations_no_repair_target`,
+  `pilot_declined_rust_files_no_repair_target`,
   `pilot_routed_to_check_no_repair_target`) then names the choices. A seam
   the repair eligibility gate refuses (or cannot verify) is not offered a
   start: `repair_start_withheld` names it, states that the remaining work is

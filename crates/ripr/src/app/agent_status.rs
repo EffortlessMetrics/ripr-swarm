@@ -1596,7 +1596,8 @@ fn pilot_declined_files(root: &Path) -> bool {
 }
 
 /// Rust files a complete `ripr pilot` run declined with a parse limit when it
-/// ranked no seam, withheld none and recorded no repair start (#9371). Running
+/// ranked no seam and recorded no repair start (#9371). The withheld check
+/// runs first, so a run that also withheld seams never reaches this one. Running
 /// pilot again unchanged declines the same files, so status must not send the
 /// user back. A missing, unreadable, timed-out or seam-ranking summary is not
 /// this fact.
@@ -1604,6 +1605,8 @@ struct PilotDeclinedOnly {
     file_count: u64,
     named: Vec<String>,
 }
+
+const DECLINED_NAMED_MAX: usize = 3;
 
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
     let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
@@ -1629,7 +1632,7 @@ fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
         .map(|files| {
             files
                 .iter()
-                .take(3)
+                .take(DECLINED_NAMED_MAX)
                 .filter_map(|file| {
                     let path = file.pointer("/path").and_then(Value::as_str)?;
                     let reason = file.pointer("/reason").and_then(Value::as_str)?;
@@ -1650,11 +1653,19 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
     let named = if declined.named.is_empty() {
         String::new()
     } else {
-        format!(": {}", declined.named.join(", "))
+        let unnamed = declined
+            .file_count
+            .saturating_sub(declined.named.len() as u64);
+        let more = if unnamed > 0 {
+            format!(" and {unnamed} more")
+        } else {
+            String::new()
+        };
+        format!(": {}{more}", declined.named.join(", "))
     };
     // No trailing pilot command: rerunning unchanged declines the same files.
     format!(
-        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}{named}, so their seams were never analyzed, and running pilot again unchanged declines them again: {}",
+        "the last complete `ripr pilot` run ranked no seam and a parse limit declined {files}{named}, so their seams were never analyzed, and running pilot again unchanged declines them again: {}",
         crate::output::pilot::DECLINED_RUST_GUIDANCE,
     )
 }
@@ -5724,7 +5735,7 @@ mod tests {
             .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "declined 1 Rust file: `src/deep.rs` (rust_nesting_budget)",
+            "and a parse limit declined 1 Rust file: `src/deep.rs` (rust_nesting_budget)",
             "running pilot again unchanged declines them again",
             "Split them below the Rust parse budget",
         ] {
@@ -5734,7 +5745,8 @@ mod tests {
         // Controls: a timed-out run, or no declined files
         // keeps status on `select_seam`.
         for (control, text) in [
-            ("partial", summary("timed_out", "[]", declined)),
+            ("timed_out", summary("timed_out", "[]", declined)),
+            ("missing_field", r#"{"status": "complete", "top_actionable_seams": [], "withheld_static_limitations_total": 0, "next": {"repair_command": null}}"#.to_string()),
             (
                 "none",
                 summary("complete", "[]", r#"{"file_count": 0, "files": []}"#),
@@ -5745,6 +5757,66 @@ mod tests {
             let step = report.next_command.as_ref().map(|next| next.step.as_str());
             assert_eq!(step, Some("select_seam"), "{control}");
         }
+
+        // A ranked seam keeps its own branch: the declined warning is not it.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", r#"[{"seam_id": "a"}]"#, declined),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|warning| warning.kind != "pilot_declined_rust_files_no_repair_target"),
+            "{:?}",
+            report.warnings
+        );
+
+        // Withheld seams take the withheld branch, which already names the
+        // declined files, so the two warnings never stack.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", declined).replace(
+                "\"withheld_static_limitations_total\": 0",
+                "\"withheld_static_limitations_total\": 4",
+            ),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "limited_declined_files"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let kinds: Vec<&str> = report.warnings.iter().map(|w| w.kind.as_str()).collect();
+        assert!(
+            kinds.contains(&"pilot_withheld_static_limitations_no_repair_target")
+                && !kinds.contains(&"pilot_declined_rust_files_no_repair_target"),
+            "{kinds:?}"
+        );
+
+        // Only three files are named; the rest are counted.
+        let many = r#"{"file_count": 5, "files": [{"path": "a.rs", "reason": "r"}, {"path": "b.rs", "reason": "r"}, {"path": "c.rs", "reason": "r"}, {"path": "d.rs", "reason": "r"}, {"path": "e.rs", "reason": "r"}]}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", many),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        assert!(
+            warning.message.contains("declined 5 Rust files"),
+            "{}",
+            warning.message
+        );
+        assert!(
+            warning.message.contains("`c.rs` (r) and 2 more"),
+            "{}",
+            warning.message
+        );
+        assert!(!warning.message.contains("`d.rs`"), "{}", warning.message);
         Ok(())
     }
 
