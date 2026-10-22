@@ -1971,6 +1971,31 @@ fn tokio_spawned_task_counts_only_when_joined_and_unwrapped() -> Result<(), Stri
         ),
         ("handle awaited without a check", spawned(".await;"), ""),
         (
+            "return before the assertion",
+            spawned(".await.unwrap();").replacen(
+                "assert_eq!(fetch_limit(50, 50)",
+                "if std::env::var(\"X\").is_ok() { return; }\n            assert_eq!(fetch_limit(50, 50)",
+                1,
+            ),
+            "",
+        ),
+        (
+            "question mark before the assertion",
+            spawned(".await.unwrap();")
+                .replacen(
+                    "assert_eq!(fetch_limit(50, 50)",
+                    "let _v = std::env::var(\"X\").ok()?;\n            assert_eq!(fetch_limit(50, 50)",
+                    1,
+                )
+                .replacen("}).await", "Some(())\n        }).await", 1),
+            "",
+        ),
+        (
+            "a spawn that is a shadowing local item",
+            spawned(".await.unwrap();"),
+            "    fn spawn() {}\n",
+        ),
+        (
             "rebound tokio",
             spawned(".await.unwrap();"),
             "    use core as tokio;\n",

@@ -4578,6 +4578,34 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
     {
         return None;
     }
+    // `first_return` skips a `return` owned by an `async` block and the escape
+    // gate only reads closures, so an exit inside this block would skip the
+    // assertion unseen: refuse any `return` or `?` the block itself owns,
+    // including inside macro tokens.
+    let owns_exit = block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
+            )
+        })
+        .any(|token| {
+            token
+                .parent_ancestors()
+                .find(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::Fn::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node.clone())
+                            .is_some_and(|inner| inner.async_token().is_some())
+                })
+                .is_some_and(|owner| owner == *block.syntax())
+        });
+    if owns_exit {
+        return None;
+    }
     let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
     if args.args().count() != 1 {
         return None;
