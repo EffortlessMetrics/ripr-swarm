@@ -202,3 +202,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (18)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_rebound_constant_boundary_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

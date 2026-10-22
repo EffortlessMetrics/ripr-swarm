@@ -666,12 +666,17 @@
       "claim_id": "macro-site-parity",
       "owner_issue": 8265,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "The macro-site retention parity regression has a Draft repair (#8772).",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "Retained workspace macro-site disclosures match the singleton reference, scoped sites are excluded in both retention phases, and an unrelated scoped definition no longer turns binding uncertainty into an actionable gap (#8772).",
       "related_issues": [
         8772
       ],
-      "next": "Land #8772 or record a release hold with the failing predicate. Owner: #8265 repair owner."
+      "implementation_refs": [
+        "pr:8772"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/8265#issuecomment-6331576474"
+      ]
     },
     {
       "claim_id": "git-path-inventories",
