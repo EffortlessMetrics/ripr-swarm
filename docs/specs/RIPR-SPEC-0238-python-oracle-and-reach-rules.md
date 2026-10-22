@@ -616,6 +616,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     the changed effect could run, on both sides of the change. An
     assertion with no known source line does not credit here.
     Rule 6 still applies on the error path.
+    A comparison supplied by bounded assertion-helper resolution does not
+    establish that an `async def` or generator owner's body ran. Such an
+    owner receives no helper-derived credit, including through a method-name
+    branch when the changed effect has no modeled channel. Generator refusal
+    conservatively reads a whole `yield` identifier in the owner's source,
+    including f-string expressions, strings and nested scopes; it does not
+    claim precise generator execution. Raw assertions and mock expectations
+    keep their existing rules. Synchronous function-result helpers retain
+    the ordinary substituted-assertion reading.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level
