@@ -9577,6 +9577,226 @@ fn allow_attribute_detection_flags_guarded_lint_suppressions() {
     );
 }
 
+/// #9501 negative experiment: a guarded suppression wrapped in `cfg_attr`
+/// used to bypass the count ledger because only `allow`/`expect` directly
+/// after `#[` were recognized.
+#[test]
+fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
+    let text = format!(
+        "{}\nfn a() {{}}\n{}\n{}\n{}\n{}\n",
+        concat!("#", "[cfg_attr(test, allow(clippy::unwrap_used))]"),
+        concat!(
+            "#",
+            "![cfg_attr(not(test), expect(dead_code, reason = \"a, (b)\"), inline(never))]"
+        ),
+        concat!(
+            "#",
+            "[cfg_attr(all(unix, test), cfg_attr(test, allow(warnings)))]"
+        ),
+        concat!("#", "[ cfg_attr ( test , allow ( unused_imports ) ) ]"),
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(clippy::module_name_repetitions))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (3, "expect(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (5, "allow(unused_imports)".to_string()),
+        ]
+    );
+}
+
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+/// Raw string delimiters, rather than interior quotes or backslashes, bound a
+/// reason. Neither wrapper nesting nor ordinary attributes may lose a lint.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
+    let guarded = guarded_allow_attribute_lints();
+    for (hashes, body) in [
+        ("", "\\"),
+        ("#", "\" )"),
+        ("##", "\"# ) , [ ( \\"),
+        ("###", "🦀 \"## ], ( \\,"),
+    ] {
+        let reason = format!("r{hashes}\"{body}\"{hashes}");
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                reason
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "raw reason must retain both suppressions: {text}",
+            );
+        }
+    }
+}
+
+#[test]
+fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
+    let reason = "r#\"\"), allow(warnings), (\"#";
+    let text = format!(
+        concat!(
+            "#",
+            "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})))]"
+        ),
+        reason
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints()),
+        vec![(1, "allow(dead_code)".to_string())],
+    );
+}
+
+#[test]
+fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() -> Result<(), String>
+{
+    with_temp_cwd("allow-attributes-raw-reason", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        write(
+            &root.join("src/lib.rs"),
+            concat!(
+                "#",
+                "[cfg_attr(test, allow(dead_code, reason = r#\"\" )\"#), expect(warnings))]\nfn f() {}\n"
+            ),
+        );
+        badge_fixture_git(&["add", ".ripr/allow-attributes.txt", "src/lib.rs"])?;
+        let listed = super::tracked_files()?;
+        assert!(listed.iter().any(|path| path == "src/lib.rs"), "{listed:?}");
+
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("unbudgeted raw-reason suppressions must fail the gate")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read unbudgeted suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "src/lib.rs:1 contains `{attribute}` 1 time(s), allowed 0"
+                )),
+                "the gate must report the actual tracked suppression: {report}",
+            );
+        }
+
+        write(
+            &root.join(".ripr/allow-attributes.txt"),
+            "src/lib.rs|allow(dead_code)|1|deliberate gate fixture\nsrc/lib.rs|expect(warnings)|1|deliberate gate fixture\n",
+        );
+        super::check_allow_attributes_impl()?;
+
+        write(&root.join("src/lib.rs"), "fn f() {}\n");
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("removing raw-reason suppressions must leave stale budgets")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read stale suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "`{attribute}` allowlist count is stale: found 0, allowed 1"
+                )),
+                "the gate must retain exact budget enforcement: {report}",
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
+    for text in [
+        concat!("#", "[cfg_attr(test, derive(Debug))]"),
+        concat!("#", "[cfg_attr(test, allow)]"),
+        // The predicate position is not an attribute, even if it names a lint.
+        concat!("#", "[cfg_attr(allow(dead_code), derive(Debug))]"),
+        concat!("#", "[cfg_attr(test)]"),
+        concat!("#", "[cfg_attr(test, allow(dead_code)"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cfg_attr_suppression_spends_the_same_budget_as_the_plain_attribute() {
+    let guarded = guarded_allow_attribute_lints();
+    let text = concat!("#", "[cfg_attr(test, allow(dead_code))]");
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+    for (line, attribute) in guarded_allow_attributes_in_text(text, &guarded) {
+        counts
+            .entry(("src/lib.rs".to_string(), attribute))
+            .or_default()
+            .push(line);
+    }
+
+    let unbudgeted = allow_attribute_budget_violations(&BTreeMap::new(), &counts, &guarded);
+    assert_eq!(unbudgeted.len(), 1, "{unbudgeted:?}");
+    assert!(unbudgeted[0].contains("allow(dead_code)"), "{unbudgeted:?}");
+
+    let budget = BTreeMap::from([(
+        ("src/lib.rs".to_string(), "allow(dead_code)".to_string()),
+        1,
+    )]);
+    assert!(allow_attribute_budget_violations(&budget, &counts, &guarded).is_empty());
+}
+
 #[test]
 fn allow_attribute_detection_ignores_untracked_lints() {
     let text = format!(

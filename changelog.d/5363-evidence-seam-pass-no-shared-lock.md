@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A cold `ripr pilot` on a large workspace spends less time in the per-seam evidence pass. The seam workers no longer queue behind one lock around the shared owner-pin syntax while its first user scans the workspace for macro bindings, and the whole-index tables they all need (macro sites, type mentions, unseen-reach names) are built once before the pass fans out instead of by whichever worker asks first while the others wait (#5363).

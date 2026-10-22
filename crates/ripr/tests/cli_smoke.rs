@@ -792,7 +792,7 @@ fn write_bound_repo_exposure_fixture(
     "kind": "repo_exposure",
     "schema_version": "1",
     "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.11.0"}},
+    "producer": {{"tool": "ripr", "version": "{producer_version}"}},
     "repository": {{"root": "{root_identity}", "head": "{head}"}},
     "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
     "snapshot_identity": "snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}",
@@ -801,7 +801,8 @@ fn write_bound_repo_exposure_fixture(
   "scope": "repo",
   "run_status": "complete",
   "seams": [{seam_json}]
-}}"#
+}}"#,
+        producer_version = env!("CARGO_PKG_VERSION"),
     );
     let mut hasher = Sha256::new();
     hasher.update(raw.as_bytes());
@@ -1015,7 +1016,7 @@ fn bind_repo_exposure_fixture_with_worktree(
         "kind": "repo_exposure",
         "schema_version": "1",
         "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.11.0"},
+        "producer": {"tool": "ripr", "version": env!("CARGO_PKG_VERSION")},
         "repository": {"root": root_identity, "head": head},
         "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
         "snapshot_identity": format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}"),
@@ -3570,6 +3571,43 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         "{}",
         String::from_utf8_lossy(&nothing.stderr)
     );
+    // The `--json` refusal is the non-consumable analysis_failed envelope:
+    // no findings, nothing downstream may consume it, and the message carries
+    // the scope identity and the files the pattern missed.
+    let envelope: serde_json::Value = serde_json::from_slice(&nothing.stdout)
+        .map_err(|err| format!("matched-nothing refusal must be JSON: {err}"))?;
+    for (pointer, expected) in [
+        ("/analysis_scope/run_status", "analysis_failed"),
+        ("/run_limitations/0/category", "analysis_failed"),
+    ] {
+        assert_eq!(
+            envelope
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str),
+            Some(expected),
+            "{pointer}: {envelope}"
+        );
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        assert_eq!(
+            envelope.pointer(pointer),
+            Some(&serde_json::Value::Bool(false)),
+            "{pointer}: {envelope}"
+        );
+    }
+    assert_eq!(envelope["findings"].as_array().map(Vec::len), Some(0));
+    let message = envelope["run_limitations"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.starts_with("scope_filter_matched_nothing:")
+            && message.contains("--path nowhere/**")
+            && message.contains("src/big.rs"),
+        "{message}"
+    );
 
     // A scope that keeps the oversized file still trips the guard.
     let still_big = run(&["--path", "src/big.rs"]);
@@ -3590,6 +3628,14 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     // Malformed patterns and repo-scoped formats are refused up front.
     let bad = run(&["--path", "../escape"]);
     assert_eq!(bad.status.code(), Some(2));
+    // The refusal names the rejected pattern and the reason, so a regression
+    // to a generic failure is caught.
+    let bad_stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        bad_stderr.contains("--path pattern \"../escape\"")
+            && bad_stderr.contains("contains a `..` segment"),
+        "{bad_stderr}"
+    );
     let repo_format = run_ripr_with_env(
         &[
             "check",
@@ -10349,9 +10395,9 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
-            "producer versions differ",
+            "produced by RIPR 0.10.0",
         ),
         (
             "analysis mode",
@@ -11248,7 +11294,7 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
         ),
         (
@@ -11293,6 +11339,10 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
         let stderr = String::from_utf8_lossy(&output.stderr);
         let expected = if label == "analysis profile" {
             "invalid or unknown producer identity"
+        } else if label == "producer version" {
+            // #9500: a version other than the consumer's is refused at
+            // artifact validation, before pair comparability is reached.
+            "produced by RIPR 0.10.0"
         } else {
             "[incomparable_analysis_inputs]"
         };
@@ -19577,9 +19627,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout.contains(
-            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
-        ),
+        stdout
+            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
         "{stdout}"
     );
     assert!(
@@ -22293,9 +22342,13 @@ index 0000000..1111111 100644
         stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#),
         "diff-scope `ripr+` must filter out unrelated repo-wide TE debt: {stdout}"
     );
-    // The headline must reflect the filter: no behavioral candidates
-    // (docs-only diff) and no unrelated TE debt = 0.
-    assert!(stdout.contains(r#""message": "0""#));
+    // A docs-only diff has no analysis subject (#8827): the headline names
+    // that outcome with a warning instead of a clean `0`, while the unrelated
+    // TE debt stays filtered out above.
+    assert!(
+        stdout.contains(r#""message": "no analysis subject: no_behavioral_candidates""#),
+        "docs-only diff must not read as a clean zero: {stdout}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())

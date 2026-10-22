@@ -137,6 +137,20 @@ Final tree effect is derived exactly and cheaply first:
 Tree effect follows the renames git detects (`-M`, default similarity). A blame failure, a timeout or a non-UTF-8 path fails the capture; an unknown
 effect is never defaulted.
 
+Each fact also carries `inline_test_paths`: the product-class `.rs` paths whose
+every change in that commit sits inside a `#[cfg(test)]` item, on each side that
+has lines. It is read from `git diff -U0` hunks against the first parent and the
+item spans of the file at the parent and at the commit. Spans come from a lexer
+that ignores braces in comments, strings, raw strings and char literals; an item
+it cannot close, a whole-file add or delete, a hunk-less change and a quoted path
+give no span and stay product, as does an attribute on a field, variant or
+parameter (no item of its own ends before an enclosing closer). A span whose first or last line also holds other code
+gives no span either, because hunks are whole lines. A hunk that touches a span's
+attribute or closing line is a product change unless it is exactly the whole span, so a hunk that also adds a blank separator line
+around a new test module stays product (a conservative miss).
+ Product-class Rust under
+`editors/` and `schemas/` is scanned as well as `crates/ripr/src/`.
+
 ## Disposition rule v1 and overrides
 
 `cargo xtask release-ledger derive --facts <facts.json> --packet
@@ -152,10 +166,14 @@ published wire contract), except that any `.md` is `docs`, `package-lock.json`
 is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`; `evidence` is any test path (`tests/`, `tests.rs`,
 `*_tests.rs`, `fixtures/`), `benchmarks/`, `metrics/`, `docs/specs/` and
 `.ripr/`; `docs` is `docs/`, `changelog.d/`, any `.md` and the root `LICENSE`,
-`LICENSE-MIT` and `LICENSE-APACHE`; `control` is
-`.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`, `xtask`,
+`LICENSE-MIT` and `LICENSE-APACHE`; `automation` is `xtask`; `control` is
+`.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`,
 `policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and other root
 files; anything else is unclassified.
+
+A product path listed in the commit's `inline_test_paths` counts as `evidence`, so
+a commit whose only product edits are inline tests is `included_test_or_evidence`,
+while one that also edits product code in the same file stays product.
 
 Order, first match wins:
 
@@ -171,7 +189,9 @@ Order, first match wins:
    `claim_ref`.
 5. Otherwise the strongest class present: product is
    `included_accepted_product`, control is
-   `included_accepted_release_or_control`, evidence is `included_test_or_evidence`,
+   `included_accepted_release_or_control` (automation, `xtask`, keeps that
+   disposition under its own `automation` theme; a commit that also touches control
+   paths takes the control theme), evidence is `included_test_or_evidence`,
    docs is `included_structural_no_semantic_delta`.
 
 The design brief reads "only tests..." and "only docs..." for the lower classes;
@@ -210,7 +230,22 @@ valid-ledger control that yields no reasons.
 
 ## Test Mapping
 
+- `xtask/src/reports/release_ledger/inline_tests_tests.rs`:
+  `cfg_test_modules_and_items_are_spans`,
+  `braces_in_strings_chars_comments_and_raw_strings_do_not_end_a_span`,
+  `attributes_in_strings_and_other_cfgs_are_not_spans`,
+  `an_unclosed_item_is_not_a_span`, `zero_context_diffs_parse_hunks_and_whole_files`,
+  `quoted_paths_are_never_inline_edits`,
+  `hunks_must_sit_inside_a_span_on_every_side_that_has_lines`,
+  `only_product_rust_files_are_candidates`,
+  `a_span_sharing_a_line_with_other_code_is_not_a_span`,
+  `touching_a_span_boundary_line_is_a_product_change`,
+  `an_escaped_quote_char_literal_is_blanked_whole`,
+  `cfg_test_on_a_field_or_parameter_is_not_an_item_span`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
+  `inline_test_edits_are_detected_per_hunk_from_real_git`,
+  `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,
+  `changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit`,
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
   `split_refs_takes_only_the_trailing_pull_request`,
@@ -220,7 +255,11 @@ valid-ledger control that yields no reasons.
   `unjudgeable_commits_block_instead_of_defaulting`,
   `deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row`,
   `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
-  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`.
+  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`,
+  `repeated_derive_flags_are_rejected_before_any_file_is_read`,
+  `failed_derivation_leaves_an_existing_output_untouched`,
+  `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
+  `inline_test_only_product_paths_count_as_evidence`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
@@ -240,6 +279,8 @@ valid-ledger control that yields no reasons.
   `history_row_claiming_surviving_lines_is_rejected`,
   `blank_override_ref_is_rejected`, `unknown_rule_version_is_rejected`,
   `markdown_with_a_conflicting_second_digest_line_is_rejected`,
+  `markdown_projection_shows_every_records_theme`,
+  `input_over_the_byte_cap_is_rejected_not_truncated`,
   `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
   `valid_ledger_has_no_reasons`).
 

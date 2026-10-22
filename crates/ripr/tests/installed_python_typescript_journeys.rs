@@ -101,12 +101,16 @@ fn materialize(
     Ok((guard, root, decoy))
 }
 
-fn ripr(launch: &Path, args: &[&str]) -> Result<(bool, String), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn ripr_output(launch: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(launch)
         .args(args)
         .output()
-        .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+fn ripr(launch: &Path, args: &[&str]) -> Result<(bool, String), String> {
+    let output = ripr_output(launch, args)?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     Ok((output.status.success(), text))
@@ -405,4 +409,127 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
         "names the enabling config",
     )?;
     Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> Result<(), String> {
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "ts-verify",
+        Some(toml),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let snapshot_dir = root.join("target").join("ripr");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|error| format!("snapshot dir: {error}"))?;
+    let snapshot = |name: &str| snapshot_dir.join(name);
+    let produce = |name: &str| -> Result<PathBuf, String> {
+        // Stdout only: the artifact is the producer's exact bytes.
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        expect_exit(output.status.success(), true, "check-findings-json")?;
+        let path = snapshot(name);
+        std::fs::write(&path, &output.stdout).map_err(|error| format!("write {name}: {error}"))?;
+        Ok(path)
+    };
+
+    let before = produce("before.json")?;
+    let before_text =
+        std::fs::read_to_string(&before).map_err(|error| format!("read before: {error}"))?;
+    need(&before_text, "\"kind\":\"check_findings\"", "producer kind")?;
+    need(&before_text, "gap:typescript:", "typescript gap identity")?;
+
+    // The repair: pin the equality boundary the packet names.
+    let test_file = root.join("test").join("pricing.test.ts");
+    let original =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
+    let repaired = original.replacen(
+        "  it(\"discounts an above-threshold subtotal\"",
+        "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
+        1,
+    );
+    if repaired == original {
+        return Err("repair edit did not apply".to_string());
+    }
+    std::fs::write(&test_file, repaired).map_err(|error| format!("write test: {error}"))?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "pin the threshold"])?;
+    let after = produce("after.json")?;
+
+    let verify_args = |before: &Path, after: &Path| -> Vec<String> {
+        [
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &before.to_string_lossy(),
+            "--after",
+            &after.to_string_lossy(),
+        ]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect()
+    };
+    let run_verify = |before: &Path, after: &Path| -> Result<(bool, String), String> {
+        let args = verify_args(before, after);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        ripr(&decoy, &refs)
+    };
+
+    let (ok, verified) = run_verify(&before, &after)?;
+    expect_exit(
+        ok,
+        true,
+        &format!("verify over producer artifacts: {verified}"),
+    )?;
+    need(&verified, "gap:typescript:", "verify names the gap")?;
+
+    // Forgery 1: a hand-edited "after" with a flipped finding breaks the commitment.
+    let after_text =
+        std::fs::read_to_string(&after).map_err(|error| format!("read after: {error}"))?;
+    let forged = after_text.replacen(
+        "\"classification\": \"exposed\"",
+        "\"classification\": \"weakly_exposed\"",
+        1,
+    );
+    let forged_path = snapshot("forged.json");
+    std::fs::write(&forged_path, forged).map_err(|error| format!("write forged: {error}"))?;
+    let (ok, out) = run_verify(&before, &forged_path)?;
+    expect_exit(ok, false, "edited artifact")?;
+    need(&out, "content commitment mismatch", "edit is detected")?;
+
+    // Forgery 2: an artifact without the producer envelope is not accepted.
+    let bare = ripr_output(
+        &decoy,
+        &[
+            "check", "--root", &root_arg, "--base", &base, "--format", "json",
+        ],
+    )?;
+    let bare_path = snapshot("bare.json");
+    std::fs::write(&bare_path, &bare.stdout).map_err(|error| format!("write bare: {error}"))?;
+    let (ok, _) = run_verify(&bare_path, &after)?;
+    expect_exit(ok, false, "unenveloped before snapshot")?;
+
+    // Forgery 3: reversed lineage is incomparable.
+    let (ok, out) = run_verify(&after, &before)?;
+    expect_exit(ok, false, "reversed pair")?;
+    need(&out, "incomparable", "reversed pair named")?;
+    decoy_untouched(&decoy)
 }
