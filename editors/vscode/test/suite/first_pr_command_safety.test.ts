@@ -6,12 +6,17 @@ import { hasUnsafeShellMetacharacter } from '../../src/packetJson';
 suite('First-PR command safety', () => {
   const workspaceRoot = path.resolve('first-pr workspace');
 
-  for (const separator of ['\n', '\r\n']) {
+  for (const [name, command] of [
+    ['LF', 'ripr agent receipt --root . --json\nprintf REVIEW_EXTRA_COMMAND'],
+    ['CRLF', 'ripr agent receipt --root . --json\r\nprintf REVIEW_EXTRA_COMMAND'],
+    ['leading CR', '\rripr agent receipt --root . --json'],
+    ['standalone CR', 'ripr agent receipt --root . --json\rprintf REVIEW_EXTRA_COMMAND'],
+    ['quoted LF', "ripr agent receipt --root 'workspace\nname' --json"]
+  ]) {
     for (const placement of ['commands', 'selected'] as const) {
-      test(`rejects raw ${JSON.stringify(separator)} in ${placement} before normalization`, () => {
-        const command = `ripr agent receipt --root . --json${separator}printf REVIEW_EXTRA_COMMAND`;
+      test(`rejects raw ${name} in ${placement} before normalization`, () => {
         assert.strictEqual(hasUnsafeShellMetacharacter(command), true);
-        assert.strictEqual(packetStatus(command, workspaceRoot, placement).state, 'unsafeCommand');
+        assert.strictEqual(packetStatus(command, workspaceRoot, placement).state, 'unsafeCommand', JSON.stringify(command));
       });
     }
   }
@@ -64,6 +69,12 @@ suite('First-PR command safety', () => {
     ]) {
       assert.strictEqual(firstPrCommandIsSafe(command, [workspaceRoot]), false, command);
     }
+  });
+
+  test('preserves quoted whitespace and redirect-like bytes as argument data', () => {
+    const root = path.resolve('first-pr  workspace').replace(/\\/g, '/');
+    const command = `ripr\tagent packet --root . --gap-id 'gap:a  >\tb' --json\t>\t'${root}/target/ripr/out.json'`;
+    assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
   });
 });
 
