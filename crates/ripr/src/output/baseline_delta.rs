@@ -1124,10 +1124,19 @@ fn match_current_decision(identity: &Identity, indexes: &CurrentIndexes) -> Matc
 /// canonical identity change (issue #1964). `None` unless both sides carry a
 /// canonical gap id and they differ.
 fn canonical_divergence(baseline: &BaselineRecord, current: &CurrentDecision) -> Option<String> {
-    match (
+    canonical_identity_divergence(
         baseline.identity.canonical_gap_id.as_deref(),
         current.identity.canonical_gap_id.as_deref(),
-    ) {
+    )
+}
+
+/// The single owner of the fallback-join divergence rule, shared by the delta
+/// and by the gate's baseline comparison so they cannot disagree (issue #1964).
+pub(super) fn canonical_identity_divergence(
+    baseline: Option<&str>,
+    current: Option<&str>,
+) -> Option<String> {
+    match (baseline, current) {
         (Some(old), Some(new)) if old != new => Some(format!("{old} -> {new}")),
         _ => None,
     }
@@ -1743,7 +1752,7 @@ fn fallback_identity(
     }
 }
 
-fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
+pub(super) fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
     string_field(value.get("canonical_gap_id"))
         .or_else(|| string_field(value.pointer("/identity/canonical_gap_id")))
         .or_else(|| string_field(value.pointer("/evidence_record/canonical_gap_id")))
@@ -1760,6 +1769,19 @@ pub(crate) use crate::output::path::display_path;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn canonical_identity_divergence_matrix_is_pinned_for_gate_and_delta() {
+        use super::canonical_identity_divergence as div;
+        // The gate and `baseline diff` both call this one rule (issue #1964).
+        assert_eq!(div(Some("a"), Some("a")), None);
+        assert_eq!(div(Some("a"), Some("b")).as_deref(), Some("a -> b"));
+        // A side without a canonical id carries no divergence evidence, so a
+        // legacy/identityless side keeps the disclosed fallback join.
+        assert_eq!(div(Some("a"), None), None);
+        assert_eq!(div(None, Some("b")), None);
+        assert_eq!(div(None, None), None);
+    }
+
     use super::{
         BaselineDeltaInput, build_baseline_delta_report, render_baseline_delta_json,
         render_baseline_delta_markdown,

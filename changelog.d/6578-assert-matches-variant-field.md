@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- An `assert_matches!` (or `assert!(matches!(..))`) on the owner's result whose pattern pins a changed variant field to a literal, such as `Err(ParseError::BadDigit { pos: 0 })`, now counts as observing that field. Wildcard, binding, range, guarded and alternative patterns, variants other code or the test itself also builds, owner calls with non-literal arguments, compound `assert!` conditions and `#[should_panic]` tests still do not (#6578).

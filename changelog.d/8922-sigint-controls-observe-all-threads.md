@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Test: the three native SIGINT interruption controls (`native_sigint_interrupts_held_stdin`, `native_sigint_interrupts_unopened_fifo`, `second_sigint_escapes_blocked_interruption_diagnostics`) now observe the blocked I/O on every CLI thread instead of only the leader, which waits on a futex since the budgeted check moved to a worker thread; they failed under `--all-features` before reaching the signal (#8922).

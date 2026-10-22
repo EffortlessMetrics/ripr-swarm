@@ -73,7 +73,8 @@ required `Ripr Rust Small Result` exists only for that request). ub-review, the
 Python wheel workflow and source-of-truth still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
 starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
@@ -116,6 +117,25 @@ Route, docs detection and admission carry the same request guard, so an
 ordinary label allocates no qualification work, and the result job keeps
 `if: always()` so a skipped prerequisite fails the required context instead of
 skipping it.
+
+### Which state is my PR in, and what is next?
+
+The state names describe where a head is; only the `merge-ready` request (or a
+merge-queue entry) spends the required qualification. `merge-ready` is today's
+spelling of that request, so apply it only when the exact head is the selected,
+reviewed candidate, never as a general "please run CI" signal.
+
+| State | How to read it on the PR | Next action |
+| --- | --- | --- |
+| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
+| Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
+| Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
+| Not qualified | A push landed after the request, or the result failed or was refused at admission (a Draft PR is refused: `candidate_not_open_ready`) | Repair; admission refusals name the cause (for example a missing PR-body claim field, or Draft). Mark the PR Ready, then remove and re-apply `merge-ready` for the new head |
+
+A green `ub-review` wrapper is advisory: read its review and sensor output, not
+only the conclusion (see the `ub-review` notes under Current Workflows). A
+cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
 
 ## Verification Economics Policy
 
@@ -2249,6 +2269,32 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
+
+The ordinary size envelope (files and changed lines) counts only what a human
+has to review. Generated files are declared once, with `linguist-generated` in
+`.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
+public-proof metrics), and their lines and files are not counted. The
+declaration is read from the PR's base commit, so a PR cannot label its own
+files; a `.gitattributes` edit is itself counted in full. Three guards keep the
+label from hiding hand-written code: only declarable shapes count (lockfiles,
+`fixtures/**/expected/**`, `metrics/public-proof/**`; a new family is added to
+`GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
+ignored and fails admission with `generated_declaration_invalid`); only data
+file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
+exempt, and a file must change at least one line; and the exempt lines have their
+own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
+from the hand-written change. A truncated file listing exempts nothing.
+
+Past its diff budget (roughly 700 KB of patch text) GitHub lists the remaining
+files with no line counts while the PR totals still include them. Their lines are
+the PR total minus the listed lines. The generated files among them are exempt
+only after each hand-written file in that group, of any status, is bounded by its
+own line count at the merge base (under its previous name for a rename) plus the
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
