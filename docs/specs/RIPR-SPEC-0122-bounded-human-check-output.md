@@ -26,6 +26,10 @@ Linked issues:
 - [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
   the bounded default verdict uses plain language only; schema tokens stay
   in `human-full`, JSON, and `explain`.
+- [#9346](https://github.com/EffortlessMetrics/ripr-swarm/issues/9346) -
+  Start-here selection ranks changed-file role first, so an unknown probe
+  seeded by a test-file edit cannot lead over a decisive production
+  verdict.
 
 Linked PRs:
 
@@ -220,13 +224,28 @@ lines rendered beneath it:
 The bounded renderer selects at most one visible unsuppressed finding. The
 selector is deterministic:
 
-1. Non-preview findings outrank preview-language findings.
-2. Non-exposed findings with repair routes outrank findings without repair
+1. Findings whose changed file seeds production findings outrank findings
+   on evidence-role files (#9346). The role is the producer-owned
+   source-role model (`analysis::workspace::source_role`, layout-only at
+   this surface): production subjects and opted-in production-like targets
+   seed; integration tests, benches, examples, and fixtures are evidence.
+   The demoted pair is (evidence-role file, unknown verdict): an unknown
+   probe seeded by a test-file edit cannot lead over the decisive or weak
+   production finding it accompanies.
+2. Non-preview findings outrank preview-language findings.
+3. Non-exposed findings with repair routes outrank findings without repair
    routes.
-3. `exposed` findings do not outrank non-exposed findings merely because they
+4. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-4. Class, gap metadata, related tests, missing evidence, confidence, path, and
+5. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
+
+Verdict order within one file role is unchanged: a production unknown
+still leads a production `exposed` finding, so `no_actionable_gap` keeps
+meaning only-exposed-selected, a production unknown keeps its lead over a
+decisive test-file finding, and when every probe is unknown the selected
+unknown still yields the `static_limited` state. Classification is
+unchanged; only the selection order moves (#9346).
 
 The selected finding's `Next step` is never truncated, because the guidance
 ends with its remedy (#4323). Text within the digest line budget stays on one

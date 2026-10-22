@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::analysis::{SourceRoleContext, classify_with};
 use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
@@ -89,7 +90,9 @@ pub(crate) fn select_human_triage<'a>(
             continue;
         }
         visible_findings += 1;
-        if selected.is_none_or(|current| triage_rank(finding) < triage_rank(current)) {
+        if selected.is_none_or(|current| {
+            triage_rank(finding, &output.root) < triage_rank(current, &output.root)
+        }) {
             selected = Some(finding);
         }
     }
@@ -1012,7 +1015,23 @@ fn python_preview_safe_action(finding: &Finding) -> String {
     )
 }
 
-fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path, usize) {
+/// #9346: the changed file's role from the producer-owned source-role
+/// model (`analysis::workspace::source_role`, layout-only context: triage
+/// holds no Cargo target metadata). Files that seed production findings
+/// rank ahead of evidence-role files (integration tests, benches,
+/// examples, fixtures), so an unknown probe seeded by a test-file edit
+/// cannot lead Start here over the production change it accompanies.
+fn file_role_rank(finding: &Finding, root: &std::path::Path) -> u8 {
+    let file = &finding.probe.location.file;
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let role = classify_with(relative, &SourceRoleContext::empty());
+    u8::from(!role.seeds_production_findings())
+}
+
+fn triage_rank<'a>(
+    finding: &'a Finding,
+    root: &std::path::Path,
+) -> (u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -1030,6 +1049,13 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         class_rank
     };
     (
+        // #9346: changed-file role leads the ranking. The pair (file
+        // role, verdict decisiveness) defines the demotion this fixes —
+        // an unknown verdict on an evidence-role file — while verdict
+        // order within one role keeps its existing keys below, so a
+        // production unknown still leads a production exposed finding
+        // and `no_actionable_gap` keeps meaning only-exposed-selected.
+        file_role_rank(finding, root),
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
@@ -1842,6 +1868,121 @@ mod tests {
             rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
             "{rendered}"
         );
+    }
+
+    fn finding_at(id: &str, file: &str, class: ExposureClass) -> Finding {
+        let mut finding = test_finding(id);
+        finding.probe.location = SourceLocation::new(file, 1, 1);
+        finding.class = class;
+        finding
+    }
+
+    /// #9346: a decisive production verdict must lead Start here ahead of
+    /// an unknown probe seeded by a test-file edit. The unknown is listed
+    /// first so insertion order cannot masquerade as ranking.
+    #[test]
+    fn start_here_prefers_exposed_production_over_unknown_test_file() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production = finding_at("finding:production", "src/lib.rs", ExposureClass::Exposed);
+        let output = test_output(vec![test_unknown, production]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    /// #9346: the same preference covers a weak production gap.
+    #[test]
+    fn start_here_prefers_weak_production_over_unknown_test_file() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production = finding_at(
+            "finding:production",
+            "src/lib.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let output = test_output(vec![test_unknown, production]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production")
+        );
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+    }
+
+    /// #9346: with no decisive production verdict the limitation headline
+    /// stays: a production unknown is selected over a test-file unknown,
+    /// and a lone test-file unknown still leads.
+    #[test]
+    fn start_here_keeps_static_limited_when_all_probes_are_unknown() {
+        let test_unknown = finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let production_unknown = finding_at(
+            "finding:production-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![test_unknown, production_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+
+        let output = test_output(vec![finding_at(
+            "finding:test-unknown",
+            "tests/pricing.rs",
+            ExposureClass::StaticUnknown,
+        )]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346: file role leads the ranking, so a production unknown is
+    /// never demoted below a decisive test-file finding.
+    #[test]
+    fn start_here_does_not_demote_production_unknown_below_test_decisive() {
+        let test_decisive = finding_at(
+            "finding:test-decisive",
+            "tests/pricing.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        let production_unknown = finding_at(
+            "finding:production-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        let output = test_output(vec![test_decisive, production_unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:production-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
     }
 
     #[test]
