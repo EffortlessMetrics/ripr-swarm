@@ -17621,6 +17621,9 @@ outputs = [
   "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md",
   "docs/REPAIR_ATTEMPT.md",
 ]
+metrics = [
+  "unit_test_pass_rate",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0294"
