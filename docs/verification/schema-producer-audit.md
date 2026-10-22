@@ -127,10 +127,26 @@ rule for which bytes count:
 Hand-written edge fixtures are counted apart from producer bytes, so they can
 never be a row's only subjects.
 
-The sweep is release-only. It is not a required check; replacing the required
-gate's subject selection is #3919, deferred past the 0.11 cut. Unit tests pin
-the sweep's own failure modes and that its binding table names exactly the
-published inventory.
+The sweep runs in the required Rust gate (`rust-gates.yml`, step `Schema
+producer sweep`, reached through `Ripr Rust Small Result` on a merge-ready
+request and on `main` pushes) without any new workflow or check name (#9505).
+On the candidate it validates every corpus row and feeds the runtime-only rows
+with bytes that same run produced: `doctor` from the freshly built binary on
+every run, and on pull requests and merge groups also `pr-evidence`
+(`target/ripr/pr/repo-exposure.json`) and `review-comments`
+(`target/ripr/review/comments.json`) from the PR evidence step. A missing or
+unparseable artifact fails the step, so a producer that stops writing cannot
+turn a row into `not_run`. A producer that drifts from its published schema
+(for example renaming a `doctor` field) fails the gate with
+`missing required field` / `unexpected field`. Replacing the required gate's
+hand-picked subject selection is still #3919.
+
+Enforcement gap, stated explicitly: `repair-attempt` and `execution_result`
+need an agent repair transaction, so they stay `not_run` on the candidate and
+remain a release-packet replay (below). Exempt rows (reserved envelopes and
+`ripr-agent-capability`) are never counted as validated. Unit tests pin the
+sweep's own failure modes, that its binding table names exactly the published
+inventory, and that the required gate keeps the step and its three artifacts.
 
 To feed the runtime-only rows on a candidate, run the producers in a scratch Git
 repository with one committed behavior change (for example

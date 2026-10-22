@@ -196,6 +196,7 @@ fn owner_from_function(
         unplain_decorators,
         parameters,
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
@@ -261,6 +262,7 @@ fn owner_from_class(
         unplain_decorators: called_decorator_names(decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
@@ -292,6 +294,7 @@ pub(super) fn module_owner(
         unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),

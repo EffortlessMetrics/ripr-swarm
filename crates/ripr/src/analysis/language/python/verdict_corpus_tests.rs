@@ -19,7 +19,11 @@ fn classify(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
-    let owners = extract_owners(Path::new(OWNER_FILE), owner);
+    let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
+    // The workspace pass fills the star-export fact from the module source.
+    reexports::apply_package_reexports(&mut owners, |file| {
+        (file == Path::new(OWNER_FILE)).then_some(owner)
+    });
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
     let new_line = owner
         .lines()
@@ -1871,5 +1875,96 @@ fn a_set_up_hook_the_framework_does_not_run_or_that_shadows_the_class_does_not_c
             "{rebind}"
         );
     }
+    Ok(())
+}
+
+/// A star import names every public owner of its module, so a strong exact
+/// assertion on the starred name observes the owner. Private names stay out
+/// of a star import, and an import from another module never binds it.
+#[test]
+fn star_import_binds_a_public_owner_for_the_strong_oracle() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    for (import, expected) in [
+        ("from src.shop import fee", ExposureClass::Exposed),
+        ("from src.shop import *", ExposureClass::Exposed),
+        ("from src.other import *", ExposureClass::WeaklyExposed),
+    ] {
+        assert_eq!(
+            classify(FEE, 2, FEE_OLD, &test_module(import, body))?,
+            expected,
+            "{import}"
+        );
+    }
+    let private = "def _fee(amount):\n    return amount * 3\n";
+    assert_eq!(
+        classify(
+            private,
+            2,
+            FEE_OLD,
+            &test_module(
+                "from src.shop import *",
+                "def test_fee():\n    assert _fee(2) == 6\n"
+            )
+        )?,
+        ExposureClass::WeaklyExposed,
+        "a private name is not exported by a star import"
+    );
+    Ok(())
+}
+
+/// A star import binds only what the module exports: `__all__` decides when
+/// declared, an absent `__all__` exports every public name, and an `__all__`
+/// this reader cannot resolve fails closed.
+#[test]
+fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    for (all, expected, why) in [
+        (
+            "",
+            ExposureClass::Exposed,
+            "no __all__ exports every public name",
+        ),
+        (
+            "__all__ = ['fee']\n\n\n",
+            ExposureClass::Exposed,
+            "a listed name is exported",
+        ),
+        (
+            "__all__ = ['charge']\n\n\n",
+            ExposureClass::WeaklyExposed,
+            "a name omitted from __all__ is not exported",
+        ),
+        (
+            "__all__ = make_all()\n\n\n",
+            ExposureClass::WeaklyExposed,
+            "an unresolved __all__ fails closed",
+        ),
+    ] {
+        let owner = format!("{all}{FEE}");
+        let line = 2 + all.matches('\n').count();
+        assert_eq!(
+            classify(
+                &owner,
+                line,
+                FEE_OLD,
+                &test_module("from src.shop import *", body)
+            )?,
+            expected,
+            "{why}"
+        );
+    }
+    // The omitted owner is not credited even when the test calls the same name
+    // from a module it did import.
+    let owner = format!("__all__ = ['charge']\n\n\n{FEE}");
+    assert_eq!(
+        classify(
+            &owner,
+            5,
+            FEE_OLD,
+            &test_module("from src.shop import *\nfrom src.other import fee", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "fee comes from src.other, not the starred module"
+    );
     Ok(())
 }
