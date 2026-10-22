@@ -457,9 +457,12 @@ and single-platform CI was the root cause enabling both.
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
   not start) and exits 0, so test outcomes stay advisory and a missing status is
-  still reported as missing evidence by the summarizer. It also bounds the wait
-  for output after cargo exits and terminates descendants that keep the pipe
-  open, which is what a `| tee` could not do: a test that leaks a child kept
+  still reported as missing evidence by the summarizer. Both streams share one
+  pipe so cargo's `Running` headers and libtest's results keep the order the
+  summarizer attributes by. It also bounds the wait for output after cargo
+  exits and requests termination of the process tree when a descendant keeps
+  the pipe open (a Job Object kills the whole tree on Windows), which is what a
+  `| tee` could not do: a test that leaks a child kept
   the step alive after cargo finished until the 90-minute job limit cancelled
   the whole lane (run 39549631529), and two jobs ran for hours past a
   75-minute step limit with no output (jobs 119992784688 and 120026188944). The

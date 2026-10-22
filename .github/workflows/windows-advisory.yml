@@ -154,7 +154,7 @@ jobs:
         timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Check --all-features (advisory)
         if: ${{ !cancelled() }}
@@ -183,14 +183,14 @@ jobs:
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Summarize environment
         if: ${{ !cancelled() }}

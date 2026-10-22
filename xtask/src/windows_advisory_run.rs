@@ -28,7 +28,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -89,7 +89,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 if minutes == 0 {
                     return Err("--timeout-minutes must be at least 1".to_string());
                 }
-                timeout = Some(Duration::from_secs(minutes * 60));
+                let seconds = minutes
+                    .checked_mul(60)
+                    .ok_or_else(|| format!("--timeout-minutes is too large: {value}"))?;
+                timeout = Some(Duration::from_secs(seconds));
             }
             "--log" => log = Some(PathBuf::from(iter.next().ok_or(USAGE)?)),
             "--status" => status = Some(PathBuf::from(iter.next().ok_or(USAGE)?)),
@@ -128,7 +131,9 @@ impl SlowTests {
         if let Some((name, _)) = rest.split_once(" has been running for over ") {
             self.0.insert(name.to_string());
         } else if let Some((name, _)) = rest.split_once(" ... ") {
-            self.0.remove(name);
+            // libtest spells a finished should_panic test `NAME - should panic`.
+            self.0
+                .remove(name.strip_suffix(" - should panic").unwrap_or(name));
         }
     }
 }
@@ -166,12 +171,23 @@ fn execute(options: &Options, out: &mut dyn Write) -> Result<Outcome, String> {
         .collect::<Vec<_>>()
         .join(" ");
 
+    // One pipe for both streams, like `> log 2>&1`: cargo writes its `Running`
+    // headers to stderr and libtest writes `test result:` to stdout, and the
+    // summarizer attributes results to the most recent header, so the two must
+    // keep the order the child wrote them in. Two pipes drained by two threads
+    // would let a result overtake its header.
+    let (reader, writer) =
+        std::io::pipe().map_err(|err| format!("create the output pipe: {err}"))?;
+    let stderr_writer = writer
+        .try_clone()
+        .map_err(|err| format!("clone the output pipe: {err}"))?;
     let mut command = Command::new(&options.program);
     command
         .args(&options.args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = match OwnedProcess::spawn(command) {
+        .stdout(writer)
+        .stderr(stderr_writer);
+    let spawned = OwnedProcess::spawn(command);
+    let mut child = match spawned {
         Ok(child) => child,
         Err(err) => {
             let banner = format!("windows-advisory-run: could not start `{describe}`: {err}\n");
@@ -186,13 +202,7 @@ fn execute(options: &Options, out: &mut dyn Write) -> Result<Outcome, String> {
         }
     };
     let (tx, rx) = mpsc::channel();
-    if let Some(stdout) = child.stdout_pipe().take() {
-        spawn_reader(stdout, tx.clone());
-    }
-    if let Some(stderr) = child.stderr_pipe().take() {
-        spawn_reader(stderr, tx.clone());
-    }
-    drop(tx);
+    spawn_reader(reader, tx);
 
     let started = Instant::now();
     let mut slow = SlowTests::default();
@@ -206,7 +216,14 @@ fn execute(options: &Options, out: &mut dyn Write) -> Result<Outcome, String> {
         match rx.recv_timeout(POLL) {
             Ok(line) => handle_line(&mut log, out, &mut slow, &mut tail, &line),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => readers_done = true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                readers_done = true;
+                // A disconnected channel returns at once; wait out the poll
+                // interval instead of spinning until the child exits.
+                if exited.is_none() {
+                    thread::sleep(POLL);
+                }
+            }
         }
         if exited.is_none() {
             if let Some(status) = child
@@ -274,7 +291,7 @@ fn execute(options: &Options, out: &mut dyn Write) -> Result<Outcome, String> {
     if pipe_held_after_exit {
         banner.push_str(&format!(
             "windows-advisory-run: output was still open {}s after the command exited; \
-             descendants holding the pipe were terminated\n",
+             termination of the process tree was requested\n",
             options.drain_grace.as_secs()
         ));
     }
@@ -493,10 +510,32 @@ mod windows_advisory_run_tests {
         let streamed = String::from_utf8_lossy(&sink).into_owned();
         assert!(streamed.contains("finished"), "{streamed}");
         assert!(
-            streamed.contains("descendants holding the pipe were terminated"),
+            streamed.contains("termination of the process tree was requested"),
             "{streamed}"
         );
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_and_stderr_keep_the_order_the_child_wrote_them() -> Result<(), String> {
+        let dir = scratch("order")?;
+        let script = "for i in 1 2 3 4 5 6 7 8 9 10; do echo \"o$i\"; echo \"e$i\" 1>&2; done";
+        let opts = options(&dir, Duration::from_mins(1), script);
+        let mut sink = Vec::new();
+        execute(&opts, &mut sink)?;
+        let log = std::fs::read_to_string(&opts.log).map_err(|err| err.to_string())?;
+        let expected: String = (1..=10).map(|i| format!("o{i}\ne{i}\n")).collect();
+        assert_eq!(log, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn a_should_panic_test_that_finished_is_no_longer_named_as_running() {
+        let mut slow = SlowTests::default();
+        slow.observe("test a::p has been running for over 60 seconds\n");
+        slow.observe("test a::p - should panic ... ok\n");
+        assert!(slow.0.is_empty());
     }
 
     #[test]
