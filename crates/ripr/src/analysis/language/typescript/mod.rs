@@ -104,12 +104,12 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
-mod row_miss;
-#[cfg(test)]
-mod row_miss_tests;
 mod repo;
 #[cfg(test)]
 mod repo_tests;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
