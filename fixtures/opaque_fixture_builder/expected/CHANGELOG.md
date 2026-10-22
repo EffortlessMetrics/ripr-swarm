@@ -526,3 +526,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — opaque_fixture_builder (20)
+
+Reason:
+RIPR-SPEC-0001: an unmapped local boundary operand and a neutral input-free fallback name the literal inputs that would settle the unknown (#9276)
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -455,7 +455,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures, so the compared value is read from the input at run time); activation/infection is unknown, and a test input that sits exactly on the boundary would settle it",
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it",
                         probe_literals.join(", ")
                     ),
                 )
@@ -605,7 +605,15 @@ fn balanced(text: &str) -> bool {
 }
 
 fn unresolved_boundary_summary(reason: &str) -> String {
-    format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown")
+    // An operand that is a local or computed value comes from somewhere ripr
+    // cannot trace (a test input it cannot fold, the runtime, a random draw).
+    // Name what it can read, so the unknown ends in a next step.
+    let next = if reason.starts_with("boundary operand") {
+        "; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+    } else {
+        ""
+    };
+    format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown{next}")
 }
 
 /// Numeric, char or byte: (quoted, byte-prefixed).
@@ -687,6 +695,19 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
+        let local = unresolved_boundary_summary(
+            "boundary operand `unit` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches",
+        );
+        assert!(local.ends_with(
+            "activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+        ));
+        // A reason that is not about an operand keeps its own ending.
+        let other = unresolved_boundary_summary("a compared argument is computed");
+        assert!(other.ends_with("activation/infection is unknown"));
+    }
+
     use super::super::super::rust_index::LiteralFact;
     use super::*;
     use std::path::PathBuf;
@@ -804,7 +825,7 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures, so the compared value is read from the input at run time); activation/infection is unknown, and a test input that sits exactly on the boundary would settle it"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it"
         );
     }
 
