@@ -716,7 +716,7 @@ fn validate_artifact_identity(
     if identity.producer.version != env!("CARGO_PKG_VERSION") {
         return Err(foreign_producer_refusal(
             root,
-            &subject,
+            &format!("agent verify {label} artifact"),
             &identity.producer.version,
         ));
     }
