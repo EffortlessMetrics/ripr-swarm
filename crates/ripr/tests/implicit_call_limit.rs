@@ -152,6 +152,16 @@ impl Add for Money {{
     }}
 }}
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tile(pub i64);
+
+impl Add for Tile {{
+    type Output = Tile;
+    fn add(self, other: Tile) -> Tile {{
+        Tile(self.0 + other.0)
+    }}
+}}
+
 #[cfg(test)]
 mod tests {{
     use super::*;
@@ -196,6 +206,18 @@ fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
         (
             "operand from a helper",
             "fn money(v: i64) -> Money {\n            Money(v)\n        }\n        assert_eq!(money(2) + Money(3), Money(5));",
+        ),
+        (
+            "associated call returning Money",
+            "struct Factory;\n        impl Factory {\n            fn new() -> Money {\n                Money(1)\n            }\n        }\n        let value = Factory::new();\n        assert_eq!(value + Money(1), Money(2));",
+        ),
+        (
+            "closed block shadowing the operand",
+            "let m = Money(1);\n        {\n            let m = Tile(1);\n            let _ = m;\n        }\n        assert_eq!(m + Money(2), Money(3));",
+        ),
+        (
+            "destructured result",
+            "let Money(v) = Money(2) + Money(3);\n        assert_eq!(v, 5);",
         ),
         (
             "reassigned accumulator",

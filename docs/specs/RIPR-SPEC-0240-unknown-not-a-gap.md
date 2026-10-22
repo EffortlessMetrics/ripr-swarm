@@ -407,7 +407,8 @@ comments and strings masked, matches:
   a closure parameter list and a macro bang are not operators. `PartialOrd`
   is also reached through `partial_cmp`, `max`, `min`, `sort` and `clamp`.
   `Drop` needs `drop(` or an inner block; the iterator traits need an
-  iterating `for` or adapter (`collect`, `next`, `sum`, ..); `Deref` has no
+  iterating `for`, any method call (a terminal adapter such as `any`, `len` or
+  `next_back` consumes the value) or a path call into an iterator trait; `Deref` has no
   syntax to inspect. A workspace declaration of a trait with an operator
   trait's name is a different trait the operator cannot call, so the gap
   stays;
@@ -437,8 +438,10 @@ use does not run the method, so these keep the gap:
 An operand ripr cannot type (a helper's return value, an associated constant,
 a field, a destructured tuple, a name with no `let`) might be the impl's, so
 the withholding stands: a wrong actionable signal is worse than a missed
-advisory. A reassignment (`acc = acc + x`), a destructuring `let` and an
-assertion statement count as using the result; statements nest braces, so a
+advisory. A reassignment (`acc = acc + x`), a destructuring `let` (`let Money(v) = ..`),
+a compound assignment or `IndexMut` write (it changes its operand even when
+the unit result is discarded) and an assertion statement count as using the
+result; statements nest braces, so a
 struct literal or closure body does not end one.
 
 A test with no strong assertion (`negation_is_only_exercised`,

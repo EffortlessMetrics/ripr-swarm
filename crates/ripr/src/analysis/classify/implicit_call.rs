@@ -28,8 +28,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_mentions_type, let_binding_type_head,
-    owner_trait_name,
+    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
+    let_binding_mentions_type, owner_trait_name,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -462,7 +462,10 @@ fn binds_impl_value(code: &str, trait_name: &str, self_type: &str) -> bool {
             SelfOperand::Left => operand_before(code, site.at, self_type),
             SelfOperand::Right => operand_after(code, site.at + site.len, self_type),
         };
-        operand != Operand::Other && result_is_used(code, site.at)
+        // A compound assignment or `IndexMut` write changes its operand, so
+        // its unit result being thrown away does not make it unrelated.
+        let mutates = trait_name.ends_with("Assign") || trait_name == "IndexMut";
+        operand != Operand::Other && (mutates || result_is_used(code, site.at))
     })
 }
 
@@ -583,11 +586,40 @@ fn operand_before(code: &str, end: usize, ty: &str) -> Operand {
         .map_or(0, |i| {
             i + head[i..].chars().next().map_or(1, char::len_utf8)
         });
+    // A higher-precedence operator before the token (`Money(2) * 3 + x`)
+    // makes the real `Self` operand the whole product, which is not typed here.
+    let alone = stands_alone(&head[..token_start]);
     if is_literal_token(&head[token_start..]) {
-        return Operand::Other;
+        return if alone {
+            Operand::Other
+        } else {
+            Operand::Unknown
+        };
     }
     let lets = code[..end].rfind(';').map_or("", |at| &code[..=at]);
-    named_binding_operand(ident_before(code, end), lets, ty)
+    match named_binding_operand(ident_before(code, end), lets, &code[..end], ty) {
+        Operand::Other if !alone => Operand::Unknown,
+        operand => operand,
+    }
+}
+
+/// Whether the text before an operand ends where an expression can begin, so
+/// no operator of tighter precedence takes the operand first.
+fn stands_alone(before: &str) -> bool {
+    let before = before.trim_end();
+    match before.bytes().last() {
+        None | Some(b'(' | b',' | b'{' | b';' | b'[') => true,
+        Some(b'=') => {
+            before.ends_with("=>")
+                || !before[..before.len() - 1].ends_with(|ch: char| {
+                    matches!(
+                        ch,
+                        '=' | '!' | '<' | '>' | '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^'
+                    )
+                })
+        }
+        Some(_) => false,
+    }
 }
 
 /// The unary `Self` operand starting at byte `start`: a constructor or unit
@@ -611,25 +643,64 @@ fn operand_after(code: &str, start: usize, ty: &str) -> Operand {
         return Operand::Bound;
     }
     let lets = code[..start].rfind(';').map_or("", |at| &code[..=at]);
-    named_binding_operand((!path.contains("::")).then_some(path), lets, ty)
+    named_binding_operand(
+        (!path.contains("::")).then_some(path),
+        lets,
+        &code[..start],
+        ty,
+    )
 }
 
 /// An identifier operand typed by its `let`: the impl's type, another type
 /// (an uppercase head, so a helper `money(2)` is not mistaken for one), or
 /// not typed at all.
-fn named_binding_operand(name: Option<&str>, lets: &str, ty: &str) -> Operand {
+fn named_binding_operand(name: Option<&str>, lets: &str, scope: &str, ty: &str) -> Operand {
     let Some(name) = name else {
         return Operand::Unknown;
     };
     if let_binding_mentions_type(lets, name, ty) {
         return Operand::Bound;
     }
-    match let_binding_type_head(lets, name) {
-        Some(head) if head.starts_with(|ch: char| ch.is_uppercase()) && head != ty => {
+    match let_binding_certain_type_head(lets, name) {
+        Some(head)
+            if head.starts_with(|ch: char| ch.is_uppercase())
+                && head != ty
+                && !name_is_rebound(scope, name) =>
+        {
             Operand::Other
         }
         _ => Operand::Unknown,
     }
+}
+
+/// Whether `name` may denote a different value at the use than its last `let`
+/// says: it is bound by more than one `let` (a shadow in a closed block, an
+/// `if let`/`while let` pattern), by a `for` pattern, or by a closure
+/// parameter or match arm. Only a name bound exactly once keeps its type.
+fn name_is_rebound(lets: &str, name: &str) -> bool {
+    let mut binders = 0usize;
+    for (at, _) in lets.match_indices("let ") {
+        let pattern = lets[at + 4..].split('=').next().unwrap_or("");
+        binders += usize::from(contains_as_whole_word(pattern, name));
+    }
+    for (at, _) in lets.match_indices("for ") {
+        let pattern = lets[at + 4..].split(" in ").next().unwrap_or("");
+        binders += usize::from(contains_as_whole_word(pattern, name));
+    }
+    let closure_param = lets
+        .split('|')
+        .skip(1)
+        .step_by(2)
+        .any(|segment| contains_as_whole_word(segment, name));
+    let parts: Vec<&str> = lets.split("=>").collect();
+    let arm = parts
+        .iter()
+        .take(parts.len().saturating_sub(1))
+        .any(|before| {
+            let before = before.trim_end().trim_end_matches([')', ']', '}']);
+            before.ends_with(name)
+        });
+    binders != 1 || closure_param || arm
 }
 
 /// A numeric literal (`1`, `2.5`, `1u8`, `0xff`) or a boolean.
@@ -653,8 +724,15 @@ fn result_is_used(code: &str, at: usize) -> bool {
     let len = pattern
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(pattern.len());
-    match &pattern[..len] {
+    let name = &pattern[..len];
+    // `let Money(v) = ..` and `let P { x } = ..` bind names after the head.
+    let destructures = matches!(
+        pattern[len..].trim_start().bytes().next(),
+        Some(b'(' | b'{')
+    ) || name.starts_with(|ch: char| ch.is_uppercase());
+    match name {
         "" => true,
+        _ if destructures => true,
         "_" => false,
         name => contains_as_whole_word(&code[end..], name),
     }
@@ -702,15 +780,35 @@ fn statement_bounds(code: &str, at: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// The test iterates a value: a `for` loop or an adapter that calls `next`.
+/// The test may iterate a value: a `for` loop, any method call (a terminal
+/// adapter such as `any`, `next_back` or `len` consumes the iterator without a
+/// name worth listing), or a path call into an iterator trait. Only code with
+/// none of these is provably not running the iterator.
 fn iterates(code: &str) -> bool {
     code.contains("for ")
+        || code.contains("from_iter")
         || [
-            "collect", "next", "sum", "count", "fold", "map", "take", "last", "nth", "product",
-            "min", "max", "rev",
+            "Iterator::",
+            "IntoIterator::",
+            "DoubleEndedIterator::",
+            "ExactSizeIterator::",
         ]
         .iter()
-        .any(|name| calls_method_named(code, name))
+        .any(|path| code.contains(path))
+        || calls_any_method(code)
+}
+
+/// Whether the code has a `.name(` or `.name::<..>(` method call.
+fn calls_any_method(code: &str) -> bool {
+    code.match_indices('.').any(|(dot, _)| {
+        let rest = &code[dot + 1..];
+        let len = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        len > 0
+            && !rest.starts_with(|ch: char| ch.is_ascii_digit())
+            && rest[len..].trim_start().starts_with(['(', ':'])
+    })
 }
 
 /// Whether the dispatched `.method(` may be called on a value of the impl's
@@ -720,7 +818,7 @@ fn dispatch_binds_impl_value(code: &str, method: &str, self_type: &str) -> bool 
     method_call_dots(code, method).into_iter().any(|dot| {
         let lets = code[..dot].rfind(';').map_or("", |at| &code[..=at]);
         let other_type = ident_before(code, dot).is_some_and(|receiver| {
-            named_binding_operand(Some(receiver), lets, self_type) == Operand::Other
+            named_binding_operand(Some(receiver), lets, &code[..dot], self_type) == Operand::Other
         });
         !other_type && result_is_used(code, dot)
     })
@@ -841,6 +939,36 @@ mod tests {
         assert!(before("Money::ZERO + 1") == Operand::Unknown);
         assert!(before("m.0 + 1") == Operand::Unknown);
         assert!(before("total + 1") == Operand::Unknown);
+        // A constructor-named call says nothing about the type it returns.
+        assert!(before("let v = Factory::new(); v + v") == Operand::Unknown);
+        assert!(before("let v: Tile = make(); v + v") == Operand::Other);
+        // A name bound twice may be the outer value at the use.
+        assert!(before("let m = Money(1); { let m = Tile(1); } m + m") == Operand::Unknown);
+        assert!(before("let t = Tile(1); for t in ts { t + t }") == Operand::Unknown);
+        // A tighter operator before the token takes the operand first.
+        assert!(before("let a = Tile(1); Money(2) * 3 + a") == Operand::Unknown);
+        assert!(before("let t = Tile(1); x * t + 1") == Operand::Unknown);
+        assert!(before("assert_eq!(1 + 2, 3)") == Operand::Other);
+    }
+
+    #[test]
+    fn iteration_is_any_method_call_or_loop() {
+        assert!(iterates("for n in Countdown(3) {}"));
+        assert!(iterates("Countdown(3).any(|n| n == 3)"));
+        assert!(iterates("it.next_back()"));
+        assert!(iterates("it.len()"));
+        assert!(iterates("Vec::from_iter(c)"));
+        assert!(iterates("Iterator::next(&mut c)"));
+        assert!(!iterates("assert_eq!(Countdown(3).0, 3);"));
+        assert!(!iterates("let v = 1.5; assert_eq!(v, 1.5);"));
+    }
+
+    #[test]
+    fn assignment_operators_mutate_their_operand() {
+        let code = "let mut acc = Money(0); let _ = acc += Money(1); assert_eq!(acc, Money(1));";
+        assert!(binds_impl_value(code, "AddAssign", "Money"));
+        let code = "let mut acc = Money(0); let _ = acc + Money(1); assert_eq!(1, 1);";
+        assert!(!binds_impl_value(code, "Add", "Money"));
     }
 
     #[test]
@@ -851,6 +979,8 @@ mod tests {
         assert!(used("acc = acc + b; assert_eq!(acc, c);"));
         assert!(used("let (x, y) = (a + b, 1);"));
         assert!(used("let t = P { v: 1 } + P { v: 2 }; assert_eq!(t, c);"));
+        assert!(used("let Money(v) = a + b; assert_eq!(v, 5);"));
+        assert!(used("let P { x } = p + q; assert_eq!(x, 5);"));
         assert!(!used("let _ = a + b; assert_eq!(1, 1);"));
         assert!(!used("let _unused = a + b; assert_eq!(1, 1);"));
         assert!(!used("let _ = P { v: 1 } + P { v: 2 };"));

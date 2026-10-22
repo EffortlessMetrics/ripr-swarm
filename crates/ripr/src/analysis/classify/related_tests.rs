@@ -2723,13 +2723,27 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
-/// The type head a `let` binding names for `binding`, from its annotation or
-/// its initializer head, as [`let_binding_mentions_type`] reads it.
-pub(in crate::analysis) fn let_binding_type_head<'a>(
+/// The type a `let` binding certainly has: its annotation, or a constructor
+/// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
+/// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
+/// read: its name says nothing about the type it returns.
+pub(in crate::analysis) fn let_binding_certain_type_head<'a>(
     body: &'a str,
     binding: &str,
 ) -> Option<&'a str> {
-    last_let_statement(body, binding).and_then(let_statement_type_head)
+    let stmt = last_let_statement(body, binding)?;
+    let eq = stmt.find('=')?;
+    if let Some(colon) = stmt[..eq].find(':') {
+        return type_head(&stmt[colon + 1..eq]).and_then(|(segments, _)| segments.last().copied());
+    }
+    let init = &stmt[eq + 1..];
+    if !initializer_is_one_head_expr(init) {
+        return None;
+    }
+    match type_head(init)? {
+        (segments, Some(b'(' | b'{')) if segments.len() == 1 => segments.first().copied(),
+        _ => None,
+    }
 }
 
 /// Whether the operand expression ending just before byte `end` of `code`
