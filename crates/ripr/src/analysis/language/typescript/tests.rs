@@ -17436,6 +17436,7 @@ mod mocked_callee_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
 mod out_dir_specifier_tests;
+mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod returned_dataflow_tests;

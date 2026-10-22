@@ -144,6 +144,7 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod helper_assertions;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -731,6 +732,8 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut helper_modules_by_file: BTreeMap<PathBuf, helper_assertions::PythonHelperModule> =
+            BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -769,6 +772,7 @@ impl PythonAdapter {
             if !facts.fixtures.is_empty() {
                 fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
             }
+            helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
             // A conftest with implicit setup, or one that only partly parsed,
             // may assert around every test below it.
             if facts.conftest_implicit_setup
@@ -784,6 +788,7 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
+        helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
         fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
             // A chain conftest that exists but was never read (capped,
             // excluded or unreadable) cannot be ruled out.
@@ -1135,6 +1140,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod helper_assertions_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;
