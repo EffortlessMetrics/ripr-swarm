@@ -1,8 +1,15 @@
 //! Narrow canonical-decomposition table for macOS path identity (#9623).
 //!
-//! No normalization dependency: the table is the Unicode NFD mapping for the
-//! Latin, Greek, Cyrillic and polytonic Greek blocks, generated once from
-//! the Unicode Character Database and sorted by code point. Every entry is a
+//! No normalization dependency. Provenance: the table is the full NFD
+//! mapping (Unicode 15.1.0, `unicodedata.normalize("NFD", c)`) of every
+//! character whose NFD differs from itself in U+00C0..=U+024F, U+0300..=U+03FF
+//! (excluding the combining marks U+0300..=U+036F themselves),
+//! U+0400..=U+04FF, U+1E00..=U+1EFF and U+1F00..=U+1FFF, sorted by code point.
+//! Regeneration is a manual procedure (no non-Rust generator is committed,
+//! per file policy): run that normalize call over those ranges, emit the
+//! changed characters, and keep the ordering. `known_decompositions_match_ucd`
+//! cross-checks a sample. U+2126 (Ohm) and U+212B (Angstrom) singletons live
+//! outside the ranges and are intentionally not folded. Every entry is a
 //! genuine canonical decomposition, so two spellings that fold to one key are
 //! canonically equivalent (never a wrong merge). Coverage is partial by
 //! design: scripts outside the table (Hangul, Indic, ...) and mark reordering
@@ -12,6 +19,25 @@ pub(super) fn decompose_into(ch: char, out: &mut String) {
     match DECOMPOSITIONS.binary_search_by_key(&ch, |entry| entry.0) {
         Ok(index) => out.push_str(DECOMPOSITIONS[index].1),
         Err(_) => out.push(ch),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn known_decompositions_match_ucd() {
+    for (ch, expected) in [
+        ('\u{c5}', "A\u{30a}"),
+        ('\u{e9}', "e\u{301}"),
+        ('\u{1e69}', "s\u{323}\u{307}"),
+        ('\u{1f80}', "\u{3b1}\u{313}\u{345}"),
+        ('\u{374}', "\u{2b9}"),
+        ('\u{419}', "\u{418}\u{306}"),
+        ('\u{1ed9}', "o\u{323}\u{302}"),
+        ('\u{1ff7}', "\u{3c9}\u{342}\u{345}"),
+    ] {
+        let mut out = String::new();
+        decompose_into(ch, &mut out);
+        assert_eq!(out, expected, "{ch:?}");
     }
 }
 

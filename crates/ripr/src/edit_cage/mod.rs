@@ -3886,6 +3886,16 @@ mod tests {
     }
 
     #[test]
+    fn inventory_flags_non_ascii_case_pairs_as_ambiguous() {
+        let (_, ambiguous) =
+            inventory_paths("\u{c9}.rs\0\u{e9}.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(ambiguous);
+        let (_, distinct) =
+            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(!distinct);
+    }
+
+    #[test]
     fn nonzero_or_duplicate_index_stages_are_explicitly_ambiguous() -> Result<(), String> {
         let oid = "0".repeat(40);
         let nonzero = format!("100644 {oid} 2\ttests/pricing.rs\0");
