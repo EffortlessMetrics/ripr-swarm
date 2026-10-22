@@ -16894,6 +16894,7 @@ tests = [
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_twice_adds_one_stop_reason",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_panic_macro_is_read_by_its_own_name",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it",
   "crates/ripr/tests/should_panic_limit.rs::a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown",
   "crates/ripr/tests/should_panic_limit.rs::a_panic_outcome_the_rule_does_not_cover_keeps_the_gap",
   "crates/ripr/tests/debug_assertion_limit.rs::a_debug_assert_eq_owner_pin_reads_as_a_profile_limit",

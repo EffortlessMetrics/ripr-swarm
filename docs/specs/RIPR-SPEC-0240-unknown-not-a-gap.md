@@ -71,9 +71,16 @@ the finding is an unknown that names the limit.
 | lexical fallback, unparsed file, stale source | `if` branch or other conditional path |
 | unplaced module, `include!`d file | closure that may not run or may exit early |
 | unidentified test (also the fallback when no gate explains a refusal), `async fn` test | opaque macro or macro operand that may leave the test |
-| any other test attribute: a feature `cfg`, `#[rstest]`, a lint attribute | `#[ignore]`, `#[should_panic]`, or a `cfg`/`cfg_attr` the shared evaluator (`attribute_test_build_availability`) reads as disabled in every test build |
+| any other test attribute: a feature `cfg`, `#[rstest]` | `#[ignore]`, `#[should_panic]`, or a `cfg`/`cfg_attr` the shared evaluator (`attribute_test_build_availability`) reads as disabled in every test build |
 | the same assertion spelled twice on one line | test nested in a function body; gated enclosing module or gated `mod` declaration |
 | a binding that only may rebind the macro: foreign glob, unresolved `#[macro_use]`, macro argument, unparsed file, `no_implicit_prelude`, no site found | a `macro_rules!`/`macro` definition or `use` of the name in reach |
+
+An attribute that cannot change whether or how the body runs (a lint level
+such as `#[allow(..)]`, `#[doc = ".."]`, `#[inline]`, `#[must_use]`,
+`#[track_caller]`, a `rustfmt::` or `clippy::` tool attribute) refuses
+nothing: the test keeps the owner pin, in any position beside `#[test]`. A bare
+built-in name that an import or `extern crate .. as` rebinds in the test's
+module does not count as the built-in, and refuses as any other attribute does.
 
 The right column is what the compiled runtime controls in
 `crates/ripr/tests/owner_pin_execution.rs` prove are real gaps (the assertion
@@ -464,6 +471,7 @@ Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 - `analyzer_limit_refusals_are_limits_of_ripr_reading`
 - `refusals_that_can_keep_an_assertion_from_running_are_not_limits`
 - `an_outcome_settling_attribute_is_the_refusal_wherever_it_sits`
+- `inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it`
 - `a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit`
 - `a_direct_call_name_is_one_bare_call_ending_the_subject`
 
