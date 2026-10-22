@@ -13,7 +13,9 @@
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
 //!   alignment is a credit-only model, so no credit is an unresolved
-//!   observation edge, never an affirmative mismatch.
+//!   observation edge, never an affirmative mismatch. A local stand-in row
+//!   (`fee = Mock(...)` shadowing the imported owner) lands here too:
+//!   stand-in detection is textual and errs toward withholding credit.
 //!
 //! Deliberately not emitted, so the row stays `miss: None`:
 //!
@@ -33,9 +35,6 @@
 //!   (`oracle_related_tests`) read, so emitting it would move decisions.
 //! - `assertion_not_credited`: no typed established refusal exists (#5446);
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
-//! - a local stand-in row (`fee = Mock(...)` shadowing the imported owner) keeps
-//!   its `observation_unconfirmed`: stand-in detection is textual and errs
-//!   toward withholding credit, so it cannot support an affirmative no-call claim.
 //! - `missing_input`: pending follow-up (#5491). The row-owned omission needs
 //!   import-resolved owner calls and per-row operand resolution; until that
 //!   lands a strong row that observes nothing falls to

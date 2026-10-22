@@ -227,20 +227,28 @@ fn hidden_call_shapes_never_get_no_call_path() -> Result<(), String> {
 
 #[test]
 fn off_boundary_strong_predicate_row_is_never_missing_input_here() -> Result<(), String> {
-    // `missing_input` is pending follow-up (#5491): the row keeps only the
-    // weaker `observation_unconfirmed`, or no reason, never a boundary claim.
+    // `missing_input` is pending follow-up (#5491): a strong row that the
+    // alignment credits keeps no miss, never a boundary claim, and its weak
+    // sibling keeps its own reason. A mutant that marks every strong row
+    // `observation_unconfirmed` fails the first assertion.
     let finding = classify(
         "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n",
-        "from src.subject import can_reserve\n\ndef test_off_boundary():\n    assert can_reserve(5, 3) == True\n",
+        "from src.subject import can_reserve\n\ndef test_off():\n    assert can_reserve(5, 3) == True\n\ndef test_w():\n    assert can_reserve(4, 4)\n",
         2,
         "    if qty > on_hand:",
         "    if qty >= on_hand:",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.related_tests.len(), 1);
-    assert_ne!(
-        finding.related_tests[0].miss,
-        Some(RelatedTestMiss::MissingInput)
+    assert_eq!(finding.related_tests.len(), 2, "{:?}", misses(&finding));
+    assert_eq!(
+        miss_of(&finding, "test_off"),
+        None,
+        "{:?}",
+        misses(&finding)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_w"),
+        Some(RelatedTestMiss::WeakAssertion)
     );
     Ok(())
 }
