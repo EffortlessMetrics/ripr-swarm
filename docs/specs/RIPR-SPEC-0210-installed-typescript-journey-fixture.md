@@ -114,6 +114,14 @@ checks receipt binding plus incomplete-argument refusals. That parser/control
 proof does not execute the authored installed-language fixture or establish blind
 acceptance; the real candidate-bound installed journey remains separate.
 
+`cargo xtask check-fixture-contracts` also rebuilds the snapshot repository
+from `repository/<snapshot>/` using the manifest `construction_recipe` (offline,
+a handful of local git calls in one scratch repository, with the user and system
+git configuration, host identity and index environment, global ignore file,
+signing and hooks all neutralized; the variant commit dates and messages follow
+the recipe's documented derivation) and refuses any recorded commit or tree id the recipe does not
+reproduce, so a well-formed but hand-edited id cannot pass (#9235).
+
 ## Required Evidence
 
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
@@ -178,6 +186,14 @@ acceptance; the real candidate-bound installed journey remains separate.
 
 ## Test Mapping
 
+- `xtask/src/fixture_contracts/installed_journey_recipe.rs`
+  (`installed_journey_recipe_tests`): the committed fixtures reproduce every
+  recorded commit and tree id from `construction_recipe`; a forged but
+  well-formed commit id is refused; a changed snapshot byte changes the
+  rebuilt ids and is refused; a recipe without the base and head steps fails
+  closed; inherited git repository selectors do not redirect the rebuild; a
+  snapshot carrying `.git` is refused; a recipe that no longer states the
+  variant derivation is refused.
 - `xtask/src/fixture_contracts/general_validators.rs`
   (`installed_typescript_fixture_tests`): committed manifest binds the
   snapshot bytes; committed scenarios exist in the executor corpus; an

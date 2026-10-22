@@ -1,0 +1,7 @@
+diff --git a/hostile/beta.py b/hostile/beta.py
+--- a/hostile/beta.py
++++ b/hostile/beta.py
+@@ -1,2 +1,2 @@
+ def compute(x):
+-    return x - 1
++    return x + 1

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::assess::{Observed, assess};
-use super::command::{Options, aggregate, family_counts, packet_digest, parse_args};
+use super::command::{Options, aggregate, build_packet, family_counts, packet_digest, parse_args};
 use super::corpus::{Case, Expect, Route, all_cases};
 use super::model::{
     Aggregate, Control, ControlKind, Family, Packet, Role, Row, RowResult, Subjects, render_json,
@@ -245,6 +245,76 @@ fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestRe
 }
 
 #[test]
+fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
+    let nonmatch = case_named("glob-suppression-many-star-nonmatch")?;
+    let visible = format!(
+        "{{\"findings\":[{{\"canonical_gap\":{{\"file\":\"{}\"}}}}],\"suppression_policy\":{{\"suppressed\":0}},\"summary\":{{\"suppressed_by_policy\":0}},\"analysis_outcome\":{{\"analysis_complete\":true}}}}",
+        nonmatch.changed
+    );
+    if assess(&nonmatch, &observe(&visible, "", None)).result != RowResult::PassedSupportedAnalysis
+    {
+        return Err("a visible finding after a nonmatch must pass".to_string());
+    }
+    let suppressed = visible.replace("\"suppressed\":0", "\"suppressed\":1");
+    if assess(&nonmatch, &observe(&suppressed, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatching pattern that suppressed must fail".to_string());
+    }
+    let partial = visible.replace("\"analysis_complete\":true", "\"analysis_complete\":false");
+    if assess(&nonmatch, &observe(&partial, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatch row with an incomplete analysis must fail".to_string());
+    }
+    let limited = visible.replace(
+        "\"analysis_outcome\":{\"analysis_complete\":true}",
+        &format!(
+            "\"analysis_outcome\":{{\"analysis_complete\":true,\"outcome\":{{\"limitations\":[{{\"path\":\"{}\",\"bounded_detail\":\"declined\"}}]}}}}",
+            nonmatch.changed
+        ),
+    );
+    if assess(&nonmatch, &observe(&limited, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatch row with a limitation on the changed file must fail".to_string());
+    }
+
+    let generated = case_named("glob-generated-many-star-nonmatch")?;
+    let skipped = format!(
+        "{{\"findings\":[],\"analysis_outcome\":{{\"analysis_complete\":false,\"outcome\":{{\"limitations\":[{{\"kind\":\"language_scope_unsupported\",\"bounded_detail\":\"1 generated or vendored Rust file(s) were intentionally skipped: {}\"}}]}}}}}}",
+        generated.changed
+    );
+    if assess(&generated, &observe(&skipped, "", None)).result != RowResult::SemanticFailure {
+        return Err("a nonmatching generated pattern that excluded the file must fail".to_string());
+    }
+    let excluded = case_named("glob-generated-star-in-segment")?;
+    let silent = check_json(&[], "", true);
+    if assess(&excluded, &observe(&silent, "", None)).result
+        != RowResult::MissingOrFalseCleanLimitation
+    {
+        return Err("an exclusion with no disclosure must not pass".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_malformed_selector_passes_only_as_a_policy_refusal() -> TestResult {
+    let case = case_named("glob-suppression-empty-pattern-is-a-policy-error")?;
+    let refused =
+        "{\"analysis_scope\":{\"limitation\":\"suppression_policy_invalid\"},\"findings\":[]}";
+    let mut exit_two = observe(refused, "", None);
+    exit_two.exit_code = Some(2);
+    if assess(&case, &exit_two).result != RowResult::PassedTypedLimitation {
+        return Err("a refused policy at exit 2 must pass".to_string());
+    }
+    if assess(&case, &observe(refused, "", None)).result != RowResult::MissingOrFalseCleanLimitation
+    {
+        return Err("a policy refusal that exits 0 must not pass".to_string());
+    }
+    let clean = check_json(&["src/lib.rs"], "", true);
+    if assess(&case, &observe(&clean, "", None)).result != RowResult::MissingOrFalseCleanLimitation
+    {
+        return Err("treating a malformed selector as a clean run must not pass".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn a_supported_row_must_report_a_complete_analysis_of_the_changed_file() -> TestResult {
     let case = case_named("python-supported-control")?;
     let incomplete = check_json(&["src/app.py"], "", false);
@@ -262,6 +332,17 @@ fn a_supported_row_must_report_a_complete_analysis_of_the_changed_file() -> Test
     );
     if assess(&case, &observe(&naming, "", None)).result != RowResult::SemanticFailure {
         return Err("a limitation naming the changed file must not pass".to_string());
+    }
+    let excluded = case_named("glob-generated-star-in-segment")?;
+    let complete = format!(
+        "{{\"findings\":[],\"analysis_outcome\":{{\"analysis_complete\":true,\"outcome\":{{\"limitations\":[{{\"kind\":\"language_scope_unsupported\",\"bounded_detail\":\"1 generated file(s) were intentionally skipped: {}\"}}]}}}}}}",
+        excluded.changed
+    );
+    if assess(&excluded, &observe(&complete, "", None))
+        .result
+        .is_pass()
+    {
+        return Err("an exclusion marked complete must not pass".to_string());
     }
     Ok(())
 }
@@ -292,6 +373,57 @@ fn pilot_disclosure_must_name_the_hostile_file() -> TestResult {
             "disclosure for another file classified {:?}",
             result.result
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn glob_and_generated_passing_branches_need_their_evidence() -> TestResult {
+    let matched = case_named("glob-suppression-double-star-prefix")?;
+    let ok = "{\"findings\":[{\"canonical_gap\":{\"file\":\"src/lib.rs\"},\"suppressed\":true,\"suppressed_by\":\"**/lib.rs\"}],\"suppression_policy\":{\"suppressed\":1},\"summary\":{\"suppressed_by_policy\":1}}";
+    if assess(&matched, &observe(ok, "", None)).result != RowResult::PassedSupportedAnalysis {
+        return Err("a suppressing match must pass".to_string());
+    }
+    let half = ok.replace("\"suppressed_by_policy\":1", "\"suppressed_by_policy\":0");
+    if assess(&matched, &observe(&half, "", None)).result != RowResult::SemanticFailure {
+        return Err("summary and policy counts must both show the suppression".to_string());
+    }
+    let unmarked = ok.replace(",\"suppressed\":true,\"suppressed_by\":\"**/lib.rs\"", "");
+    if assess(&matched, &observe(&unmarked, "", None)).result != RowResult::WrongSubject {
+        return Err("positive counters without a marked changed finding must fail".to_string());
+    }
+
+    let excluded = case_named("glob-generated-star-in-segment")?;
+    let skipped = |findings: &str| {
+        format!(
+            "{{\"findings\":[{findings}],\"analysis_outcome\":{{\"analysis_complete\":false,\"outcome\":{{\"limitations\":[{{\"kind\":\"language_scope_unsupported\",\"bounded_detail\":\"1 generated file(s) were intentionally skipped: {}\"}}]}}}}}}",
+            excluded.changed
+        )
+    };
+    if assess(&excluded, &observe(&skipped(""), "", None)).result
+        != RowResult::PassedTypedLimitation
+    {
+        return Err("a disclosed exclusion must pass".to_string());
+    }
+    let finding = format!(
+        "{{\"canonical_gap\":{{\"file\":\"{}\"}}}}",
+        excluded.changed
+    );
+    if assess(&excluded, &observe(&skipped(&finding), "", None)).result
+        != RowResult::SemanticFailure
+    {
+        return Err("an excluded file that still has a finding must fail".to_string());
+    }
+
+    let refused = case_named("glob-suppression-empty-pattern-is-a-policy-error")?;
+    let mut with_finding = observe(
+        "{\"analysis_scope\":{\"limitation\":\"suppression_policy_invalid\"},\"findings\":[{}]}",
+        "",
+        None,
+    );
+    with_finding.exit_code = Some(2);
+    if assess(&refused, &with_finding).result == RowResult::PassedTypedLimitation {
+        return Err("a policy refusal that still reports findings must not pass".to_string());
     }
     Ok(())
 }
@@ -425,6 +557,35 @@ fn aggregate_is_passed_only_when_everything_ran_and_discriminated() -> TestResul
     Ok(())
 }
 
+#[test]
+fn zero_rows_or_an_unexecuted_family_cannot_aggregate_to_pass() -> TestResult {
+    let cases = cases_for_all_families();
+    let (aggregate, _) = agg(&[], &[], &[], "removed");
+    if aggregate != Aggregate::Failed {
+        return Err(format!("zero rows gave {aggregate:?}"));
+    }
+    let mut rows = all_family_rows(RowResult::PassedSupportedAnalysis);
+    rows[0].result = RowResult::NotRun;
+    let (aggregate, reasons) = agg(&rows, &cases, &[], "removed");
+    if aggregate != Aggregate::Failed
+        || !reasons
+            .iter()
+            .any(|reason| reason.contains("executed zero rows"))
+    {
+        return Err(format!("unexecuted family gave {aggregate:?} {reasons:?}"));
+    }
+    let (aggregate, _) = agg(
+        &all_family_rows(RowResult::PassedSupportedAnalysis),
+        &cases,
+        &[],
+        "retained (busy)",
+    );
+    if aggregate != Aggregate::Failed {
+        return Err(format!("failed cleanup gave {aggregate:?}"));
+    }
+    Ok(())
+}
+
 fn packet(rows: Vec<Row>, elapsed_ms: u128, path: &str) -> Result<Packet, String> {
     use super::model::{BinaryIdentity, CORPUS_SCHEMA, HostIdentity, Observation, SCHEMA};
     let mut packet = Packet {
@@ -479,7 +640,7 @@ fn packet_digest_ignores_timing_and_host_path_but_not_semantic_state() -> TestRe
 #[test]
 fn json_and_markdown_agree_on_every_row_state_and_the_aggregate() -> TestResult {
     let mut rows = all_family_rows(RowResult::PassedSupportedAnalysis);
-    rows[1].result = RowResult::ProcessAbort;
+    rows[2].result = RowResult::ProcessAbort;
     let mut packet = packet(rows, 1, "/a/ripr")?;
     packet.aggregate = Aggregate::Failed;
     let json = render_json(&packet)?;
@@ -553,4 +714,256 @@ fn arguments_require_a_binary_and_reject_unknown_flags() -> TestResult {
         return Err("flags were not parsed".to_string());
     }
     Ok(())
+}
+
+#[cfg(unix)]
+mod unix_stubs {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(name: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-termination-test-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).map_err(|error| format!("mkdir: {error}"))?;
+        fs::canonicalize(&root).map_err(|error| format!("canonicalize: {error}"))
+    }
+
+    fn stub(root: &std::path::Path, script: &str) -> Result<PathBuf, String> {
+        let path = root.join("ripr");
+        fs::write(&path, script).map_err(|error| format!("write stub: {error}"))?;
+        let mut permissions = fs::metadata(&path)
+            .map_err(|error| format!("stat stub: {error}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).map_err(|error| format!("chmod stub: {error}"))?;
+        Ok(path)
+    }
+
+    fn stub_options(root: &std::path::Path, binary: PathBuf) -> Options {
+        Options {
+            binary,
+            out: root.join("out"),
+            work: root.join("work"),
+            expected_sha256: None,
+            expected_version: None,
+            families: vec![Family::PythonNesting],
+            removal_controls: Vec::new(),
+            repeat: false,
+            deadline: Duration::from_secs(5),
+            allow_incomplete: false,
+        }
+    }
+
+    #[test]
+    fn a_stub_that_answers_clean_to_everything_cannot_earn_a_pass() -> TestResult {
+        let root = scratch("clean")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\necho '{\"findings\":[{\"canonical_gap\":{\"file\":\"src/app.py\"}}],\"analysis_outcome\":{\"analysis_complete\":true,\"outcome\":{\"limitations\":[]}}}'\n",
+        )?;
+        let packet = build_packet(&stub_options(&root, binary))?;
+        let _ = fs::remove_dir_all(&root);
+        if packet.aggregate != Aggregate::Failed {
+            return Err(format!("stub earned {:?}", packet.aggregate));
+        }
+        let false_clean = packet
+            .rows
+            .iter()
+            .filter(|row| row.result == RowResult::MissingOrFalseCleanLimitation)
+            .count();
+        if false_clean == 0 {
+            return Err("no over-budget row recognized the missing limitation".to_string());
+        }
+        if packet.rows.iter().any(|row| row.cleanup != "removed") {
+            return Err("a row retained its workspace".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_aborting_stub_is_a_process_abort_row_and_the_work_root_is_removed() -> TestResult {
+        let root = scratch("abort")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nkill -ABRT $$\n",
+        )?;
+        let packet = build_packet(&stub_options(&root, binary))?;
+        let leftover = root
+            .join("work")
+            .read_dir()
+            .map(|mut entries| entries.next().is_some());
+        let _ = fs::remove_dir_all(&root);
+        if packet
+            .rows
+            .iter()
+            .any(|row| row.result != RowResult::ProcessAbort)
+        {
+            return Err("every row of an aborting binary must be process_abort".to_string());
+        }
+        if packet.aggregate != Aggregate::Failed {
+            return Err(format!("aborting binary earned {:?}", packet.aggregate));
+        }
+        if leftover.unwrap_or(false) {
+            return Err("the owned work root was not removed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_hanging_stub_is_a_deadline_row_not_a_pass() -> TestResult {
+        let root = scratch("hang")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nsleep 600\n",
+        )?;
+        let mut options = stub_options(&root, binary);
+        options.deadline = Duration::from_secs(1);
+        let packet = build_packet(&options)?;
+        let _ = fs::remove_dir_all(&root);
+        if packet
+            .rows
+            .iter()
+            .any(|row| row.result != RowResult::NonterminalDeadline)
+        {
+            return Err("every row of a hanging binary must be nonterminal_deadline".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_binary_with_the_wrong_digest_is_refused_before_any_row_runs() -> TestResult {
+        let root = scratch("digest")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\n",
+        )?;
+        let mut options = stub_options(&root, binary);
+        options.expected_sha256 = Some("0".repeat(64));
+        let refused = build_packet(&options);
+        let ran_anything = root.join("work").exists();
+        let _ = fs::remove_dir_all(&root);
+        match refused {
+            Err(message)
+                if message.contains("does not match --expected-sha256") && !ran_anything =>
+            {
+                Ok(())
+            }
+            other => Err(format!("wrong digest was not refused up front: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn removal_controls_need_a_failing_and_different_binary() -> TestResult {
+        let root = scratch("removal")?;
+        let candidate = stub(
+            &root,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo ripr-test 1\nexit 0\n",
+        )?;
+        let candidate_sha = crate::blind_journey::sha256_hex(
+            &fs::read(&candidate).map_err(|error| format!("read: {error}"))?,
+        );
+        let cases: Vec<Case> = all_cases()
+            .into_iter()
+            .filter(|case| case.family == Family::PythonNesting)
+            .collect();
+        let deadline = Duration::from_secs(10);
+
+        // Byte-identical to the candidate: never a control.
+        let same = super::super::controls::removal_controls(
+            &root.join("w1"),
+            &cases,
+            &[(Family::PythonNesting, candidate.clone())],
+            &candidate_sha,
+            "ripr-test 1",
+            deadline,
+        );
+        // An aborting binary is a valid removal control.
+        let aborting_dir = root.join("abort");
+        fs::create_dir_all(&aborting_dir).map_err(|error| format!("mkdir: {error}"))?;
+        let aborting = stub(
+            &aborting_dir,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo ripr-test 1; exit 0; }\nkill -ABRT $$\n",
+        )?;
+        let unrelated_dir = root.join("unrelated");
+        fs::create_dir_all(&unrelated_dir).map_err(|error| format!("mkdir: {error}"))?;
+        let unrelated = stub(&unrelated_dir, "#!/bin/sh\nkill -ABRT $$\n")?;
+        let abort = super::super::controls::removal_controls(
+            &root.join("w2"),
+            &cases,
+            &[(Family::PythonNesting, aborting)],
+            &candidate_sha,
+            "ripr-test 1",
+            deadline,
+        );
+        // An unrelated aborting executable is not a build of the candidate.
+        let foreign = super::super::controls::removal_controls(
+            &root.join("w4"),
+            &cases,
+            &[(Family::PythonNesting, unrelated)],
+            &candidate_sha,
+            "ripr-test 1",
+            deadline,
+        );
+        // A binary that passes every row proves nothing.
+        let none = super::super::controls::removal_controls(
+            &root.join("w3"),
+            &cases,
+            &[],
+            &candidate_sha,
+            "ripr-test 1",
+            deadline,
+        );
+        let _ = fs::remove_dir_all(&root);
+        if same[0].discriminated || same[0].observed.as_deref() != Some("same_binary_as_candidate")
+        {
+            return Err("an identical binary must not discriminate".to_string());
+        }
+        if !abort[0].discriminated {
+            return Err(format!(
+                "aborting control did not discriminate: {:?}",
+                abort[0]
+            ));
+        }
+        if foreign[0].discriminated {
+            return Err("an unrelated aborting executable must not discriminate".to_string());
+        }
+        if none[0].observed.is_some() || none[0].discriminated {
+            return Err("a missing control must read as not run".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn instrument_controls_discriminate_every_failure_state() -> TestResult {
+        let root = scratch("instrument")?;
+        let controls = super::super::controls::instrument_controls(&root, &all_cases());
+        let _ = fs::remove_dir_all(&root);
+        let mut observed = BTreeSet::new();
+        for control in &controls {
+            if !control.discriminated {
+                return Err(format!(
+                    "{} did not discriminate: {}",
+                    control.id, control.detail
+                ));
+            }
+            observed.insert(control.observed.clone().unwrap_or_default());
+        }
+        for state in [
+            "process_abort",
+            "nonterminal_deadline",
+            "missing_or_false_clean_limitation",
+            "wrong_subject",
+            "semantic_failure",
+            "instrument_failure",
+        ] {
+            if !observed.contains(state) {
+                return Err(format!("no instrument control reached {state}"));
+            }
+        }
+        Ok(())
+    }
 }

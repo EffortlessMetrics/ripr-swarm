@@ -600,6 +600,78 @@ fn slice_parameter_position(function: &ast::Fn, parameter: &str) -> Option<usize
     found
 }
 
+/// The argument positions of the owner's slice-like parameters that the
+/// changed `expression` walks (`P.iter()`, `P.into_iter()`, `P.iter_mut()`).
+/// An empty literal passed at such a position leaves the walk with nothing
+/// to visit, so the changed tail cannot show on that input (#9444).
+pub(in crate::analysis::classify) fn iterated_slice_positions(
+    owner_body: &str,
+    expression: &str,
+) -> Vec<usize> {
+    // Whitespace around `.` and `(` is not significant to the parser.
+    let compact: String = expression
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let owner_text = collapse(owner_body);
+    let Some(parse) = parse_clean_source_file(owner_body) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let Some(list) = function.param_list() else {
+        return Vec::new();
+    };
+    let mut positions = Vec::new();
+    for (position, param) in list.params().enumerate() {
+        let (Some(ast::Pat::IdentPat(pattern)), Some(ty)) = (param.pat(), param.ty()) else {
+            continue;
+        };
+        let Some(name) = pattern.name() else {
+            continue;
+        };
+        let name = name.text().to_string();
+        if !slice_like_type(&ty.syntax().text().to_string()) {
+            continue;
+        }
+        // A local `let` of the same name may rebind the parameter.
+        if owner_text.contains(&format!("let {name}"))
+            || owner_text.contains(&format!("let mut {name}"))
+        {
+            continue;
+        }
+        let walked = whole_word_offsets(&compact, &name)
+            .into_iter()
+            .any(|offset| {
+                // `row.values.iter()` walks a field, not the parameter.
+                !compact[..offset].ends_with('.')
+                    && [".iter()", ".into_iter()", ".iter_mut()"]
+                        .iter()
+                        .any(|walk| compact[offset + name.len()..].starts_with(walk))
+            });
+        if walked {
+            positions.push(position);
+        }
+    }
+    positions
+}
+
+/// Whether the pinned call `call_text` passes an empty literal sequence on
+/// every run at `position`, so a walk over that parameter visits nothing.
+pub(in crate::analysis::classify) fn pinned_call_passes_only_empty(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    call_text: &str,
+    name: &str,
+    position: usize,
+) -> bool {
+    call_argument_texts(call_text, name)
+        .and_then(|arguments| arguments.get(position).cloned())
+        .and_then(|argument| argument_sequences(test, loan, &argument, call_text))
+        .is_some_and(|runs| runs.iter().all(Vec::is_empty))
+}
+
 fn slice_like_type(ty: &str) -> bool {
     let ty = collapse(ty);
     let mut rest = ty.as_str();

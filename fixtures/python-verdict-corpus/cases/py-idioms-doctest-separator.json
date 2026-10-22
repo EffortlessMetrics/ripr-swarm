@@ -1,0 +1,45 @@
+{
+  "case_id": "py-idioms-doctest-separator",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-doctest-separator.diff",
+  "anchor": {
+    "file": "idioms/texts.py",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_doctest_modules_only_oracle",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"_\".join(text.lower().split())",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "idioms/texts.py::idioms.texts.slugify",
+        "equivalence_review": "not equivalent: words join with underscores"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "slugify has no regular test; its doctest, collected through --doctest-modules, is the only oracle.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
