@@ -4894,6 +4894,9 @@ suite('Extension Smoke', () => {
     assert.ok(!hasUnsafeShellMetacharacter(body('"100% done!"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD^"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"%PATH%"'), true));
+    // An even run then `""`, and adjacent spans, stay one quoted word.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body(`"a"'b'`), true));
     // A backslash run not followed by a quote is literal mid-span.
     assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\\\b\\\\"'), true));
     // Not Windows: a double quote is refused, as before.
@@ -5000,6 +5003,7 @@ suite('Extension Smoke', () => {
     assert.ok(!acceptsWindows('ripr first-pr --json > "target/../../outside.json"'));
     assert.ok(!acceptsWindows('ripr first-pr --json > "%TEMP%/out.json"'));
     assert.ok(!acceptsWindows('ripr first-pr --json > "!TEMP!/out.json"'));
+    assert.ok(!acceptsWindows("ripr first-pr --json > '%TEMP%/out.json'"));
     assert.ok(!acceptsWindows('ripr first-pr --json > "target/ripr/out.json'));
   });
 
