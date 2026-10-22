@@ -23,6 +23,7 @@ Linked issues:
 - #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
 - #7418 (evaluate a same-module call term)
 - #9515 (TypeScript grid false verdicts: property-test rows)
+- #9437 (false-exposed TypeScript rows: rounding-function swap)
 
 Linked PRs:
 
@@ -127,6 +128,28 @@ expression intact:
 A term that names nothing (`+ 0`, `+ ''`, `+ 0x10`) is outside the rule:
 it is the same for every input, so a non-zero literal always changes the
 value and a zero literal is an equivalent edit this rule does not judge.
+
+**Rule 2. A change that only swaps one rounding function for another
+needs a tested input the two functions treat differently.** On the same
+value seam, when the changed line and its removed counterpart differ only
+in one `Math.round`, `Math.floor`, `Math.ceil` or `Math.trunc` name
+replaced by another of the four, an `exposed` ladder result keeps its class
+only when the swap's single operand folds, for some owner call of a related
+test, to a value on which the two functions give different results
+(JavaScript `Math.round` sends halves toward positive infinity, so `-1.5`
+rounds to `-1`). The fold is the one rule 1 uses: owner parameters bind to
+plain, optionally negated numeric literal arguments (or test-scope
+constants) when the owner body never rebinds them. When every owner call of
+every related test folds and none discriminates, the finding reads
+`weakly_exposed`, discrimination `weak`, and its missing line says the
+related tests only pass inputs whose pre-rounding value is whole (or rounds
+the same way under both functions), so the rounding mode is not
+discriminated. Anything the rule cannot read keeps the pre-rule credit
+(fail open): a non-literal argument, an operand the fold does not support, a
+related test whose owner calls it cannot enumerate (a local shadow, a helper
+or hook that names the owner, an owner reference that is not a call), an
+instance method owner, or no readable call at all. Static methods are read
+through the class name the test imports (`Temperature.fromFahrenheit(212)`).
 
 ### Decisions
 
@@ -251,6 +274,8 @@ Known limits of rules 2 and 3:
 ## Required Evidence
 
 - The rule only moves `exposed` to `weakly_exposed`.
+- Rule 2: on the TypeScript verdict corpus, `shape-static-factory-rounding`
+  moves from `credited` to `gap` (#9437), and no other row moves.
 - On the TypeScript verdict corpus, `ts-nodetest-quote-shipping-term`
   moves from `credited` to `gap` (false verdicts 10/101 to 9/101, false
   exposed 1/39 to 0/39), and no other row moves.
@@ -306,6 +331,10 @@ Known limits of rules 2 and 3:
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs`
+  pins rule 2: whole inputs, a discriminating fractional input, fractional
+  inputs both functions round alike, negative directions and unreadable
+  calls.
 - `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`
   pins examples 2 to 10, and example 1's message through the analogous
   `shipping(subtotal)` call term.
@@ -327,6 +356,8 @@ Known limits of rules 2 and 3:
   `ts_neutral_operand_hides`, `ts_assertions_only_relate_owner_calls`.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `dynamic_argument_text` fills `TypeScriptAssertion::dynamic_expected_text`.
+- `crates/ripr/src/analysis/language/typescript/rounding_mode_guard.rs`:
+  `ts_rounding_swap`, `ts_rounding_witness` (rule 2).
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
   `masked_owner_body`, shared with RIPR-SPEC-0247 rule 1.
 

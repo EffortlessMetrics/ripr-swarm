@@ -701,7 +701,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
     both abstain instead of reading a weak gap. An assertion about unrelated
     text keeps its verdict. `caplog.messages` and `caplog.records` are not
-    read by this rule.
+    read by this rule. The membership is read from the parsed assertion, not
+    its text layout: extra spacing, parentheses, line breaks, implicit
+    literal concatenation, an assertion message and a membership joined by
+    `and` all abstain the same way, while a membership against any receiver
+    other than `caplog.text` is not read.
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;

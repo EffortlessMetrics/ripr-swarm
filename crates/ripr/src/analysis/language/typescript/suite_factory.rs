@@ -259,7 +259,7 @@ fn span_text(source: &str, span: oxc_span::Span) -> Option<String> {
 /// `None` for a bare `/` (a regex or a division), which this scan does not
 /// classify; a parameter spelled inside text the runner reads as data must
 /// not be renamed, because that would change an expected value or title.
-fn code_bytes(body: &str) -> Option<Vec<bool>> {
+pub(super) fn code_bytes(body: &str) -> Option<Vec<bool>> {
     let bytes = body.as_bytes();
     let mut code = vec![true; bytes.len()];
     let mut at = 0;
