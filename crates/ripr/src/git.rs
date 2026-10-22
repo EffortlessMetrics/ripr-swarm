@@ -1397,6 +1397,10 @@ fn drain_pipe_reader(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "The failure-path tests assert an expected `Err` via `.expect_err(\"why\")`, making the expected failure mode part of the assertion message."
+)]
 mod tests {
 
     use super::*;
