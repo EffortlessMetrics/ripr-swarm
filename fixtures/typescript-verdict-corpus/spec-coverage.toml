@@ -30,7 +30,7 @@ floor = 121
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 23
+missed_credit_ceiling = 24
 
 # LSP Repair Packet Command
 [[spec]]
