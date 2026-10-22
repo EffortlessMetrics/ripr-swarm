@@ -150,7 +150,8 @@ fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
         return false;
     }
     test.assertions.iter().any(|assertion| {
-        assertion.strength == OracleStrength::Strong
+        assertion_runs_unconditionally(&test.body, &assertion.text)
+            && assertion.strength == OracleStrength::Strong
             && assertion.kind == OracleKind::ExactValue
             && assertion.text.trim_start().starts_with("assert_eq!")
             && assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
@@ -163,6 +164,45 @@ fn pins_owner_exactly(test: &TestFact, owner: &str) -> bool {
                 pins(left, right) || pins(right, left)
             })
     })
+}
+
+/// Whether `assertion` is a statement of the test's own body, before any
+/// `return`: not inside an `if`, `match`, loop, closure or nested block that
+/// may not run it, which the owner pin's execution admission would refuse.
+fn assertion_runs_unconditionally(test_body: &str, assertion: &str) -> bool {
+    let squash = |text: &str| -> String {
+        text.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .trim_end_matches(';')
+            .to_string()
+    };
+    let Some(parse) = parse_clean_source_file(test_body) else {
+        return false;
+    };
+    let Some(list) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|block| block.stmt_list())
+    else {
+        return false;
+    };
+    let wanted = squash(assertion);
+    for statement in list.statements() {
+        if squash(&statement.syntax().text().to_string()) == wanted {
+            return true;
+        }
+        if let ast::Stmt::ExprStmt(expr) = &statement
+            && matches!(expr.expr(), Some(ast::Expr::ReturnExpr(_)))
+        {
+            return false;
+        }
+    }
+    list.tail_expr()
+        .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
 }
 
 /// The operand is `owner(..)`, optionally applied again (`owner(..)(..)`) or
@@ -292,10 +332,12 @@ fn unread_shape(body: &str, line_index: usize, family: &ProbeFamily) -> Option<S
             // RIPR-SPEC-0265 reads the slice-parameter adaptor tail itself:
             // it credits a non-empty literal input and keeps the gap for an
             // empty one, so this rule leaves that shape to it.
-            let on_closure_line = tail
-                .syntax()
-                .descendants()
-                .any(|node| ast::ClosureExpr::can_cast(node.kind()) && overlaps(&node));
+            // A closure bound by `let` in the tail block may never be called.
+            let on_closure_line = tail.syntax().descendants().any(|node| {
+                ast::ClosureExpr::can_cast(node.kind())
+                    && overlaps(&node)
+                    && !node.ancestors().any(|up| ast::LetStmt::can_cast(up.kind()))
+            });
             (on_closure_line
                 && adaptor_tail_of(body).is_none()
                 && !has_other_exit(block.syntax())
@@ -305,13 +347,31 @@ fn unread_shape(body: &str, line_index: usize, family: &ProbeFamily) -> Option<S
         ProbeFamily::CallDeletion | ProbeFamily::SideEffect => {
             let tail = list.tail_expr()?;
             let returned = path_ident(&tail)?;
-            let changed = list.statements().find_map(|statement| {
-                let ast::Stmt::ExprStmt(statement) = statement else {
-                    return None;
-                };
-                let expr = statement.expr()?;
-                overlaps(expr.syntax()).then_some(expr)
+            let statements: Vec<ast::Stmt> = list.statements().collect();
+            let at = statements.iter().position(|statement| {
+                matches!(statement, ast::Stmt::ExprStmt(expr)
+                    if expr.expr().is_some_and(|expr| overlaps(expr.syntax())))
             })?;
+            // A later `let` or assignment gives the tail a different value.
+            let rebound = statements[at + 1..].iter().any(|statement| {
+                statement.syntax().descendants().any(|node| {
+                    ast::IdentPat::cast(node.clone())
+                        .is_some_and(|pat| pat.syntax().text() == returned.as_str())
+                        || ast::BinExpr::cast(node).is_some_and(|bin| {
+                            matches!(bin.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                                && bin.lhs().is_some_and(|lhs| {
+                                    path_ident(&lhs).as_deref() == Some(returned.as_str())
+                                })
+                        })
+                })
+            });
+            if rebound {
+                return None;
+            }
+            let ast::Stmt::ExprStmt(statement) = &statements[at] else {
+                return None;
+            };
+            let changed = statement.expr()?;
             let ast::Expr::MethodCallExpr(call) = changed else {
                 return None;
             };
@@ -326,27 +386,41 @@ fn unread_shape(body: &str, line_index: usize, family: &ProbeFamily) -> Option<S
 /// `let ... else { .. return value; }` whose `else` block holds the changed
 /// line, in an owner with no other early exit.
 fn let_else_exit(list: &ast::StmtList, overlaps: &impl Fn(&SyntaxNode) -> bool) -> Option<Shape> {
-    let else_blocks: Vec<ast::BlockExpr> = list
+    let lets: Vec<ast::LetStmt> = list
         .statements()
         .filter_map(|statement| match statement {
-            ast::Stmt::LetStmt(let_stmt) => let_stmt.let_else(),
+            ast::Stmt::LetStmt(let_stmt) if let_stmt.let_else().is_some() => Some(let_stmt),
             _ => None,
         })
-        .filter_map(|let_else| let_else.block_expr())
+        .collect();
+    let else_blocks: Vec<ast::BlockExpr> = lets
+        .iter()
+        .filter_map(|let_stmt| let_stmt.let_else()?.block_expr())
         .collect();
     // The change is inside an `else` block (its initializer runs on every
     // input), and every other `return`, `?`, `break` or `continue` outside
     // closures is in an `else` block too.
     // Braces on the `let` line are not the else body: look at its statements.
-    let changed = else_blocks.iter().any(|block| {
-        block.stmt_list().is_some_and(|inner| {
-            inner
-                .statements()
-                .any(|statement| overlaps(statement.syntax()))
-                || inner
-                    .tail_expr()
-                    .is_some_and(|tail| overlaps(tail.syntax()))
-        })
+    // The initializer must not share the changed line: a one-line
+    // `let .. = init else { return .. }` cannot tell the two apart.
+    let changed = lets.iter().any(|let_stmt| {
+        let initializer_changed = let_stmt
+            .initializer()
+            .is_some_and(|init| overlaps(init.syntax()));
+        let block = let_stmt
+            .let_else()
+            .and_then(|let_else| let_else.block_expr());
+        !initializer_changed
+            && block.is_some_and(|block| {
+                block.stmt_list().is_some_and(|inner| {
+                    inner
+                        .statements()
+                        .any(|statement| overlaps(statement.syntax()))
+                        || inner
+                            .tail_expr()
+                            .is_some_and(|tail| overlaps(tail.syntax()))
+                })
+            })
     });
     let exits_elsewhere = exits_outside(list.syntax(), &else_blocks);
     (changed && !exits_elsewhere).then_some(Shape::LetElseExit)
@@ -541,5 +615,23 @@ fn walk_outside_closures(root: &SyntaxNode, visit: &mut impl FnMut(&SyntaxNode))
                 visit(&node);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail() {
+        let body =
+            "fn f(x: u32) -> u32 {\n    {\n        let _unused = || x + 1;\n        7\n    }\n}\n";
+        assert!(unread_shape(body, 2, &ProbeFamily::ReturnValue).is_none());
+        let called =
+            "fn f(x: u32) -> u32 {\n    std::thread::spawn(move || x + 1).join().unwrap()\n}\n";
+        assert!(matches!(
+            unread_shape(called, 1, &ProbeFamily::ReturnValue),
+            Some(Shape::ClosureTail)
+        ));
     }
 }

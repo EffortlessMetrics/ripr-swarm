@@ -536,3 +536,80 @@ fn a_let_else_initializer_or_a_second_exit_keeps_the_gap() -> Result<(), String>
         ProbeFamily::ReturnValue,
     )
 }
+
+#[test]
+fn a_shadowed_or_reassigned_receiver_keeps_the_gap() -> Result<(), String> {
+    for rebind in ["let v = Vec::new();", "v = Vec::new();"] {
+        let lib = owner_with_test(
+            &format!(
+                "pub fn top(mut v: Vec<u32>) -> Vec<u32> {{
+    v.sort_by_key(|x| std::cmp::Reverse(*x));
+    {rebind}
+    v
+}}"
+            ),
+            "",
+            "assert_eq!(top(vec![3, 9, 5]), vec![]);",
+        );
+        keeps_gap(
+            &lib,
+            2,
+            "    v.sort_by(|a, b| b.cmp(a));",
+            "    v.sort_by_key(|x| std::cmp::Reverse(*x));",
+            ProbeFamily::CallDeletion,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_closure_the_tail_never_calls_keeps_the_gap() -> Result<(), String> {
+    let lib = owner_with_test(
+        "pub fn seven(x: u32) -> u32 {
+    let _unused = || x + 1;
+    7
+}",
+        "",
+        "assert_eq!(seven(5), 7);",
+    );
+    keeps_gap(
+        &lib,
+        2,
+        "    let _unused = || x + 2;",
+        "    let _unused = || x + 1;",
+        ProbeFamily::Predicate,
+    )
+}
+
+#[test]
+fn a_single_line_let_else_initializer_keeps_the_gap() -> Result<(), String> {
+    let lib = owner_with_test(
+        "pub fn first(xs: &[u32]) -> u32 {
+    let Some(w) = xs.get(1) else { return 0; };
+    *w
+}",
+        "",
+        "assert_eq!(first(&[4, 4]), 4);",
+    );
+    keeps_gap(
+        &lib,
+        2,
+        "    let Some(w) = xs.get(0) else { return 0; };",
+        "    let Some(w) = xs.get(1) else { return 0; };",
+        ProbeFamily::ReturnValue,
+    )
+}
+
+#[test]
+fn an_equality_that_may_not_run_does_not_withhold() -> Result<(), String> {
+    let finding = spawned(
+        "",
+        "doubled(5);
+        if false {
+            assert_eq!(doubled(5), 10);
+        }
+        assert_eq!(1, 1);",
+    )?;
+    assert_eq!(limit(&finding), None);
+    Ok(())
+}
