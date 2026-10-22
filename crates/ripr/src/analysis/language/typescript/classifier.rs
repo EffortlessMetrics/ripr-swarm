@@ -6106,6 +6106,25 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         },
     );
+    // RIPR-SPEC-0246 rule 8: a counted-loop header change that a related test
+    // reads only through a mock call count. The ladder's predicate-boundary
+    // gap does not apply to a loop header, so the iteration count is unknown.
+    let loop_count_unknown = matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && strongest_strength >= OracleStrength::Strong.rank()
+        && super::loop_count_guard::ts_loop_count_unmodeled(
+            old_line_text,
+            line_text,
+            &related_candidates,
+        );
+    if loop_count_unknown {
+        verdict.class = ExposureClass::StaticUnknown;
+        verdict.observe_state = StageState::Unknown;
+        verdict.discriminate_state = StageState::Unknown;
+        verdict.missing = vec![format!(
+            "The change to `{}` rewrites a counted loop header, and the related tests observe it only through a mock call count; the adapter does not model how many iterations the loop runs, so whether the count discriminates the change is not established.",
+            owner.name
+        )];
+    }
     let TsLadderVerdict {
         class,
         observe_state,
@@ -6114,7 +6133,8 @@ pub(crate) fn classify_change_with_alias_state(
     } = verdict;
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
-        && !ladder_entry_unknown;
+        && !ladder_entry_unknown
+        && !loop_count_unknown;
     let unresolved_callback_unknown =
         matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
@@ -6239,6 +6259,8 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if loop_count_unknown {
+        "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if ladder_unresolved_unknown {
@@ -6310,6 +6332,9 @@ pub(crate) fn classify_change_with_alias_state(
         }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if loop_count_unknown => {
+            "TypeScript preview advisory: the changed counted-loop header is observed only through a mock call count the adapter cannot tie to the iteration count; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
             "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -6481,7 +6506,7 @@ pub(crate) fn classify_change_with_alias_state(
         },
         stop_reasons: if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
-        } else if unresolved_callback_unknown {
+        } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {
             vec![StopReason::PropagationEvidenceUnknown]
