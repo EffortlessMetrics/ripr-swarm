@@ -365,6 +365,15 @@ rule only for an assertion whose context was admitted.
    shadowing that parameter. Partial inputs are not combined across indirect calls, and an
    unread mask, zero kept bits or nonliteral input supplies no pointer pin.
    The ordinary direct-call mask guard retains its existing collective rule.
+   A selected pointer call also supplies no pin when the existing integer fold
+   proves its arguments give the same result before and after the change, and
+   the existing bounded input grid finds another input that separates them.
+   Thus `n.min(5)` changed to `n.min(6)` is not pinned by `f(3) == 3`, while
+   `f(9) == 6` may pin it. Either equality order and a qualified binding have
+   the same rule. The separating-input preparation is lazy and reused per pin;
+   unknown folds and equivalent rewrites retain today's reading. This veto
+   reads only the selected call's arguments and leaves ordinary direct-call
+   infection and owner-identity rules unchanged.
 
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
@@ -2268,6 +2277,12 @@ assertions. This repair shares the existing callback without that larger migrati
   cannot pin the mask when both neutral and narrower masks pass the same
   one-test native assertion. The constant-shadow case is also retained in
   `fixtures/owner_return_pin_pointer_mask_rebound` and the honesty corpus.
+
+  `function_pointer_invisible_inputs_withhold_exposure` and
+  `function_pointer_invisible_runtime_controls_match_the_input` retain bare,
+  qualified and reversed pointer calls, plus direct-call twins. Both versions
+  pass at a neutral input; a separating input fails the baseline. The neutral
+  pointer case is retained in `fixtures/owner_return_pin_pointer_invisible_input`.
 
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,

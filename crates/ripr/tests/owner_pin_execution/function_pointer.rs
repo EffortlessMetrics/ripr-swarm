@@ -423,7 +423,7 @@ mod tests {{
 }
 
 #[test]
-fn function_pointer_invisible_inputs_keep_infection_weak() -> Result<(), String> {
+fn function_pointer_invisible_inputs_withhold_exposure() -> Result<(), String> {
     for &(case, body, observes_change) in INFECTION_CASES {
         let scratch = Scratch::create()?;
         std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
