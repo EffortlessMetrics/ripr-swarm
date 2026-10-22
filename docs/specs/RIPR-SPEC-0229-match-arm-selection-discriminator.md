@@ -216,6 +216,14 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+The same applies to a return value whose integer literals only changed
+spelling to the same value (`"ftp" => Some(0x15)` from `"ftp" => Some(21)`,
+a `_` separator, a radix): the arm finding stays and decides whether a test
+notices the arm, so a listed row is credited and an allowlisted one stays a
+gap, but no `return_value` finding asks for a discriminator of a value that
+did not change (#6578). Text holding a string, character or macro, a
+changed suffix, or a float is never a respelling.
+
 ### A guard-only edit is the guard's predicate
 
 When an edit lies wholly inside one comparison of an arm's guard
@@ -637,6 +645,10 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
+- `crates/ripr/src/analysis/probes/diff.rs` unit tests: a respelled arm
+  value drops the return value; a changed, suffixed, float or string value
+  keeps it. Verdict corpus cases `mined-allowlist-listed-row-ftp` and
+  `mined-allowlisted-row-gopher`.
 - `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for
   ranges and moved-input credit (examples 7 to 9):
   `integer_range_arms_select_by_value`,
