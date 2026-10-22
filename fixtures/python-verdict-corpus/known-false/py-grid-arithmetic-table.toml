@@ -1,0 +1,3 @@
+case = "py-grid-arithmetic-table"
+issue = 9594
+reason = "False actionable: table-loop assertion not credited for an arithmetic edit (#9594)."

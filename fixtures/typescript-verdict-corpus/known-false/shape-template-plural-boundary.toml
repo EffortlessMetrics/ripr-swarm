@@ -1,0 +1,3 @@
+case = "shape-template-plural-boundary"
+issue = 9437
+reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
