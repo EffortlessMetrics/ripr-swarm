@@ -17,15 +17,15 @@
     "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
     "mutants": [
       {
-        "replacement": "return round(self.amount - self.amount * self.tax_rate)",
-        "mutated_line": "return round(self.amount - self.amount * self.tax_rate)",
+        "replacement": "return round((1 - self.tax_rate) * self.amount)",
+        "mutated_line": "return round((1 - self.tax_rate) * self.amount)",
         "outcome": "tests_failed",
         "failing_test": "tests/test_models.py::test_total_applies_default_tax",
         "equivalence_review": "not equivalent: pricing changes for every nonzero amount"
       },
       {
-        "replacement": "return round(self.amount + self.tax_rate)",
-        "mutated_line": "return round(self.amount + self.tax_rate)",
+        "replacement": "return round((1 + self.tax_rate) + self.amount)",
+        "mutated_line": "return round((1 + self.tax_rate) + self.amount)",
         "outcome": "tests_failed",
         "failing_test": "tests/test_models.py::test_total_applies_default_tax",
         "equivalence_review": "not equivalent: pricing changes for every nonzero amount"
@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "A green algebraic rewrite of the price; the two exact totals kill a flipped sign or a dropped term.",
+  "reasoning": "A green rewrite that commutes the product, which IEEE multiplication keeps bit-identical; the two exact totals kill a flipped sign or a dropped term.",
   "labeling_observation": {
     "ripr_commit": "3608bb9a",
     "full_checkout_verdict": "credited",

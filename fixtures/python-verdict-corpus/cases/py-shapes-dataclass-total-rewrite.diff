@@ -6,7 +6,7 @@ diff --git a/shapes/models.py b/shapes/models.py
  
      def total(self):
 -        return round(self.amount * (1 + self.tax_rate))
-+        return round(self.amount + self.amount * self.tax_rate)
++        return round((1 + self.tax_rate) * self.amount)
  
      @property
      def is_large(self):
