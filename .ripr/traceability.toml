@@ -16174,6 +16174,7 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_deferred_owner_bodies",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_shadowed_class_bindings",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_literal_owner_calls",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_receiver_or_field_modification",
@@ -16197,6 +16198,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_assertion_helper_async_owner",
+  "fixtures/python_assertion_helper_generator_owner",
   "fixtures/python_assertion_helper_rebound_class",
   "fixtures/python_assertion_helper_literal_call",
   "fixtures/python_assertion_helper_method_rebinding",
@@ -16221,6 +16224,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/python/oracles/helpers.rs",
+  "crates/ripr/src/analysis/language/python/term_activation.rs",
   "crates/ripr/src/analysis/language/python/source_facts.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",

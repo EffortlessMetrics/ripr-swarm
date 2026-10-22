@@ -14,7 +14,11 @@ fn test_source(helper: &str, call: &str) -> String {
 }
 
 fn finding(source: &str) -> Result<Finding, String> {
-    let owners = extract_owners(Path::new("src/stats.py"), OWNER);
+    finding_with_owner(source, OWNER)
+}
+
+fn finding_with_owner(source: &str, owner_source: &str) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/stats.py"), owner_source);
     let tests = extract_tests(Path::new("tests/test_stats.py"), source);
     assert!(owners.iter().any(|owner| owner.name == "record_write"));
     assert_eq!(tests.len(), 1, "{source}");
@@ -27,6 +31,30 @@ fn finding(source: &str) -> Result<Finding, String> {
         &tests,
     )
     .ok_or_else(|| "the changed field write must produce a finding".to_string())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_deferred_owner_bodies() -> Result<(), String> {
+    let source = test_source(
+        &format!("{HELPER}\ndef drop(coro):\n    coro.close()\n"),
+        "check_writes(stats, 0)",
+    )
+    .replace(
+        "    stats.record_write()\n",
+        "    drop(stats.record_write())\n",
+    );
+    for owner in [
+        OWNER.replace("def record_write(", "async def record_write("),
+        format!("{OWNER}        yield None\n"),
+        format!("{OWNER}        f\"{{(yield None)}}\"\n"),
+    ] {
+        assert_eq!(
+            finding_with_owner(&source, &owner)?.class,
+            ExposureClass::WeaklyExposed,
+            "{owner}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -246,6 +274,13 @@ fn a_same_file_assertion_helper_refuses_receiver_or_field_modification() -> Resu
             ExposureClass::WeaklyExposed,
             "{source}"
         );
+        let tests = extract_tests(Path::new("tests/test_stats.py"), &source);
+        assert!(
+            tests[0]
+                .assertions
+                .iter()
+                .all(|assertion| !assertion.effect_only)
+        );
     }
     Ok(())
 }
@@ -276,6 +311,8 @@ fn a_same_file_assertion_helper_refuses_receiver_rebinding() -> Result<(), Strin
         "(stats) = Other()",
         "import stats",
         "from other import stats",
+        "import other as stats",
+        "from other import replacement as stats",
     ] {
         let source = format!(
             "from src.stats import Stats\n\n{HELPER}\nclass Other:\n    writes = 0\n\ndef test_writes():\n    stats = Stats()\n    stats.record_write()\n    {replacement}\n    check_writes(stats, 0)\n"

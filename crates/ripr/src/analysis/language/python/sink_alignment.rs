@@ -967,10 +967,15 @@ pub(super) fn classify_sink_alignment_prepared(
         }))
     });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
-        effect_reads(unit)
-            .as_ref()
-            .as_ref()
-            .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
+        // This helper capability does not establish coroutine/generator
+        // execution. Raw and mock assertions retain their existing rules.
+        !(unit.helper_assertion
+            && (owner.decorators.iter().any(|name| name == "async_def")
+                || owner.term_facts.may_yield()))
+            && effect_reads(unit)
+                .as_ref()
+                .as_ref()
+                .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
@@ -1106,6 +1111,8 @@ struct AlignmentUnit<'a> {
     kind: OracleKind,
     /// A mock or instantiated helper admitted only to observe the changed effect.
     effect_only: bool,
+    /// Origin of a synthetic comparison, distinct from existing mock rules.
+    helper_assertion: bool,
 }
 
 /// Every strong assertion of every strong related test, in related-test order
@@ -1142,6 +1149,7 @@ fn alignment_units<'a>(
                     line: Some(assertion.line),
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong || assertion.effect_only,
+                    helper_assertion: assertion.effect_only,
                 })
             }));
         }
@@ -1160,6 +1168,7 @@ fn alignment_units<'a>(
                 line: None,
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
+                helper_assertion: false,
             });
         }
     }

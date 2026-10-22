@@ -173,6 +173,9 @@ table and changed-effect alignment gates. It must observe the actual effect
 on the bound receiver and changed field; an owner-name token in another
 comparison supplies no credit. The assertion's line is the call site,
 so a read before the changed owner runs does not observe its later effect.
+This credit is limited to synchronous owners without a `yield` token. Merely
+constructing or closing a coroutine or generator does not execute its write.
+The yield check is conservative, including tokens in strings or nested scopes.
 
 This bounded form requires a plain, undecorated top-level helper with one
 to four positional parameters, no defaults or variadic parameters, and a
