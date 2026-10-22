@@ -639,6 +639,11 @@ fn operand_after(code: &str, start: usize, ty: &str) -> Operand {
     if path.is_empty() || path.contains('.') || rest[path_len..].trim_start().starts_with('.') {
         return Operand::Unknown;
     }
+    // `-Money(1).0` negates the field, not the `Money`: a postfix `.`, `?` or
+    // `[` after the constructor's arguments binds tighter than the operator.
+    if postfix_follows_group(&rest[path_len..]) {
+        return Operand::Unknown;
+    }
     if path.split("::").next() == Some(ty) {
         return Operand::Bound;
     }
@@ -649,6 +654,32 @@ fn operand_after(code: &str, start: usize, ty: &str) -> Operand {
         &code[..start],
         ty,
     )
+}
+
+/// Whether `rest` opens a `(..)` or `{..}` group that is followed by a
+/// postfix `.`, `?` or `[`.
+fn postfix_follows_group(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    let (open, close) = match rest.bytes().next() {
+        Some(b'(') => (b'(', b')'),
+        Some(b'{') => (b'{', b'}'),
+        _ => return false,
+    };
+    let mut depth = 0usize;
+    for (i, byte) in rest.bytes().enumerate() {
+        if byte == open {
+            depth += 1;
+        } else if byte == close {
+            depth -= 1;
+            if depth == 0 {
+                return matches!(
+                    rest[i + 1..].trim_start().bytes().next(),
+                    Some(b'.' | b'?' | b'[')
+                );
+            }
+        }
+    }
+    false
 }
 
 /// An identifier operand typed by its `let`: the impl's type, another type
@@ -929,6 +960,12 @@ mod tests {
     fn operands_are_bound_other_or_unknown() {
         let before = |code: &str| operand_before(code, code.find(" +").unwrap_or(0), "Money");
         assert!(before("Money(2) + 1") == Operand::Bound);
+        // The unary operand of `-Money(1).0` is the field, not the `Money`.
+        let after = |code: &str| operand_after(code, 1, "Money");
+        assert!(after("-Money(1)") == Operand::Bound);
+        assert!(after("-Money(1).0") == Operand::Unknown);
+        assert!(after("-Money { v: 1 }.v") == Operand::Unknown);
+        assert!(after("-Money(1)?") == Operand::Unknown);
         assert!(before("1 + 2") == Operand::Other);
         assert!(before("2.5 + 1.0") == Operand::Other);
         assert!(before("let t = Tile(1); t + t") == Operand::Other);
