@@ -1357,6 +1357,55 @@ pub(crate) fn detect_owner_extraction_gap(
     })
 }
 
+/// Changed lines that sit inside a runtime enum member (`High = 3,`). The
+/// owner extractor indexes no enum, so such a line has no owner and the
+/// classifier returns nothing for it; without this the edit is silent apart
+/// from the file-level `typescript_owner_extraction_partial` disclosure
+/// (#9436). Ambient `declare enum` is type-only and never listed. A file that
+/// does not parse yields nothing, as its parse-error disclosure owns it.
+pub(crate) fn changed_enum_member_lines(
+    file: &Path,
+    source: &str,
+    changed_lines: &[usize],
+) -> std::collections::BTreeSet<usize> {
+    if changed_lines.is_empty() {
+        return std::collections::BTreeSet::new();
+    }
+    let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return std::collections::BTreeSet::new();
+        }
+        let source = SourceText::new(source);
+        let mut lines = std::collections::BTreeSet::new();
+        let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
+            if decl.declare {
+                return;
+            }
+            for member in &decl.body.members {
+                let start = source.line_for_offset(member.span.start as usize);
+                let end = source.line_for_offset(member.span.end as usize);
+                lines.extend((start..=end).filter(|line| changed.contains(line)));
+            }
+        };
+        for stmt in &ret.program.body {
+            match stmt {
+                Statement::TSEnumDeclaration(decl) => collect(decl),
+                Statement::ExportNamedDeclaration(export) => {
+                    if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref()
+                    {
+                        collect(decl);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines
+    })
+    .unwrap_or_default()
+}
+
 /// 1-based inclusive line ranges of top-level ambient declarations
 /// (`declare function`, `export declare const`, `declare module 'x' { ... }`,
 /// `declare global { ... }`), read from the syntax tree. They are type-only

@@ -15959,6 +15959,57 @@ fn owner_extraction_gap_discloses_enum_member_change() -> Result<(), String> {
     )
 }
 
+/// #9436: the file-level disclosure is not enough. The changed enum member
+/// earns its own limited finding, so the edit does not read as silence; an
+/// ambient `declare enum` is type-only and a neighbouring unchanged member
+/// stays unprobed.
+#[test]
+fn changed_enum_member_is_a_limited_finding_not_silence() -> Result<(), String> {
+    let run = |label: &str, src: &str, line: (usize, &str)| -> Result<Vec<Finding>, String> {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join("src/level.ts"), src)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/level.ts", &[line])],
+        )?;
+        Ok(result.findings)
+    };
+    let findings = run(
+        "enum-member-finding",
+        "export enum Level {\n  Low = 1,\n  High = 3,\n}\n",
+        (3, "  High = 3,"),
+    )?;
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(matches!(findings[0].class, ExposureClass::StaticUnknown));
+    assert_eq!(findings[0].probe.location.line, 3);
+    let joined = findings[0].evidence.join("\n");
+    assert!(
+        joined.contains("static_limit typescript_owner_extraction_partial: enum member"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("actionability_category: owner_shape_unextracted"),
+        "{joined}"
+    );
+
+    // Controls: the closing brace and the enum header are not members, and a
+    // `declare enum` has no runtime behavior to probe.
+    let brace = run(
+        "enum-brace-line",
+        "export enum Level {\n  Low = 1,\n  High = 3,\n}\n",
+        (4, "}"),
+    )?;
+    assert!(brace.is_empty(), "{brace:?}");
+    let ambient = run(
+        "enum-ambient",
+        "export declare enum Level {\n  Low = 1,\n  High = 3,\n}\n",
+        (3, "  High = 3,"),
+    )?;
+    assert!(ambient.is_empty(), "{ambient:?}");
+    Ok(())
+}
+
 #[test]
 fn owner_extraction_gap_discloses_namespace_function() -> Result<(), String> {
     assert_owner_extraction_gap_disclosed(
