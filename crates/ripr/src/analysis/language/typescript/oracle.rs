@@ -803,6 +803,36 @@ fn collect_nested_callback_assertions(
                 out.extend(assertions);
             }
         }
+        // RIPR-SPEC-0243 rule 16: an awaited or returned Playwright
+        // `test.step(name, [options,] body)` runs `body` inside the test and
+        // rejects with its failure.
+        "step" if awaited || returned => {
+            let Expression::Identifier(object) = member.object().get_inner_expression() else {
+                return;
+            };
+            if !context
+                .bindings
+                .playwright_tests
+                .iter()
+                .any(|local| local == object.name.as_str())
+            {
+                return;
+            }
+            let Some((callback, leading)) = call.arguments.split_last() else {
+                return;
+            };
+            if leading.is_empty() || leading.len() > 2 || callback_is_generator(callback) {
+                return;
+            }
+            if let Some(statements) = function_body_statements_from_argument(callback) {
+                collect_expect_assertions_from_statement_vec(
+                    statements,
+                    source,
+                    &context.nested(),
+                    out,
+                );
+            }
+        }
         "test" if awaited => {
             let Expression::Identifier(object) = member.object().get_inner_expression() else {
                 return;
@@ -1268,6 +1298,10 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Identifiers bound to `node:test`'s default export, `test` or `it`,
     /// whose test context carries `t.assert` (RIPR-SPEC-0252).
     node_test_locals: Vec<String>,
+    /// Identifiers bound to Playwright Test's `test`, whose awaited
+    /// `test.step(name, body)` runs `body` inside the test (RIPR-SPEC-0243
+    /// rule 16).
+    playwright_tests: Vec<String>,
     /// Whether the test being read was registered through one of
     /// `node_test_locals`; set only by `for_registration`, so any other
     /// path reads no context assert.
@@ -1387,6 +1421,9 @@ impl TypeScriptAssertionBindings {
         if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
             self.node_test_locals.push(local.clone());
         }
+        if module == "@playwright/test" && imported == Some("test") && !namespace {
+            self.playwright_tests.push(local.clone());
+        }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
                 AssertFlavor::NodeStrict
@@ -1464,6 +1501,12 @@ impl TypeScriptAssertionBindings {
             },
             node_test_locals: self
                 .node_test_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            playwright_tests: self
+                .playwright_tests
                 .iter()
                 .filter(|local| !is_shadowed(local))
                 .cloned()
@@ -2246,11 +2289,22 @@ fn negated_oracle_cap(matcher: &str) -> (OracleKind, OracleStrength) {
     }
 }
 
+/// `expect(...)` or the soft form `expect.soft(...)` (Playwright and
+/// Vitest): a soft assertion records its failure and fails the test when
+/// it ends, so it separates the same versions as a hard one
+/// (RIPR-SPEC-0243 rule 16).
 pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    matches!(
-        &call.callee,
-        Expression::Identifier(ident) if ident.name.as_str() == "expect"
-    )
+    match &call.callee {
+        Expression::Identifier(ident) => ident.name.as_str() == "expect",
+        Expression::StaticMemberExpression(member) => {
+            member.property.name.as_str() == "soft"
+                && matches!(
+                    &member.object,
+                    Expression::Identifier(ident) if ident.name.as_str() == "expect"
+                )
+        }
+        _ => false,
+    }
 }
 
 /// Static value of a branch or loop condition made of constant literals
@@ -2419,7 +2473,12 @@ pub(crate) fn error_payload_from_assertion(
             let arg = matcher_call.arguments.first()?;
             // Priority: string literal > object literal > class/constructor ref.
             // Fail-closed: any form we can't confirm is exact stays None (→ BroadError).
-            if let Some(expected) = safe_error_literal_payload_text(arg, source) {
+            if let Some(expected) = anchored_regex_payload_text(arg, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ThrowsRegex,
+                })
+            } else if let Some(expected) = safe_error_literal_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::ThrowsLiteral,
@@ -2438,7 +2497,12 @@ pub(crate) fn error_payload_from_assertion(
         }
         (Some("rejects"), "toThrow" | "toThrowError") if matcher_call.arguments.len() == 1 => {
             let arg = matcher_call.arguments.first()?;
-            if let Some(expected) = safe_error_literal_payload_text(arg, source) {
+            if let Some(expected) = anchored_regex_payload_text(arg, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::RejectsThrowRegex,
+                })
+            } else if let Some(expected) = safe_error_literal_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::RejectsThrowLiteral,

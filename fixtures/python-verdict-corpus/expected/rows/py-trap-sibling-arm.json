@@ -1,0 +1,22 @@
+{
+  "case_id": "py-trap-sibling-arm",
+  "subject_id": "authored-py-trap-kit",
+  "origin": "authored",
+  "anchor": "trapkit/core.py:106",
+  "behavior_family": "match_arm",
+  "test_shape": "sibling_arm_pinned_only",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

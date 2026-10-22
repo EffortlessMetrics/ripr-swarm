@@ -86,6 +86,7 @@ mod module_entries;
 mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
+mod nullish_chain_guard;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -111,6 +112,7 @@ mod repo;
 #[cfg(test)]
 mod repo_tests;
 mod returned_state_guard;
+mod rounding_mode_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -120,6 +122,7 @@ mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
@@ -142,6 +145,7 @@ pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
@@ -159,6 +163,7 @@ pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
+pub(crate) use nullish_chain_guard::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -167,6 +172,7 @@ pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use returned_state_guard::*;
+pub(crate) use rounding_mode_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;

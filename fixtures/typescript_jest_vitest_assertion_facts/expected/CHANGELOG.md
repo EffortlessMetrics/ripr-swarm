@@ -647,3 +647,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (24)
+
+Reason:
+isReady loses its boolean annotation so the fixture keeps exercising smoke-only truthiness after RIPR-SPEC-0247 rule 5 (#9532); only the source snapshot line changes
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
