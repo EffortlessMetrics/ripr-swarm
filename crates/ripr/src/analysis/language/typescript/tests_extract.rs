@@ -2005,7 +2005,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             _ => continue,
         };
         let rest = text[close + 1..].trim_start();
-        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+        let assigned = rest.starts_with('=') && !rest[1..].starts_with(['=', '>']);
+        // `for ([name] of ...)` / `for ({ name } in ...)` write their targets.
+        let loop_bound = ["of", "in"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                tail.starts_with(|c: char| c.is_whitespace() || "([{'\"`".contains(c))
+            })
+        });
+        if !assigned && !loop_bound {
             continue;
         }
         let mut depth = 0usize;

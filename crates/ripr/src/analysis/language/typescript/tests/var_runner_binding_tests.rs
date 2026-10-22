@@ -59,6 +59,15 @@ fn written_var_runner_bindings_stay_uncredited() -> Result<(), String> {
         ),
         ("let test = require('tape');", "test++;"),
         ("var test = require('tape');", "for (test of []) {}"),
+        (
+            "var test = require('tape');",
+            "for ([test] of [[function () {}]]) {}",
+        ),
+        (
+            "var test = require('tape');",
+            "for ({ test } of [{ test: function () {} }]) {}",
+        ),
+        ("var test = require('tape');", "for ([test] in {}) {}"),
     ] {
         let class = class_for("var-runner-written", &tape_test(prelude, tail))?;
         assert_ne!(class, ExposureClass::Exposed, "{prelude} {tail}");
@@ -88,5 +97,20 @@ fn opaque_files_keep_var_runner_bindings_uncredited() -> Result<(), String> {
         &tape_test("var test = require('tape');", "eval('test = null');"),
     )?;
     assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_written_unrelated_declarator_keeps_the_runner_declarator_registered() -> Result<(), String> {
+    let class = class_for(
+        "var-runner-sibling-written",
+        &tape_test("var counter = 0, test = require('tape');", "counter++;"),
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    let written_runner = class_for(
+        "var-runner-sibling-runner-written",
+        &tape_test("var counter = 0, test = require('tape');", "test = null;"),
+    )?;
+    assert_ne!(written_runner, ExposureClass::Exposed);
     Ok(())
 }

@@ -177,6 +177,10 @@ impl TypeScriptAdmissionContext {
                                 });
                             }
                         }
+                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                            let kept = unwritten_declarator_locals(declaration, code.as_deref());
+                            imports.retain(|import| kept.contains(&import.local));
+                        }
                     }
                     imports
                 })
@@ -309,25 +313,45 @@ fn unwritten_binding_declaration(
     declaration: &oxc_ast::ast::VariableDeclaration<'_>,
     code: Option<&str>,
 ) -> bool {
+    !unwritten_declarator_locals(declaration, code).is_empty()
+}
+
+/// The binding names of the declarators of a `var`/`let` declaration whose own
+/// bindings the file never writes. An unrelated declarator that is written
+/// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
+/// the runner declarator; each declarator is judged on its own bindings.
+fn unwritten_declarator_locals(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: Option<&str>,
+) -> Vec<String> {
     use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
     let Some(code) = code else {
-        return false;
+        return Vec::new();
     };
     if !matches!(declaration.kind, Var | Let) {
-        return false;
+        return Vec::new();
     }
-    declaration.declarations.iter().all(|declarator| {
+    let mut locals = Vec::new();
+    for declarator in &declaration.declarations {
         let outside = format!(
             "{}{}",
             &code[..declarator.span.start as usize],
             &code[declarator.span.end as usize..]
         );
-        declarator
+        let names: Vec<String> = declarator
             .id
             .get_binding_identifiers()
             .iter()
-            .all(|id| !super::tests_extract::identifier_written_in(&outside, id.name.as_str()))
-    })
+            .map(|id| id.name.to_string())
+            .collect();
+        if names
+            .iter()
+            .all(|name| !super::tests_extract::identifier_written_in(&outside, name))
+        {
+            locals.extend(names);
+        }
+    }
+    locals
 }
 
 /// A bounded fixture-extension registration: one immutable top-level result
