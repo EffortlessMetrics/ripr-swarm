@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Ten small authored Python projects under `subjects/`, our own code under
+Eleven small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -53,6 +53,12 @@ this repository's license, one per test library or library feature:
   generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
   `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
   statements; and relative imports through a package `__init__` re-export.
+- `authored-py-pytest-idioms`: test-library idioms beyond the first seven.
+  `MagicMock` call expectations, `patch`, `monkeypatch.setenv`, doctests
+  collected with `--doctest-modules`, `pytest.approx`, `pytest.raises(match=)`,
+  `skip` and non-strict `xfail`, `caplog`, `parametrize` with ids, a Hypothesis
+  round-trip property whose oracle calls the changed function, a
+  `unittest.TestCase` with `setUp` run under pytest, and an autouse fixture.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -60,7 +66,7 @@ own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under
 Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
-The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
+The newest subjects (shapes, idioms) were run under Python 3.13.16
 and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
 
 ## When
