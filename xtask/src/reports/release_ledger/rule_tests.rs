@@ -142,7 +142,8 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         ),
         ("CHANGELOG.md", PathClass::Docs),
         ("docs/ROADMAP.md", PathClass::Docs),
-        ("xtask/src/main.rs", PathClass::Control),
+        ("xtask/src/main.rs", PathClass::Automation),
+        ("xtask", PathClass::Automation),
         (".github/workflows/x.yml", PathClass::Control),
         ("policy/x.toml", PathClass::Control),
         ("Cargo.lock", PathClass::Control),
@@ -159,8 +160,51 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         "xtask/src/main.rs".to_string(),
     ];
     require(
-        mixed.iter().map(|path| classify_path(path)).max() == Some(PathClass::Control),
+        mixed.iter().map(|path| classify_path(path)).max() == Some(PathClass::Automation),
         "the strongest class wins",
+    )?;
+    let with_packaging = [
+        "xtask/src/main.rs".to_string(),
+        "packaging/x.toml".to_string(),
+    ];
+    require(
+        with_packaging.iter().map(|path| classify_path(path)).max() == Some(PathClass::Control),
+        "packaging outranks automation",
+    )
+}
+
+fn theme_of(commit: CommitFacts) -> Result<String, String> {
+    let input = facts(vec![commit]);
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    Ok(ledger.records.first().ok_or("no record")?.theme.clone())
+}
+
+#[test]
+fn xtask_only_commits_share_the_control_disposition_under_their_own_theme() -> Result<(), String> {
+    let effective = "present_effective";
+    require(
+        disposition_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))?
+            == "included_accepted_release_or_control",
+        "xtask keeps the control disposition",
+    )?;
+    require(
+        theme_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))? == "automation",
+        "xtask-only theme",
+    )?;
+    require(
+        theme_of(commit(
+            5,
+            Some(1),
+            effective,
+            &["xtask/src/a.rs", "packaging/x.toml"],
+        ))? == "release_or_control",
+        "packaging in the commit keeps the release theme",
     )
 }
 
