@@ -12,9 +12,9 @@ def test_area_table(width, height, want):
     assert area(width, height) == want
 
 
-def test_scaling_by_one_keeps_the_quantity():
-    for qty in range(1, 5):
-        assert scaled(qty, 1) == qty
+def test_one_of_anything_keeps_the_unit():
+    for unit in range(1, 5):
+        assert scaled(1, unit) == unit
 
 
 def check_tip(bill, rate, want):

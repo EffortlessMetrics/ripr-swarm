@@ -17,15 +17,15 @@
     "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
     "mutants": [
       {
-        "replacement": "return qty + price",
-        "mutated_line": "return qty + price",
+        "replacement": "return price + qty",
+        "mutated_line": "return price + qty",
         "outcome": "tests_failed",
         "failing_test": "test_three_at_seven_costs_twenty_one",
         "equivalence_review": "not equivalent: another operator gives a different value at the tested inputs unless the inputs hide it"
       },
       {
-        "replacement": "return qty / price",
-        "mutated_line": "return qty / price",
+        "replacement": "return price / qty",
+        "mutated_line": "return price / qty",
         "outcome": "tests_failed",
         "failing_test": "test_three_at_seven_costs_twenty_one",
         "equivalence_review": "not equivalent: another operator gives a different value at the tested inputs unless the inputs hide it"
