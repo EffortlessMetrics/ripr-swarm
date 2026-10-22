@@ -326,8 +326,8 @@ the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
-The field set is unchanged; the new refusal-kind spelling requires the new
-version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+Ready stub documents add `already_present`; the new refusal-kind spelling
+requires the new version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
 `selector_ambiguous` (choose a specific path or seam ID) from `seam_not_found`
 (correct or re-list the selector). Legacy `0.1` did not distinguish ambiguity
 from absence. The disclosure fields introduced in `0.1` (#7290) remain:

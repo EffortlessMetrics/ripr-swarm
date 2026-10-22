@@ -78,8 +78,8 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             .is_ok_and(|stub| stub.already_present)
     {
         match revalidate_already_present_stub(&options.root, &config, &options.selector) {
-            Ok(AlreadyPresentRevalidation::Current) => {}
-            Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
+            Ok(AlreadyPresentRevalidation::Current(fresh))
+            | Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
                 resolution = *fresh;
             }
             Err(message) => return Err(CommandError::Failure(message)),
@@ -671,7 +671,7 @@ weakly_gripped = "off"
         }
         // Unchanged bytes: the skip survives the re-read.
         match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
-            Ok(AlreadyPresentRevalidation::Current) => {}
+            Ok(AlreadyPresentRevalidation::Current(_)) => {}
             other => {
                 let _ = std::fs::remove_dir_all(&root);
                 return Err(format!(

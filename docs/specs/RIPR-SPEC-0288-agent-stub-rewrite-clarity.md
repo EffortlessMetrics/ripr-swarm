@@ -71,11 +71,14 @@ lesson twice:
 ### Already-written detection (#8891 item 1)
 
 When the stub's uniqueness scope (the placement file's current text) already
-contains the exact test function ripr would write — same rendered body, same
-base test name, modulo line endings — the stub is flagged `already_present`:
+contains the test function ripr would write — same attributes, signature and
+body, compared modulo line endings, per-line indentation, blank lines and pure
+comment lines — the stub is flagged `already_present`:
 
-- `RustTestStub.already_present` is `true`; `test_name` stays the base name
-  and `text` is the identical function.
+- `RustTestStub.already_present` is `true`; `test_name` is the name of the
+  identical function on disk (the base name, or the `_2`, `_3`, … suffix an
+  earlier write used after a collision), and `text` is the function ripr
+  would render. The no-edit guarantee is the CLI skip, not an empty `text`.
 - A repeated `--write` does not touch the file. Human output says
   `Stub already written at <file>:<line> ...` and still prints the run
   command; the JSON document stays `state: "ready"`, sets
@@ -83,8 +86,9 @@ base test name, modulo line endings — the stub is flagged `already_present`:
   appended this run).
 - A name collision with genuinely different content (a user's own test that
    shares the generated name) is unchanged: the name still suffixes
-  (`_2`, …) and the write proceeds. Only the byte-identical recompute is
-  treated as already written.
+  (`_2`, …) and the write proceeds. Only an identical recompute under a
+  candidate name is treated as already written, so a repeated write after a
+  collision reports the existing `_2` stub instead of writing `_3`.
 - The detection is content comparison, not bookkeeping: it does not matter
   which command or run inserted the text.
 
@@ -107,7 +111,7 @@ On the stub path, the grip-class disclosure names the real reason:
 ## Required Evidence
 
 - A second `--write` for the same seam leaves the file with exactly one
-  base-named test function, reports "already written" with the run command
+  test function for the seam, reports "already written" with the run command
   on the human surface, and emits `state: "ready"`,
   `already_present: true`, `written: false` under `--json`.
 - A same-named test with different content still receives the `_2` suffix
