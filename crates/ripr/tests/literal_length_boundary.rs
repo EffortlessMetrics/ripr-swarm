@@ -14,6 +14,10 @@ fn finding(source: &str) -> Result<Finding, String> {
 }
 
 fn finding_with_diff(source: &str, diff: &str) -> Result<Finding, String> {
+    finding_with_extra(source, diff, None)
+}
+
+fn finding_with_extra(source: &str, diff: &str, extra: Option<&str>) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-literal-length-{}-{}",
@@ -24,10 +28,67 @@ fn finding_with_diff(source: &str, diff: &str) -> Result<Finding, String> {
     let result = (|| {
         std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"tokens\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n",
+            format!(
+                "{}\n[workspace]\n",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/Cargo.toml"
+                )
+            ),
         )
         .map_err(|e| e.to_string())?;
-        std::fs::write(root.join("src/lib.rs"), "mod flow;\n").map_err(|e| e.to_string())?;
+        // Materialize the complete retained subject, not a proxy containing
+        // only its edited file. Foreign enums/macros are part of the input.
+        for (path, text) in [
+            (
+                "src/lib.rs",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/src/lib.rs.txt"
+                ),
+            ),
+            (
+                "src/raw.rs",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/src/raw.rs.txt"
+                ),
+            ),
+            (
+                "src/reach.rs",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/src/reach.rs.txt"
+                ),
+            ),
+            (
+                "src/scan.rs",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/src/scan.rs.txt"
+                ),
+            ),
+            (
+                "tests/public.rs",
+                include_str!(
+                    "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/tests/public.rs.txt"
+                ),
+            ),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().ok_or("retained source has no parent")?)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(path, text).map_err(|e| e.to_string())?;
+        }
+        if let Some(extra) = extra {
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(root.join("src/lib.rs"))
+                .and_then(|mut file| writeln!(file, "mod foreign;"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(root.join("src/foreign.rs"), extra).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(
+            root.join("doc.md"),
+            "```rust\nlet _ = tokens::flow::fits(\"abc\", 2 + 1);\n```\n",
+        )
+        .map_err(|e| e.to_string())?;
         std::fs::write(root.join("src/flow.rs"), source).map_err(|e| e.to_string())?;
         std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
         let output = check_workspace(CheckInput {
@@ -182,6 +243,29 @@ fn a_hidden_owner_alias_keeps_the_literal_input_family_unknown() -> Result<(), S
 }
 
 #[test]
+fn foreign_owner_references_and_unindexed_docs_keep_inputs_unknown() -> Result<(), String> {
+    for extra in [
+        "fn hidden() { let alias = crate::flow::fits; let _ = alias(\"abc\", 2 + 1); }",
+        "use crate::flow::fits as renamed; fn hidden() { let _ = renamed(\"abc\", 2 + 1); }",
+        "macro_rules! hidden { () => { crate::flow::fits(\"abc\", 2 + 1) }; } fn invoke() { hidden!(); }",
+        "#![doc = include_str!(\"../doc.md\")]",
+        "#![doc = concat!(\"```rust\\nlet _ = tokens::flow::\", \"fit\", \"s(\\\"abc\\\", 2 + 1);\\n```\")]",
+    ] {
+        let finding = finding_with_extra(&candidate(), DIFF, Some(extra))?;
+        assert_eq!(finding.class, ExposureClass::InfectionUnknown, "{extra}");
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .all(|fact| { !fact.text.contains("via as_bytes().len()") }),
+            "{extra}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn computed_arguments_and_unsupported_owner_expressions_stay_unknown() -> Result<(), String> {
     for argument in [
         "build(\"abc\")",
@@ -231,7 +315,7 @@ fn primitive_aliases_and_imports_cannot_supply_intrinsic_meaning() -> Result<(),
     }
     let source = format!("{}\nuse std::primitive::usize;\n", candidate());
     // Primitive binding authority alone admits this builtin import. The
-    // unchanged whole-index reference-completeness authority has a narrower
+    // unchanged reference-completeness authority has a narrower
     // import grammar, so this context remains intentionally unsupported.
     assert_eq!(finding(&source)?.class, ExposureClass::InfectionUnknown);
     Ok(())

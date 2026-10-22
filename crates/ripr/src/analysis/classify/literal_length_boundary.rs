@@ -5,6 +5,7 @@
 use super::activation::{ActivationWithBoundaryInput, sort_value_facts};
 use super::context::ProbeContext;
 use super::owner_pin::{OwnerPinSyntax, builtin_type_unshadowed, targeted_free_call_reaches_owner};
+use super::reach::{includes_external_docs, names_identifier_outside_fn_definition};
 use super::targeted_calls::{TargetedCallShape, TargetedCallSyntax};
 use crate::analysis::facts::{
     FunctionImplContext, FunctionSummary, OracleFact, RustIndex, TestSummary,
@@ -264,15 +265,27 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
     let references = context
         .index
         .files()
-        .values()
-        .try_fold(0usize, |count, facts| {
+        .iter()
+        .try_fold(0usize, |count, (path, facts)| {
+            if includes_external_docs(&facts.source) {
+                return None;
+            }
+            // Reuse the native free-function reach boundary: source that
+            // never names this owner outside a declaration cannot supply an
+            // explicit call/reference. This does not resolve generated calls
+            // or expand foreign macros. Primitive-name authority stays global.
+            if path != &owner.file
+                && !names_identifier_outside_fn_definition(&facts.source, &owner.name)
+            {
+                return Some(count);
+            }
             count.checked_add(owner_reference_count(&facts.source, &owner.name)?)
         });
     // Match the existing literal-slice family's conservative completeness
     // authority: one declaration plus these exact source calls. An alias,
-    // function pointer or unindexed input cannot silently disappear. Its
-    // closed source grammar also refuses imports except `use super::*`, even
-    // when the separate primitive-name authority admits a builtin import.
+    // function pointer or explicitly named hidden input cannot disappear.
+    // In these owner-referencing files its closed source grammar also refuses
+    // imports except `use super::*`, even when primitive authority admits one.
     if rows.is_empty() || references != rows.len().checked_add(1) {
         return None;
     }

@@ -56,12 +56,18 @@ exercised boundary from a missing one.
   Every admitted direct call has two whole literals: a Rust string decoded
   by the parser and a plain decimal `usize` input. At most 64 call rows and
   512 source bytes per string literal are read. Other expressions, aliases,
-  hidden calls and unresolved owner or primitive bindings keep the ordinary
-  unknown reading. The existing whole-index owner-reference counter must
-  account for exactly the declaration and the admitted literal call sites;
-  function references and aliases cannot hide another input. Its closed
-  source grammar permits only `use super::*` imports, so even a direct
-  `std::primitive::usize` import is an unsupported context for this leaf.
+  explicit hidden references and unresolved owner or primitive bindings keep the ordinary
+  unknown reading. The existing owner-reference counter must account for
+  exactly the declaration and admitted literal call sites in the owner file
+  and every indexed file the native free-function reach scan marks as
+  explicitly naming the owner. Function references, aliases and owner-naming
+  macros in any indexed source cannot hide another explicit input. External
+  or macro-derived documentation refuses the witness globally, and primitive
+  shadow checks still cover every indexed file. The counter's closed source
+  grammar permits only `use super::*` imports in owner-referencing files, so
+  even a direct `std::primitive::usize` import there is unsupported. This
+  inherits the native free-function reach limits around generated identifiers
+  and calls; it does not establish universal macro-expansion completeness.
   This is a diff-only refinement; the general evaluator,
   repo-seam/test-grip path and persistent fact/classification generations are
   unchanged.
@@ -129,7 +135,8 @@ exercised boundary from a missing one.
 
 ## Required Evidence
 
-- The retained `tokens-fits-binding-predicate` row and public
+- The complete retained `authored-tokens` subject's six Rust sources,
+  `tokens-fits-binding-predicate` row and public
   `literal_length_boundary` integration target cover the byte-length leaf,
   UTF-8/escape decoding, boundary distance, crossed rows, same-line and
   assertion-message calls, unsupported expressions/bodies, foreign owners,
