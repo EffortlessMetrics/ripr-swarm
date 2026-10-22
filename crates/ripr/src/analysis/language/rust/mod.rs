@@ -1353,6 +1353,9 @@ fn apply_probe_and_oracle_limits(
     // tail is a closure, a returned-receiver effect or a let-else exit is a
     // shape the owner pin does not read, not a missing assertion.
     classify::withhold_pinned_shape_gap(finding, index);
+    // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
+    // may run the owner without naming it.
+    classify::withhold_implicit_call_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
