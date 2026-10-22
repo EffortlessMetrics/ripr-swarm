@@ -1,0 +1,3 @@
+case = "shape-hostile-owner-through-fn-pointer"
+issue = 9442
+reason = "Owner reached through a fn pointer is not followed (#9442)."
