@@ -322,9 +322,16 @@ fn parse_range(text: &str) -> Option<(u64, u64)> {
     }
 }
 
+/// Whether the hunk sits inside one span without touching its attribute or
+/// closing line, or is exactly that whole span. Touching a boundary line alone
+/// changes whether the item is compiled for tests, which is a product change.
 fn within(spans: &[Span], start: u64, count: u64) -> bool {
     let end = start + count - 1;
-    spans.iter().any(|(from, to)| *from <= start && end <= *to)
+    spans.iter().any(|(from, to)| {
+        let whole = start == *from && end == *to;
+        let interior = *from < start && end < *to;
+        whole || interior
+    })
 }
 
 /// True when the file changed and every hunk lies inside a `#[cfg(test)]` item

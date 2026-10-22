@@ -232,3 +232,28 @@ fn a_span_sharing_a_line_with_other_code_is_not_a_span() -> Result<(), String> {
         "a trailing comment does not share the line with code",
     )
 }
+
+#[test]
+fn touching_a_span_boundary_line_is_a_product_change() -> Result<(), String> {
+    let spans = [(10, 20)];
+    require(
+        is_inline_test_edit(&file(vec![hunk(11, 2, 11, 2)]), &spans, &spans),
+        "interior lines",
+    )?;
+    require(
+        is_inline_test_edit(&file(vec![hunk(10, 11, 10, 11)]), &spans, &spans),
+        "a hunk that is the whole span",
+    )?;
+    require(
+        !is_inline_test_edit(&file(vec![hunk(10, 1, 9, 0)]), &spans, &[]),
+        "deleting only the attribute line",
+    )?;
+    require(
+        !is_inline_test_edit(&file(vec![hunk(9, 0, 10, 1)]), &[], &spans),
+        "inserting only the attribute line",
+    )?;
+    require(
+        !is_inline_test_edit(&file(vec![hunk(20, 1, 20, 1)]), &spans, &spans),
+        "editing the closing line",
+    )
+}
