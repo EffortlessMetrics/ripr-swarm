@@ -83,14 +83,11 @@ pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
 /// here instead of decoding to a different argument: `$` or backtick outside
 /// a single-quoted run, a double quote inside a single-quote token (the
 /// control-character `"$(printf …)"` form is bash source), cmd.exe operators
-/// (`&`, `|`, `<`, `^`) outside quotes, `%` anywhere (cmd.exe expands
-/// `%NAME%` even inside double quotes), and an unterminated quote.
+/// (`&`, `|`, `<`, `^`) outside quotes, and an unterminated quote. `%` and
+/// `!` decode literally, as PowerShell, Git Bash and the native argv parser
+/// read them; cmd.exe `%NAME%` expansion is the documented limit of the
+/// console form (`shell_arg`, #9659).
 pub(crate) fn windows_console_words(command: &str) -> Result<Vec<String>, String> {
-    if command.contains('%') {
-        return Err(format!(
-            "`%` does not survive a cmd.exe paste, even quoted: `{command}`"
-        ));
-    }
     let mut words = Vec::new();
     let mut chars = command.chars().peekable();
     loop {

@@ -132,6 +132,12 @@ fn windows_console_words_decode_the_printed_console_form() -> Result<(), String>
                 "/srv/r x/out.json",
             ],
         ),
+        // `%` and `!` are literal outside cmd.exe (the console form's
+        // documented limit, #9659).
+        (
+            r#"ripr check --root "/srv/100% done!/repo""#,
+            vec!["ripr", "check", "--root", "/srv/100% done!/repo"],
+        ),
         // `$` keeps the single-quote form on Windows, read as Git Bash does.
         (
             r"ripr doctor --root 'srv\x\it'\''s $'",
@@ -145,7 +151,6 @@ fn windows_console_words_decode_the_printed_console_form() -> Result<(), String>
         r#"ripr check --root 'a'"$(printf '\033')"'b'"#,
         r#"ripr check --root "open"#,
         "ripr check --root a & b",
-        r#"ripr check --root "/srv/%USERNAME%/repo""#,
     ] {
         if let Ok(words) = windows_console_words(rejected) {
             return Err(format!(
