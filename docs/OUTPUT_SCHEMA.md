@@ -8425,12 +8425,16 @@ tightening, not a current guarantee.
 
 ### Declared limitations
 
-- **Descendant containment.** Only the owned child is terminated. The workspace
-  forbids `unsafe_code` and the dependency policy admits neither `libc` nor
-  `windows-sys`, so no process-group or job-object substrate is available. The
-  authority boundary compensates structurally: the only executable route is one
-  leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
-  The posture is disclosed as `descendant_containment` in the response.
+- **Descendant containment.** The child is spawned through the shared owned
+  process authority (#3803). On Windows a Job Object owns the whole tree and
+  every terminal path (timeout, cancellation, output overflow, exit) ends it
+  before the output is read. On other platforms only the owned child is
+  terminated: the workspace forbids `unsafe_code` and the dependency policy
+  admits neither `libc` nor `windows-sys`, so no process-group substrate is
+  available. The authority boundary compensates structurally: the only
+  executable route is one leaf `ripr agent verify` invocation, which spawns no
+  long-lived descendants. The posture is disclosed as `descendant_containment`
+  in the response (`job_object` or `owned_child_only`).
 - **`verification_executed_fail`**, **`verification_timed_out`**, and
   **`verification_command_not_found`** are mapped and unit-tested but are not
   reachable end-to-end today. The only executable route is `ripr agent verify`
@@ -14968,6 +14972,21 @@ vocabulary and `final_tree_effect` is a separate closed field backed by an
 `effect_basis`. Markdown carries the same digests as
 `first-parent digest: \`...\`` lines. A `final` ledger rejects any
 `blocking_unresolved` row and requires an audit digest.
+
+`release-ledger capture` writes a `release_ledger_git_facts` document with the
+same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
+`blamed_paths` and one `commits` entry per reachable commit (`paths`,
+`final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
+first-parent subject, `issue_refs` for other `#N` mentions).
+
+`release-ledger derive` writes the `release_ledger` DTO that `release-ledger
+--input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
+`selected_claims` and `open_prs` taken from `policy/release-selection.json`
+(`packet_digest` is the sha256 of the raw file bytes) and recomputed `digests`.
+Rows the rule cannot judge stay `blocking_unresolved` until
+`policy/release-ledger-overrides.json` (`kind: release_ledger_overrides`,
+entries `{commit_sha, disposition, owner, note}`) resolves them; a resolved row
+carries `override_ref`.
 
 ## Operator Cockpit Report
 

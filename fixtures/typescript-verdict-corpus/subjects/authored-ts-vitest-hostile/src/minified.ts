@@ -1,0 +1,1 @@
+export const total=(n:number):number=>{let t=0;for(let i=0;i<n;i++){t+=i*2}return t};export const next=(n:number):number=>n+1;export const label=(n:number):string=>"n="+String(n);export const flag=(n:number):boolean=>n>10&&n<20||n===99;

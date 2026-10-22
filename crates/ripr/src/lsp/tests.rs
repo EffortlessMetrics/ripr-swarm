@@ -2430,7 +2430,7 @@ fn hover_for_position_uses_latest_matching_diagnostic() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("* reach yes: related tests found"));
@@ -3000,7 +3000,7 @@ fn hover_fallback_to_diagnostic_without_matching_finding() -> Result<(), String>
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(
                 markup
@@ -8677,6 +8677,96 @@ fn diagnostic_for_finding_underlines_indented_expression_not_leading_whitespace(
         return Err("analyzer source_range.column must stay 1".to_string());
     }
     Ok(())
+}
+
+/// #8589: a bare `\r` ends an editor line but not an analyzer line, so the
+/// analyzer's line 2 here spans editor lines 1..=3 and the expression sits on
+/// editor line 2.
+#[test]
+fn diagnostic_for_finding_follows_editor_lines_when_file_uses_bare_cr() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-bare-cr")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    fs::write(
+        src.join("pricing.rs"),
+        "fn probe_line() {\n    let a = 1;\r    return x >= 5;\r    let b = 2;\n}\n",
+    )
+    .map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+
+    if diagnostic.range.start.line != 2 {
+        return Err(format!(
+            "expected editor line 2, got {}",
+            diagnostic.range.start.line
+        ));
+    }
+    if diagnostic.range.end.line != 2 {
+        return Err(format!(
+            "expected a single-line range ending on line 2, got {}",
+            diagnostic.range.end.line
+        ));
+    }
+    if diagnostic.range.start.character != 11 || diagnostic.range.end.character != 17 {
+        return Err(format!(
+            "expected characters 11..17, got {}..{}",
+            diagnostic.range.start.character, diagnostic.range.end.character
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn saved_editor_line_counts_bare_crs_on_earlier_analyzer_lines() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\nc\n", 1, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_falls_back_to_the_first_editor_line_when_expression_is_empty_or_absent() {
+    let contents = "a\rb\rc\nd\n";
+    for expression in ["", "missing"] {
+        assert_eq!(
+            super::diagnostics::saved_editor_line(contents, 0, expression),
+            Some((0, "a".to_string())),
+            "expression {expression:?}"
+        );
+    }
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 0, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_handles_a_cr_only_file_without_a_trailing_terminator() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\r", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_keeps_the_analyzer_line_without_a_bare_cr() {
+    let contents = "a\r\nb\r\nc\n";
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 1, "b"),
+        Some((1, "b".to_string()))
+    );
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 5, "b"),
+        None
+    );
 }
 
 #[test]
@@ -15367,7 +15457,7 @@ fn finding_hover_response_includes_ripr_evidence_path() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("reach yes:"));
             assert!(markup.value.contains("infection yes:"));
@@ -16123,7 +16213,7 @@ fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("reach yes:"));
@@ -16179,7 +16269,7 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
             let HoverContents::Markup(markup) = hover.contents else {
                 return Err("expected markup hover".to_string());
             };
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("## RIPR Evidence"));
             // The hover highlights the line the cursor is on, not an empty span.
             assert_eq!(
@@ -16241,7 +16331,7 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
             return Err("expected refresh plan".to_string());
         };
 
-        for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+        for (character, expected) in [(inside, "weak"), (past_end, "no path")] {
             let Some(hover) =
                 backend.hover_for_position(&hover_params(uri.clone(), line, character))
             else {
@@ -16251,7 +16341,9 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
                 return Err("expected markup hover".to_string());
             };
             assert!(
-                markup.value.contains(&format!("**ripr** `{expected}`")),
+                markup
+                    .value
+                    .contains(&format!("**ripr** finding: {expected}")),
                 "hover at {line}:{character} with coarse {coarse_range:?} should describe {expected}: {}",
                 markup.value
             );
