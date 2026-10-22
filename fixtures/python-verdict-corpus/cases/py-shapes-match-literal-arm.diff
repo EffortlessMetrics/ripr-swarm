@@ -1,0 +1,12 @@
+diff --git a/shapes/matching.py b/shapes/matching.py
+--- a/shapes/matching.py
++++ b/shapes/matching.py
+@@ -4,7 +4,7 @@
+ def kind(value):
+     match value:
+         case 0:
+-            return "zero"
++            return "nil"
+         case int():
+             return "int"
+         case _:

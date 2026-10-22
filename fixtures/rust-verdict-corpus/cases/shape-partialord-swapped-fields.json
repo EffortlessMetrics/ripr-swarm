@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-partialord-swapped-fields",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-partialord-swapped-fields.diff",
+  "anchor": {
+    "file": "src/ops.rs",
+    "line": 74
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "partial_ord_operator_one_pair",
+  "hard_case": "The comparison test uses one pair that differs only in the second field, so swapping the field order gives the same ordering.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some((self.1, self.0).cmp(&(other.1, other.0)))",
+        "mutated_line": "Some((self.1, self.0).cmp(&(other.1, other.0)))",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `Some((self.0, self.1).cmp(&(other.0, other.1)))` becomes `Some((self.1, self.0).cmp(&(other.1, other.0)))`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "Some(Ordering::Equal)",
+        "mutated_line": "Some(Ordering::Equal)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::minor_versions_order",
+        "equivalence_review": "not equivalent: `Some((self.0, self.1).cmp(&(other.0, other.1)))` becomes `Some(Ordering::Equal)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "minor_versions_order asserts Version(1, 2) < Version(1, 3). Comparing (minor, major) instead gives the same answer on that pair, so the swap survives; `Some(Ordering::Equal)` fails it. Shape: `impl PartialOrd` reached through `<`.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

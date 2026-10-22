@@ -315,6 +315,8 @@ fn blame_path(
         BLAME_TIMEOUT,
     )
     .map_err(|error| format!("git blame failed for {path}: {error}"))?;
+    // Only the ASCII header lines matter; the tab-prefixed content lines are
+    // file bytes that may legitimately not be UTF-8, so they must not fail capture.
     let text = String::from_utf8_lossy(&output);
     let mut lines: BTreeMap<String, u64> = BTreeMap::new();
     let mut expect_header = true;
