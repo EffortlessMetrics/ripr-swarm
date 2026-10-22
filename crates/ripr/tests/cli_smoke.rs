@@ -26211,8 +26211,8 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     assert_eq!(
         command,
         format!(
-            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
-            root_arg.replace('\\', "/")
+            "ripr agent repair --root {} --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            renderer_shell_arg(&rendered_path(&root_arg))
         )
     );
 
@@ -26880,8 +26880,8 @@ fn agent_status_keeps_the_gap_open_when_the_receipt_did_not_improve()
     assert_eq!(
         command,
         format!(
-            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
-            root_arg.replace('\\', "/")
+            "ripr agent repair --root {} --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            renderer_shell_arg(&rendered_path(&root_arg))
         )
     );
     repair_route_before(&root)?;
@@ -27107,7 +27107,7 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
     let rerun = repair_route_after(&root, &attempt_id);
     assert_failure(&rerun);
     let stderr = String::from_utf8_lossy(&rerun.stderr);
-    let root_arg = shell_single_quoted(&root.to_string_lossy().replace('\\', "/"));
+    let root_arg = renderer_shell_arg(&rendered_path(&root.to_string_lossy()));
     for needle in [
         "already finished".to_string(),
         "state `ready_to_finish`".to_string(),
