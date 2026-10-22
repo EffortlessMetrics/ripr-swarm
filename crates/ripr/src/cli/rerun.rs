@@ -1970,7 +1970,7 @@ fn resolve_output_path(root: &Path, out: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    crate::output::path::fold_verbatim_on_host(path.to_string_lossy().replace('\\', "/"))
 }
 
 fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {

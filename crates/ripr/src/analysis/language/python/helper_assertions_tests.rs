@@ -173,3 +173,190 @@ fn given_a_helper_in_the_test_module_when_called_then_it_resolves() -> Result<()
     assert_eq!(only_assertion(&test)?.gate_text, "assert sq(3) == 9");
     Ok(())
 }
+
+const FIELD_OWNER: &str = "class Stats:\n    def __init__(self):\n        self.writes = 0\n        self.hits = 0\n\n    def record_write(self):\n        self.writes += 1\n";
+const FIELD_HELPER: &str = "def check_writes(obj, want):\n    assert obj.writes == want\n";
+
+fn classified_helper_field(
+    owner_source: &str,
+    test_source: &str,
+    helper_source: &str,
+) -> Result<crate::domain::Finding, String> {
+    classified_helper_change(
+        owner_source,
+        test_source,
+        helper_source,
+        "        self.writes += 1",
+        "        self.writes = self.writes + 1",
+    )
+}
+
+fn classified_helper_change(
+    owner_source: &str,
+    test_source: &str,
+    helper_source: &str,
+    new_line: &str,
+    old_line: &str,
+) -> Result<crate::domain::Finding, String> {
+    let facts = extract_source_facts(Path::new("src/stats.py"), owner_source);
+    assert!(
+        facts
+            .owners
+            .iter()
+            .any(|owner| owner.name == "record_write")
+    );
+    assert_eq!(owner_source.lines().nth(6), Some(new_line));
+    // Resolution must run at its workspace owner before classification. The
+    // extract_tests-only wrapper used before #9711 would miss that pass.
+    let test = resolved(test_source, helper_source);
+    assert!(
+        test.assertions
+            .iter()
+            .any(|assertion| { assertion.oracle_strength == OracleStrength::Strong }),
+        "the control must reach strong helper-derived alignment"
+    );
+    super::classify::classify_change_with_old(
+        Path::new("src/stats.py"),
+        7,
+        new_line,
+        Some(old_line),
+        &facts.owners,
+        &[test],
+    )
+    .ok_or_else(|| "the changed owner write must produce a finding".to_string())
+}
+
+fn field_test_source(helper: &str, statements: &str) -> String {
+    format!(
+        "from src.stats import Stats\n\n{helper}\ndef drop(pending):\n    pending.close()\n\ndef test_writes():\n    stats = Stats()\n    {statements}\n"
+    )
+}
+
+#[test]
+fn given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited()
+-> Result<(), String> {
+    let bodies = [
+        FIELD_OWNER.replace("def record_write(", "async def record_write("),
+        format!("{FIELD_OWNER}        yield None\n"),
+        format!("{FIELD_OWNER}        f\"{{(yield None)}}\"\n"),
+    ];
+    for owner in bodies {
+        for (in_test, in_module) in [
+            (FIELD_HELPER, ""),
+            ("from tests.helpers import check_writes\n", FIELD_HELPER),
+        ] {
+            let source = field_test_source(
+                in_test,
+                "drop(stats.record_write())\n    check_writes(stats, 0)",
+            );
+            assert_eq!(
+                classified_helper_field(&owner, &source, in_module)?.class,
+                crate::domain::ExposureClass::WeaklyExposed,
+                "closing a deferred object must not credit its body: {owner}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit()
+-> Result<(), String> {
+    let helper = "def check_writes(obj, want):\n    assert obj.record_write == want\n";
+    for owner in [
+        FIELD_OWNER.replace("def record_write(", "async def record_write("),
+        format!("{FIELD_OWNER}        yield None\n"),
+        format!("{FIELD_OWNER}        f\"{{(yield None)}}\"\n"),
+    ] {
+        for (in_test, in_module) in [
+            (helper, ""),
+            ("from tests.helpers import check_writes\n", helper),
+        ] {
+            let source = field_test_source(
+                in_test,
+                "drop(stats.record_write())\n    method = stats.record_write\n    check_writes(stats, method)",
+            );
+            assert_eq!(
+                classified_helper_field(&owner, &source, in_module)?.class,
+                crate::domain::ExposureClass::WeaklyExposed,
+                "a method-name credit branch must not bypass refusal: {owner}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited()
+-> Result<(), String> {
+    for (in_test, in_module) in [
+        (FIELD_HELPER, ""),
+        ("from tests.helpers import check_writes\n", FIELD_HELPER),
+    ] {
+        let source = field_test_source(
+            in_test,
+            "stats.record_write()\n    stats.record_write()\n    check_writes(stats, 2)",
+        );
+        assert_eq!(
+            classified_helper_field(FIELD_OWNER, &source, in_module)?.class,
+            crate::domain::ExposureClass::Exposed
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_deferred_helper_when_a_write_is_unmodeled_then_method_credit_still_refuses()
+-> Result<(), String> {
+    let helper = "def check_writes(obj, want):\n    assert obj.record_write == want\n";
+    for (new_line, old_line) in [
+        (
+            "        self.writes: int = 1",
+            "        self.writes: int = 0",
+        ),
+        (
+            "        self.writes[0] += 1",
+            "        self.writes[0] = self.writes[0] + 1",
+        ),
+    ] {
+        let base = FIELD_OWNER
+            .replace("        self.writes += 1", new_line)
+            .replace("self.writes = 0", "self.writes = [0]");
+        for owner in [
+            base.replace("def record_write(", "async def record_write("),
+            format!("{base}        yield None\n"),
+            format!("{base}        f\"{{(yield None)}}\"\n"),
+        ] {
+            let source = field_test_source(
+                helper,
+                "drop(stats.record_write())\n    method = stats.record_write\n    check_writes(stats, method)",
+            );
+            assert_eq!(
+                classified_helper_change(&owner, &source, "", new_line, old_line)?.class,
+                crate::domain::ExposureClass::WeaklyExposed,
+                "unmodeled write must not bypass the helper refusal: {owner}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_preserved()
+-> Result<(), String> {
+    let source = "def sq(x):\n    return x * x\n";
+    let facts = extract_source_facts(Path::new("pkg/sq.py"), source);
+    assert!(facts.owners.iter().any(|owner| owner.name == "sq"));
+    let test = resolved(&test_source("check_equal(sq(3), 9)"), EQ_HELPER);
+    let finding = super::classify::classify_change_with_old(
+        Path::new("pkg/sq.py"),
+        2,
+        "    return x * x",
+        Some("    return x + x"),
+        &facts.owners,
+        &[test],
+    )
+    .ok_or("the changed function result must produce a finding")?;
+    assert_eq!(finding.class, crate::domain::ExposureClass::Exposed);
+    Ok(())
+}
