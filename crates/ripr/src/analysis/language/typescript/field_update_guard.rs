@@ -641,6 +641,8 @@ mod tests {
         assert!(!table(&zero_rows, "want"));
         let no_calls = TABLE.replace("[[0, 0], [1, 1], [3, 3]]", "[[0, 1], [0, 2]]");
         assert!(!table(&no_calls, "want"));
+        let mixed = TABLE.replace("[[0, 0], [1, 1], [3, 3]]", "[[0, 5], [2, 0]]");
+        assert!(!table(&mixed, "want"));
         let ragged = TABLE.replace("[3, 3]", "[3]");
         assert!(!table(&ragged, "want"));
         let rebound = TABLE.replace("stats.hits, want", "stats.hits, want = 4");
