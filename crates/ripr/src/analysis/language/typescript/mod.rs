@@ -114,10 +114,10 @@ mod repo;
 #[cfg(test)]
 mod repo_tests;
 mod returned_state_guard;
+mod rounding_mode_guard;
 mod row_miss;
 #[cfg(test)]
 mod row_miss_tests;
-mod rounding_mode_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -181,8 +181,8 @@ pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use returned_state_guard::*;
-pub(crate) use row_miss::*;
 pub(crate) use rounding_mode_guard::*;
+pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
