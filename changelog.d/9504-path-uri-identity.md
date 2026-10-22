@@ -12,6 +12,6 @@
   the same ASCII fold instead of Unicode `to_lowercase`; a Windows-produced
   report root spelled `sub\proj` no longer equals `<root>/sub/proj` on Unix
   (it fails closed as a wrong root). Windows separator handling is unchanged.
-  The edit-cage case-collision key is ASCII-only. Baseline keys
+  The edit-cage case-collision key is ASCII-only, so non-ASCII case variants (for example `É`/`é`) are no longer flagged ambiguous, including on macOS. Baseline keys
   (`output/baseline*.rs`) are intentionally unchanged (stored-string
   compatibility; tracked in a follow-up issue) (#9504).

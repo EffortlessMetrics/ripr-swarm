@@ -1064,8 +1064,7 @@ mod tests {
         let slash = parse_uri("file:///srv/a")?;
         assert!(!file_uris_match_on(&literal, &slash, false));
         assert_eq!(path_from_file_uri(&parse_uri("file:////srv/a")?), None);
-        // A traversal-looking run is a literal filename on Unix, while a real
-        // `..` segment is still refused.
+        // A percent-encoded `..` segment is still a traversal and is refused.
         assert!(path_from_file_uri(&parse_uri("file:///a/%2e%2e/b")?).is_none());
         Ok(())
     }
