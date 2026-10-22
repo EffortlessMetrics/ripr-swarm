@@ -864,7 +864,7 @@ fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a Functio
 /// Whether every token-boundary mention of `name` in `text` is a receiver
 /// call (`.name(`). Zero mentions answers `false`, so an unreadable call text
 /// (a turbofish, a macro) keeps its caller.
-fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
+pub(crate) fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let mut mentions = 0usize;
@@ -883,6 +883,11 @@ fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
         }
     }
     mentions > 0
+}
+
+/// Whether any hop of `chain` is a method hop (#9329).
+pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
+    chain.hops.iter().any(|hop| hop.receiver.is_some())
 }
 
 /// The receiver self forms a method hop admits.
@@ -1363,6 +1368,7 @@ fn caller_oracles_are_all_weak(
                 Some(below) => hops.get(below).map(|lower| &lower.caller),
             };
             hop.caller.source_role != FunctionSourceRole::Production
+                || hop.receiver.is_some()
                 || (!hop.through_macro
                     && !callee.is_some_and(|callee| {
                         returns_std_scalar_or_string(&callee.body)
@@ -1800,7 +1806,14 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         .map(|(index, _)| index)
         .collect();
     // #6614: a macro-argument hop passes no state the analyzer can follow.
-    if tracked.is_empty() || hops.is_empty() || hops.iter().any(|hop| hop.through_macro) {
+    // #9329: a method hop hands its callee the receiver's state as well as
+    // its arguments; the effect target is not followed through it.
+    if tracked.is_empty()
+        || hops.is_empty()
+        || hops
+            .iter()
+            .any(|hop| hop.through_macro || hop.receiver.is_some())
+    {
         return false;
     }
     for hop in hops {
@@ -1831,7 +1844,9 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
             // macro hands the callee's result on is unknown.
-            if hop.through_macro {
+            // #9329: a method hop never forwards: its caller makes a
+            // receiver call whose result no tail-forwarding rule reads.
+            if hop.through_macro || hop.receiver.is_some() {
                 return false;
             }
             let callee = match step.checked_sub(1) {
