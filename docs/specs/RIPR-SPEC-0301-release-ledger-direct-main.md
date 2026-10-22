@@ -137,6 +137,14 @@ Final tree effect is derived exactly and cheaply first:
 Tree effect follows the renames git detects (`-M`, default similarity). A blame failure, a timeout or a non-UTF-8 path fails the capture; an unknown
 effect is never defaulted.
 
+Each fact also carries `inline_test_paths`: the product-class `.rs` paths whose
+every change in that commit sits inside a `#[cfg(test)]` item, on each side that
+has lines. It is read from `git diff -U0` hunks against the first parent and the
+item spans of the file at the parent and at the commit. Spans come from a lexer
+that ignores braces in comments, strings, raw strings and char literals; an item
+it cannot close, a whole-file add or delete, a hunk-less change and a quoted path
+give no span and stay product.
+
 ## Disposition rule v1 and overrides
 
 `cargo xtask release-ledger derive --facts <facts.json> --packet
@@ -156,6 +164,10 @@ is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`;
 `.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`, `xtask`,
 `policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and other root
 files; anything else is unclassified.
+
+A product path listed in the commit's `inline_test_paths` counts as `evidence`, so
+a commit whose only product edits are inline tests is `included_test_or_evidence`,
+while one that also edits product code in the same file stays product.
 
 Order, first match wins:
 
@@ -210,7 +222,16 @@ valid-ledger control that yields no reasons.
 
 ## Test Mapping
 
+- `xtask/src/reports/release_ledger/inline_tests_tests.rs`:
+  `cfg_test_modules_and_items_are_spans`,
+  `braces_in_strings_chars_comments_and_raw_strings_do_not_end_a_span`,
+  `attributes_in_strings_and_other_cfgs_are_not_spans`,
+  `an_unclosed_item_is_not_a_span`, `zero_context_diffs_parse_hunks_and_whole_files`,
+  `quoted_paths_are_never_inline_edits`,
+  `hunks_must_sit_inside_a_span_on_every_side_that_has_lines`,
+  `only_product_rust_files_are_candidates`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
+  `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
   `split_refs_takes_only_the_trailing_pull_request`,
@@ -222,7 +243,8 @@ valid-ledger control that yields no reasons.
   `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
   `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`,
   `repeated_derive_flags_are_rejected_before_any_file_is_read`,
-  `failed_derivation_leaves_an_existing_output_untouched`.
+  `failed_derivation_leaves_an_existing_output_untouched`,
+  `inline_test_only_product_paths_count_as_evidence`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
