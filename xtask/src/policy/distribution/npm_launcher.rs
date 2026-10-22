@@ -430,12 +430,7 @@ pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mu
                 .iter()
                 .map(String::as_str)
                 .collect::<Vec<_>>();
-            let Some(sub) = args.iter().position(|t| {
-                matches!(
-                    *t,
-                    "publish" | "dist-tag" | "dist-tags" | "run" | "run-script" | "exec" | "x"
-                )
-            }) else {
+            let Some(sub) = subcommand_index(&args) else {
                 continue;
             };
             match args[sub] {
@@ -447,6 +442,27 @@ pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mu
             }
         }
     }
+}
+
+/// Index of the npm subcommand of interest, skipping the values of
+/// value-taking global flags so `npm --workspace x publish` is not misread.
+fn subcommand_index(args: &[&str]) -> Option<usize> {
+    let mut position = 0;
+    while position < args.len() {
+        let arg = args[position];
+        if VALUE_FLAGS.contains(&arg) || arg == "--tag" {
+            position += 2;
+            continue;
+        }
+        if matches!(
+            arg,
+            "publish" | "dist-tag" | "dist-tags" | "run" | "run-script" | "exec" | "x"
+        ) {
+            return Some(position);
+        }
+        position += 1;
+    }
+    None
 }
 
 fn check_publish_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
