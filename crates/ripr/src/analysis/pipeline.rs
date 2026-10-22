@@ -7124,6 +7124,25 @@ index 0000000..1111111 100644
         .map_err(|error| format!("a long pattern list must not abort: {error}"))?;
         let outcome = result.analysis_outcome.ok_or("outcome missing")?;
         assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        // The 41 patterns would exceed the bound unabridged; the limitation
+        // text must stay inside the typed contract's limit.
+        let scope_limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
+            .ok_or("the out-of-scope limitation is missing")?;
+        let bound = crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS;
+        let recovery = &scope_limitation.recovery.detail;
+        assert!(recovery.chars().count() <= bound, "{recovery}");
+        let bounded = scope_limitation
+            .bounded_detail
+            .as_deref()
+            .unwrap_or_default();
+        assert!(bounded.chars().count() <= bound, "{bounded}");
+        assert!(
+            format!("{recovery} {bounded}").contains("pattern(s) in total"),
+            "{recovery} / {bounded}"
+        );
         Ok(())
     }
 }
