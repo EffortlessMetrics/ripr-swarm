@@ -23,6 +23,7 @@ use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+    unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -308,7 +309,14 @@ pub(super) fn classify_change_for_owner(
     let static_limit =
         static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
-            .or_else(|| heuristic_only_relation_limit(owner, &related_candidates));
+            .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
+            .or_else(|| {
+                unpinned_equality_dunder_limit(
+                    owner,
+                    &related_candidates,
+                    alignment.credited.is_some(),
+                )
+            });
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -478,6 +486,19 @@ pub(super) fn classify_change_for_owner(
                         &focus,
                     )
                 })
+                .or_else(|| {
+                    // #9429: an owner observed only through a further method
+                    // call on its result.
+                    arm_activation::python_chained_receiver_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();
@@ -635,15 +656,23 @@ pub(super) fn classify_change_for_owner(
         // changed line never executes under an observed input and the oracle
         // cannot discriminate a line it never runs (#7392).
         guarded_arm_downgraded = true;
+        let message = if gap.chained_receiver {
+            format!(
+                "A strong Python oracle reaches `{}`, but every strong assertion reads its result only through a further method call, and that method does not return the edited state directly, so the edited value is not observed (observation_unverified). {}.",
+                owner.name, gap.reason,
+            )
+        } else {
+            format!(
+                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
+                owner.name, gap.discriminator,
+            )
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Yes,
             StageState::Yes,
             StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
-                owner.name, gap.discriminator,
-            )],
+            vec![message],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -815,6 +844,12 @@ pub(super) fn classify_change_for_owner(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if guarded_arm_downgraded
+            && guarded_arm_gap
+                .as_ref()
+                .is_some_and(|gap| gap.chained_receiver)
+        {
+            "Related tests reach the changed owner, but every strong assertion reads its result only through a further method call that does not return the edited state.".to_string()
         } else if guarded_arm_downgraded {
             "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {

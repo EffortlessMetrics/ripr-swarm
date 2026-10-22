@@ -5126,14 +5126,17 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  if (hasUnsafeShellMetacharacter(command)) {
+  const windowsQuoting = isWindowsHost();
+  if (hasUnsafeShellMetacharacter(command, windowsQuoting)) {
     return false;
   }
   const normalized = command.trim().replace(/\s+/g, ' ');
-  // Decode the single-quoted words permitted by the existing passive safety
-  // grammar, including quoted fragments of flags. This is display admission,
-  // not a shell evaluator or command-execution authority.
-  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  // Decode the quoted words permitted by the existing passive safety grammar
+  // (single quotes, and the server's console double quotes on Windows),
+  // including quoted fragments of flags. This is display admission, not a
+  // shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|"(?:[^"]|"")*"|[^\s'"])+/g) ?? [])
+    .map(word => word.replace(/'/g, '').replace(/""/g, '\0').replace(/"/g, '').replace(/\0/g, '"'));
   const decoded = words.join(' ').replace(/\\/g, '/');
   const broadSnapshot = decoded.includes('ripr agent verify')
     && decoded.includes('--before') && decoded.includes('--after')
@@ -5141,7 +5144,7 @@ function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonl
   return normalized !== ''
     && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, windowsQuoting)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
@@ -5155,7 +5158,7 @@ function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown
   const file = related ? stringField(related, 'file') : undefined;
   const name = related ? stringField(related, 'name') : undefined;
   const command = packet.verify_command;
-  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command, isWindowsHost())) {
     return false;
   }
   // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
@@ -5506,7 +5509,8 @@ export function validatedAgentLoopCommand(
       !redirectTargetMatches(
         command.slice(redirectAt + ' > '.length),
         contract.targetArtifact,
-        redirectRoots
+        redirectRoots,
+        isWindowsHost()
       )
     ) {
       return undefined;
@@ -5526,7 +5530,7 @@ export function validatedAgentLoopCommand(
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
-  if (hasUnsafeShellMetacharacter(portableBody)) {
+  if (hasUnsafeShellMetacharacter(portableBody, isWindowsHost())) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.

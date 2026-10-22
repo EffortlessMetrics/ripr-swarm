@@ -41,8 +41,15 @@ fn collect_assertions(
                 }
             }
             Stmt::If(if_stmt) => {
-                collect_assertions(&if_stmt.body, source, out);
-                collect_assertions(&if_stmt.orelse, source, out);
+                // A constant condition makes one arm dead: an assertion there
+                // never runs, so it can never fail (#9691).
+                let truth = constant_truth(if_stmt.test.as_ref());
+                if truth != Some(false) {
+                    collect_assertions(&if_stmt.body, source, out);
+                }
+                if truth != Some(true) {
+                    collect_assertions(&if_stmt.orelse, source, out);
+                }
             }
             Stmt::For(for_stmt) => {
                 collect_assertions(&for_stmt.body, source, out);
@@ -53,7 +60,9 @@ fn collect_assertions(
                 collect_assertions(&for_stmt.orelse, source, out);
             }
             Stmt::While(while_stmt) => {
-                collect_assertions(&while_stmt.body, source, out);
+                if constant_truth(while_stmt.test.as_ref()) != Some(false) {
+                    collect_assertions(&while_stmt.body, source, out);
+                }
                 collect_assertions(&while_stmt.orelse, source, out);
             }
             Stmt::With(with_stmt) => {
@@ -67,13 +76,17 @@ fn collect_assertions(
                 collect_assertions(&with_stmt.body, source, out);
             }
             Stmt::Try(try_stmt) => {
-                collect_assertions(&try_stmt.body, source, out);
+                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
+                    collect_assertions(&try_stmt.body, source, out);
+                }
                 collect_except_handler_assertions(&try_stmt.handlers, source, out);
                 collect_assertions(&try_stmt.orelse, source, out);
                 collect_assertions(&try_stmt.finalbody, source, out);
             }
             Stmt::TryStar(try_stmt) => {
-                collect_assertions(&try_stmt.body, source, out);
+                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
+                    collect_assertions(&try_stmt.body, source, out);
+                }
                 collect_except_handler_assertions(&try_stmt.handlers, source, out);
                 collect_assertions(&try_stmt.orelse, source, out);
                 collect_assertions(&try_stmt.finalbody, source, out);
@@ -86,6 +99,83 @@ fn collect_assertions(
             _ => {}
         }
     }
+}
+
+/// The truth of a literal condition (`if False:`, `while 0:`), when it is one.
+fn constant_truth(expr: &Expr) -> Option<bool> {
+    let Expr::Constant(constant) = expr else {
+        return None;
+    };
+    match &constant.value {
+        ast::Constant::Bool(value) => Some(*value),
+        ast::Constant::None => Some(false),
+        ast::Constant::Int(value) => Some(value.to_string() != "0"),
+        ast::Constant::Str(value) => Some(!value.is_empty()),
+        _ => None,
+    }
+}
+
+/// Whether a `try` handler catches the `AssertionError` its body's `assert`
+/// raises and neither re-raises nor fails afterward, so a failing assertion
+/// still lets the test pass (#9691). A handler that raises, asserts or calls a
+/// `fail` helper keeps the body's assertions live.
+fn handlers_swallow_assertion_errors(handlers: &[ast::ExceptHandler]) -> bool {
+    handlers.iter().any(|handler| {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        let catches = match handler.type_.as_deref() {
+            None => true,
+            Some(kind) => catches_assertion_error(kind),
+        };
+        catches && !statements_fail_again(&handler.body)
+    })
+}
+
+fn catches_assertion_error(kind: &Expr) -> bool {
+    match kind {
+        Expr::Name(name) => is_catching_name(name.id.as_str()),
+        Expr::Attribute(attribute) => {
+            matches!(attribute.value.as_ref(), Expr::Name(root) if root.id.as_str() == "builtins")
+                && is_catching_name(attribute.attr.as_str())
+        }
+        Expr::Tuple(tuple) => tuple.elts.iter().any(catches_assertion_error),
+        _ => false,
+    }
+}
+
+fn is_catching_name(name: &str) -> bool {
+    matches!(name, "Exception" | "BaseException" | "AssertionError")
+}
+
+fn statements_fail_again(statements: &[Stmt]) -> bool {
+    statements.iter().any(|stmt| match stmt {
+        Stmt::Raise(_) | Stmt::Assert(_) => true,
+        Stmt::Expr(expr) => matches!(
+            expr.value.as_ref(),
+            Expr::Call(call) if expr_full_name(call.func.as_ref())
+                .is_some_and(|name| {
+                    // `pytest.fail`, `self.fail` and the unittest `assert*`
+                    // methods all fail the test again.
+                    let last = name.rsplit('.').next().unwrap_or_default();
+                    last == "fail" || (last.starts_with("assert") && name.contains('.'))
+                })
+        ),
+        Stmt::If(inner) => {
+            statements_fail_again(&inner.body) || statements_fail_again(&inner.orelse)
+        }
+        Stmt::For(inner) => {
+            statements_fail_again(&inner.body) || statements_fail_again(&inner.orelse)
+        }
+        Stmt::While(inner) => {
+            statements_fail_again(&inner.body) || statements_fail_again(&inner.orelse)
+        }
+        Stmt::With(inner) => statements_fail_again(&inner.body),
+        Stmt::Try(inner) => {
+            statements_fail_again(&inner.body)
+                || statements_fail_again(&inner.orelse)
+                || statements_fail_again(&inner.finalbody)
+        }
+        _ => false,
+    })
 }
 
 fn collect_with_item_assertions(

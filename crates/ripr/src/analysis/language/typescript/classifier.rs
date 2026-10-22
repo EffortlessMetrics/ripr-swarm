@@ -1367,10 +1367,10 @@ pub(crate) fn ts_field_update_witnessed(
         test.assertions.iter().any(|assertion| {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
-                || !assertion_expected_side_is_pinned(assertion)
             {
                 return false;
             }
+            let pinned = assertion_expected_side_is_pinned(assertion);
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
@@ -1409,8 +1409,29 @@ pub(crate) fn ts_field_update_witnessed(
                 .any(|(at, _)| {
                     // The assertion observes the field itself, not a derived
                     // value (`stats.hits - stats.hits`).
-                    ts_field_update_precedes_read(change, &owner.name, &masked, line_start + at)
-                        .is_some_and(|receiver| observed == format!("{receiver}.{}", change.field))
+                    let read = line_start + at;
+                    if pinned {
+                        return ts_field_update_precedes_read(change, &owner.name, &masked, read)
+                            .is_some_and(|receiver| {
+                                observed == format!("{receiver}.{}", change.field)
+                            });
+                    }
+                    // A table-driven expected side: the witness proves the loops
+                    // around the call run at least once for a nonzero row.
+                    ts_field_update_precedes_read_through_loops(change, &owner.name, &masked, read)
+                        .is_some_and(|receiver| {
+                            observed == format!("{receiver}.{}", change.field)
+                                && ts_expected_identifier(&masked[read + observed.len()..line_end])
+                                    .is_some_and(|expected| {
+                                        ts_table_expected_witnessed(
+                                            &owner.name,
+                                            &receiver,
+                                            &masked,
+                                            expected,
+                                            read,
+                                        )
+                                    })
+                        })
                 })
         })
     })
@@ -1842,6 +1863,19 @@ pub(crate) fn test_file_names_owner_only_in_test_bodies(
     names: &[&str],
     root: &Path,
 ) -> bool {
+    test_file_names_owner_only_outside_inert_text(test, sibling_tests, names, root, &[])
+}
+
+/// [`test_file_names_owner_only_in_test_bodies`] with `inert_text` (a
+/// resolved loop header and its literal table, from `loop_rows`) removed
+/// from the file first, as the statements the reader already folded.
+pub(crate) fn test_file_names_owner_only_outside_inert_text(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    names: &[&str],
+    root: &Path,
+    inert_text: &[String],
+) -> bool {
     let Ok(mut source) = std::fs::read_to_string(root.join(&test.file)) else {
         return false;
     };
@@ -1859,6 +1893,12 @@ pub(crate) fn test_file_names_owner_only_in_test_bodies(
     }
     for body in bodies {
         source = source.replace(body, "");
+    }
+    for text in inert_text {
+        if source.matches(text.as_str()).count() != 1 {
+            return false;
+        }
+        source = source.replace(text.as_str(), "");
     }
     // Each import statement is gathered whole and must be exactly one named,
     // default or namespace import with nothing after its terminator; a
@@ -5338,8 +5378,10 @@ pub(crate) fn classify_change_with_alias_state(
     let field_update_witnessed = !probe_shape.specific
         && lookup_change.is_none()
         && !returns_changed_state
-        && ts_field_update_change(owner, line_text, old_line_text)
-            .is_some_and(|change| ts_field_update_witnessed(&change, owner, &related_candidates));
+        && ts_field_update_change(owner, line_text, old_line_text).is_some_and(|change| {
+            !ts_field_has_accessor(&change, owner, owners)
+                && ts_field_update_witnessed(&change, owner, &related_candidates)
+        });
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
@@ -6237,6 +6279,8 @@ struct TsPostLadderContext<'a> {
 /// - #8569: an `exposed` result whose changed line sits under an `if` arm
 ///   that every related test call provably leaves untaken reads
 ///   `weakly_exposed`, because the line never runs under the tests.
+/// - RIPR-SPEC-0246 rule 6: an `exposed` result whose changed line sits in a
+///   `catch` arm that no related test can make run reads `weakly_exposed`.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -6257,6 +6301,19 @@ fn ts_apply_post_ladder_rules(
         verdict.discriminate_state = StageState::Weak;
         verdict.missing = vec![format!(
             "The change to `{}` only replaces the returned `{subject}` with a copy of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual` pass on both. Add an identity assertion such as `expect(result).toBe(input)` or `assert.strictEqual(result, input)`.",
+            context.owner.name
+        )];
+        return;
+    }
+    // A module scalar constant a test compares to the very literal the edit
+    // wrote: the test passes on the edited value, so no assertion notices it.
+    if let Some(literal) = super::probe_shape::module_scalar_constant_literal(context.line_text)
+        && ts_candidates_expect_literal(context.candidates, &context.owner.name, literal)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change sets `{}` to `{literal}`, and a related test already expects that value, so it passes on the edit. Assert a value the edit changes, or pin the previous value.",
             context.owner.name
         )];
         return;
@@ -6293,6 +6350,17 @@ fn ts_apply_post_ladder_rules(
         verdict.missing = vec![format!(
             "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
             context.owner.name, guard.condition, guard.observed
+        )];
+        return;
+    }
+    // RIPR-SPEC-0246 rule 6: a changed line in a `catch` arm no related test
+    // can make run.
+    if ts_catch_arm_unreached(context) {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` sits inside a `catch` arm, and no related test file shows a throwing or rejecting signal, so the catch arm is never exercised by the related tests. The changed line never runs under the tests, so no assertion can observe it. Add a test whose call throws or rejects.",
+            context.owner.name
         )];
         return;
     }
@@ -6440,6 +6508,44 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// RIPR-SPEC-0246 rule 6: `true` only when the changed line is located in a
+/// `catch` arm of the owner and every related test is a direct owner call
+/// whose whole file (and imports) show no signal that could throw or reject.
+/// Anything unreadable returns `false` and keeps the ladder verdict.
+fn ts_catch_arm_unreached(context: &TsPostLadderContext<'_>) -> bool {
+    let owner = context.owner;
+    let (Some(source), Some(root)) = (owner.source_text.as_deref(), context.workspace_root) else {
+        return false;
+    };
+    if context.candidates.is_empty()
+        || !super::catch_arm_guard::changed_line_in_catch_arm(
+            source,
+            owner.start_line,
+            context.line,
+            context.line_text,
+            &owner.params,
+        )
+    {
+        return false;
+    }
+    context.candidates.iter().all(|candidate| {
+        let test = candidate.test;
+        matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+        ) && test.mocks_in_file.is_empty()
+            && test.imports_in_file.iter().all(|import| {
+                is_test_framework_source(&import.source)
+                    || import.imported.as_deref() == Some(owner.name.as_str())
+                    || import.local == owner.name
+            })
+            && std::fs::read_to_string(root.join(&test.file))
+                .is_ok_and(|text| !super::catch_arm_guard::may_throw_or_reject(&text))
+    })
 }
 
 /// The guard no related test call enters, and what the tests pass instead.
@@ -7382,6 +7488,40 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
     } else {
         (is_identifier(&new) && copied(&old)? == new).then_some(new)
     }
+}
+
+/// A string literal without its quotes, so `'x'` and `"x"` compare equal.
+fn ts_unquoted(text: &str) -> &str {
+    ['\'', '"', '`']
+        .iter()
+        .find_map(|quote| text.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(text)
+}
+
+/// Two literal texts denote one value. Quotes only drop when both sides are
+/// quoted strings, so `11` and `'11'` (number vs string) stay different.
+fn ts_same_literal(a: &str, b: &str) -> bool {
+    let quoted = |text: &str| ts_unquoted(text).len() != text.len();
+    quoted(a) == quoted(b) && ts_unquoted(a) == ts_unquoted(b)
+}
+
+/// `true` when an oracle-bearing related test asserts the bare `owner` against
+/// exactly `literal` (`expect(LIMIT).toBe(11)`).
+fn ts_candidates_expect_literal(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &str,
+    literal: &str,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate.test.assertions.iter().any(|assertion| {
+                assertion.observed_expression.as_deref().map(str::trim) == Some(owner)
+                    && assertion
+                        .expected_value_or_variant
+                        .as_deref()
+                        .is_some_and(|expected| ts_same_literal(expected.trim(), literal))
+            })
+    })
 }
 
 /// `true` when a related test that grants oracle credit pins identity. A

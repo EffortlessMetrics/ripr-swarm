@@ -253,6 +253,10 @@ struct PythonOwner {
     /// guarded-return shape as a callee, and whether its parameters hold
     /// their call-site values as a caller (`term_activation.rs`, #6733).
     term_facts: term_activation::PythonTermFacts,
+    /// Facts about the owner's class that a dunder-protocol binding needs
+    /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
+    /// which keeps every consumer fail-closed.
+    class_facts: related_tests::PythonClassFacts,
 }
 
 /// One declared parameter of a Python function owner.
@@ -814,6 +818,7 @@ impl PythonAdapter {
             workspace_files.iter().filter(|file| !is_test_file(file)),
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
+        related_tests::apply_class_facts(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -1130,6 +1135,9 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod unreachable_assertion_tests;
+
+#[cfg(test)]
 mod arm_activation_tests;
 
 #[cfg(test)]
@@ -1146,6 +1154,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod dunder_entry_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;
