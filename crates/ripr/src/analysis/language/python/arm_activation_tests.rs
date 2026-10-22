@@ -284,3 +284,20 @@ fn string_escape_spellings_are_not_compared_as_text() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_non_ascii_table_name_fails_open_instead_of_panicking() -> Result<(), String> {
+    // A multi-byte identifier character delimits the table name here; slicing
+    // past `position + 1` would split it and panic mid-analysis.
+    let owner = "größe = {\"gold\": 10}\n\n\ndef lookup(tier):\n    return größe.get(tier, 1)\n";
+    assert_eq!(
+        classify(
+            owner,
+            "    return größe.get(tier, 0)",
+            RATES_IMPORT,
+            "def test_lookup():\n    assert lookup(\"gold\") == 10\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

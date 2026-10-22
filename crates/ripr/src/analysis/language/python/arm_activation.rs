@@ -496,9 +496,13 @@ fn get_call(line: &str) -> Option<GetCall> {
     if line[marker + 1..].contains(".get(") {
         return None;
     }
+    // Step past the delimiter's full UTF-8 width: a non-ASCII identifier
+    // character is a delimiter here, and `position + 1` would split it.
     let table_start = line[..marker]
-        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .map_or(0, |position| position + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+        .map_or(0, |(position, ch)| position + ch.len_utf8());
     let table = &line[table_start..marker];
     if table.is_empty() || line[..table_start].ends_with('.') {
         return None;
