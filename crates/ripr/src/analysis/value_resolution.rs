@@ -405,8 +405,9 @@ impl<'a> ValueEnv<'a> {
     /// observed values for unrelated seams.
     ///
     /// `test_body` is the raw body the facts were built from. The comment-free
-    /// copy is rebuilt here, only for seams with builder tokens, rather than
-    /// kept alive for every indexed test.
+    /// copy is rebuilt on each call rather than kept alive for every indexed
+    /// test; every expected sink yields at least one allowed token, so the
+    /// strip is not limited to seams that actually contain builder calls.
     pub(crate) fn builder_facts(&self, test_body: &str) -> Vec<ValueFact> {
         let allowed = self.allowed_builder_method_names();
         if allowed.is_empty() {

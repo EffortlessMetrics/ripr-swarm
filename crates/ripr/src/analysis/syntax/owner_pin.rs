@@ -5371,4 +5371,18 @@ mod skipping_table_tests {
         let extra = inline("if want.is_none() { continue; }");
         assert_eq!(skipping_table_column(&extra, "scheme", SOURCE), None);
     }
+
+    #[test]
+    fn a_body_fingerprint_follows_the_text_exactly() {
+        assert_eq!(BodyFingerprint::of(""), BodyFingerprint::of(""));
+        assert_eq!(BodyFingerprint::of("é = 1;"), BodyFingerprint::of("é = 1;"));
+        assert_ne!(BodyFingerprint::of(""), BodyFingerprint::of(" "));
+        // Same length, one differing byte, and a multibyte character in place
+        // of two ASCII bytes.
+        assert_ne!(
+            BodyFingerprint::of("n = 12;"),
+            BodyFingerprint::of("n = 13;")
+        );
+        assert_ne!(BodyFingerprint::of("é"), BodyFingerprint::of("ab"));
+    }
 }
