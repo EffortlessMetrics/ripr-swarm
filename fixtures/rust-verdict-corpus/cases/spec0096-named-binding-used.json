@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "score returns the bound result, and score_of_ten_is_ten compares it with 10, so every mutant of the call argument fails. Spec cells: RIPR-SPEC-0096 example 2 (named binding stays exposed).",
+  "reasoning": "score returns the bound result, and score_of_ten_is_ten compares it with 10, so this mutant of the call argument fails. Spec cells: RIPR-SPEC-0096 example 2 (named binding stays exposed).",
   "labeling_observation": {
     "ripr_commit": "2939c0d6",
     "full_checkout_verdict": "limited",

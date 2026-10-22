@@ -683,7 +683,7 @@ reason = "policy suppression, not a discriminator: a constant read only by an in
 
 [[spec.waived]]
 example = 6
-reason = "a constant with no config, policy, output or behavior-selector shape is read by nothing a test reaches, so every mutant is equivalent and no runtime truth exists"
+reason = "a constant with no supported config, policy, output or behavior-selector shape carries no behavior a mutant could change, so no discriminating runtime truth exists"
 
 # Match-Arm Blind-Reach Downgrade
 [[spec]]
