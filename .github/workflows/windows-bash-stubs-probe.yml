@@ -1,0 +1,26 @@
+name: Windows bash stubs probe
+
+on:
+  push:
+    branches: [claude/windows-bash-stubs-9272]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+      - name: Run the two bash-stub test targets
+        shell: bash
+        run: |
+          set +e; cargo test -p xtask --test hard_cut_admission_selftest --test routed_dispatch_result -- --test-threads=2 > target/probe.log 2>&1; status=$?; cat target/probe.log; exit "$status"

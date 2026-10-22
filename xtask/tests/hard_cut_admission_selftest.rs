@@ -242,11 +242,13 @@ esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
-    let path = format!(
-        "{}:{}",
-        tmp.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // `join_paths` uses the host separator; a literal `:` splits `C:\...`.
+    let path = std::env::join_paths(
+        std::iter::once(tmp.clone()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )),
+    )
+    .map_err(|e| e.to_string())?;
     let status = Command::new("bash")
         .args(["-e", "-o", "pipefail"])
         .arg(tmp.join("action.sh"))
@@ -716,11 +718,13 @@ esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
-    let path = format!(
-        "{}:{}",
-        tmp.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // `join_paths` uses the host separator; a literal `:` splits `C:\...`.
+    let path = std::env::join_paths(
+        std::iter::once(tmp.clone()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )),
+    )
+    .map_err(|e| e.to_string())?;
     let status = Command::new("bash")
         .args(["-e", "-o", "pipefail"])
         .arg(tmp.join("action.sh"))
