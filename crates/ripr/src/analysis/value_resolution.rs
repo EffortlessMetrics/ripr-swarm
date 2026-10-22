@@ -136,6 +136,13 @@ impl FileValueScan {
 }
 
 impl ValueEnvFacts {
+    /// Whether both facts hold the same file-level constants allocation, so a
+    /// file with many tests pays for its constants once, not once per test.
+    #[cfg(test)]
+    pub(crate) fn shares_module_constants_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.module_constants, &other.module_constants)
+    }
+
     pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan) -> Self {
         let body_clean = strip_comments_and_strings(&test.body);
         let let_bindings = extract_let_bindings(&body_clean);
@@ -170,15 +177,6 @@ impl ValueEnvFacts {
             bare_std_path_imported: path_constructor_imports.path,
             bare_std_path_buf_imported: path_constructor_imports.path_buf,
         }
-    }
-}
-
-impl ValueEnvFacts {
-    /// Whether both facts hold the same file-level constants allocation, so a
-    /// file with many tests pays for its constants once, not once per test.
-    #[cfg(test)]
-    pub(crate) fn shares_module_constants_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.module_constants, &other.module_constants)
     }
 }
 
