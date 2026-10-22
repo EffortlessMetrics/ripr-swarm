@@ -21147,7 +21147,7 @@ fn guarded_allow_attributes_in_text(
             cursor += 1;
         }
         let kind = &text[ident_start..cursor];
-        if kind != "allow" && kind != "expect" {
+        if kind != "allow" && kind != "expect" && kind != "cfg_attr" {
             index += 1;
             continue;
         }
@@ -21162,6 +21162,20 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        if kind == "cfg_attr" {
+            // #9501: `#[cfg_attr(<predicate>, allow(..), expect(..))]` is the
+            // same suppression under a condition; it spends the same budget
+            // as the plain attribute.
+            let mut line = None;
+            for (wrapped, lint) in cfg_attr_suppressed_lints(&text[content_start..content_end]) {
+                if guarded.contains(lint.as_str()) {
+                    let line = *line.get_or_insert_with(|| byte_line_number(text, index));
+                    findings.push((line, format!("{wrapped}({lint})")));
+                }
+            }
+            index = next_index;
+            continue;
+        }
         let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
@@ -21173,6 +21187,61 @@ fn guarded_allow_attributes_in_text(
         index = next_index;
     }
     findings
+}
+
+/// `allow`/`expect` lints named by the attributes a `cfg_attr(<predicate>, ..)`
+/// conditionally applies, including nested `cfg_attr` wrappers. Splitting is
+/// parenthesis- and string-aware so predicates such as `all(a, b)` and reason
+/// strings do not shift the attribute boundaries.
+fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    // The first top-level part is the predicate; the rest are attributes.
+    for part in split_top_level_commas(content).into_iter().skip(1) {
+        let part = part.trim();
+        let Some((name, rest)) = part.split_once('(') else {
+            continue;
+        };
+        let inner = rest.trim_end().strip_suffix(')').unwrap_or(rest);
+        match name.trim() {
+            "allow" => found.extend(attribute_lints(inner).into_iter().map(|l| ("allow", l))),
+            "expect" => found.extend(attribute_lints(inner).into_iter().map(|l| ("expect", l))),
+            "cfg_attr" => found.extend(cfg_attr_suppressed_lints(inner)),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn split_top_level_commas(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, ch) in content.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&content[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&content[start..]);
+    parts
 }
 
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
