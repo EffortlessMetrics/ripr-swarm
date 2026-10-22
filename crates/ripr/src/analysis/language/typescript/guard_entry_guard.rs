@@ -148,8 +148,10 @@ pub(crate) fn enclosing_conditions(
     // other text before the line (a loop head, a nested braceless `if`, a
     // continued expression) reads no extra condition, which only withdraws
     // exclusions.
+    // A braceless head guards one statement, not a whole line: a line that
+    // holds a second statement (`a = 1; b = 2;`) is left unguarded.
     let pending: String = masked_chars[segment_start..target].iter().collect();
-    if !pending.trim().is_empty() {
+    if !pending.trim().is_empty() && is_one_statement(&masked, index) {
         let pending_original: String = original[segment_start..target].iter().collect();
         let (conditions, _) = block_conditions(
             &pending,
@@ -165,6 +167,26 @@ pub(crate) fn enclosing_conditions(
         .flat_map(|block| block.conditions)
         .collect();
     (!conditions.is_empty()).then_some(conditions)
+}
+
+/// Whether the masked line at `index` holds at most one statement: no `;`
+/// outside parentheses other than a final one.
+fn is_one_statement(masked: &str, index: usize) -> bool {
+    let Some(line) = masked.lines().nth(index) else {
+        return false;
+    };
+    let line = line.trim();
+    let body = line.strip_suffix(';').unwrap_or(line);
+    let mut parens = 0usize;
+    for c in body.chars() {
+        match c {
+            '(' | '[' | '{' => parens += 1,
+            ')' | ']' | '}' => parens = parens.saturating_sub(1),
+            ';' if parens == 0 => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// The conditions a block with `header` needs, and the chain a directly
@@ -2064,6 +2086,9 @@ mod tests {
         assert_eq!(conditions(looped, 3, "flag = item;"), None);
         let nested = "function run(a, b) {\n  if (a)\n    if (b)\n      a = 1;\n  return a;\n}\n";
         assert_eq!(conditions(nested, 4, "a = 1;"), None);
+        // A second statement on the line is not the arm's body.
+        let two = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+        assert_eq!(conditions(two, 4, "total = total / 2; total += 2;"), None);
         // A continued condition is not a head.
         let continued = "function run(a, b) {\n  if (a &&\n    b)\n    a = 1;\n  return a;\n}\n";
         assert_eq!(

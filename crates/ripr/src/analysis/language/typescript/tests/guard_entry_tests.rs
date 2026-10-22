@@ -574,3 +574,18 @@ fn a_braceless_arm_some_test_input_can_enter_keeps_exposed() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn a_second_statement_on_a_braceless_arm_line_keeps_exposed() -> Result<(), String> {
+    let source = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+    let finding = finding_at(
+        "braceless-two-statements",
+        source,
+        4,
+        "    total = total / 2; total += 1;",
+        "    total = total / 2; total += 2;",
+        &test_with(&[("price(2)", "22")]),
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}

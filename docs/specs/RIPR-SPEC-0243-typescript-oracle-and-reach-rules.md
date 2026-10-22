@@ -1156,8 +1156,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - #8569: a braceless `if (c)` / `else if (c)` head that directly precedes the
   changed line makes that line the arm's one statement, read with the same
   rule. Any other text before the line (a loop head, a nested braceless `if`,
-  a continued condition, an `else` after a braceless arm) reads no extra
-  condition and only withdraws exclusions.
+  a continued condition, an `else` after a braceless arm, or a second
+  statement on the changed line, which the head does not guard) reads no
+  extra condition and only withdraws exclusions.
   `braceless_arms_read_their_head_and_nothing_else` pins the reader, and
   `a_braceless_arm_no_test_input_enters_withdraws_exposed` and
   `a_braceless_arm_some_test_input_can_enter_keeps_exposed` are the
