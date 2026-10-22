@@ -12334,9 +12334,26 @@ pub(super) fn imported_enum_variant_value(
     let [declaring] = declaring.as_slice() else {
         return false;
     };
-    if !local_type_equality(&declaring.source, enum_name)
-        .is_some_and(|facts| facts.variants.iter().any(|variant| variant == name))
-    {
+    // Equality facts are not needed (and can be unavailable for an enum with
+    // exotic derives): only the single non-test `enum` declaration's variants.
+    let Some(parse) = parse_clean_source_file(&declaring.source) else {
+        return false;
+    };
+    let mut enums = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|item| item.name().is_some_and(|ident| ident.text() == enum_name));
+    let (Some(item), None) = (enums.next(), enums.next()) else {
+        return false;
+    };
+    if !item.variant_list().is_some_and(|list| {
+        list.variants().any(|variant| {
+            variant.name().is_some_and(|ident| ident.text() == name)
+                && variant.field_list().is_none()
+        })
+    }) {
         return false;
     }
     let Some(file) = index.files().get(test_file) else {
@@ -12351,11 +12368,11 @@ pub(super) fn imported_enum_variant_value(
     let rooted = |path: &str, tail: &str| {
         path.strip_suffix(tail).is_some_and(|prefix| {
             prefix.is_empty()
-                || prefix
-                    .strip_suffix("::")
-                    .is_some_and(|prefix| prefix.split("::").all(|segment| {
-                        matches!(segment, "self" | "super" | "crate")
-                    }))
+                || prefix.strip_suffix("::").is_some_and(|prefix| {
+                    prefix
+                        .split("::")
+                        .all(|segment| matches!(segment, "self" | "super" | "crate"))
+                })
         })
     };
     let mut admitted = 0usize;
@@ -12377,15 +12394,18 @@ pub(super) fn imported_enum_variant_value(
     // the glob; refuse any item keyword directly before the spelling.
     !whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
-        ["const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let", "mut"]
-            .iter()
-            .any(|keyword| {
-                before.ends_with(keyword)
-                    && before[..before.len() - keyword.len()]
-                        .chars()
-                        .next_back()
-                        .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            })
+        [
+            "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",
+            "mut",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        })
     })
 }
 

@@ -4,7 +4,7 @@
   refuse comment-only, expired-binding and assertion-operand item-shadow
   evidence while preserving actual enum receivers, public-library calls and
   outer receivers after an inner foreign shadow expires. Corpus snapshots
-  retain the false actionable cost of unsupported factory/parameter/import flow
+  retain the false actionable cost of unsupported factory flow
   (#7415, #8004).
 - Same-name local wrapper delegation retains repository helper reach; diff
   evidence remains conservative. Module-shadowed assertion operands and foreign
@@ -32,3 +32,8 @@
   bare enum variant brought in by a single `use Enum::*` as visible receiver
   bindings, so those tests keep their credit; aliases, prelude spellings,
   shadowing items and ambiguous imports still withhold (#9676).
+- A standard-crate glob that is a direct item of an inline module
+  (`mod core { pub use core::*; }`) no longer makes every assertion macro
+  ambiguous workspace-wide: its root resolves against that module's own items,
+  not the enclosing file's. The serde corpus subject now retains its three
+  `#[macro_use]` module sources so macro bindings are indexed (#9676).

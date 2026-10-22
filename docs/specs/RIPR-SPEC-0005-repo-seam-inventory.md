@@ -131,7 +131,7 @@ in both diff and repository consumers; a sibling module's private macro does
 not shadow a real assertion outside it. Foreign or unresolved helper last hops
 cannot make the private owner strongly gripped. General type resolution,
 parameter/field flow and cross-file helper receiver inference remain outside
-this bounded admission. The five retained corpus accuracy losses keep their
+this bounded admission. The retained corpus accuracy losses keep their
 runtime truth and false-actionable accounting.
 
 ### Bounded Rust module motion
@@ -358,11 +358,17 @@ Malformed source, ambiguous owners and same-line test candidates retain their
 conservative behavior. Performance measurements remain separate from correctness
 controls; residual per-call work and unsupported semantic boundaries remain visible.
 
-The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
-`ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
-imported enum variants in table loops do not acquire identity from a unique
-method name. Their runtime-discriminated truth and acceptable verdict labels
-remain unchanged; a resulting `gap` is recorded as `false_actionable`, never
+A declared nominal parameter type (an `#[rstest]` fixture injection such as
+`fn t(account: Account)`) and a bare enum variant brought in by one non-aliased
+`use Enum::*` or `use Enum::Variant` of the workspace's single `Enum`
+declaration are visible receiver bindings; a prelude spelling, a second import
+or same-named item, a `macro_rules!` in the file, or a loop pattern that binds
+the name still withholds. A standard-crate glob that is a direct item of an
+inline module is resolved against that module's own items only, so
+`mod core { pub use core::*; }` does not shadow the real root. The verdict
+corpus keeps the accuracy cost of the remaining boundary visible: arbitrary
+`ByteSize::gb`/`ByteSize::kib` factories do not acquire identity from a unique
+method name; a resulting `gap` is recorded as `false_actionable`, never
 relabeled as correct test advice.
 
 Related-test oracle semantics must explain what the oracle observes, what

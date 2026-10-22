@@ -12401,6 +12401,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12422,6 +12426,12 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {
@@ -12801,7 +12811,10 @@ fn parameter_types_and_imported_variants_give_receiver_identity() {
         ("fn t(w: &Widget) {\n assert_eq!(w.read(), 4);\n}", true),
         ("fn t(w: Other) {\n assert_eq!(w.read(), 4);\n}", false),
         ("fn t(w: impl Sized) {\n assert_eq!(w.read(), 4);\n}", false),
-        ("fn t(w: Widget) {\n let w = other();\n assert_eq!(w.read(), 4);\n}", false),
+        (
+            "fn t(w: Widget) {\n let w = other();\n assert_eq!(w.read(), 4);\n}",
+            false,
+        ),
         ("fn t() {\n assert_eq!(w.read(), 4);\n}", false),
     ];
     for (function, expected) in params {
@@ -12826,16 +12839,52 @@ fn parameter_types_and_imported_variants_give_receiver_identity() {
     }
     let mode_lib = "pub enum Mode {\n    Fast,\n    Slow,\n}\n\nimpl Mode {\n    pub fn label(&self) -> u32 {\n        1\n    }\n}\n";
     let variants = [
-        ("use demo::Mode::*;\n", "assert_eq!(Fast.label(), 1);", true),
-        ("use demo::Mode::Fast;\n", "assert_eq!(Fast.label(), 1);", true),
-        ("use demo::Mode::*;\n", "for x in [1] { assert_eq!(Fast.label(), x); }", true),
-        ("use demo::Mode::*;\n", "for Fast in [1] { assert_eq!(Fast.label(), 1); }", false),
-        ("use demo::Mode::*;\n", "assert_eq!(Slow.other(), 1);", false),
-        ("use demo::Mode::Fast as Quick;\n", "assert_eq!(Fast.label(), 1);", false),
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(Fast.label(), 1);",
+            true,
+        ),
+        (
+            "use crate::Mode::Fast;\n",
+            "assert_eq!(Fast.label(), 1);",
+            true,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "for x in [1] { assert_eq!(Fast.label(), x); }",
+            true,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "for Fast in [1] { assert_eq!(Fast.label(), 1); }",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(Slow.other(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::Fast as Quick;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
         ("", "assert_eq!(Fast.label(), 1);", false),
-        ("use demo::Mode::*;\nuse other::Fast;\n", "assert_eq!(Fast.label(), 1);", false),
-        ("use demo::Mode::*;\nconst Fast: u32 = 1;\n", "assert_eq!(Fast.label(), 1);", false),
-        ("use demo::Mode::*;\n", "assert_eq!(None.label(), 1);", false),
+        (
+            "use crate::Mode::*;\nuse other::Fast;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\nconst Fast: u32 = 1;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(None.label(), 1);",
+            false,
+        ),
     ];
     for (uses, body, expected) in variants {
         let tests = format!("{uses}\n#[test]\nfn t() {{\n    {body}\n}}\n");

@@ -3796,8 +3796,7 @@ fn visible_receiver_binding_names_type(
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
         // infer their types, and never borrows an outer same-spelled binding.
-        if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::MatchArm::can_cast(ancestor.kind())
-        {
+        if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::MatchArm::can_cast(ancestor.kind()) {
             return false;
         }
         // A `for` loop binds only the names its own pattern spells; a receiver
@@ -10886,6 +10885,18 @@ let r = try_parse_summary(\"x\");",
             ),
             (
                 "fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }",
+                "monthly_fee",
+                "Account",
+                true,
+            ),
+            (
+                "fn t(account: Other) { assert_eq!(account.monthly_fee(), 5); }",
+                "monthly_fee",
+                "Account",
+                false,
+            ),
+            (
+                "fn t(account: Account) { let account = make(); assert_eq!(account.monthly_fee(), 5); }",
                 "monthly_fee",
                 "Account",
                 false,
