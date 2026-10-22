@@ -41,17 +41,22 @@ fn commit(root: &Path, files: &[(&str, Option<&str>)], message: &str) -> Result<
     git(root, &["rev-parse", "HEAD"])
 }
 
-fn fixture() -> Result<(PathBuf, GitFacts, Vec<String>), String> {
+fn new_repo(label: &str) -> Result<PathBuf, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("ripr-ledger-capture-{nonce}"));
+    let root = std::env::temp_dir().join(format!("ripr-ledger-{label}-{nonce}"));
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     git(&root, &["init", "--quiet"])?;
     git(&root, &["config", "user.name", "test"])?;
     git(&root, &["config", "user.email", "test@example.invalid"])?;
     git(&root, &["checkout", "--quiet", "-b", "trunk"])?;
+    Ok(root)
+}
+
+fn fixture() -> Result<(PathBuf, GitFacts, Vec<String>), String> {
+    let root = new_repo("capture")?;
     let base = commit(
         &root,
         &[("a.txt", Some("1\n2\n3\n")), ("keep.txt", Some("k\n"))],
@@ -193,4 +198,67 @@ fn split_refs_takes_only_the_trailing_pull_request() -> Result<(), String> {
         split_refs("feat: side (#7)", false) == (vec![], vec![7]),
         "a non-first-parent commit has no squash PR",
     )
+}
+
+#[test]
+fn lines_written_under_a_renamed_path_are_attributed_by_blame() -> Result<(), String> {
+    let root = new_repo("rename")?;
+    let result = (|| {
+        let base = commit(&root, &[("keep.txt", Some("k\n"))], "base")?;
+        let writer = commit(
+            &root,
+            &[("old.txt", Some("one\ntwo\nthree\nfour\nfive\n"))],
+            "feat: write (#21)",
+        )?;
+        git(&root, &["mv", "old.txt", "new.txt"])?;
+        let mover = commit(&root, &[], "chore: move (#22)")?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &mover,
+            main: &mover,
+        })?;
+        let found = facts
+            .commits
+            .iter()
+            .find(|commit| commit.commit_sha == writer)
+            .ok_or("writer missing")?;
+        require(
+            found.final_tree_effect == "present_effective"
+                && found.effect_basis.alive_paths == 0
+                && found.effect_basis.blamed_lines == 5,
+            "the writer owns the five lines that now live under the new name",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
+#[test]
+fn newline_prefixed_file_names_keep_their_tree_effect() -> Result<(), String> {
+    let root = new_repo("newline")?;
+    let result = (|| {
+        let base = commit(&root, &[("keep.txt", Some("k\n"))], "base")?;
+        let writer = commit(&root, &[("\nnotes.txt", Some("n\n"))], "feat: notes (#31)")?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &writer,
+            main: &writer,
+        })?;
+        let found = facts
+            .commits
+            .iter()
+            .find(|commit| commit.commit_sha == writer)
+            .ok_or("writer missing")?;
+        require(
+            found.paths == ["\nnotes.txt".to_string()]
+                && found.final_tree_effect == "present_effective",
+            "the newline-prefixed name survives byte for byte",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }

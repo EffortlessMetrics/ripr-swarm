@@ -99,7 +99,18 @@ pub(super) fn capture(args: &CaptureArgs<'_>) -> Result<GitFacts, String> {
         .map(|(index, sha)| (sha, index as u64 + 1))
         .collect();
 
-    let owned = derive_ownership(args.repo, &cut, &first_parent, &reachable, &touched, &alive)?;
+    let renamed = read_rename_destinations(args.repo, &reachable)?;
+    let owned = derive_ownership(
+        args.repo,
+        &cut,
+        &Ranges {
+            first_parent: &first_parent,
+            reachable: &reachable,
+        },
+        &touched,
+        &alive,
+        &renamed,
+    )?;
     let mut records = Vec::with_capacity(reachable.len());
     let mut merged_prs = Vec::new();
     for sha in &reachable {
@@ -223,14 +234,20 @@ struct Ownership {
     blamed_paths: u64,
 }
 
+struct Ranges<'a> {
+    first_parent: &'a [String],
+    reachable: &'a [String],
+}
+
 fn derive_ownership(
     repo: &Path,
     cut: &str,
-    first_parent: &[String],
-    reachable: &[String],
+    ranges: &Ranges<'_>,
     touched: &BTreeMap<String, BTreeSet<String>>,
     alive: &BTreeSet<String>,
+    renamed: &BTreeSet<String>,
 ) -> Result<Ownership, String> {
+    let (first_parent, reachable) = (ranges.first_parent, ranges.reachable);
     // Ordered first-parent touchers per alive path; the last one wrote the
     // path's final blob.
     let mut touchers: BTreeMap<&String, Vec<&String>> = BTreeMap::new();
@@ -260,11 +277,15 @@ fn derive_ownership(
         }
     }
     let in_range: BTreeSet<&str> = reachable.iter().map(String::as_str).collect();
-    let blame_paths: Vec<&String> = all_touchers
+    // A path another file was renamed into can carry lines written under its
+    // old name, which no touched-path set names, so it is always blamed.
+    let mut blame_paths: BTreeSet<&String> = all_touchers
         .iter()
         .filter(|(_, chain)| chain.len() > 1 && chain.iter().any(|sha| !decided.contains(*sha)))
         .map(|(path, _)| *path)
         .collect();
+    blame_paths.extend(renamed.iter().filter(|path| alive.contains(*path)));
+    let blame_paths: Vec<&String> = blame_paths.into_iter().collect();
     let results: Vec<Result<BTreeMap<String, u64>, String>> = blame_paths
         .par_iter()
         .map(|path| blame_path(repo, cut, path, &in_range))
@@ -372,16 +393,52 @@ fn read_touched_paths(
             let sha = fields.next().unwrap_or("").to_string();
             let rest: Vec<&str> = fields.collect();
             let paths = touched.entry(sha).or_default();
-            let mut tokens = rest.iter().map(|token| token.trim_start_matches('\n'));
+            // Git separates records with a newline that lands on the next status
+            // token; path tokens are kept byte for byte.
+            let mut tokens = rest.iter();
             while let (Some(status), Some(path)) = (tokens.next(), tokens.next()) {
-                if status.is_empty() {
+                if status.trim_start_matches('\n').is_empty() {
                     break;
                 }
-                paths.insert(path.to_string());
+                paths.insert((*path).to_string());
             }
         }
     }
     Ok(touched)
+}
+
+/// Destinations of renames git detects in each commit; their history lives
+/// under another name, so only blame can attribute their lines.
+fn read_rename_destinations(repo: &Path, reachable: &[String]) -> Result<BTreeSet<String>, String> {
+    let mut destinations = BTreeSet::new();
+    for chunk in reachable.chunks(SHA_CHUNK) {
+        let mut args = vec![
+            "log",
+            "--no-walk=unsorted",
+            "-m",
+            "--first-parent",
+            "-M",
+            "--diff-filter=R",
+            "--name-status",
+            "-z",
+            "--format=%x1e%H",
+        ];
+        args.extend(chunk.iter().map(String::as_str));
+        let bytes = git_bytes(repo, &args, GIT_TIMEOUT)?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_error| "git log produced a non-UTF-8 path".to_string())?;
+        for entry in text.split('\x1e').filter(|entry| !entry.is_empty()) {
+            let mut tokens = entry.split('\0').skip(1);
+            while let (Some(status), Some(_old), Some(new)) =
+                (tokens.next(), tokens.next(), tokens.next())
+            {
+                if status.trim_start_matches('\n').starts_with('R') {
+                    destinations.insert(new.to_string());
+                }
+            }
+        }
+    }
+    Ok(destinations)
 }
 
 fn alive_paths(repo: &Path, cut: &str) -> Result<BTreeSet<String>, String> {
