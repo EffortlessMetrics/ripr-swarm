@@ -408,16 +408,6 @@ fn repo_exposure_regeneration_guidance(root: &Path) -> String {
     format!("{recovery}. {binding}")
 }
 
-/// A repo-exposure document that carries no producer envelope at all: the
-/// legacy shape (`schema_version` + `scope: repo` + `seams`) of a pre-envelope
-/// producer, or any document with a `seams` array and no `artifact` member.
-fn is_unenveloped_repo_exposure(raw: &str) -> bool {
-    let Ok(Value::Object(document)) = serde_json::from_str::<Value>(raw) else {
-        return false;
-    };
-    !document.contains_key("artifact") && document.get("seams").is_some_and(Value::is_array)
-}
-
 fn legacy_repo_exposure_refusal(root: &Path, subject: &str) -> String {
     format!(
         "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
@@ -432,34 +422,6 @@ fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> St
         env!("CARGO_PKG_VERSION"),
         repo_exposure_regeneration_guidance(root),
     )
-}
-
-/// Envelope gate for repo-exposure readers that do not need the full
-/// identity validation (the `reports gap-ledger --repo-exposure` route,
-/// #9500). It is the same decision `validate_repo_exposure_artifact` makes —
-/// no envelope refuses as legacy, a producer version other than this
-/// executable's refuses as foreign — so there is one owner for both.
-pub(crate) fn require_current_repo_exposure_envelope(
-    root: &Path,
-    raw: &str,
-    subject: &str,
-) -> Result<(), String> {
-    let Ok(Value::Object(document)) = serde_json::from_str::<Value>(raw) else {
-        // Not a JSON object: the caller's own parser reports it.
-        return Ok(());
-    };
-    if is_unenveloped_repo_exposure(raw) {
-        return Err(legacy_repo_exposure_refusal(root, subject));
-    }
-    if let Some(version) = document
-        .get("artifact")
-        .and_then(|artifact| artifact.pointer("/producer/version"))
-        .and_then(Value::as_str)
-        && version != env!("CARGO_PKG_VERSION")
-    {
-        return Err(foreign_producer_refusal(root, subject, version));
-    }
-    Ok(())
 }
 
 pub(crate) fn validate_repo_exposure_artifact(

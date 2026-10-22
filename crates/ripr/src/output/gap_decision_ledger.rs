@@ -471,23 +471,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned);
             }
-            // #9500: a repo-exposure source is producer evidence, so it passes
-            // the same envelope gate `agent verify` uses before any record is
-            // derived. An unenveloped legacy artifact or one from another
-            // producer version is refused with the regeneration command rather
-            // than ledgered as a clean advisory with `warnings: []`.
-            let envelope = if input.source_kind == GapDecisionLedgerSourceKind::RepoExposure {
-                crate::agent::artifact::require_current_repo_exposure_envelope(
-                    Path::new(&input.root),
-                    &contents,
-                    &format!("repo-exposure source {}", input.records_path),
-                )
-            } else {
-                Ok(())
-            };
-            let parsed = match envelope
-                .and_then(|()| parse_gap_decision_source(input.source_kind, &contents))
-            {
+            let parsed = match parse_gap_decision_source(input.source_kind, &contents) {
                 Ok(records) => {
                     parsed_cleanly = true;
                     records
@@ -6740,82 +6724,13 @@ mod tests {
 
     // ── repo_exposure source kind via build_gap_decision_ledger_report ───────
 
-    fn repo_exposure_report_for(payload: &serde_json::Value) -> GapDecisionLedgerReport {
-        build_gap_decision_ledger_report(GapDecisionLedgerInput {
-            root: ".".to_string(),
-            generated_at: "test".to_string(),
-            source_kind: GapDecisionLedgerSourceKind::RepoExposure,
-            records_path: "exposure.json".to_string(),
-            records_json: Ok(payload.to_string()),
-        })
-    }
-
-    fn enveloped_repo_exposure(version: &str) -> serde_json::Value {
-        serde_json::json!({
-            "schema_version": "0.5",
-            "scope": "repo",
-            "artifact": {"producer": {"tool": "ripr", "version": version}},
+    #[test]
+    fn build_report_with_repo_exposure_source_kind() -> Result<(), String> {
+        let payload = serde_json::json!({
             "seams": [
                 make_repo_exposure_seam("actionable", "add_focused_test", "error_variant")
             ]
-        })
-    }
-
-    /// #9500 (a): an unenveloped legacy artifact was ledgered as a clean
-    /// `advisory` with `warnings: []`. It must be refused with the same
-    /// diagnosis `agent verify` gives, and no record may be derived.
-    #[test]
-    fn repo_exposure_ledger_refuses_unenveloped_legacy_artifact() {
-        for payload in [
-            serde_json::json!({
-                "schema_version": "0.4",
-                "scope": "repo",
-                "seams": [make_repo_exposure_seam("actionable", "add_focused_test", "error_variant")]
-            }),
-            serde_json::json!({
-                "seams": [make_repo_exposure_seam("actionable", "add_focused_test", "error_variant")]
-            }),
-        ] {
-            let report = repo_exposure_report_for(&payload);
-            assert_eq!(report.status, "blocked", "{:?}", report.warnings);
-            assert!(report.records.is_empty());
-            let warnings = report.warnings.join("\n");
-            assert!(
-                warnings.contains("no RIPR producer envelope")
-                    && warnings.contains("recovered.repo-exposure.json"),
-                "refusal must name the missing envelope and the recovery: {warnings}"
-            );
-        }
-    }
-
-    /// #9500 (c) on the ledger route: a producer version other than this
-    /// executable's is refused, naming both versions.
-    #[test]
-    fn repo_exposure_ledger_refuses_foreign_producer_version() {
-        let report = repo_exposure_report_for(&enveloped_repo_exposure("0.10.9"));
-        assert_eq!(report.status, "blocked", "{:?}", report.warnings);
-        assert!(report.records.is_empty());
-        let warnings = report.warnings.join("\n");
-        assert!(
-            warnings.contains("produced by RIPR 0.10.9")
-                && warnings.contains(env!("CARGO_PKG_VERSION")),
-            "{warnings}"
-        );
-    }
-
-    /// Positive control for the two refusals above: the same seam in a
-    /// current-producer envelope still ledgers cleanly.
-    #[test]
-    fn repo_exposure_ledger_accepts_current_producer_envelope() {
-        let report = repo_exposure_report_for(&enveloped_repo_exposure(env!("CARGO_PKG_VERSION")));
-        assert_eq!(report.status, "advisory", "{:?}", report.warnings);
-        assert_eq!(report.summary.records_total, 1);
-        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-    }
-
-    #[test]
-    fn build_report_with_repo_exposure_source_kind() -> Result<(), String> {
-        let payload = enveloped_repo_exposure(env!("CARGO_PKG_VERSION"));
+        });
         let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
             root: ".".to_string(),
             generated_at: "test".to_string(),
