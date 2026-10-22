@@ -541,7 +541,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     strength, so an exact conjunct on something else does not credit a
     weak conjunct on the owner (`fee(10) > 0 and other == 5` does not
     observe `fee`). `or`,
-    `not` and any other boolean form stay `smoke_only` / smoke.
+    `not` and any other boolean form stay `smoke_only` / smoke, with one
+    exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
+    `assert not f(lit, ..)` whose single resolved workspace function owner
+    provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
+    `== False`.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
@@ -672,6 +676,58 @@ mutant calibrates the rule; ripr reports only the static shape.
     fixture, `setUp` or class decorator rather than in the related test
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
+
+21. **An explicit `approx` band abstains on a numeric edit.** Rule 12
+    reads `pytest.approx(expected)` at its default tolerance as pinning
+    the value. When the assertion the row selects passes an explicit band,
+    `approx(expected, rel=...)`, `abs=...`, a positional second or third
+    argument, or a `*` or `**` spread that may carry one (a literal `None`
+    counts as absent), static evidence cannot tell whether the band
+    excludes the pre-change value. On a changed line that contains a
+    digit the finding is `static_unknown` with the static limit
+    `unsupported_syntax` naming the band. ripr does not evaluate the band,
+    so a change outside it (`py-idioms-approx-constant-outside-tolerance`)
+    abstains as well as one inside it
+    (`py-idioms-approx-constant-within-tolerance`, whose old reading as
+    `exposed` was a false exposed).
+22. **A `caplog.text` membership check on a changed log call abstains.**
+    When the changed line is a logging call (`<receiver>.debug`, `.info`,
+    `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
+    string literal) and the selected assertion is `<text> in caplog.text`
+    sharing a word of three or more characters with that literal, the
+    finding is `static_unknown` with `unsupported_syntax`. The check
+    compares against `%`-formatted text and a runtime level filter, neither
+    of which the adapter evaluates, so a message edit
+    (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
+    both abstain instead of reading a weak gap. An assertion about unrelated
+    text keeps its verdict. `caplog.messages` and `caplog.records` are not
+    read by this rule. The membership is read from the parsed assertion, not
+    its text layout: extra spacing, parentheses, line breaks, implicit
+    literal concatenation, an assertion message and a membership joined by
+    `and` all abstain the same way, while a membership against any receiver
+    other than `caplog.text` is not read.
+23. **An assertion that cannot run or cannot fail is not read.** The
+    assertion collector skips the dead arm of an `if` or `while` whose
+    condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
+    the arm that can run is still read) and the body of a `try` whose
+    handler catches `AssertionError` (a bare `except`, `Exception`,
+    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
+    naming one) and does not raise, assert, call a `fail` helper or call a
+    unittest `assert*` method. The `else` and `finally` blocks
+    are still read. A swallowed or dead assertion cannot notice a change, so
+    it must not credit one (`py-trap-dead-branch`,
+    `py-trap-swallowed-assert`, #9691).
+24. **A test the collector skips is activation-controlled.** A parametrize
+    decorator over an empty literal table (`[]` or `()`) and an
+    unconditional module-level `pytest.importorskip(...)`,
+    `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
+    a recognized skip, skipif or xfail mark control every affected test the
+    same way a `@pytest.mark.skip` decorator does (a condition is never
+    evaluated, so a `skipif` that is false on the host still abstains): the finding is
+    `static_unknown` with `decorator_indirection`. The adapter does not
+    evaluate whether the module is installed, so `importorskip` of a present
+    module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-module-loaded`, #9691).
 
 ### Verdict ladder
 
@@ -1200,6 +1256,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
+- `crates/ripr/src/analysis/language/python/oracles.rs` (dead arms and
+  swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
+  module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
+  the `py-trap-*` corpus cases.
 
 ## Metrics
 

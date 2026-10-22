@@ -453,6 +453,9 @@ use super::resource_cost::{self as latency_trace, trace_latency_phase};
 /// A bounded, typed diagnostic channel for the latency runner. The ordinary
 /// human phase label cannot represent failure identities or overflow.
 fn trace_file_fact_cache(stats: &FileFactCacheStats) {
+    for line in file_fact_store_failure_summary(stats) {
+        eprintln!("{}", crate::terminal_text::terminal_safe(line));
+    }
     if !latency_trace::latency_trace_enabled() {
         return;
     }
@@ -462,8 +465,11 @@ fn trace_file_fact_cache(stats: &FileFactCacheStats) {
     );
 }
 
-fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
-    let rows: Vec<_> = stats
+/// Bounded `{path, stage, error}` store-failure rows, shared by the opt-in
+/// trace receipt, the ordinary stderr summary and the targeted-rerun JSON
+/// (#9503) so every surface names the same failures.
+pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<serde_json::Value> {
+    stats
         .store_failures
         .iter()
         .map(|failure| {
@@ -473,7 +479,42 @@ fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
                 "error": failure.error,
             })
         })
-        .collect();
+        .collect()
+}
+
+/// Ordinary (non-trace) stderr disclosure of file-fact store failures (#9503):
+/// the count alone was anonymous. Prints at most [`ORDINARY_STORE_FAILURE_LINES`]
+/// rows and states the remainder, so a broken cache cannot flood the terminal.
+const ORDINARY_STORE_FAILURE_LINES: usize = 5;
+
+fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
+    if stats.store_errors == 0 {
+        return Vec::new();
+    }
+    let rows = file_fact_store_failure_rows(stats);
+    let mut lines = vec![format!(
+        "ripr: {} repo file fact cache store failure(s); results are recomputed, not stale",
+        stats.store_errors
+    )];
+    for row in rows.iter().take(ORDINARY_STORE_FAILURE_LINES) {
+        let path = row["path"].as_str().unwrap_or("(unrepresentable path)");
+        lines.push(format!(
+            "ripr:   {path} [{}]: {}",
+            row["stage"].as_str().unwrap_or("unknown"),
+            row["error"].as_str().unwrap_or("unknown")
+        ));
+    }
+    let unlisted = stats
+        .store_errors
+        .saturating_sub(rows.len().min(ORDINARY_STORE_FAILURE_LINES));
+    if unlisted > 0 {
+        lines.push(format!("ripr:   ... and {unlisted} more store failure(s)"));
+    }
+    lines
+}
+
+fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+    let rows = file_fact_store_failure_rows(stats);
     serde_json::json!({
         "schema_version": "0.1",
         "hits": stats.hits,
@@ -885,7 +926,13 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) total_rust_files: usize,
     pub(crate) total_production_files: usize,
     pub(crate) scoped_production_files: Vec<PathBuf>,
+    /// Changed production files whose seams were actually extracted. A file
+    /// the parser declined (nesting budget, parse error, non-UTF-8) is not
+    /// listed here: its lexical fallback yields no seams, so absence of a
+    /// seam in it is not evidence of resolution (#9301).
     pub(crate) changed_production_files: Vec<PathBuf>,
+    /// Changed production files that fell back to lexical summarization.
+    pub(crate) parser_declined_files: Vec<PathBuf>,
     pub(crate) immediate_caller_files: Vec<PathBuf>,
     /// Scoped seams left without evidence because the first
     /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
@@ -1359,6 +1406,7 @@ fn try_no_impact_fast_path(
             total_production_files,
             scoped_production_files: Vec::new(),
             changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             unevaluated_seams: 0,
             absent_changed_files: Vec::new(),
@@ -2029,11 +2077,18 @@ fn inventory_diff_scoped_classified_seams_inner(
         .filter(|path| scoped_file_set.contains(&inventory_scope_key(path)))
         .cloned()
         .collect::<Vec<_>>();
-    let changed_production_files = production_files
-        .iter()
-        .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
-        .cloned()
-        .collect::<Vec<_>>();
+    let (parser_declined_files, changed_production_files): (Vec<PathBuf>, Vec<PathBuf>) =
+        production_files
+            .iter()
+            .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
+            .cloned()
+            .partition(|path| {
+                cached
+                    .index
+                    .files()
+                    .get(path)
+                    .is_none_or(|facts| facts.used_lexical_fallback)
+            });
     let immediate_caller_files = production_files
         .iter()
         .filter(|path| caller_file_set.contains(&inventory_scope_key(path)))
@@ -2070,6 +2125,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         total_production_files,
         scoped_production_files,
         changed_production_files,
+        parser_declined_files,
         immediate_caller_files,
         unevaluated_seams,
         absent_changed_files,
@@ -3518,6 +3574,29 @@ mod tests {
         assert_eq!(value["store_failures"][1]["path"], expected_bar);
         assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    #[test]
+    fn ordinary_store_failure_summary_is_bounded_and_silent_when_healthy() {
+        assert!(file_fact_store_failure_summary(&FileFactCacheStats::zero_work()).is_empty());
+        let mut stats = FileFactCacheStats::zero_work();
+        for index in 0..40 {
+            stats.record_store_failure(
+                PathBuf::from(format!("src/f{index}.rs")),
+                super::super::seam_cache::FileFactStoreError {
+                    stage: super::super::seam_cache::FileFactStoreStage::CreateDir,
+                    message: "blocked".to_string(),
+                },
+            );
+        }
+        let lines = file_fact_store_failure_summary(&stats);
+        // Header, five rows, one remainder line naming the unlisted 35.
+        assert_eq!(lines.len(), 7, "{lines:?}");
+        assert!(lines[0].contains("40 repo file fact cache store failure(s)"));
+        assert!(lines[1].contains("src/f0.rs [create_dir]: blocked"));
+        assert!(lines[6].contains("and 35 more"));
+        assert_eq!(file_fact_store_failure_rows(&stats).len(), 32);
+        assert_eq!(stats.store_failures_dropped, 8);
     }
 
     #[cfg(unix)]

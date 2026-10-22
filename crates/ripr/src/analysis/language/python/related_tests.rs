@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod verify_command_tests;
 
+mod dunder_entries;
+pub(super) use dunder_entries::{
+    PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
     SyntacticCall,
@@ -863,6 +868,9 @@ pub(super) fn oracle_operand_protocol_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> bool {
+    if operator_entry_in_text(text, test, owner) {
+        return true;
+    }
     let Some(depth) = oracle_operand_depth(text) else {
         return false;
     };
@@ -917,7 +925,7 @@ fn dunder_method_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
-    if protocol_entry_in_body(test, owner) {
+    if protocol_entry_in_body(test, owner) || with_entry(test, owner).is_some() {
         return Some(PythonRelationKind::ProtocolEntryCall);
     }
     if test_constructs_class(test, owner, class) {
@@ -942,6 +950,14 @@ fn dunder_method_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether the test imports the owner's module, or anything from it or a
+/// package above it. Importing the module runs its top-level statements.
+pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.imports.iter().any(|import| {
+        imports_owner_module(import, owner) || module_contains_owner(&import.source_module, owner)
+    })
 }
 
 /// Whether the test references the owner's `class` through an import that

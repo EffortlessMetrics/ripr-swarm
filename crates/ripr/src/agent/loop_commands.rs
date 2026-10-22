@@ -529,7 +529,12 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   interior quote with a backtick instead of doubling, and Git Bash drops
 ///   an interior quote in the `""` form; an interior `"` cannot occur in a
 ///   Windows filename, so the `""` doubling is the conservative choice for
-///   the paths this form exists to quote.
+///   the paths this form exists to quote. One limit is accepted rather than
+///   encoded (#9659): cmd.exe expands `%NAME%` inside double quotes (and
+///   `!NAME!` when delayed expansion is on), and no quoting form prevents
+///   that on an interactive cmd.exe line, so a value carrying `%` or `!`
+///   pastes literally in PowerShell and Git Bash but not in cmd.exe. The
+///   VS Code terminal and Windows Terminal default to PowerShell.
 ///
 /// The empty string must be quoted (`''` or `""`), or the argument disappears
 /// from the command line entirely.

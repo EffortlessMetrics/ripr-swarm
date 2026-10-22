@@ -147,7 +147,7 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "message=ok" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.95.0
           components: llvm-tools-preview
@@ -157,13 +157,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
       - name: Restore hosted Rust cache
         if: ${{ !inputs.use-scratch }}
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-swarm-rust-small-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -371,8 +371,8 @@ jobs:
       # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
       # bytes the PR evidence step just wrote. A missing artifact file fails the
       # step, so a producer that stops writing cannot silently turn a row into
-      # `not_run`. Producer-only rows (repair-attempt, execution_result) stay
-      # unrun here by design; see docs/verification/schema-producer-audit.md.
+      # `not_run`. Producer-only rows (repair-attempt, execution_result) carry a
+      # reviewed narrower authority instead (#9561); see docs/verification/schema-producer-audit.md.
       - name: Schema producer sweep
         id: schema_producer_sweep
         env:

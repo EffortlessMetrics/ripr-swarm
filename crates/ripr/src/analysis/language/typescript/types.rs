@@ -674,11 +674,13 @@ impl TypeScriptErrorPayload {
         match self.kind {
             TypeScriptErrorPayloadKind::ThrowsLiteral
             | TypeScriptErrorPayloadKind::ThrowsObject
+            | TypeScriptErrorPayloadKind::ThrowsRegex
             | TypeScriptErrorPayloadKind::ThrowsClass => {
                 format!("expect(...).toThrow({})", self.expected)
             }
             TypeScriptErrorPayloadKind::RejectsThrowLiteral
             | TypeScriptErrorPayloadKind::RejectsThrowObject
+            | TypeScriptErrorPayloadKind::RejectsThrowRegex
             | TypeScriptErrorPayloadKind::RejectsThrowClass => {
                 format!("await expect(...).rejects.toThrow({})", self.expected)
             }
@@ -708,6 +710,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     /// literal-valued keys (fail-closed: shorthand / spread / dynamic
     /// computed properties are rejected).
     ThrowsObject,
+    /// `.toThrow(/^exact message$/)` — anchored regex (RIPR-SPEC-0243 rule 16).
+    ThrowsRegex,
     /// `.toThrow(SomeError)` or `.toThrow(SomeError.SubClass)` — class /
     /// constructor reference as a safe member path.
     ThrowsClass,
@@ -715,6 +719,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowLiteral,
     /// `await expect(...).rejects.toThrow({ code: "X" })`.
     RejectsThrowObject,
+    /// `await expect(...).rejects.toThrow(/^exact message$/)`.
+    RejectsThrowRegex,
     /// `await expect(...).rejects.toThrow(SomeError)`.
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.

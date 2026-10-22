@@ -15,7 +15,7 @@
     },
     {
       "path": "shapes/aio.py",
-      "sha256": "61a516ca3c9b375148cb0f9ded132eae6f05dd4cf50ade66c421e2d711e4fd80"
+      "sha256": "154b1ec01240835e019b398fcc52cc448f2043a37fce96b1f137d9a25231efa1"
     },
     {
       "path": "shapes/comps.py",
@@ -59,7 +59,7 @@
     },
     {
       "path": "tests/test_aio.py",
-      "sha256": "7a8d58f32e4615298694508a9d97b8592aabe6b97f9c4e82c2f0d8766b9e288c"
+      "sha256": "fa74bc873862caaed69eed0e4e5084586659ae0f3db40a4e0f4a71beac6cdb97"
     },
     {
       "path": "tests/test_comps.py",

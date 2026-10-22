@@ -416,8 +416,9 @@ each labeled row carries an `oracle` object (expected, `observed_kind`,
 `observed_strength`, `observed_all`, `outcome`). These never enter
 `false_verdict_rate` or any verdict rate.
 
-The `[[known_false]]` tables of `spec-coverage.toml` (`case`, `issue`,
-`reason`) list every false verdict the corpus still scores with its owning
+The `known-false/<case>.toml` files of a corpus directory (`case`, `issue`,
+`reason`; the file name is the case id, and an inline `[[known_false]]` table
+in `spec-coverage.toml` is rejected so parallel fixes never share lines) list every false verdict the corpus still scores with its owning
 issue. A whole-corpus `check` fails on a false row that is not listed and on a
 listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never

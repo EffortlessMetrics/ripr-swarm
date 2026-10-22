@@ -3,6 +3,17 @@
 ## Pending
 
 Reason:
+wording: route-not-ready refusal now names the missing evidence (#9604 batch C), so the advisory line carries the parenthetical evidence detail
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending
+
+Reason:
 additive: add related_tests_total cap field (mirrors repo-exposure pattern)
 
 Command:
