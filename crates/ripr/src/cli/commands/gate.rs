@@ -86,8 +86,8 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     if output::gate::gate_decision_should_fail(&report) {
         let detail = output::gate::gate_decision_inline_detail(&report);
         let message = format!(

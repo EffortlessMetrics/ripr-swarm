@@ -14,7 +14,7 @@
 //! is `None`; it is never inferred, and no per-language CPU or memory is
 //! attributed.
 
-use crate::analysis::language::LanguageRepoResult;
+use crate::analysis::language::{LanguageRepoResult, RepoFileAccounting};
 use crate::analysis::{LanguageRun, LanguageRunStatus};
 use crate::domain::{Finding, LanguageId};
 use sha2::{Digest, Sha256};
@@ -52,13 +52,16 @@ impl LanguageOutcomeStatus {
     }
 }
 
-/// Facts the producer actually measured. `None` is "not measured". No named
-/// bound is recorded until a producer reports one as typed metadata; a
-/// disclosure string is not evidence that a bound fired.
+/// Facts the producer actually measured. `None` is "not measured". Named
+/// bounds come only from the producer's typed `files.first_cap_fired`; a
+/// disclosure string is never parsed and is not evidence that a bound fired.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LanguageResourceObservations {
     pub(crate) files_skipped: Option<usize>,
     pub(crate) production_files: Option<usize>,
+    /// Typed file accounting and the first fired cap, exactly as the producer
+    /// reported it. Per-language; never summed across languages.
+    pub(crate) files: RepoFileAccounting,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +100,7 @@ impl LanguageAnalysisOutcomeV1 {
         let resources = LanguageResourceObservations {
             files_skipped: Some(result.skipped_files),
             production_files: Some(result.production_files),
+            files: result.file_accounting,
         };
         Self::new(
             language,

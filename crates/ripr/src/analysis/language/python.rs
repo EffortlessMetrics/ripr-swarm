@@ -419,6 +419,9 @@ struct PythonAssertion {
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
     callable_call: Option<String>,
+    /// The existing helper-resolution pass supplied this assertion. Its
+    /// comparison alone does not establish a deferred owner's execution.
+    helper_derived: bool,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
@@ -1165,6 +1168,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
