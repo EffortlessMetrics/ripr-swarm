@@ -1007,6 +1007,69 @@ mod direct {
     }
 
     #[test]
+    fn recursive_owner_is_not_an_omission() -> Result<(), String> {
+        let tests = "from src.subject import count_down\n\ndef test_a():\n    assert count_down(5, 3) == 3\n";
+        let recursive = case(
+            "def count_down(n, floor):\n    if n >= floor:\n        return count_down(n - 1, floor) + 1\n    return 0\n",
+            tests,
+            2,
+            "    if n > floor:",
+            "    if n >= floor:",
+        )?;
+        assert_no_missing_input(&recursive, "self-recursive owner");
+        // Control: the same predicate without the self-call is an omission.
+        let plain = case(
+            "def count_down(n, floor):\n    if n >= floor:\n        return 1\n    return 0\n",
+            tests,
+            2,
+            "    if n > floor:",
+            "    if n >= floor:",
+        )?;
+        assert!(omission(&plain, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn wider_line_change_is_not_an_omission() -> Result<(), String> {
+        let tests =
+            "from src.subject import f\n\ndef test_a():\n    assert f(5, 3, True) == True\n";
+        let build = |source_line: &str, before: &str| {
+            case(
+                &format!(
+                    "def f(qty, on_hand, force):\n{source_line}\n        return True\n    return False\n"
+                ),
+                tests,
+                2,
+                before,
+                source_line,
+            )
+        };
+        let widened = build(
+            "    if qty >= on_hand or force:",
+            "    if qty > on_hand and force:",
+        )?;
+        assert_no_missing_input(&widened, "and -> or with the operator");
+        // Control: the connective unchanged, only inclusivity moves.
+        let narrow = build(
+            "    if qty >= on_hand and force:",
+            "    if qty > on_hand and force:",
+        )?;
+        assert!(omission(&narrow, 0));
+        // An equality change must be the whole condition on both sides.
+        let eq_tests =
+            "from src.subject import g\n\ndef test_a():\n    assert g(1, True) == True\n";
+        let eq = case(
+            "def g(level, force):\n    if level == 3 or force:\n        return True\n    return False\n",
+            eq_tests,
+            2,
+            "    if level == 2 and force:",
+            "    if level == 3 or force:",
+        )?;
+        assert_no_missing_input(&eq, "equality with a widened condition");
+        Ok(())
+    }
+
+    #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
             case(

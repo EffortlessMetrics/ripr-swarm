@@ -405,8 +405,36 @@ pub(super) fn python_row_boundary_omission(
         return false;
     };
     let new_operator = condition[start..start + len].to_string();
+    // An equality change must be the whole condition on both sides, so a
+    // wider edit (`== 2 and f` -> `== 3 or f`) is not read as a constant move.
+    if old_pair.is_some()
+        && !(is_whole_comparison(&condition, &left, "==")
+            && old_line_text.is_some_and(|old| {
+                let old_condition = predicate_condition(old);
+                old_pair.as_ref().is_some_and(|(old_left, old_right)| {
+                    is_whole_comparison(&old_condition, old_left, "==")
+                        && is_whole_comparison(&old_condition, old_right, "==")
+                })
+            }))
+    {
+        return false;
+    }
+    // Recursion or a call back into project code can reach the boundary with
+    // inputs the test never names: the owner may call only builtins.
+    if owner.term_facts.calls_own_name()
+        || owner
+            .module_callees
+            .iter()
+            .chain(&owner.same_class_callees)
+            .any(|callee| {
+                callee == &owner.name
+                    || !super::row_reach::SAFE_BARE_CALLS.contains(&callee.as_str())
+            })
+    {
+        return false;
+    }
     if old_pair.is_none()
-        && !relational_change_keeps_boundary(old_line_text, &left, &right, &new_operator)
+        && !relational_change_keeps_boundary(line_text, old_line_text, &left, &right, &new_operator)
     {
         return false;
     }
@@ -458,11 +486,26 @@ pub(super) fn python_row_boundary_omission(
     })
 }
 
-/// A relational change whose old line compares the same two operands in the
-/// same direction (`>` <-> `>=`, `<` <-> `<=`): only inclusivity moves, so
-/// the old and new predicates agree everywhere but at equality. A reversed
-/// direction (`>` -> `<`) or a moved operand differs away from the boundary.
+/// Whether `condition` is exactly `<operand> <operator> <operand>` (spacing
+/// aside), with no `and`/`or`/`not` or other term around it.
+fn is_whole_comparison(condition: &str, operand: &str, operator: &str) -> bool {
+    let squashed = condition.split_whitespace().collect::<Vec<_>>().join(" ");
+    let squashed = squashed.trim_start_matches('(').trim_end_matches(')');
+    squashed.contains(&format!(" {operator} "))
+        && squashed.contains(operand)
+        && !squashed
+            .split_whitespace()
+            .any(|word| matches!(word, "and" | "or" | "not" | "if" | "else" | "in" | "is"))
+}
+
+/// A relational change whose changed lines are identical once the single
+/// relational operator is normalized, with the same operands and the same
+/// direction (`>` <-> `>=`, `<` <-> `<=`): only inclusivity moves, so the old
+/// and new predicates agree everywhere but at equality. A reversed direction,
+/// a moved operand or any other edit on the line (`and force` -> `or force`)
+/// differs away from the boundary.
 fn relational_change_keeps_boundary(
+    line_text: &str,
     old_line_text: Option<&str>,
     left: &str,
     right: &str,
@@ -485,10 +528,26 @@ fn relational_change_keeps_boundary(
         }
     };
     let old_operator = &old_condition[start..start + len];
-    direction(old_operator).is_some()
-        && direction(old_operator) == direction(new_operator)
-        && simple_comparison_operands(&old_condition, start, len)
+    if direction(old_operator).is_none()
+        || direction(old_operator) != direction(new_operator)
+        || !simple_comparison_operands(&old_condition, start, len)
             .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
+    {
+        return false;
+    }
+    // Same line once the operator is blanked out on both sides.
+    let new_condition = predicate_condition(line_text);
+    let &[(new_start, new_len)] = relational_operators(&new_condition).as_slice() else {
+        return false;
+    };
+    let blank = |line: &str, condition: &str, at: usize, width: usize| {
+        let marked = format!("{}\u{1}{}", &condition[..at], &condition[at + width..]);
+        line.replacen(condition, &marked, 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    blank(old, &old_condition, start, len) == blank(line_text, &new_condition, new_start, new_len)
 }
 
 /// Both literals are of one comparable kind and differ. Mixed kinds

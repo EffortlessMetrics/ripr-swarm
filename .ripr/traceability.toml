@@ -14872,6 +14872,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::decorated_owner_is_not_an_omission",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::inherited_or_decorated_test_class_is_not_an_omission",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::reversed_relational_direction_is_not_an_omission",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::recursive_owner_is_not_an_omission",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::wider_line_change_is_not_an_omission",
   "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::row_reach::conftest_fixture_or_hook_on_the_chain_withholds_the_omission",
   "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::family_relevant_assertion_selection_controls",

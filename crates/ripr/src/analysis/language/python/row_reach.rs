@@ -11,7 +11,7 @@ use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
 
 /// Names a test may call that cannot reach project code.
-const SAFE_BARE_CALLS: &[&str] = &[
+pub(super) const SAFE_BARE_CALLS: &[&str] = &[
     "abs",
     "all",
     "any",
