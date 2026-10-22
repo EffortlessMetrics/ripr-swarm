@@ -10643,6 +10643,78 @@
           "type": "must_not_promote"
         }
       ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_computed_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_computed",
+      "vector": "field_update_computed_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_alias_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_alias",
+      "vector": "field_update_alias_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_update_overwritten_by_object_assign_write_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_overwrite_assign",
+      "vector": "field_update_object_assign_write_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
