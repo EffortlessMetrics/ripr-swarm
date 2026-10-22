@@ -193,6 +193,11 @@ struct TokenNotifications {
     /// Consecutive duplicate stage events are suppressed so repeated
     /// equivalent events stay within the declared record ceiling.
     last_stage: Option<AnalysisProgressStage>,
+    /// Stage reports that arrived while the detached announce (#9149) was
+    /// still waiting on the client's create response. `announce` flushes them
+    /// in order right after the begin notification, so a fast refresh cannot
+    /// drop its first stage report (#9362).
+    pending_stages: Vec<AnalysisProgressStage>,
 }
 
 fn progress_token(generation: u64) -> String {
@@ -377,9 +382,34 @@ impl AnalysisProgressTracker {
             },
         )
         .await;
-        // A terminal owner may have marked this entry while Begin was
-        // sending. Cleanup must observe this completed Begin and send End
-        // after acquiring the same token lock.
+        // Reports that raced the create go out right after the begin, still
+        // under the token lock, so they keep producer order. A terminal owner
+        // may have marked this entry while Begin was sending: then nothing
+        // more is reported, and cleanup sends End after acquiring the same
+        // token lock.
+        let pending = std::mem::take(&mut notifications.pending_stages);
+        let terminal = self
+            .tokens
+            .lock()
+            .map(|tokens| {
+                tokens
+                    .get(&request.generation)
+                    .is_none_or(|record| record.terminal.is_some())
+            })
+            .unwrap_or(true);
+        if !terminal {
+            for stage in pending {
+                if let Some(message) = stage_report_message(stage) {
+                    sink.notify(
+                        token.clone(),
+                        ProgressNotificationValue::Report {
+                            message: message.to_string(),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
         notifications.started = true;
     }
 
@@ -498,16 +528,20 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if record.terminal.is_some()
-                || !notifications.started
-                || record.phase != AnalysisProgressPhase::Analyzing
-            {
+            if record.terminal.is_some() || record.phase != AnalysisProgressPhase::Analyzing {
                 return;
             }
             if notifications.last_stage == Some(stage) {
                 return;
             }
             notifications.last_stage = Some(stage);
+            if !notifications.started {
+                // The begin is still in flight: hold the report so it
+                // follows the begin. A token that ends or whose create fails
+                // first is removed and the held reports go with it.
+                notifications.pending_stages.push(stage);
+                return;
+            }
             record.token.clone()
         };
         let Some(sink) = self.sink() else {
@@ -920,6 +954,118 @@ mod tests {
                         recorder.events()
                     ));
                 }
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stage_reports_sent_during_pending_create_follow_the_begin_in_order() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcing = Arc::clone(&tracker);
+            let announce = tokio::spawn(async move {
+                announcing
+                    .begin(&test_request(8), AnalysisProgressPhase::Analyzing)
+                    .await;
+            });
+            sink.entered.notified().await;
+            // The refresh outran the client's create response (#9362).
+            for stage in [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::Analyzing,
+            ] {
+                tracker.report_stage(8, stage).await;
+            }
+            sink.release.notify_one();
+            announce
+                .await
+                .map_err(|error| format!("announce task failed: {error}"))?;
+            tracker
+                .report_stage(8, AnalysisProgressStage::BuildingOutput)
+                .await;
+            tracker.end(8, AnalysisProgressEnd::Complete).await;
+
+            let token = progress_token(8);
+            let expected = vec![
+                ProgressEvent::Create {
+                    token: token.clone(),
+                },
+                ProgressEvent::Begin {
+                    token: token.clone(),
+                    title: "ripr analysis".to_string(),
+                    message: "analyzing workspace (did_save)".to_string(),
+                },
+                ProgressEvent::Report {
+                    token: token.clone(),
+                    message: "loading input".to_string(),
+                },
+                ProgressEvent::Report {
+                    token: token.clone(),
+                    message: "analyzing workspace".to_string(),
+                },
+                ProgressEvent::Report {
+                    token: token.clone(),
+                    message: "building output".to_string(),
+                },
+                ProgressEvent::End {
+                    token,
+                    message: "analysis complete".to_string(),
+                },
+            ];
+            if recorder.events() != expected {
+                return Err(format!(
+                    "stage reports raced the create out of order or were dropped: {:?}",
+                    recorder.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stage_reports_held_for_a_token_ended_during_create_are_never_sent() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcing = Arc::clone(&tracker);
+            let announce = tokio::spawn(async move {
+                announcing
+                    .begin(&test_request(9), AnalysisProgressPhase::Analyzing)
+                    .await;
+            });
+            sink.entered.notified().await;
+            tracker
+                .report_stage(9, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker.end(9, AnalysisProgressEnd::Cancelled).await;
+            sink.release.notify_one();
+            announce
+                .await
+                .map_err(|error| format!("announce task failed: {error}"))?;
+            if recorder.events()
+                != [ProgressEvent::Create {
+                    token: progress_token(9),
+                }]
+            {
+                return Err(format!(
+                    "a held report escaped a token ended during create: {:?}",
+                    recorder.events()
+                ));
             }
             Ok(())
         })
