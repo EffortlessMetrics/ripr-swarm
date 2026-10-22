@@ -1,0 +1,3 @@
+case = "node-first-attempt-nonnegative-bound"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
