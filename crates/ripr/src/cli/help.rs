@@ -717,7 +717,6 @@ mod tests {
         // #5065: standalone verify is the exit-3 path whose stdout stays empty.
         assert!(AGENT_VERIFY_HELP.contains("exits `3`"));
         assert!(AGENT_VERIFY_HELP.contains("stdout empty"));
-        assert!(AGENT_VERIFY_HELP.contains("RIPR-SPEC-0134"));
         assert!(AGENT_VERIFY_HELP.contains("exit `2`"));
         assert!(AGENT_VERIFY_HELP.contains("stderr"));
     }
@@ -895,7 +894,7 @@ mod tests {
         assert!(AGENT_BRIEF_HELP.starts_with("Write a bounded brief for a coding agent"));
         assert!(AGENT_BRIEF_HELP.contains("Usage: ripr agent brief"));
         assert!(AGENT_BRIEF_HELP.contains("--max-seams N"));
-        assert!(AGENT_BRIEF_HELP.contains("RIPR-SPEC-0010"));
+        assert!(AGENT_BRIEF_HELP.contains("agent-brief router's first implementation seam"));
         assert!(AGENT_PACKET_HELP.starts_with("Write a per-change handoff packet"));
         assert!(AGENT_PACKET_HELP.contains("Usage: ripr agent packet"));
         assert!(AGENT_PACKET_HELP.contains("agent-seam-packets-json"));
@@ -931,6 +930,11 @@ mod tests {
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
+        // #9807: help names the volatile timing fields, the byte-stable
+        // default, and the opt-in that restores them.
+        assert!(DOCTOR_HELP.contains("--timings"));
+        assert!(DOCTOR_HELP.contains("byte-stable"));
+        assert!(DOCTOR_HELP.contains("elapsed_ms"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
