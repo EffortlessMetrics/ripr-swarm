@@ -1,0 +1,12 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function shout(text: string): string {
+-  return text.toUpperCase();
++  return text.toLocaleUpperCase();
+ }
+ 
+ export function banner(title: string): string {
