@@ -453,9 +453,10 @@ and single-platform CI was the root cause enabling both.
   the whole lane (#9272, run 39549631529). Each cargo step also carries its
   own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
   no status file, which the summarizer reports as missing evidence. The job
-  deadline (150 minutes) exceeds the sum of the step deadlines, so the
-  summarizer is always reached; the manual nested-alias isolation repeats use
-  the same redirect-and-replay form.
+  deadline (150 minutes) exceeds the sum of the cargo step deadlines, so
+  those steps alone cannot exhaust it (setup, summary compilation and the
+  manual isolation repeats have no separate deadline). The manual nested-alias
+  isolation repeats use the same redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports

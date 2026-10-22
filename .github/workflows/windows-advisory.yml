@@ -87,8 +87,9 @@ jobs:
     name: windows-advisory
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
-    # Above the sum of the step deadlines below (15+30+15+30+30), so even when
-    # every cargo step times out the summarizer still runs and reports it.
+    # Above the sum of the cargo step deadlines below (15+30+15+30+30), so the
+    # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
+    # compilation and the manual isolation repeats have no deadline of their own.
     timeout-minutes: 150
 
     steps:
