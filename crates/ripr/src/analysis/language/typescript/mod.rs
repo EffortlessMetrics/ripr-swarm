@@ -531,6 +531,17 @@ impl TypeScriptAdapter {
                     owner_extraction_gaps.push(gap);
                 }
             }
+            // The gap disclosure above is file-level; a changed enum member
+            // also earns its own limited finding so the edit is not silent
+            // (#9436).
+            let enum_member_lines = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    let changed_lines: Vec<usize> =
+                        changed.added_lines.iter().map(|added| added.line).collect();
+                    changed_enum_member_lines(&changed.path, source, &changed_lines)
+                })
+                .unwrap_or_default();
 
             // Resolve package/workspace discovery facts for this changed file.
             // Evidence lines are injected into every finding generated below
@@ -690,6 +701,11 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    findings.push(finding);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
+                    finding.evidence.extend(discovery_evidence.clone());
                     findings.push(finding);
                 }
             }
