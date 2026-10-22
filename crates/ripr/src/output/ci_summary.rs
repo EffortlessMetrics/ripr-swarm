@@ -8,8 +8,9 @@
 //!
 //! Field fallbacks, `repo_relative` rewriting, and raw report inclusion follow
 //! [`jq`]'s model of what the retired shell printed. Changed-behavior source
-//! snippets use the shared Markdown code-span renderer so source backticks
-//! remain literal; other fields retain the legacy `markdown_inline` spelling.
+//! snippets and Why values use the shared Markdown code-span renderer so
+//! source backticks remain literal; other fields retain the legacy
+//! `markdown_inline` spelling.
 
 pub(crate) mod annotations;
 mod jq;
@@ -396,7 +397,7 @@ impl Summary {
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
-        let why = field(&["why"], "not_available");
+        let why = code_span(&doc.field(&["why"], "not_available", "unknown"));
         let changed = code_span(&doc.field(
             &["selected.changed_behavior", "why"],
             "not_available",
@@ -470,7 +471,7 @@ impl Summary {
         self.line(&format!("- Status: `{status}`"));
         self.line(&format!("- Safe next action: `{action_kind}`"));
         self.line(&format!("- Title: `{title}`"));
-        self.line(&format!("- Why: `{why}`"));
+        self.line(&format!("- Why: {why}"));
         self.line(&format!("- Changed behavior: {changed}"));
         self.line(&format!("- Current evidence strength: `{evidence}`"));
         self.line(&format!("- Missing discriminator: `{missing}`"));
@@ -690,7 +691,7 @@ impl Summary {
             let status = field(&["status"], "unknown");
             let kind = field(&["action_kind"], "unknown");
             let title = field(&["title"], "not_available");
-            let why = field(&["why"], "not_available");
+            let why = code_span(&doc.field(&["why"], "not_available", "unknown"));
             let seam = field(&["selected.seam_id"], "not_available");
             let target = inline(&doc.text(
                 |value| {
@@ -714,7 +715,7 @@ impl Summary {
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Safe next action: `{kind}`"));
             self.line(&format!("- Title: `{title}`"));
-            self.line(&format!("- Why: `{why}`"));
+            self.line(&format!("- Why: {why}"));
             self.line(&format!("- Seam: `{seam}`"));
             self.line(&format!("- Target: `{target}`"));
             self.line(&format!("- {}: `{verify}`", labels.verify));

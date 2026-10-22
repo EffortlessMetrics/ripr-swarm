@@ -378,6 +378,12 @@ spells other terminal controls visibly; check JSON round-trips the original
 source expression, including controls. Neither is replaced by the compact CI
 projection.
 
+The first-useful-action `Why` value has the same literal code-span contract in
+both the first-run and recommended-next-test CI-summary sections. Markdown
+punctuation in this field is displayed as data, even when other surfaces use
+the value as prose. Its JSON value and existing field/failure fallbacks remain
+unchanged. Other legacy CI-summary fields are outside this escaping repair.
+
 ## Outputs
 
 The first-run path should output:

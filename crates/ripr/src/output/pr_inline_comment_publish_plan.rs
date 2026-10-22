@@ -957,7 +957,7 @@ fn repair_card_body(
         body.push_str("\n\n");
     }
     body.push_str("Why this matters:\n");
-    body.push_str(&prose(&bounded_field(why.trim(), PROSE_FIELD_CHAR_BUDGET)));
+    body.push_str(&bounded_field(why.trim(), PROSE_FIELD_CHAR_BUDGET));
     if let Some(route) = repair_route {
         body.push_str("\n\nRepair route:\n");
         body.push_str(&inline_prose(&bounded_field(
@@ -966,10 +966,7 @@ fn repair_card_body(
         )));
     }
     body.push_str("\n\nRepair:\n");
-    body.push_str(&prose(&bounded_field(
-        repair.trim(),
-        PROSE_FIELD_CHAR_BUDGET,
-    )));
+    body.push_str(&bounded_field(repair.trim(), PROSE_FIELD_CHAR_BUDGET));
     match next {
         NextStep::Verify(verify) => {
             body.push_str("\n\nVerify:\n");
@@ -989,7 +986,9 @@ fn repair_card_body(
             );
         }
     }
-    body
+    // Parse in the actual block context: a field can continue the label's
+    // paragraph, and a table-shaped fragment alone may parse differently.
+    prose(&body)
 }
 
 fn repair_route_title(route_kind: &str) -> String {
@@ -1357,6 +1356,93 @@ mod tests {
             assert!(!line.contains("@octocat") || line.contains(&span), "{line}");
             assert!(!line.contains("<script>"), "{line}");
         }
+    }
+
+    // RIPR-SPEC-0025: exercise the actual comment-plan producer for both
+    // repair-card prose fields and the older reason fallback.
+    fn planned_prose(field: &str, source: &str) -> Result<String, String> {
+        let mut item = serde_json::json!({
+            "id": "prose", "dedupe_key": "ripr:prose",
+            "placement": {"path": "src/lib.rs", "line": 7,
+                "side": "RIGHT", "mode": "exact_seam_line"}
+        });
+        if field == "reason" {
+            item["reason"] = Value::from(source);
+        } else {
+            item["repair_card"] = serde_json::json!({
+                "gap_kind": "MissingBoundaryAssertion", (field): source
+            });
+        }
+        let guidance = serde_json::json!({
+            "comments": [item], "summary_only": [], "suppressed": []
+        });
+        let report = build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Plan,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext::default(),
+        });
+        assert_eq!(report.operations.len(), 1, "nonempty producer subject");
+        report
+            .operations
+            .first()
+            .and_then(|op| op.body.clone())
+            .ok_or_else(|| "comment plan needs one rendered body".to_string())
+    }
+
+    #[test]
+    fn given_block_boundaries_when_comment_prose_is_rendered_then_html_stays_literal()
+    -> Result<(), String> {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for (prefix, boundary, escaped_boundary) in [
+                ("prefix", "\n\n", "\n\n"),
+                ("prefix", "\n \t\n", "\n \t\n"),
+                ("prefix", "\r\n\r\n", "\r\n\r\n"),
+                ("prefix", "\n# ", "\n# "),
+                ("prefix", "\n> ", "\n> "),
+                ("prefix", "\n- ", "\n- "),
+                ("prefix", "\n---\n", "\n---\n"),
+                ("prefix", "\n<div> ", "\n&lt;div> "),
+                ("lead\n\nprefix", " | h\n--- | ---\n", " | h\n--- | ---\n"),
+            ] {
+                let source = format!("{prefix} `left{boundary}@octocat <img src=x>` tail");
+                let expected = format!(
+                    "{prefix} \\`left{escaped_boundary}@\u{2060}octocat &lt;img src=x>\\` tail"
+                );
+                let body = planned_prose(field, &source)?;
+                assert!(body.contains(&expected), "{field} {boundary:?}: {body}");
+                assert!(!body.contains("<img src=x>"), "{body}");
+                assert!(!body.contains("@octocat"), "{body}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_intentional_markdown_when_comment_prose_is_rendered_then_formatting_is_preserved()
+    -> Result<(), String> {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for source in [
+                // Without a blank before the table-shaped fragment, the label
+                // and fragment share a paragraph containing one code span.
+                "prefix `left | h\n--- | ---\n@octocat <img src=x>` tail",
+                "**strong** and *emphasis* [link](https://example.test)",
+                "prefix `left\n@octocat <img src=x>` tail",
+                "prefix ``left` @octocat <img src=x>`` tail",
+                "lead\n\n> `left\n> @octocat <img src=x>` tail",
+                "lead\n\n```text\n@octocat <img src=x>\n```\n\ntail",
+                "lead\n\n    @octocat <img src=x>\n\ntail",
+            ] {
+                let body = planned_prose(field, source)?;
+                assert!(body.contains(source), "{field} {source:?}: {body}");
+            }
+        }
+        Ok(())
     }
 
     /// #4446: an oversized expression from user source is bounded per field,

@@ -334,6 +334,18 @@ Field contract:
 
 ## Markdown Shape
 
+Comment-card `why_this_matters`, `repair`, and fallback `reason` are Markdown
+prose. Parse the assembled comment body, including the labels that can share a
+paragraph with field text. Preserve emphasis, links, paragraphs, and actual
+code spans or blocks.
+Neutralize raw HTML and mentions outside code. Backtick runs in different
+CommonMark blocks or GFM table cells do not form one code span; a soft newline
+inside one paragraph may belong to a span. Preserve the original bytes of
+recognized code, including fenced and indented blocks. Escape other backticks
+so neutralizing an HTML block cannot create a new accidental span. Re-rendering
+the result must be idempotent. Heading/list fields continue to use their
+single-line projection; this does not turn all prose into literal text.
+
 The Markdown sibling should be short enough for a GitHub job summary and clear
 enough for review:
 

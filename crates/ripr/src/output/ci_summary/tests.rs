@@ -523,7 +523,47 @@ fn given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal() 
     Ok(())
 }
 
-/// Field values cannot break out of their code span or line.
+/// RIPR-SPEC-0051: Why is a literal value in both summary projections,
+/// even when its source contains intentional Markdown prose.
+#[test]
+fn given_ci_summary_why_markup_when_rendered_then_one_literal_span() -> TestResult {
+    let fixture = Fixture::new("why-markup")?;
+    for (source, expected) in [
+        ("weak oracle", "`weak oracle`"),
+        ("compare `a` and ``b``", "``` compare `a` and ``b`` ```"),
+        ("*bold* [link](url)", "`*bold* [link](url)`"),
+        (
+            "a` @octocat <img> | \\path",
+            "``a` @octocat <img> | \\path``",
+        ),
+        ("  spaced  ", "`   spaced   `"),
+        ("a`b\nc\r\nd\re\n", "``a`b c d e``"),
+    ] {
+        fixture.json(super::FIRST_ACTION_JSON, &json!({"why": source}))?;
+        let summary = fixture.render(&[])?;
+        for heading in [
+            "#### First-run status",
+            "#### Recommended next test at a glance",
+        ] {
+            let lines = block(&summary, heading)
+                .lines()
+                .filter(|line| line.starts_with("- Why: "))
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lines,
+                vec![format!("- Why: {expected}")],
+                "{heading}: {source:?}"
+            );
+        }
+        let artifact: Value =
+            serde_json::from_slice(&fs::read(fixture.root.join(super::FIRST_ACTION_JSON))?)?;
+        assert_eq!(artifact["why"], source);
+    }
+    Ok(())
+}
+
+/// Legacy field spelling is retained outside the explicitly repaired fields.
 #[test]
 fn field_values_are_escaped_into_one_inline_code_span() -> TestResult {
     let fixture = Fixture::new("inline")?;

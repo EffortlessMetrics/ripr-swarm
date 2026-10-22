@@ -154,21 +154,36 @@ pub(crate) fn table_code_span(text: &str) -> String {
 }
 
 /// Untrusted prose for a Markdown block (a comment section or a paragraph):
-/// neutralises `@mention` and raw HTML outside code spans. See [`neutralize`].
+/// neutralises `@mention` and raw HTML outside real code spans/blocks while
+/// preserving other Markdown formatting. Source offsets avoid AST reformatting.
 pub(crate) fn prose(text: &str) -> String {
-    neutralize(text, false)
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    // Inline spans cannot cross CommonMark block boundaries or GFM table cells.
+    // The parser's ranges are UTF-8 byte boundaries in this exact source.
+    for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
+        if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
+            out.push_str(&neutralize(&text[copied..range.start], false, false));
+            out.push_str(&text[range.clone()]);
+            copied = range.end;
+        }
+    }
+    out.push_str(&neutralize(&text[copied..], false, false));
+    out
 }
 
 /// Untrusted prose on one line (a list item or a heading): line endings
 /// become spaces so the text cannot start a new block, then [`prose`].
 pub(crate) fn inline_prose(text: &str) -> String {
-    neutralize(&one_line(text), false)
+    neutralize(&one_line(text), false, true)
 }
 
 /// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
 /// code spans, for free text that must not turn into emphasis or a link.
 pub(crate) fn inline_prose_literal(text: &str) -> String {
-    neutralize(&one_line(text), true)
+    neutralize(&one_line(text), true, true)
 }
 
 /// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
@@ -184,13 +199,14 @@ fn one_line(text: &str) -> String {
 ///
 /// `@` followed by a username character gains a word joiner (U+2060), so
 /// GitHub renders the text but does not notify the named user or team, and
-/// `<` becomes `&lt;`, so no raw HTML or autolink renders. A code span, as
-/// CommonMark reads it, is copied unchanged: its content is already literal,
-/// and ripr renders its own spans through [`code_span`]. A backslash escape
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Only the single-line
+/// callers allow lexical code spans here; [`prose`] copies parsed code ranges
+/// first. Other backticks are escaped so neutralizing an HTML block cannot
+/// create a new span across what used to be a block boundary. A backslash escape
 /// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
 /// pair, since the escaped `@` still renders as a mention. The result is
 /// idempotent, so text read back from a posted body can be rendered again.
-fn neutralize(text: &str, literal_markup: bool) -> String {
+fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
     let chars = text.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(text.len());
     let mut index = 0usize;
@@ -207,11 +223,15 @@ fn neutralize(text: &str, literal_markup: bool) -> String {
                     index += 1;
                 }
             },
-            '`' => {
+            '`' if inline_spans => {
                 let run = backtick_run(&chars, index);
                 let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
                 out.extend(chars.get(index..end).unwrap_or_default());
                 index = end;
+            }
+            '`' => {
+                out.push_str("\\`");
+                index += 1;
             }
             '<' => {
                 out.push_str("&lt;");
@@ -1284,16 +1304,26 @@ mod tests {
         );
         // An unclosed backtick run is literal text, so what follows it is not
         // protected by it.
-        assert_eq!(prose("a ` @octocat"), "a ` @\u{2060}octocat");
-        assert_eq!(prose("``x` @octocat"), "``x` @\u{2060}octocat");
+        assert_eq!(prose("a ` @octocat"), "a \\` @\u{2060}octocat");
+        assert_eq!(prose("``x` @octocat"), "\\`\\`x\\` @\u{2060}octocat");
         // An escaped backtick opens no span.
-        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat`");
+        assert_eq!(prose("\\`@octocat`"), "\\`@\u{2060}octocat\\`");
     }
 
     #[test]
     fn prose_is_idempotent() {
         let once = prose("@octocat <img> `@x` \\@y");
         assert_eq!(prose(&once), once);
+        for source in [
+            "prefix `left\n\n@octocat <img>` tail",
+            "prefix `left\n<div> @octocat ` tail",
+            "prefix `left\n# @octocat <img>` tail",
+            "prefix `left\n@octocat <img>` tail",
+            "lead\n\n```text\n@octocat <img>\n```",
+        ] {
+            let once = prose(source);
+            assert_eq!(prose(&once), once, "{source:?}");
+        }
     }
 
     #[test]

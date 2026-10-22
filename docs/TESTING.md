@@ -364,6 +364,13 @@ checks the real full-text and JSON renderers with delimiters, whitespace, C0/C1
 controls, bidi formatting, and Unicode. These tests distinguish compact Markdown
 line normalization from the exhaustive source representations (RIPR-SPEC-0051).
 
+The companion `given_ci_summary_why_markup_when_rendered_then_one_literal_span`
+test pins both literal Why rows. Comment-plan tests under RIPR-SPEC-0025 use the
+real producer for Why, Repair, and fallback reason: block boundaries must not
+hide raw HTML or mentions, while links, emphasis, valid multiline code spans,
+and fenced/indented code retain their Markdown meaning. These prose controls
+must reject a repair that escapes all intentional formatting.
+
 ## CI Test Results
 
 The protected routed Rust lane has an intentional dual runner contract:
