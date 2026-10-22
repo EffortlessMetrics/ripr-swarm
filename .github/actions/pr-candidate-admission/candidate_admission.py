@@ -69,6 +69,9 @@ GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^metrics/public-proof/\*\*$"),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
+# Bounds on the hand-written blobs read to cap count-less files.
+BLOB_READ_TIMEOUT_SECONDS = 30
+MAX_BLOB_BYTES = 2_000_000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
@@ -773,19 +776,35 @@ def self_test() -> None:
     # The live reader bounds a rename at the merge base under its previous name.
     calls: list[str] = []
 
-    def fake_gh(command: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+    blobs = {
+        "src/old.rs": b"a\nb\nc\n",
+        "src/moved.rs": b"a\n",
+        "img/logo.png": b"\x89PNG\xff\xfe\n",
+    }
+    sizes_by_path = {"src/huge.rs": 5_000_000}
+    mode = {"fail": ""}
+    raw_reads: list[str] = []
+
+    def fake_gh(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs.get("timeout"), "every read has a timeout"
         url = next(a for a in command if a.startswith("repos/"))
         calls.append(url)
+        if mode["fail"] == "timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        if mode["fail"] == "error":
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 502")
         if "/compare/" in url:
             return subprocess.CompletedProcess(command, 0, b"c" * 40 + b"\n", b"")
-        text = {
-            "src/old.rs": b"a\nb\nc\n",
-            "src/moved.rs": b"a\n",
-            "img/logo.png": b"\x89PNG\xff\xfe\n",
-        }.get(url.split("contents/")[1].split("?")[0])
-        if text is None:
+        path = url.split("contents/")[1].split("?")[0]
+        if "--jq" not in command:
+            raw_reads.append(path)
+        if path in sizes_by_path:
+            return subprocess.CompletedProcess(command, 0, str(sizes_by_path[path]).encode(), b"")
+        if path not in blobs:
             return subprocess.CompletedProcess(command, 1, b"", b"HTTP 404")
-        return subprocess.CompletedProcess(command, 0, text, b"")
+        if "--jq" in command:
+            return subprocess.CompletedProcess(command, 0, str(len(blobs[path])).encode(), b"")
+        return subprocess.CompletedProcess(command, 0, blobs[path], b"")
 
     real_run = subprocess.run
     subprocess.run = fake_gh  # type: ignore[assignment]
@@ -794,6 +813,14 @@ def self_test() -> None:
         assert reader({"filename": "src/moved.rs", "previous_filename": "src/old.rs"}) == 4
         assert reader({"filename": "src/fresh.rs"}) == 0
         assert reader({"filename": "img/logo.png"}) is None, "a binary blob keeps the residual counted"
+        assert reader({"filename": "src/huge.rs"}) is None, "an oversized blob is not downloaded"
+        assert "src/huge.rs" not in raw_reads
+        for failure in ("timeout", "error"):
+            mode["fail"] = failure
+            assert gh_blob_lines("o/r", {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}})(
+                {"filename": "src/moved.rs"}
+            ) is None, failure
+        mode["fail"] = ""
     finally:
         subprocess.run = real_run
     assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
@@ -910,8 +937,14 @@ def gh_blob_lines(
     cache: dict[str, str | None] = {}
 
     def gh(args: list[str]) -> subprocess.CompletedProcess[bytes]:
-        # Bytes, not text: a binary blob must not raise while decoding.
-        return subprocess.run(["gh", "api", *args], capture_output=True, check=False)
+        # Bytes, not text: a binary blob must not raise while decoding. A hung
+        # or missing `gh` is a failed read, never an exception out of admission.
+        try:
+            return subprocess.run(
+                ["gh", "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return subprocess.CompletedProcess(args, 1, b"", b"unavailable")
 
     def merge_base() -> str | None:
         if "sha" not in cache:
@@ -923,8 +956,17 @@ def gh_blob_lines(
         return cache["sha"]
 
     def lines_at(path: str, ref: str) -> int | None:
-        done = gh(["-H", "Accept: application/vnd.github.raw",
-                   f"repos/{repository}/contents/{quote(path)}?ref={ref}"])
+        url = f"repos/{repository}/contents/{quote(path)}?ref={ref}"
+        # Size first, so an oversized blob is never downloaded.
+        sized = gh([url, "--jq", ".size"])
+        if sized.returncode != 0:
+            return 0 if b"HTTP 404" in sized.stderr else None
+        try:
+            if int(sized.stdout.strip()) > MAX_BLOB_BYTES:
+                return None
+        except ValueError:
+            return None
+        done = gh(["-H", "Accept: application/vnd.github.raw", url])
         if done.returncode != 0:
             return 0 if b"HTTP 404" in done.stderr else None
         data = done.stdout
