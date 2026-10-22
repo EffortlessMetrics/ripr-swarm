@@ -1551,8 +1551,7 @@ mod tests;
 
 /// Typed `config_for_candidate` failure (#6956): a stalled
 /// candidate-tree config read stays a timeout so the refusal names
-/// `git_invocation_timeout`, never `config_invalid`. Every other failure
-/// keeps its existing message verbatim.
+/// `git_invocation_timeout`, never `config_invalid`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CandidateConfigError {
     Timeout {
@@ -1580,6 +1579,13 @@ impl std::fmt::Display for CandidateConfigError {
         }
     }
 }
+
+const CANDIDATE_CONFIG_PARSE_HINT: &str = concat!(
+    "Fix the error above in the candidate's ripr.toml, or remove that file ",
+    "to use the built-in defaults; create a new candidate tree and rerun ",
+    "with its --candidate-tree value. Editing only the working-tree file ",
+    "does not change this candidate."
+);
 
 /// The config a bound immutable-subject run uses (#3279 R4): the
 /// candidate tree's own `ripr.toml` when the tree carries one, else the
@@ -1619,8 +1625,12 @@ pub(crate) fn config_for_candidate(
         let _ = worktree;
         return Ok(RiprConfig::default());
     };
-    let mut config = parse_config(&text)
-        .map_err(|err| CandidateConfigError::Other(format!("candidate tree ripr.toml: {err}")))?;
+    let mut config = parse_config(&text).map_err(|err| {
+        CandidateConfigError::Other(format!(
+            "candidate tree ripr.toml: {}\n{CANDIDATE_CONFIG_PARSE_HINT}",
+            err.trim_end()
+        ))
+    })?;
     config.source_path = None;
     config.source_text = Some(text);
     Ok(config)

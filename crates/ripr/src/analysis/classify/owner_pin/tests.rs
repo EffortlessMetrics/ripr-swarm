@@ -12133,6 +12133,76 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     Ok(())
 }
 
+/// #9211: the first workspace macro-site lookup on a classify worker ran the
+/// whole-corpus scan in line while holding the memo lock, so every sibling
+/// worker slept on it. Priming pays the scan once, fanned out over the pool
+/// it runs on, and the lookups afterwards only read the filled memo.
+#[test]
+fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> Result<(), String> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let index = convergence_index();
+    let lookup_all = |syntax: &OwnerPinSyntax| {
+        for name in assertion_context_macros() {
+            for test_root in [None, Some(Path::new(TESTS))] {
+                let _ = syntax.workspace_macro_site(name, test_root, &index);
+            }
+        }
+    };
+
+    // Control: unprimed, the first lookup on a pool worker scans in line.
+    let unprimed = OwnerPinSyntax::default();
+    let in_line = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        lookup_all(&unprimed);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(in_line, Some(false), "an unprimed worker scans in line");
+
+    let primed = OwnerPinSyntax::default();
+    let fanned_out = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        primed.prime_workspace_macro_scan(&index);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(fanned_out, Some(true), "priming fans out over its pool");
+    assert!(
+        primed
+            .workspace_site_scan
+            .borrow()
+            .as_ref()
+            .is_some_and(|scan| scan.complete),
+        "priming completes the retained scan"
+    );
+    let passes = primed.workspace_scan_passes();
+    assert_eq!(passes, 2, "the ambiguity pass plus one completion");
+
+    // After priming no worker scans again, and the guard did not leak.
+    let after = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        lookup_all(&primed);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(after, None, "lookups after priming must not scan");
+    assert_eq!(primed.workspace_scan_passes(), passes);
+    let leaked = pool.install(scan_fans_out);
+    assert!(!leaked, "the priming fan-out must not outlive the prime");
+
+    // Same answers whether or not the scan was primed.
+    for name in assertion_context_macros() {
+        for test_root in [None, Some(Path::new(TESTS))] {
+            assert_eq!(
+                primed.workspace_macro_site(name, test_root, &index),
+                unprimed.workspace_macro_site(name, test_root, &index),
+                "{name} {test_root:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
     assert_eq!(declared_type(": Foo<{ A == B }> = 1"), None);
