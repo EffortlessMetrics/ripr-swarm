@@ -1,0 +1,3 @@
+case = "py-idioms-approx-constant-within-tolerance"
+issue = 9428
+reason = "pytest.approx credited as an exact-value oracle for a within-tolerance edit (#9428)."

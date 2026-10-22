@@ -6252,7 +6252,7 @@ fn ts_apply_post_ladder_rules(
         && let Some(change) = ts_neutral_operand_change(context.line_text)
         && context
             .old_line_text
-            .is_some_and(|old| ts_operands_rewritten_in_place(old, context.line_text))
+            .is_some_and(|old| ts_identity_hides_edit(old, context.line_text))
         && ts_neutral_operand_hides(&change, context)
     {
         verdict.class = ExposureClass::WeaklyExposed;
@@ -6722,6 +6722,25 @@ fn ts_owner_calls_in(text: &str, names: &[&str], receivers: &[String]) -> usize 
         .sum()
 }
 
+/// How many times `text` names the owner as a whole identifier, call or not
+/// (`.map(scaled)`, `scaled<number>(..)`, `other.scaled(..)`), on text whose
+/// literals and comments are already masked (a test title may name the
+/// owner). A mention the call counter cannot read must keep the credit.
+fn ts_owner_mentions_in(text: &str, names: &[&str]) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    names
+        .iter()
+        .map(|name| {
+            text.match_indices(name)
+                .filter(|(at, _)| {
+                    !text[..*at].chars().next_back().is_some_and(is_word)
+                        && !text[at + name.len()..].chars().next().is_some_and(is_word)
+                })
+                .count()
+        })
+        .sum()
+}
+
 /// RIPR-SPEC-0248 rule 2: the changed line only rewrites one operator's
 /// operands in place (`a * b` against `b * a`), every owner call of every
 /// related test sits in a value assertion on its whole result, and each such
@@ -6801,7 +6820,12 @@ fn ts_neutral_operand_hides(
             accounted += calls;
             seen = true;
         }
-        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted
+            || ts_owner_mentions_in(
+                &ts_mask_literals_and_comments(&candidate.test.body_text),
+                &names,
+            ) != accounted
+        {
             return false;
         }
     }
@@ -6864,7 +6888,12 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
                 + ts_owner_calls_in(expected, &names, &receivers);
             relational = true;
         }
-        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted
+            || ts_owner_mentions_in(
+                &ts_mask_literals_and_comments(&candidate.test.body_text),
+                &names,
+            ) != accounted
+        {
             return false;
         }
     }
