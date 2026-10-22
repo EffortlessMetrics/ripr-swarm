@@ -262,6 +262,27 @@ mod tests {
     }
 
     #[test]
+    fn self_referential_helper_expands_to_the_same_text() {
+        let source = "function f(a) {\n  f(a);\n}\ntest('t', () => {\n  f(s);\n});\n";
+        assert!(expand(source).is_none_or(|expanded| expanded == source));
+    }
+
+    #[test]
+    fn recursive_helpers_terminate_through_the_extractor() {
+        let file = std::path::Path::new("tests/a.test.ts");
+        for source in [
+            "function f(a) {\n  f(a);\n}\ntest('t', () => {\n  f(s);\n});\n",
+            "function a(x) {\n  b(x);\n}\nfunction b(x) {\n  a(x);\n}\ntest('t', () => {\n  a(s);\n});\n",
+        ] {
+            let (tests, _, _) =
+                crate::analysis::language::typescript::tests_extract::extract_tests_with_expansion(
+                    file, source,
+                );
+            assert_eq!(tests.len(), 1);
+        }
+    }
+
+    #[test]
     fn every_mention_must_be_a_replaceable_call() {
         let aliased = format!("{HELPER}const c = check;\ntest('t', () => {{ check(s, 2); }});\n");
         assert_eq!(expand(&aliased), None);
