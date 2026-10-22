@@ -731,6 +731,19 @@ fn an_edited_arm_refuses_wrappers_dead_expectations_and_shadowed_roots() -> Resu
         &shadowed,
     )?;
     assert_not_credited(&finding, "a test-local Level is not the owner's enum");
+    let foreign = vitest(
+        "import { weight } from \"../src/level\";\nimport { Level } from \"../src/other-level\";",
+        "it(\"high\", () => {\n  expect(weight(Level.High)).toBe(10);\n});",
+    );
+    let finding = finding_for_edit(
+        "arm-foreign-root",
+        "level",
+        LEVEL,
+        7,
+        "  return level === Level.High ? 10 : 1;",
+        &foreign,
+    )?;
+    assert_not_credited(&finding, "a Level imported from another module is not the owner's enum");
     Ok(())
 }
 

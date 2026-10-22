@@ -1374,6 +1374,22 @@ pub(crate) fn ts_arm_change_witnessed(
         {
             return false;
         }
+        // A test importing the enum root from a module other than the
+        // owner's names a different enum that may share the root's text.
+        if change.member_root().is_some_and(|root| {
+            test.imports_in_file.iter().any(|import| {
+                import.local == root
+                    && !import_source_matches_owner(
+                        import,
+                        &test.file,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    )
+            })
+        }) {
+            return false;
+        }
         let receivers =
             unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
         let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
