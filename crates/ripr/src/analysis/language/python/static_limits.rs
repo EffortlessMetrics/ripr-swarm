@@ -1,6 +1,7 @@
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::caplog_text::PythonLogEvidence;
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
@@ -35,7 +36,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -44,6 +45,7 @@ pub(super) fn static_limit_for_change(
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
     old_line_text: Option<&str>,
+    log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -181,9 +183,11 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
         });
     }
-    if changed_logging_call_literal(trimmed).is_some_and(|literal| {
-        related_candidates_have_log_membership_limit(related_candidates, focus, literal)
-    }) {
+    if log_evidence.is_none()
+        && changed_logging_call_literal(trimmed).is_some_and(|literal| {
+            related_candidates_have_log_membership_limit(related_candidates, focus, literal)
+        })
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
             evidence: "static_limit unsupported_syntax: related test reads the changed log message through `caplog` membership"
@@ -837,7 +841,7 @@ fn related_candidates_have_log_membership_limit(
 /// The string literals an assertion checks for membership in `caplog.text`,
 /// read from the parsed expression so spacing, parentheses, line breaks and
 /// implicit literal concatenation do not change what is recognized.
-fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
     let mut literals = Vec::new();

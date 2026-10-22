@@ -4381,6 +4381,156 @@ fn classify_log_edit_message(
     Ok((finding.class, finding.static_limit_kind))
 }
 
+const AUDIT_OWNER: &str = "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+     def check_balance(balance):\n    if balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+
+/// Classify the edit of the `log.warning` line of [`AUDIT_OWNER`] (or a
+/// variant of it) under `test_body`, with the old line and the owner source so
+/// the logged text can be evaluated.
+fn classify_log_text_edit(
+    owner_source: &str,
+    new_call: &str,
+    test_body: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change_with_source(
+        Path::new("src/audit.py"),
+        6,
+        &format!("        {new_call}"),
+        Some("        log.warning(\"low balance: %s\", balance)"),
+        &extract_owners(Path::new("src/audit.py"), owner_source),
+        &extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!("import logging\nfrom src.audit import check_balance\n\n{test_body}"),
+        ),
+        Some(owner_source),
+    )
+    .ok_or_else(|| "log edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const PINNED_TEST: &str = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
+
+#[test]
+fn caplog_text_the_edit_removes_is_credited_and_one_it_keeps_is_a_gap() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: the formatted message and the pinned capture
+    // level decide whether the asserted text is still logged.
+    for new_call in [
+        "log.warning(\"balance low: %s\", balance)",
+        "log.info(\"low balance: %s\", balance)",
+        "log.warning(\"low balance: %d units\", balance + 1)",
+    ] {
+        let expected = if new_call.contains("balance + 1") {
+            // An argument this evaluation cannot read keeps the abstention.
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax),
+            )
+        } else {
+            (ExposureClass::Exposed, None)
+        };
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, new_call, PINNED_TEST)?,
+            expected,
+            "{new_call}"
+        );
+    }
+    // The text survives: the edit changes only what follows it.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"low balance: %s (retry)\", balance)",
+            PINNED_TEST
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    // `set_level` before the call pins the level the same way.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.info(\"low balance: %s\", balance)",
+            "def test_low_balance(caplog):\n    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    // No pinned capture level: the ini level and the default are not read.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // Another call in the test may log the same text.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n        notify(5)\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A single word could also be read from the record header.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // The call sits outside the `with` block that pins the level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        pass\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A module that configures its logger can change what is captured.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("\n\ndef", "\nlog.setLevel(logging.ERROR)\n\ndef"),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // An `else` arm, a loop or a non-literal argument are not read.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace(
+                "    if balance < 10:",
+                "    for _ in range(1):\n      if balance < 10:"
+            ),
+            removed,
+            PINNED_TEST
+        )
+        .map(|result| result.0),
+        Ok(ExposureClass::StaticUnknown)
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance, exc_info=True)",
+            PINNED_TEST
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 #[test]
 fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
     assert_eq!(

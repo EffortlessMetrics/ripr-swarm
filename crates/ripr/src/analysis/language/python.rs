@@ -60,13 +60,14 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod caplog_text;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
-use classify::{classify_change, classify_change_with_old};
+use classify::{classify_change, classify_change_with_old, classify_change_with_source};
 mod discriminators;
 mod effect_alignment;
 mod hypothesis;
