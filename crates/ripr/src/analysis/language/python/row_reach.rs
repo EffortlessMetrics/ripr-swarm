@@ -61,6 +61,23 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
     test: &PythonTest,
     call_names: &[String],
 ) -> bool {
+    // Code outside the test function (autouse fixture, `pytestmark`, setup or
+    // teardown hook, module-level call, conftest fixture or hook) can reach the
+    // owner implicitly; existence alone withholds the claim. A name the test
+    // module rebinds or defines (`def can_reserve`, `can_reserve = ...`) is not
+    // the owner. A decorated owner (anything but staticmethod/classmethod)
+    // may wrap or replace the body.
+    if test.constant_rebinding.implicit_reach
+        || test.constant_rebinding.opaque
+        || call_names.iter().chain([&owner.name]).any(|name| {
+            test.constant_rebinding.module_rebinds(name) || test.constant_rebinding.rebinds(name)
+        })
+        || owner.decorators.iter().any(|decorator| {
+            !(decorator.ends_with("staticmethod") || decorator.ends_with("classmethod"))
+        })
+    {
+        return false;
+    }
     if !test.fixtures.is_empty()
         || test.decorators.iter().any(|decorator| {
             decorator.contains("usefixtures")
@@ -100,6 +117,10 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         // The test's own `def name(` / `class name(` header is not a call.
         let head = code[..start].trim_end();
         if head.ends_with("def") || head.ends_with("class") {
+            // A local definition of the owner's own name shadows it.
+            if is_name_of_owner(owner, call_names, ident) {
+                return false;
+            }
             continue;
         }
         if !is_call && !after_dot && !is_name_of_owner(owner, call_names, ident) {

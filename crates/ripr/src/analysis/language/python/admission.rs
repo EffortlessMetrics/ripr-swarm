@@ -51,7 +51,7 @@
 
 use super::expr_full_name;
 use super::{PythonAssertion, PythonImport, PythonOracleShape};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted Python test.
@@ -1700,4 +1700,44 @@ impl BodyScan<'_> {
                 }
             })
     }
+}
+
+/// Whether code outside any test function can run at the owner implicitly in
+/// this module (#5491 `missing_input`): an autouse fixture, any `pytestmark`,
+/// `pytest_plugins`, a runtest hook, any setup or teardown hook or class-body
+/// statement, or a module-level statement containing a call. Decided by
+/// existence so the row pass fails closed without reading what that code calls.
+pub(super) fn module_implicit_reach(source: &str, statements: &[Stmt]) -> bool {
+    let mut context = PythonAdmissionContext::default();
+    let mut lifecycle = Vec::new();
+    context.collect(statements, &mut lifecycle);
+    if context.has_implicit_fixture
+        || context.has_plugins
+        || context.has_runtest_hook
+        || !lifecycle.is_empty()
+    {
+        return true;
+    }
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(_)
+        | Stmt::AsyncFunctionDef(_)
+        | Stmt::ClassDef(_)
+        | Stmt::Import(_)
+        | Stmt::ImportFrom(_)
+        | Stmt::Pass(_) => false,
+        Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => false,
+        Stmt::Assign(assign)
+            if assign.targets.iter().any(
+                |target| matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark"),
+            ) =>
+        {
+            true
+        }
+        other => {
+            let range = other.range();
+            source
+                .get(usize::from(range.start())..usize::from(range.end()))
+                .is_none_or(|text| text.contains('('))
+        }
+    })
 }

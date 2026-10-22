@@ -153,3 +153,20 @@ pub(super) fn taint_admission_by_conftest(
         }
     }
 }
+
+/// Mark every test whose directory chain holds a conftest declaring any
+/// fixture or hook, or one RIPR could not read, as implicitly reachable
+/// (#5491 `missing_input` fails closed by existence).
+pub(super) fn mark_implicit_reach_by_conftest(
+    tests: &mut [PythonTest],
+    reach_conftests: &BTreeSet<PathBuf>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if conftest_chain(&test.file).any(|conftest| {
+            reach_conftests.contains(&conftest) || is_unreadable_conftest(&conftest)
+        }) {
+            test.constant_rebinding.implicit_reach = true;
+        }
+    }
+}

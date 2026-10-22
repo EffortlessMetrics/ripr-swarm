@@ -154,7 +154,12 @@ static limit, one row at a time, in `python/row_miss.rs`:
   operand or an unreadable call is unknown, and another row's input never
   counts. The row must reach the owner only through direct calls: a helper,
   alias, `map`/`partial` reference, fixture, dynamic construct or any other
-  callee the reader cannot vouch for keeps no miss, and a method call counts
+  callee the reader cannot vouch for keeps no miss, as does any code outside
+  the test function that may run at the owner implicitly, decided by existence
+  and never by reading it: an autouse fixture, `pytestmark`, a setup or
+  teardown hook, a module-level call, a test-module definition or rebinding of
+  the owner's name, a decorated owner, or a `conftest.py` on the directory
+  chain that declares any fixture or hook (or could not be read). A method call counts
   only on a receiver provably the owner class. Compared parameters must be
   ones the owner body never rebinds; a relational change must keep the same
   operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,
@@ -174,7 +179,7 @@ Python does not yet write:
   a call cannot be established while a callback or alias (`map(owner, ...)`,
   `f = owner`), a `parametrize` or fixture `params` list, `usefixtures`, a
   module-level `pytestmark`, a conftest or a plugin may still reach the owner.
-  Those rows keep no miss; `dunder_protocol`, fixture-owner, helper-owner and
+  Those rows keep no miss (`no_call_path` and `missing_input` alike); `dunder_protocol`, fixture-owner, helper-owner and
   activation-limited rows never carried the claim.
 - `no_assertion`: `extraction_complete_no_assertion` is not an established
   absence while the cross-file blind spots of #6657 (conftest autouse

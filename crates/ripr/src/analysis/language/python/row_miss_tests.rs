@@ -813,6 +813,80 @@ mod direct {
     }
 
     #[test]
+    fn implicit_reach_outside_the_test_function_is_not_an_omission() -> Result<(), String> {
+        let direct = "def test_a():\n    assert can_reserve(5, 3) == True\n";
+        for (label, tests) in [
+            (
+                "module autouse fixture",
+                "import pytest\n\n@pytest.fixture(autouse=True)\ndef boot():\n    can_reserve(4, 4)\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "in-class autouse fixture",
+                "import pytest\n\nclass TestReserve:\n    @pytest.fixture(autouse=True)\n    def boot(self):\n        can_reserve(4, 4)\n\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "pytestmark usefixtures",
+                "import pytest\n\n@pytest.fixture\ndef boot():\n    can_reserve(4, 4)\n\npytestmark = pytest.mark.usefixtures('boot')\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "pytestmark parametrize",
+                "import pytest\n\npytestmark = pytest.mark.parametrize('n', [4])\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "setUp hook",
+                "import unittest\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        can_reserve(4, 4)\n\n    def test_a(self):\n        self.assertEqual(can_reserve(5, 3), True)\n",
+            ),
+            (
+                "setup_module hook",
+                "def setup_module():\n    can_reserve(4, 4)\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "module-level call",
+                "RESULT = can_reserve(4, 4)\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "test module redefines the owner name",
+                "def can_reserve(qty, on_hand):\n    return True\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "test module rebinds the owner name",
+                "can_reserve = lambda qty, on_hand: True\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "test-local shadow of the owner name",
+                "def test_a():\n    def can_reserve(qty, on_hand):\n        return True\n    assert can_reserve(5, 3) == True\n",
+            ),
+        ] {
+            assert_no_missing_input(&reserve(tests)?, label);
+        }
+        // Controls: the same direct call with none of those shapes is an
+        // omission, and a module of only imports, definitions and constants
+        // stays one.
+        assert!(omission(&reserve(direct)?, 0));
+        assert!(omission(&reserve(&format!("LIMIT = 3\n\n{direct}"))?, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn decorated_owner_is_not_an_omission() -> Result<(), String> {
+        let tests = "from src.subject import can_reserve\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n";
+        let build = |decorator: &str| {
+            case(
+                &format!(
+                    "{decorator}def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n"
+                ),
+                tests,
+                if decorator.is_empty() { 2 } else { 3 },
+                "    if qty > on_hand:",
+                "    if qty >= on_hand:",
+            )
+        };
+        assert_no_missing_input(&build("@always_true\n")?, "decorated owner");
+        assert!(omission(&build("")?, 0), "undecorated control");
+        Ok(())
+    }
+
+    #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
             case(

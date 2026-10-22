@@ -33,6 +33,10 @@ pub(super) struct PythonSourceFacts {
     /// tests in its scope (#6657). A conftest that failed to parse is not
     /// flagged here; the workspace pass treats any limitation as unreadable.
     pub(super) conftest_implicit_setup: bool,
+    /// The file is a `conftest.py` declaring any fixture or `pytest_*` hook
+    /// (or installing implicit setup): a test below it may reach project code
+    /// through it (#5491 `missing_input` fails closed on its existence).
+    pub(super) conftest_declares_fixture_or_hook: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -619,6 +623,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         tests: Vec::new(),
         fixtures: Vec::new(),
         conftest_implicit_setup: false,
+        conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -698,6 +703,16 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
+    snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
+        || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+            && (!snapshot.fixtures.is_empty()
+                || module.body.iter().any(|statement| match statement {
+                    Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+                    Stmt::AsyncFunctionDef(function) => {
+                        function.name.as_str().starts_with("pytest_")
+                    }
+                    _ => false,
+                })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(

@@ -703,6 +703,7 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -749,6 +750,12 @@ impl PythonAdapter {
             {
                 implicit_conftests.insert(relative.clone());
             }
+            if facts.conftest_declares_fixture_or_hook
+                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                    && !facts.limitations.is_empty())
+            {
+                reach_conftests.insert(relative.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -756,11 +763,21 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
-        fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
-            // A chain conftest that exists but was never read (capped,
-            // excluded or unreadable) cannot be ruled out.
+        // A chain conftest that exists but was never read (capped, excluded or
+        // unreadable) cannot be ruled out.
+        let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
-        });
+        };
+        fixtures::taint_admission_by_conftest(
+            &mut all_tests,
+            &implicit_conftests,
+            unreadable_conftest,
+        );
+        fixtures::mark_implicit_reach_by_conftest(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });

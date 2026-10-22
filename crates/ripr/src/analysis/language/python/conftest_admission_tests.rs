@@ -557,3 +557,90 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
     }
     Ok(())
 }
+
+// #5491: `missing_input` fails closed on the existence of a conftest fixture
+// or hook on the chain, whether or not it is autouse.
+mod row_reach {
+    use super::super::assertion_selection::PythonAssertionFocus;
+    use super::super::boundary::python_row_boundary_omission;
+    use super::super::fixtures::mark_implicit_reach_by_conftest;
+    use super::super::probe_shape::classify_probe_shape;
+    use super::super::related_tests::related_test_candidates;
+    use super::super::{PythonTest, owner_for_changed_line};
+    use super::*;
+
+    const OWNER: &str = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+    const TEST: &str = "from src.subject import can_reserve\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n";
+
+    /// Whether the row of `tests/test_a.py::test_a` claims an omission, with
+    /// the workspace conftest pass applied.
+    fn omission_with(conftests: &[(&str, &str)], unread: &[&str]) -> Result<bool, String> {
+        let mut tests: Vec<PythonTest> = Vec::new();
+        let mut reach = BTreeSet::new();
+        for (path, source) in conftests {
+            let facts = extract_source_facts(Path::new(path), source);
+            if facts.conftest_declares_fixture_or_hook {
+                reach.insert(PathBuf::from(path));
+            }
+        }
+        tests.extend(extract_source_facts(Path::new("tests/test_a.py"), TEST).tests);
+        mark_implicit_reach_by_conftest(&mut tests, &reach, |conftest| {
+            unread.iter().any(|path| Path::new(path) == conftest)
+        });
+        let file = Path::new("src/subject.py");
+        let owners = super::super::owners_tests::extract_owners(file, OWNER);
+        let owner = owner_for_changed_line(file, 2, &owners)
+            .cloned()
+            .ok_or("owner")?;
+        let after = "    if qty >= on_hand:";
+        let before = "    if qty > on_hand:";
+        let focus =
+            PythonAssertionFocus::for_change(classify_probe_shape(after).0, after, Some(before));
+        let candidates = related_test_candidates(&owner, &tests);
+        if candidates.len() != 1 {
+            return Err(format!("one row expected, got {}", candidates.len()));
+        }
+        Ok(python_row_boundary_omission(
+            after,
+            Some(before),
+            &owner,
+            &candidates[0],
+            &candidates,
+            &focus,
+        ))
+    }
+
+    #[test]
+    fn conftest_fixture_or_hook_on_the_chain_withholds_the_omission() -> Result<(), String> {
+        // Control: no conftest, and a conftest with neither fixture nor hook.
+        assert!(omission_with(&[], &[])?);
+        assert!(omission_with(&[("tests/conftest.py", "LIMIT = 3\n")], &[])?);
+        for (label, source) in [
+            (
+                "plain fixture",
+                "import pytest\n\n@pytest.fixture\ndef boot():\n    return 1\n",
+            ),
+            (
+                "autouse fixture",
+                "import pytest\n\n@pytest.fixture(autouse=True)\ndef boot():\n    yield\n",
+            ),
+            (
+                "collection hook",
+                "def pytest_collection_modifyitems(items):\n    pass\n",
+            ),
+        ] {
+            assert!(
+                !omission_with(&[("tests/conftest.py", source)], &[])?,
+                "{label}"
+            );
+        }
+        // A conftest further up the chain counts too, and so does one that
+        // exists but could not be read.
+        assert!(!omission_with(
+            &[("conftest.py", "def pytest_configure(config):\n    pass\n")],
+            &[]
+        )?);
+        assert!(!omission_with(&[], &["tests/conftest.py"])?);
+        Ok(())
+    }
+}
