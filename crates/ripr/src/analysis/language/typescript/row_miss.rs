@@ -16,11 +16,16 @@
 //! satisfies another row. A row whose own evidence is unresolved keeps
 //! `miss: None`; there is no fill-every-row fallback.
 //!
-//! Shipped tokens: `no_call_path`, `weak_assertion` and
-//! `observation_unconfirmed`.
+//! Shipped tokens: `weak_assertion` and `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
 //!
+//! - `no_call_path`: absence of a call path cannot be proved from one file.
+//!   A heuristic-only row can still reach the owner through an alias,
+//!   callback or table (`const f = owner; f(1)`, `[1].map(owner)`,
+//!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
+//!   import rejections refute only the apparent call, not hooks, helpers,
+//!   re-exports or mocks. Those rows keep `miss: None`.
 //! - `assertion_not_observing`: `RelatedTest::is_unmatched` reads it as a
 //!   decision input (gap next-step choice, witness and row triage), so
 //!   emitting it would change TypeScript behavior. Rows that would have
@@ -76,16 +81,6 @@ pub(crate) fn assign_row_misses(
     }
 }
 
-/// The relations linked by an uncertain heuristic that name no owner call.
-fn is_name_or_proximity_heuristic(relation: TypeScriptRelationKind) -> bool {
-    matches!(
-        relation,
-        TypeScriptRelationKind::SameFileProximity
-            | TypeScriptRelationKind::DescribeName
-            | TypeScriptRelationKind::TestName
-    )
-}
-
 fn is_strong(strength: &OracleStrength) -> bool {
     strength.rank() >= OracleStrength::Strong.rank()
 }
@@ -104,14 +99,15 @@ pub(crate) fn ts_row_miss(
     let admission = test.assertion_admission;
     let selection = select_family_relevant_assertion(&test.assertions, Some(family));
     match candidate.owner_path() {
-        // 1. Relation path. The heuristic never named an owner call.
-        Disp::HeuristicOnly => is_name_or_proximity_heuristic(candidate.relation)
-            .then_some(RelatedTestMiss::NoCallPath),
-        // The identity gates found affirmative evidence that the apparent
-        // call does not reach the changed owner.
-        Disp::RejectedLocalShadow | Disp::RejectedUnrelatedImportOrDestructure => {
-            Some(RelatedTestMiss::NoCallPath)
-        }
+        // 1. Relation path. `no_call_path` is withheld for every state: a
+        // single-file reading cannot prove a call path absent. `HeuristicOnly`
+        // only means no literal `owner(` text appears while the body may still
+        // name the owner (`const f = owner; f(1)`, `[1].map(owner)`,
+        // `it.each([[owner, 1]])`). The local-shadow and unrelated-import
+        // rejections refute only the apparent call; the test can still reach
+        // the owner through hooks (`beforeEach`), helpers, re-exports or mocks
+        // this scan does not follow.
+        Disp::HeuristicOnly | Disp::RejectedLocalShadow | Disp::RejectedUnrelatedImportOrDestructure => None,
         // The call reaches a replacement, so the row does call something, but
         // whether the assertion observes the changed owner is unknown.
         Disp::RejectedOwnerModuleMock | Disp::RejectedSpyFabrication => {

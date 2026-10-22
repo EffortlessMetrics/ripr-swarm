@@ -145,9 +145,35 @@ fn weakly(finding: &Finding) {
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
 }
 
-/// Heuristic name-only row names the missing path.
+/// A heuristic name-only row never gets `no_call_path`: no literal `owner(`
+/// text does not prove the owner is unreached. Each shape below reaches the
+/// owner at runtime through an alias, callback or table.
 #[test]
-fn heuristic_reference_row_is_no_call_path() -> Result<(), String> {
+fn heuristic_reference_rows_keep_no_miss() -> Result<(), String> {
+    let shapes = [
+        (
+            "alias",
+            "test('works', () => {\n  const f = applyDiscount;\n  expect(f(100)).toBe(90);\n});\n",
+        ),
+        (
+            "callback",
+            "test('works', () => {\n  expect([100].map(applyDiscount)).toEqual([90]);\n});\n",
+        ),
+        (
+            "table",
+            "it.each([[applyDiscount, 90]])('works', (fn, want) => {\n  expect(fn(100)).toBe(want);\n});\n",
+        ),
+        (
+            "reference only",
+            "test('works', () => {\n  const fn = applyDiscount;\n  expect(typeof fn).toBe('function');\n});\n",
+        ),
+    ];
+    for (label, body) in shapes {
+        let source = format!("{IMPORT}{body}");
+        let finding = classify(&RETURN_CHANGE, &source)?;
+        let miss = miss_of(&finding, "works")?;
+        assert_ne!(miss, Some(RelatedTestMiss::NoCallPath), "{label}: {finding:?}");
+    }
     let source = format!(
         "{IMPORT}test('works', () => {{\n  const fn = applyDiscount;\n  expect(typeof fn).toBe('function');\n}});\n"
     );
@@ -157,10 +183,7 @@ fn heuristic_reference_row_is_no_call_path() -> Result<(), String> {
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "works")?,
-        Some(RelatedTestMiss::NoCallPath)
-    );
+    assert_eq!(miss_of(&finding, "works")?, None);
     Ok(())
 }
 
@@ -407,22 +430,23 @@ fn rejected_source(body: &str) -> String {
     format!("import {{ applyDiscount }} from '../src/pricing';\n{body}")
 }
 
-/// A body-local declaration shadows the owner name: the call reaches the
-/// local, so the row has no path to the changed owner.
+/// A body-local declaration shadows the owner name. That refutes only the
+/// apparent call; hooks or helpers may still reach the owner, so no
+/// `no_call_path` is claimed.
 #[test]
-fn local_shadow_row_is_no_call_path() -> Result<(), String> {
+fn local_shadow_row_keeps_no_miss() -> Result<(), String> {
     let source = "import { applyDiscount as ad } from '../src/pricing';\ntest('discounts', () => {\n  function applyDiscount(x: number) { return 42; }\n  expect(ad).toBeDefined();\n  expect(applyDiscount(100)).toBe(42);\n});\n";
     let finding = classify(&RETURN_CHANGE, source)?;
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "discounts")?,
-        Some(RelatedTestMiss::NoCallPath)
+        None
     );
     Ok(())
 }
 
 #[test]
-fn unrelated_destructure_row_is_no_call_path() -> Result<(), String> {
+fn unrelated_destructure_row_keeps_no_miss() -> Result<(), String> {
     let source = rejected_source(
         "test('discounts', () => {\n  const { applyDiscount } = require('../src/factory');\n  expect(applyDiscount(100)).toBe(90);\n});\n",
     );
@@ -430,7 +454,7 @@ fn unrelated_destructure_row_is_no_call_path() -> Result<(), String> {
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "discounts")?,
-        Some(RelatedTestMiss::NoCallPath)
+        None
     );
     Ok(())
 }
