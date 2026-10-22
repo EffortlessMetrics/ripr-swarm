@@ -3,8 +3,9 @@
 ## Pending — boundary_gap (9478)
 
 Reason:
-RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.93
-for bounded typed function-pointer owner pins. Regenerated the portable
+RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.94
+for bounded typed function-pointer owner pins, preserving the accepted Display
+pin transition at 1.93. Regenerated the portable
 unchanged-attempt snapshots from the native producer using the existing CLI
 test's normalization, then regenerated verify and refreshed the existing portable
 receipt's file commitments against native receipt output. Its portable envelope
