@@ -109,6 +109,40 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
     }
 }
 
+/// The exact value of a product of non-negative integers (#9329): factors
+/// joined by `*`, each a plain decimal literal or an identifier bound in
+/// `inputs` to a plain decimal. Nothing else is read: no parentheses, sums,
+/// casts, suffixes or method calls. The product is checked against `max`
+/// (the result type's largest value), so an overflow answers `None` instead
+/// of a wrapped or clamped value. This is a separate entry from
+/// [`evaluate_initializer`]: it never changes what a `let` initializer
+/// evaluates to.
+pub(crate) fn evaluate_integer_product(
+    expression: &str,
+    inputs: &ExactInputs,
+    max: u128,
+) -> Option<u128> {
+    let mut product: u128 = 1;
+    for factor in expression.trim().split('*') {
+        let factor = factor.trim();
+        let digits = if factor.chars().all(|ch| ch.is_ascii_digit()) {
+            factor
+        } else if is_identifier(factor) {
+            inputs.get(factor)?.as_str()
+        } else {
+            return None;
+        };
+        if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        product = product.checked_mul(digits.parse::<u128>().ok()?)?;
+        if product > max {
+            return None;
+        }
+    }
+    Some(product)
+}
+
 type EvalResult = Result<TypedValue, EvalOutcome>;
 
 fn unsupported(edge: &str) -> EvalOutcome {
@@ -1051,5 +1085,57 @@ mod tests {
             other => return Err(format!("expected exact, got {other:?}")),
         }
         Ok(())
+    }
+
+    // #9329: the integer product reader stays a separate, closed entry.
+    #[test]
+    fn integer_product_reads_only_factors_and_checks_the_type_bound() {
+        let inputs: ExactInputs = [("size", "3"), ("KIB", "1024"), ("name", "x1")]
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let max = u128::from(u64::MAX);
+        assert_eq!(
+            evaluate_integer_product("size * KIB", &inputs, max),
+            Some(3072)
+        );
+        assert_eq!(
+            evaluate_integer_product(" 4 * 1024 ", &inputs, max),
+            Some(4096)
+        );
+        assert_eq!(evaluate_integer_product("size", &inputs, max), Some(3));
+        // The bound is the result type's maximum, checked at every step.
+        assert_eq!(evaluate_integer_product("size * KIB", &inputs, 3071), None);
+        let huge: ExactInputs = [("n", u64::MAX.to_string())]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        assert_eq!(evaluate_integer_product("n * 2", &huge, max), None);
+        assert_eq!(evaluate_integer_product("n * 1", &huge, max), Some(max));
+        // Nothing but `*` over literals and bound plain decimals.
+        for expression in [
+            "",
+            "size *",
+            "* size",
+            "size * * KIB",
+            "size + KIB",
+            "size - 1",
+            "(size) * 2",
+            "size * missing",
+            "name * 2",
+            "size as u64",
+            "size * 1u64",
+            "size * -1",
+            "size.pow(2)",
+            "size ** 2",
+            "1_024 * 2",
+            "0x10 * 2",
+        ] {
+            assert_eq!(
+                evaluate_integer_product(expression, &inputs, max),
+                None,
+                "{expression:?}"
+            );
+        }
     }
 }
