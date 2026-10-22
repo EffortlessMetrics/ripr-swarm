@@ -63,31 +63,35 @@ jobs:
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.
       #
-      # nextest runs in the background with a native watchdog. Shard 3 of run
-      # 39854834481 outlived both GNU `timeout` (an MSYS signal does not reach a
-      # native process tree) and the 50-minute step cap, and the job was cancelled
-      # at 60 minutes with no log. After 44 minutes the watchdog records the
-      # running processes (their command lines name the stuck test binary) and
-      # force-kills the tree with taskkill, so the log and status always upload.
+      # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
+      # job was cancelled with no log. The cause is not established. nextest now
+      # runs in the background with a watchdog scoped to its own process tree:
+      # after 44 minutes it records that subtree's command lines and force-kills
+      # it by native PID. This is intended to leave a log and a status to upload;
+      # only a forced stall on the runner proves it. The watchdog polls every 10
+      # seconds and exits when nextest does, so nothing outlives the step.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
-        timeout-minutes: 50
+        timeout-minutes: 55
         shell: bash
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
+          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null || echo "$nextest_pid")
           (
-            sleep 2640
-            echo fired > target/shard-$shard.watchdog
-            powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
-            taskkill //F //T //IM cargo-nextest.exe > /dev/null 2>&1
-            taskkill //F //T //IM cargo.exe > /dev/null 2>&1
-          ) &
+            for _ in $(seq 1 264); do
+              sleep 10
+              kill -0 "$nextest_pid" 2> /dev/null || exit 0
+            done
+            echo "fired winpid=$winpid" > target/shard-$shard.watchdog
+            powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
+            taskkill //F //T //PID "$winpid" > /dev/null 2>&1
+          ) > /dev/null 2>&1 &
           watchdog_pid=$!
           set +e
           wait "$nextest_pid"; status=$?
-          kill "$watchdog_pid" 2> /dev/null
+          wait "$watchdog_pid"
           if [ -f target/shard-$shard.watchdog ]; then status=124; fi
           printf '%s\n' "$status" > target/shard-$shard.status
           cat target/shard-$shard.log
