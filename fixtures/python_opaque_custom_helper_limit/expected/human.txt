@@ -20,7 +20,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: if amount >= threshold:
   Analyzer limit: Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or…
-  Related test: tests/test_pricing.py:8 test_apply_discount_custom_helper
+  Related test: tests/test_pricing.py:9 test_apply_discount_custom_helper
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python infection claim
