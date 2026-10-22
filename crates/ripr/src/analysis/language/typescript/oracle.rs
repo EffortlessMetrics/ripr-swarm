@@ -189,6 +189,9 @@ pub(crate) fn collect_callback_assertions(
         returns_to_runner,
         literal_consts: &literal_consts,
         match_object_consts: &match_object_consts,
+        receiver_named_once: receiver.is_some_and(|name| {
+            identifier_occurrences(statements_text(statements, source), name) == 1
+        }),
     };
     let mut out = Vec::new();
     for stmt in statements {
@@ -303,6 +306,7 @@ pub(crate) fn statements_collect_assertion_probe(
         returns_to_runner: false,
         literal_consts: &[],
         match_object_consts: &[],
+        receiver_named_once: false,
     };
     let mut probe = Vec::new();
     for stmt in statements {
@@ -331,6 +335,10 @@ pub(crate) struct AssertionContext<'a> {
     /// The test body's top-level object `const`s a `toMatchObject` argument
     /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
     match_object_consts: &'a [MatchObjectConst],
+    /// Whether the receiver (`done`) is named exactly once in the whole test
+    /// body, so the one call that settles the test is the one a credited
+    /// callback holds (RIPR-SPEC-0246 rule 5).
+    receiver_named_once: bool,
 }
 
 impl<'a> AssertionContext<'a> {
@@ -343,6 +351,7 @@ impl<'a> AssertionContext<'a> {
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
             match_object_consts: &[],
+            receiver_named_once: self.receiver_named_once,
         }
     }
 }
@@ -838,6 +847,7 @@ fn collect_nested_callback_assertions(
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
+                receiver_named_once: false,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }
@@ -900,6 +910,11 @@ fn collect_done_callback_assertions(
     let Some(done) = context.receiver else {
         return;
     };
+    // `done` is named only inside one callback: not beside it in the test
+    // body (a second settle path), not in a sibling callback or branch.
+    if !context.receiver_named_once {
+        return;
+    }
     for argument in &call.arguments {
         if callback_is_async_or_generator(argument) {
             continue;
@@ -938,6 +953,28 @@ fn collect_done_callback_assertions(
             collect_expect_assertions_in_statement(statement, source, &context.nested(), out);
         }
     }
+}
+
+/// The source text spanning `statements`.
+fn statements_text<'s>(statements: &[Statement<'_>], source: &'s SourceText<'_>) -> &'s str {
+    let text: &str = source;
+    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+        return "";
+    };
+    text.get(first.span().start as usize..last.span().end as usize)
+        .unwrap_or("")
+}
+
+/// Whole-word occurrences of `name` in `text`, counting any in strings and
+/// comments too (over-counting only refuses credit).
+fn identifier_occurrences(text: &str, name: &str) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            !text[..*at].chars().next_back().is_some_and(is_word)
+                && !text[at + name.len()..].chars().next().is_some_and(is_word)
+        })
+        .count()
 }
 
 /// `name()`: a call of the bare identifier with no arguments.

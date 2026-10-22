@@ -936,6 +936,25 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
             "{header}"
         );
     }
+    // Controls: a dynamic skip, a spread, `fails` and `expectFailure` leave
+    // the suite active, so its unindexed registration stays disclosed.
+    for options in [
+        "{ skip: process.platform === \"win32\" }",
+        "{ skip: cond }",
+        "{ ...opts }",
+        "{ fails: true }",
+        "{ expectFailure: true }",
+        "{ skip: false }",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{options}"
+        );
+    }
     // Control: the same registration under an active describe-shaped
     // helper callback stays disclosed, and so does one under an active
     // `describe` that is unwalked because it sits in a helper function.

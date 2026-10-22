@@ -3090,9 +3090,30 @@ fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
             _ => false,
         }
     }
+    // Only a literal `skip: true` / `todo: true` turns the suite off; a
+    // dynamic value, a spread or any other key (`fails`) leaves it active.
+    let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
+        call.arguments.iter().take(3).any(|argument| {
+            let oxc_ast::ast::Argument::ObjectExpression(options) = argument else {
+                return false;
+            };
+            options.properties.iter().any(|property| {
+                let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                    return false;
+                };
+                !property.computed
+                    && !property.method
+                    && matches!(property.key.static_name().as_deref(), Some("skip" | "todo"))
+                    && matches!(
+                        &property.value,
+                        Expression::BooleanLiteral(literal) if literal.value
+                    )
+            })
+        })
+    };
     skipped_modifier_on_describe(&call.callee)
         || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
-            && !declaration_options_are_active(call))
+            && literally_off(call))
 }
 
 fn is_active_declaration_modifier(name: &str) -> bool {

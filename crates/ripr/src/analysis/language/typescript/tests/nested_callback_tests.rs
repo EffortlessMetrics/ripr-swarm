@@ -851,7 +851,6 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
     Ok(())
 }
 
-<<<<<<< HEAD
 /// RIPR-SPEC-0246 rule 5: a callback handed to a call, in a test that takes
 /// `done`, whose body asserts and then calls `done()` must run for the test
 /// to pass, so its assertions are the test's own.
@@ -918,6 +917,29 @@ fn done_callback_shapes_that_can_skip_the_assertion_collect_nothing() {
             "(done)",
             "  load(async (value) => {\n    expect(value).toBe(3);\n    done();\n  });",
         ),
+        // `done()` also settles the test outside the callback.
+        (
+            "(done)",
+            "  load((value) => {\n    expect(value).toBe(3);\n    done();\n  });\n  done();",
+        ),
+        (
+            "(done)",
+            "  setTimeout(() => {\n    expect(load()).toBe(3);\n    done();\n  }, 50);\n  done();",
+        ),
+        // A sibling callback settles the test without the assertion.
+        (
+            "(done)",
+            "  load((value) => {\n    expect(value).toBe(3);\n    done();\n  }, () => done());",
+        ),
+        (
+            "(done)",
+            "  emitter.on(\"ok\", (value) => {\n    expect(value).toBe(3);\n    done();\n  });\n  emitter.on(\"err\", () => done());",
+        ),
+        // `done` is reachable on a path that skips the callback.
+        (
+            "(done)",
+            "  if (ready) {\n    load((value) => {\n      expect(value).toBe(3);\n      done();\n    });\n  } else {\n    done();\n  }",
+        ),
         // A swallowing `try` before `done()`.
         (
             "(done)",
@@ -934,7 +956,7 @@ fn done_callback_shapes_that_can_skip_the_assertion_collect_nothing() {
         );
     }
 }
-=======
+
 /// Rule 4's owner tie reads the receiver chain across lines (the prettier
 /// layout) and member and generic calls of the owner (#9354).
 #[test]
@@ -1055,4 +1077,3 @@ fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
->>>>>>> origin/main
