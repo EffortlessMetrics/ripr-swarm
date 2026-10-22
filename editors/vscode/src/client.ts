@@ -905,7 +905,7 @@ export class RiprClientController {
     if (folders.length === 1) {
       if (this.workspaceRootSelectionSuppressed) {
         this.allowWorkspaceRootRecovery();
-        await this.restartSelectedWorkspaceRoot();
+        await this.restartThroughLifecycle();
         return;
       }
       await this.runtime.showInformationMessage(
@@ -923,10 +923,10 @@ export class RiprClientController {
     this.selectedWorkspaceRoot = selected.root;
     this.allowWorkspaceRootRecovery();
     this.output.appendLine(`ripr workspace root selected for this session: ${selected.root}`);
-    await this.restartSelectedWorkspaceRoot();
+    await this.restartThroughLifecycle();
   }
 
-  private async restartSelectedWorkspaceRoot(): Promise<void> {
+  private async restartThroughLifecycle(): Promise<void> {
     if (this.runtime.restartWorkspaceRoot) {
       await this.runtime.restartWorkspaceRoot();
       return;
@@ -2730,7 +2730,9 @@ export class RiprClientController {
     } else if (selection === SHOW_OUTPUT_ACTION) {
       this.showOutput();
     } else if (selection === RETRY_ACTION) {
-      await this.restart();
+      // A detached popup can outlive deactivation. The extension coordinator
+      // owns terminal shutdown and must decide whether Retry may restart.
+      await this.restartThroughLifecycle();
     }
   }
 
