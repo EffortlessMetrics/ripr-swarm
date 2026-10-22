@@ -73,6 +73,41 @@ pub(super) fn module_literal_constants(
         .collect()
 }
 
+/// How a module binds its names, for the conditional-definition and
+/// module-value reads (#9423): whether a name is bound exactly once, with no
+/// `global` declaration, no star import and no dynamic namespace writer that
+/// could rebind it behind the walk's back.
+pub(super) struct ModuleBindingFacts {
+    counts: std::collections::HashMap<String, usize>,
+    globals: std::collections::HashSet<String>,
+    opaque: bool,
+}
+
+impl ModuleBindingFacts {
+    /// The module's binding facts over `statements`.
+    pub(super) fn of(source: &str, statements: &[Stmt]) -> Self {
+        let mut bindings = ScopeBindings::default();
+        collect_scope_bindings(statements, &mut bindings);
+        let mut globals = Vec::new();
+        collect_global_declarations(statements, &mut globals);
+        let mut counts = std::collections::HashMap::new();
+        for name in bindings.names {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        Self {
+            counts,
+            globals: globals.into_iter().collect(),
+            opaque: bindings.opaque || writes_namespace_dynamically(source),
+        }
+    }
+
+    /// Whether `name` is bound exactly once at module scope and nothing in
+    /// the module can rebind it.
+    pub(super) fn bound_once(&self, name: &str) -> bool {
+        !self.opaque && !self.globals.contains(name) && self.counts.get(name) == Some(&1)
+    }
+}
+
 /// The constants still visible inside a function owner: those its parameters
 /// and local bindings do not shadow. `body_text` is the function's source,
 /// used only to catch a walrus binding inside it.
@@ -127,6 +162,9 @@ pub(super) struct PythonTestRebinding {
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
+    /// The test's file is also changed in this diff, so its assertions may
+    /// have been written for the new value (`module_value.rs`, #9423).
+    pub(super) edited_in_diff: bool,
 }
 
 impl PythonTestRebinding {
@@ -163,6 +201,7 @@ pub(super) fn python_test_rebinding(
         module_bound: Vec::new(),
         module_opaque: false,
         attributes: Vec::new(),
+        edited_in_diff: false,
     }
 }
 
@@ -300,7 +339,7 @@ fn writes_namespace_dynamically(source: &str) -> bool {
 
 /// Attribute names assigned as `<expr>.NAME = ...` or `<expr>.NAME += ...`
 /// anywhere in `source`.
-fn assigned_attributes(source: &str) -> Vec<String> {
+pub(super) fn assigned_attributes(source: &str) -> Vec<String> {
     let mut attributes = Vec::new();
     for (dot, _) in source.match_indices('.') {
         let rest = &source[dot + 1..];

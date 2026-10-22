@@ -389,6 +389,22 @@ comments, strings, and docstrings:
 - module-level owner: a local bound by an import of, or from, the owner
   module.
 
+A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
+an oracle-eligible relation, only to a test whose straight-line `assert`
+provably holds under the old literal and fails under the new one. The module
+binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
+namespace writer), the edit is the file's only changed line, no test file
+writes the attribute, and the test keeps its imported names. The assertion
+reads `NAME` itself or calls a module function with literal arguments whose
+body is one `return` expression over its parameters, literals and `NAME`; a
+name, call, operator or value kind outside that bounded evaluator decides
+nothing and the edit keeps the `missing_import_graph` abstention. A value no
+assertion distinguishes is never graded as a gap. A function defined under a
+decided module-level `if sys.version_info >= (3, 0):` condition (the only
+decided shapes are Python 2/3 version tuples, with `sys` the single plain
+import) is an ordinary function owner when its name has no other live
+binding; a definition in the dead arm stays with the `<module>` abstention.
+
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
 

@@ -7,6 +7,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
+use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
@@ -17,11 +18,12 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    helper_owner_call_candidates, python_repair_placement, related_test_candidates,
-    related_tests_for_candidates, verify_command_for_test,
+    PythonRelatedCandidate, PythonRelationKind, helper_owner_call_candidates,
+    python_repair_placement, related_test_candidates, related_tests_for_candidates,
+    sort_related_candidates, verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
-use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
+use super::sink_alignment::{CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
     unpinned_equality_dunder_limit,
@@ -115,6 +117,11 @@ pub(super) struct PythonNoBehaviorContext {
     /// The changed line lies inside a multi-line `def` header, so any
     /// parameter default on it is the owner's own default.
     pub(super) multi_line_def_header_line: bool,
+    /// The file's whole diff is this one added line replacing one removed
+    /// line, so the old module is the new source with that line put back
+    /// (`module_value.rs`, #9423). A diff with any other changed line cannot
+    /// reconstruct the old module and keeps the abstention.
+    pub(super) sole_line_replacement: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -304,9 +311,63 @@ pub(super) fn classify_change_for_owner(
         Vec::new()
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
+    // A module-level constant edit has no callable owner. A test whose
+    // assertion provably holds under the old value and fails under the new one
+    // (`module_value.rs`, #9423) is related through that value, and its
+    // assertion is the credited oracle.
+    let module_value = if owner.is_module_owner() && no_behavior.sole_line_replacement {
+        owner_source
+            .map(|source| {
+                module_constant_credits(
+                    &ModuleEdit {
+                        file,
+                        line,
+                        line_text,
+                        old_line_text,
+                        new_source: source,
+                    },
+                    owner,
+                    owners,
+                    all_tests,
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for credit in &module_value {
+        match related_candidates
+            .iter_mut()
+            .find(|candidate| std::ptr::eq(candidate.test, credit.test))
+        {
+            Some(candidate) => candidate.relation = PythonRelationKind::ModuleValueCall,
+            None => related_candidates.push(PythonRelatedCandidate {
+                test: credit.test,
+                relation: PythonRelationKind::ModuleValueCall,
+            }),
+        }
+    }
+    if !module_value.is_empty() {
+        sort_related_candidates(&mut related_candidates);
+    }
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
+    let alignment = match module_value.first() {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_module_value".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let static_limit = static_limit_for_focused_change(
         line_text,
         old_line_text,
@@ -366,6 +427,7 @@ pub(super) fn classify_change_for_owner(
         .iter()
         .map(|test| test.oracle_strength.rank())
         .chain(mock_pins_changed_call.then(|| OracleStrength::Strong.rank()))
+        .chain((!module_value.is_empty()).then(|| OracleStrength::Strong.rank()))
         .max()
         .unwrap_or(0);
     let strongest_kind = alignment
@@ -1169,6 +1231,24 @@ pub(super) fn classify_change_for_owner(
             candidate.relation.as_str(),
             test.name
         ));
+        if let Some(credit) = module_value
+            .iter()
+            .find(|credit| std::ptr::eq(credit.test, test))
+        {
+            evidence.push(format!(
+                "module_value_read: `{}` {} -> {}{} fails `{}` ({})",
+                credit.constant,
+                credit.old,
+                credit.new,
+                credit
+                    .reader
+                    .as_ref()
+                    .map(|reader| format!(" through `{reader}`"))
+                    .unwrap_or_default(),
+                credit.assertion.text,
+                test.name
+            ));
+        }
         if candidate.relation.is_uncertain() {
             evidence.push(format!(
                 "related_test_uncertain: {} ({})",
