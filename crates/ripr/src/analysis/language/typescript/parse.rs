@@ -202,7 +202,12 @@ pub(crate) fn unsupported_syntax_finding(
 /// `High = 2,` -> `High = 3,` and the edit would read as silence. Whether any
 /// test observes the member's numeric value is not statically known, so the
 /// honest verdict is limited, never exposed and never actionable.
-pub(crate) fn enum_member_finding(file: &Path, line: usize, line_text: &str) -> Finding {
+pub(crate) fn enum_member_finding(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    identity: &str,
+) -> Finding {
     let id_path: String = normalized_path(file)
         .to_string()
         .chars()
@@ -212,8 +217,9 @@ pub(crate) fn enum_member_finding(file: &Path, line: usize, line_text: &str) -> 
         "probe",
         &id_path,
         "typescript_preview_enum_member",
-        // Line-qualified: identical member text in two enums must not share an id.
-        &format!("line_{line}"),
+        // Enum::Member keeps identical member text in two enums apart without
+        // tying the id to a source line.
+        identity,
         &normalize_expression(line_text),
         1,
     );

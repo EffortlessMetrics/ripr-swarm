@@ -1367,18 +1367,20 @@ pub(crate) fn changed_enum_member_lines(
     file: &Path,
     source: &str,
     changed_lines: &[usize],
-) -> std::collections::BTreeSet<usize> {
-    if changed_lines.is_empty() {
-        return std::collections::BTreeSet::new();
+) -> std::collections::BTreeMap<usize, String> {
+    // A file without the keyword has no enum; skip the extra parse.
+    if changed_lines.is_empty() || !source.contains("enum") {
+        return std::collections::BTreeMap::new();
     }
     let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
     parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return std::collections::BTreeSet::new();
+            return std::collections::BTreeMap::new();
         }
+        let raw = source;
         let source = SourceText::new(source);
-        let mut lines = std::collections::BTreeSet::new();
+        let mut lines = std::collections::BTreeMap::new();
         let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
             if decl.declare {
                 return;
@@ -1386,7 +1388,15 @@ pub(crate) fn changed_enum_member_lines(
             for member in &decl.body.members {
                 let start = source.line_for_offset(member.span.start as usize);
                 let end = source.line_for_offset(member.span.end as usize);
-                lines.extend((start..=end).filter(|line| changed.contains(line)));
+                // Enum and member names, not the line, identify the member so
+                // the finding id survives unrelated line shifts.
+                let name = raw
+                    .get(member.id.span().start as usize..member.id.span().end as usize)
+                    .unwrap_or("");
+                let identity = format!("{}::{name}", decl.id.name);
+                for line in (start..=end).filter(|line| changed.contains(line)) {
+                    lines.entry(line).or_insert_with(|| identity.clone());
+                }
             }
         };
         for stmt in &ret.program.body {

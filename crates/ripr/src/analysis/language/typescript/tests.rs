@@ -16026,6 +16026,27 @@ fn changed_enum_member_is_a_limited_finding_not_silence() -> Result<(), String> 
         .findings;
     assert_eq!(twin.len(), 2, "{twin:?}");
     assert_ne!(twin[0].probe.id, twin[1].probe.id);
+
+    // The id follows the member, not its line: a comment above the enum
+    // shifts the line and must not change the id.
+    let shifted_root = ts_unique_tempdir("enum-member-shifted")?;
+    ts_write_file(
+        &shifted_root.join("src/level.ts"),
+        "// note\nexport enum A {\n  None = 0,\n}\nexport enum B {\n  None = 0,\n}\n",
+    )?;
+    let shifted = TypeScriptAdapter
+        .analyze_diff(
+            &ts_analysis_options(shifted_root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/level.ts",
+                &[(3, "  None = 0,"), (6, "  None = 0,")],
+            )],
+        )?
+        .findings;
+    assert_eq!(shifted.len(), 2, "{shifted:?}");
+    assert_eq!(twin[0].probe.id, shifted[0].probe.id);
+    assert_eq!(twin[1].probe.id, shifted[1].probe.id);
     Ok(())
 }
 

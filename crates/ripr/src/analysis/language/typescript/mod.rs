@@ -696,8 +696,9 @@ impl TypeScriptAdapter {
                         );
                     }
                     findings.push(finding);
-                } else if enum_member_lines.contains(&added.line) {
-                    let mut finding = enum_member_finding(&changed.path, added.line, &added.text);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
                     finding.evidence.extend(discovery_evidence.clone());
                     findings.push(finding);
                 }
