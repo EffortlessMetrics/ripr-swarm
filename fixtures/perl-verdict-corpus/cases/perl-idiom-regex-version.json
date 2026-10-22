@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-idiom-regex-version",
+  "subject_id": "authored-perl-idioms-toolkit",
+  "diff": "cases/perl-idiom-regex-version.diff",
+  "anchor": {
+    "file": "lib/Toolkit.pm",
+    "line": 30
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "regex_match",
+  "test_shape": "regex_capture_groups",
+  "hard_case": "Three regex mutants: two survive because the tests use one-digit versions and one clearly junk string.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "/^v?([0-9]+)\\.([0-9])$/",
+        "mutated_line": "return $s =~ /^v?([0-9]+)\\.([0-9])$/ ? [$1, $2] : undef;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the minor version loses its extra digits"
+      },
+      {
+        "replacement": "/^v?([0-9]+)\\.([0-9]+)/",
+        "mutated_line": "return $s =~ /^v?([0-9]+)\\.([0-9]+)/ ? [$1, $2] : undef;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the end anchor is dropped"
+      },
+      {
+        "replacement": "/^([0-9]+)\\.([0-9]+)$/",
+        "mutated_line": "return $s =~ /^([0-9]+)\\.([0-9]+)$/ ? [$1, $2] : undef;",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: parses a version",
+        "equivalence_review": "not equivalent: the v prefix is rejected"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "is_deeply(parse_version('v1.2'), [1,2]) and is(parse_version('nonsense'), undef) miss multi-digit and anchor changes. Spec cells: RIPR-SPEC-0064 oracle strength (is_deeply).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-idiom-regex-version.json",
+    "sha256": "4e844882e2e0e8d2b9c3b24c7e410d36695419eaaae01f9d6f33fc0ad5c8ce02",
+    "provenance": "producer"
+  }
+}
