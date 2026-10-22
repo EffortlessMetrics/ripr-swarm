@@ -24,7 +24,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "static_unknown"
         },
         {
           "type": "expected_related_test",

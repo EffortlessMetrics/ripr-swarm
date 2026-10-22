@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_qualified_foreign_receiver (2)
+
+Reason:
+RIPR-SPEC-0005: gap withholding on main reports the unresolved foreign-owner receivers as static_unknown (gap_evidence_unresolved) instead of weakly_exposed; still no promotion to exposed (#8782 item 1)
+
+Command:
+`cargo xtask goldens bless rust_qualified_foreign_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
