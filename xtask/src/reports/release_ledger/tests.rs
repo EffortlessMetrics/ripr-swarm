@@ -507,10 +507,24 @@ fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> 
 
 #[test]
 fn markdown_projection_shows_every_records_theme() -> Result<(), String> {
-    let ledger = valid();
+    let mut ledger = valid();
+    let total = ledger.records.len();
+    if total < 2 {
+        return Err("the fixture needs at least two records".to_string());
+    }
+    ledger.records[0].theme = "automation".to_string();
+    ledger.records[1].theme = "release_or_control".to_string();
     let markdown = super::report_markdown(&ledger, "pass", &[]);
-    if !(markdown.contains("| Theme | Count |") && markdown.contains("| Disposition | Theme |")) {
-        return Err("the theme count table or the records column is missing".to_string());
+    for expected in [
+        "| Theme | Count |".to_string(),
+        "| Disposition | Theme |".to_string(),
+        "| `automation` | 1 |".to_string(),
+        "| `release_or_control` | 1 |".to_string(),
+        format!("| `core` | {} |", total - 2),
+    ] {
+        if !markdown.contains(&expected) {
+            return Err(format!("missing `{expected}` in:\n{markdown}"));
+        }
     }
     for record in &ledger.records {
         let cell = format!("| `{}` |", record.theme);
