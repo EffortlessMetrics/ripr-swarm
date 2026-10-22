@@ -593,6 +593,24 @@ mod tests {
             reseal(&mut changed);
             assert!(!changed.valid_for(&probe), "{name}");
         }
+        // Source spellings: `decimal_u8` admits a leading zero and a `u8`
+        // suffix (observed behavior, pinned), but refuses a sign or radix.
+        for (spelling, accepted) in [
+            ("07", true),
+            ("7u8", true),
+            ("0_7", true),
+            ("-7", false),
+            ("+7", false),
+            ("0x7", false),
+            ("7.0", false),
+        ] {
+            let mut spelled = base.clone();
+            spelled.source_identity = spelling.into();
+            reseal(&mut spelled);
+            let mut spelled_probe = probe.clone();
+            spelled_probe.expression = spelling.into();
+            assert_eq!(spelled.valid_for(&spelled_probe), accepted, "{spelling}");
+        }
         // A reseal of an unmodified receipt stays valid, so the resealed
         // refusals above are attributable to the mutation alone.
         let mut resealed = base.clone();
@@ -907,6 +925,8 @@ mod tests {
 
     #[test]
     fn receipt_refuses_inverted_and_off_grammar_sources() -> Result<(), String> {
+        let control = package(OWNER_SRC, CHECK_SRC)?;
+        assert!(control.receipt()?.is_some(), "positive control");
         for (name, owner_src, check_src) in [
             (
                 "inverted",
@@ -953,7 +973,8 @@ mod tests {
     #[test]
     fn receipt_refuses_dependency_and_source_drift() -> Result<(), String> {
         let pkg = package(OWNER_SRC, CHECK_SRC)?;
-        assert!(pkg.receipt()?.is_some(), "positive control");
+        let before = pkg.receipt()?;
+        assert!(before.is_some(), "positive control");
 
         // Verified dependency whose library root is not the owner file.
         let other_root = pkg
@@ -994,8 +1015,8 @@ mod tests {
         std::fs::write(pkg.lib(), OWNER_SRC).map_err(|e| e.to_string())?;
         assert!(
             fallible_check_receipt(&pkg.probe, &pkg.owner, &pkg.test, &pkg.index, &syntax)
-                .is_some(),
-            "restored source is accepted again"
+                == before,
+            "restored source reproduces the pre-drift receipt"
         );
         std::fs::write(
             pkg.root.0.join("src/test_support.rs"),
