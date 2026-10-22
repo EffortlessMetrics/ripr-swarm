@@ -1466,7 +1466,11 @@ tests = [
   "xtask/src/reports/release.rs::tests::release_readiness_status_warns_for_not_run_but_fails_required_failures",
   "xtask/src/reports/release.rs::tests::release_readiness_json_and_markdown_are_structured",
   "xtask/src/main.rs::tests::defaults_first_example_corpus_index_names_required_operator_artifacts",
-  "editors/vscode/test/suite/extension.test.ts::defaults-first check mode is draft"
+  "editors/vscode/test/suite/extension.test.ts::defaults-first check mode is draft",
+  "crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result",
+  "crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors",
+  "crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable",
+  "crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -1488,6 +1492,8 @@ code = [
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/parse.rs",
+  "crates/ripr/src/cli/parse/format.rs",
+  "crates/ripr/src/cli/suggest.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/analysis/workspace/select.rs",
