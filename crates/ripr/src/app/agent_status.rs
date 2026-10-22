@@ -4217,6 +4217,105 @@ mod tests {
         result
     }
 
+    /// #9103: a gap-bound attempt at its current head and still awaiting the
+    /// edit names the manual by-gap verification route, never a
+    /// `--phase after` command that would refuse.
+    #[test]
+    fn current_gap_bound_attempt_status_offers_the_manual_verify_route() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
+            RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        const GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+        let root = unique_agent_status_test_dir("gap-bound-current-status");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let result = (|| {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "# test\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+            let before = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            write_file(&before, "{}\n")?;
+            let packet_text = serde_json::json!({
+                "packets": [{
+                    "seam_id": GAP,
+                    "allowed_edit_surface": ["test/pricing.test.ts"],
+                    "forbidden_files": ["src/pricing.ts"]
+                }]
+            })
+            .to_string();
+            write_file(&packet, &packet_text)?;
+            let policy = edit_cage_policy_from_packet(&packet_text, GAP)?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let identity = BeforeRepairAttemptIdentity::prepare(&root, GAP)?;
+            begin_gap_bound_repair_attempt_with_identity(
+                BeginRepairAttemptOptions {
+                    root: &root,
+                    root_argument: &root,
+                    seam_id: GAP,
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_check_findings",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                },
+                &identity,
+                RepairAttemptGapBinding {
+                    base: "HEAD~1".to_string(),
+                },
+            )?;
+            let attempt_id = only_attempt_id(&root, None)?;
+            let attempt_report = build_agent_attempt_status(&root, &root, None, &attempt_id)?;
+            let attempt_command = attempt_report
+                .next_action
+                .as_ref()
+                .map(|next| next.command.clone())
+                .unwrap_or_default();
+            if attempt_command.contains("--phase after") {
+                return Err(format!(
+                    "attempt status offers a refusing after: {attempt_command}"
+                ));
+            }
+            let rendered = render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            if !rendered.contains("\"resumable\"") {
+                return Err(format!("the attempt must be resumable:\n{rendered}"));
+            }
+            if rendered.contains("--phase after") {
+                return Err(format!("status offers a refusing after phase:\n{rendered}"));
+            }
+            if !rendered.contains("agent verify") || !rendered.contains(&format!("--gap-id {GAP}"))
+            {
+                return Err(format!("status names no manual by-gap route:\n{rendered}"));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     /// Normalized JSON is byte-stable: rendering the same report twice, and
     /// the inventory discovery document across repeated reads of the same
     /// store, produces identical bytes (the inventory is ordered by attempt

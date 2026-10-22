@@ -852,14 +852,7 @@ pub(crate) fn check_repair_route(
     // computed refusal is named instead of silent (#8729): a static-limited
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
-    let static_limited = finding.static_limit_kind.is_some()
-        || matches!(
-            finding.class,
-            crate::domain::ExposureClass::NoStaticPath
-                | crate::domain::ExposureClass::InfectionUnknown
-                | crate::domain::ExposureClass::PropagationUnknown
-                | crate::domain::ExposureClass::StaticUnknown
-        );
+    let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical

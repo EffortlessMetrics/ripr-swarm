@@ -1158,12 +1158,36 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let store_flag = store.quoted_store_flag();
-            let next_command = format!(
-                "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
-                shell_arg(&bound_root(&publication.root_argument.to_string_lossy())),
-                shell_arg(publication.repair_attempt_id.as_str()),
-                publication.next_command_suffix.unwrap_or_default()
-            );
+            let next_command = match &publication.gap_binding {
+                // #9103: a gap-bound attempt has no `--phase after` yet (it
+                // refuses), so every surface that reads the persisted next
+                // step gets the manual by-gap route instead.
+                Some(binding) => {
+                    let before = artifacts
+                        .iter()
+                        .find(|artifact| {
+                            artifact.role
+                                == crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+                        })
+                        .map(|artifact| artifact.path.as_str())
+                        .unwrap_or_default();
+                    format!(
+                        "the gap-bound after phase is not available yet; after the test edit, {}",
+                        crate::app::gap_bound_repair::gap_bound_manual_verify_route(
+                            &bound_root(&publication.root_argument.to_string_lossy()),
+                            before,
+                            publication.seam_id,
+                            &binding.base,
+                        )
+                    )
+                }
+                None => format!(
+                    "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
+                    shell_arg(&bound_root(&publication.root_argument.to_string_lossy())),
+                    shell_arg(publication.repair_attempt_id.as_str()),
+                    publication.next_command_suffix.unwrap_or_default()
+                ),
+            };
             // Finalize-path head re-verification: the earlier pre-publication
             // gate pinned the head identity before the artifacts were staged;
             // the durable manifest is the authority, so the identity is

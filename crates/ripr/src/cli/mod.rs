@@ -517,6 +517,12 @@ fn persist_before_repair_attempt(
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
             );
         }
+    } else if options.gap_id.is_some() {
+        // #9103: the edit cage is only consumed by the after phase, which a
+        // gap-bound attempt does not have yet, so nothing enforces it here.
+        eprintln!(
+            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file (leave production code unchanged). The edit cage for this gap-bound attempt is recorded but not enforced yet; enforcement arrives with the gap-bound after phase."
+        );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
@@ -563,32 +569,10 @@ fn persist_before_repair_attempt(
     // #9103: a gap-bound attempt has no `--phase after` yet, so the follow-up
     // is the manual by-gap verification route over the retained before
     // snapshot instead of a command that would refuse.
-    let gap_follow_up =
-        options
-            .gap_id
-            .as_deref()
-            .zip(options.base.as_deref())
-            .map(|(gap_id, base)| {
-                let before = result
-                    .manifest
-                    .artifacts
-                    .iter()
-                    .find(|artifact| {
-                        artifact.role
-                            == crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
-                    })
-                    .map(|artifact| artifact.path.as_str())
-                    .unwrap_or_default();
-                format!(
-                    "the gap-bound `--phase after` is not available yet; after the test edit, {}",
-                    crate::app::gap_bound_repair::gap_bound_manual_verify_route(
-                        &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
-                        before,
-                        gap_id,
-                        base,
-                    )
-                )
-            });
+    let gap_follow_up = options
+        .gap_id
+        .is_some()
+        .then(|| result.manifest.next_command.clone());
     let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
     if let Some(manual) = &gap_follow_up {
         eprintln!("ripr: attempt next step: {manual}");

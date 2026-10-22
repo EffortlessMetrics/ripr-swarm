@@ -384,7 +384,8 @@ Options:
                        `--seam-id`, and requires `--base`. It re-runs the
                        diff-scoped check, refuses unless the finding's repair
                        packet is ready, and records the check-findings
-                       snapshot. Verify afterwards with `ripr agent verify`
+                       snapshot; the edit cage is recorded but not enforced yet.
+                       Verify afterwards with `ripr agent verify`
                        and its gap binding; the gap-bound `after` phase is
                        not available. Python gaps are not repairable here.
   --base REF           The Git base the diff-scoped check compares against;

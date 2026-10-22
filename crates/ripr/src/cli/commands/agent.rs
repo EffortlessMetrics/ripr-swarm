@@ -2926,8 +2926,10 @@ fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[
 /// agent-packet validator, then prepare the same edit-cage inputs the
 /// seam-bound phase prepares. The before snapshot is the
 /// `check-findings-json` artifact (the gap's findings are diff-scoped, so the
-/// base is part of the attempt). Nothing is written before every admission
-/// check passes; a refused start leaves no workflow artifact behind.
+/// base is part of the attempt). A refused admission check writes nothing. The
+/// two workflow artifacts are written here, before the attempt is persisted,
+/// so a later persistence refusal (a lock, a moved head) can leave them
+/// behind; a rerun overwrites them and no attempt manifest exists.
 fn run_gap_bound_before_phase(
     root: &Path,
     gap_id: &str,

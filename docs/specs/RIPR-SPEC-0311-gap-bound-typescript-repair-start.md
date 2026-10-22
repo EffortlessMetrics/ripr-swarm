@@ -55,15 +55,23 @@ existed with no way to begin the attempt.
    check against `B`, looks the gap up, and runs the same shared validator.
    An unknown gap or a gap whose packet is not ready is refused ("the repair
    packet is not ready" or "names no current TypeScript gap") with no attempt
-   and no workflow artifacts.
+   and no workflow artifacts. The printed start line replays only `--base`
+   and `--root`; a static-limited finding is refused here too, as `ripr check`
+   would not offer it.
 3. Flags are exclusive: `--gap-id` excludes `--seam-id`, requires `--base` and
    `--phase before`, accepts only a canonical TypeScript preview gap id,
    refuses Python gaps with their existing terminal reason, and refuses the
    Python repair-trust flags.
 4. Acceptance writes `before.check-findings.json` and `gap-repair-packet.json`
    (packet `seam_id` is the gap id) and a manifest with `seam_id` = gap id and
-   `gap_binding.base`. The edit cage binds the attempt to the packet's test
-   file; production and non-test paths are refused.
+   `gap_binding.base`. The edit cage is derived from the packet's test
+   file but is not enforced in this slice: only the after phase consumes it
+   and a gap-bound attempt has no after phase yet, so enforcement arrives with
+   the gap-bound after slice. The persisted `next_command` is the manual
+   by-gap verification route, never a `--phase after` command. The two
+   workflow artifacts are written before the attempt is persisted, so a
+   persistence refusal (a lock, a moved head) can leave them behind, never a
+   manifest; a rerun overwrites them.
 5. Status and recovery text for a gap attempt name the gap start and never
    `--seam-id`.
 6. `agent repair --phase after` for a gap-bound attempt is refused naming the

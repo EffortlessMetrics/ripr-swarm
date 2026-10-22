@@ -1450,7 +1450,7 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1469,7 +1469,7 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn complete_finding() -> Finding {
+    pub(crate) fn complete_finding() -> Finding {
         Finding {
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,

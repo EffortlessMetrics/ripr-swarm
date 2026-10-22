@@ -413,6 +413,32 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     decoy_untouched(&decoy)?;
 
+    // An unknown gap id is refused and leaves no attempt or gap artifact.
+    let (unknown_ok, unknown) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(unknown_ok, false, "unknown gap start")?;
+    need(&unknown, "names no current TypeScript gap", "unknown gap")?;
+    let workflow_dir = root.join("target").join("ripr").join("workflow");
+    if attempt_manifests(&root)? != 0
+        || workflow_dir.join("gap-repair-packet.json").exists()
+        || workflow_dir.join("before.check-findings.json").exists()
+    {
+        return Err(format!("unknown gap start left artifacts:\n{unknown}"));
+    }
+
     // The printed start is accepted by `agent repair --phase before`: the
     // flags are replayed exactly as the start line names them.
     let (repair_ok, repair) = ripr(
@@ -454,6 +480,12 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     if manifest["seam_id"] != gap.as_str() || manifest["gap_binding"]["base"] != "HEAD~1" {
         return Err(format!(
             "manifest does not record the gap binding:\n{manifest_text}"
+        ));
+    }
+    let persisted_next = manifest["next_command"].as_str().unwrap_or_default();
+    if persisted_next.contains("--phase after") || !persisted_next.contains("--gap-id") {
+        return Err(format!(
+            "persisted next step is not the manual by-gap route: {persisted_next}"
         ));
     }
     let roles: Vec<&str> = manifest["artifacts"]
