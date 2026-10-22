@@ -193,22 +193,22 @@ property-style tests, both from an exact matcher that cannot tell the changed
 return value apart.
 
 **Rule 2. An operator whose right operand is its identity in every tested
-call is not pinned.** On a `return_value` probe whose changed line only
-rewrites the operands of a commutative operator in place (`return qty *
-unit;` against `return unit * qty;`, or `+` likewise; a changed operator or
-operand, or a dropped term, keeps the credit because the identity input can
-still pin the edit) and reads
-`return <operand> <op> <param>;` (`op` one of `*`, `/`, `+`, `-`; the left
-operand a plain identifier or number, the right operand an owner parameter
-the body never rebinds), an `exposed` result reads `weakly_exposed` when
-every owner call whose whole result a strong value assertion observes passes
-the identity for that parameter: `1` for `*` and `/`, `0` for `+` and `-`.
-`return unit * qty` tested only through `scaled(1, u)` against `u` returns
-the same number as `unit / qty`. One tested call with another value, an
-argument the reader cannot read as a number, a related test that does not call
-the owner directly, an owner call outside a value assertion on its whole
-result (setup, a local, a weak matcher), or any other assertion naming the
-owner keeps the credit. Only the right operand counts: `1 / qty` differs from `qty`.
+call is not pinned.** The rule applies on a `return_value` probe when the
+changed line only rewrites the operands of a commutative operator in place:
+`return qty * unit;` against `return unit * qty;`, or `+` likewise. A changed
+operator or operand, or a dropped term, keeps the credit, because the identity
+input can still pin that edit. The new line reads `return <operand> <op>
+<param>;`, with a plain identifier or number on the left and an owner
+parameter on the right that the body never rebinds. An `exposed` result then
+reads `weakly_exposed` when every owner call whose whole result a strong value
+assertion observes passes the identity for that parameter: `1` for `*` and
+`/`, `0` for `+` and `-`. `return unit * qty` tested only through
+`scaled(1, u)` against `u` returns the same number as `unit / qty`. One tested
+call with another value, an argument the reader cannot read as a number, a
+related test that does not call the owner directly, an owner call outside a
+value assertion on its whole result (setup, a local, a weak matcher), or any
+other assertion naming the owner keeps the credit. Only the right operand
+counts: `1 / qty` differs from `qty`.
 
 **Rule 3. An assertion built from owner calls alone cannot notice a changed
 return value.** On a `return_value` or `field_construction` probe, an
@@ -225,6 +225,10 @@ Both rules only move `exposed` to `weakly_exposed`; neither adds credit.
 
 Known limits of rules 2 and 3:
 
+- Rule 2 is deliberately narrow: it does not read an added factor
+  (`return a;` becoming `return a * b;`) or a swap from `/` to `*`, where an
+  identity input also hides the edit; those keep the credit (missed advisory,
+  never a false demotion).
 - Rule 2 reads one operator between two operands. `a * b + c`, a call or
   member operand and a compound assignment keep the pre-rule credit.
 - Rule 2 does not ask whether the identity makes the other mutants of the
