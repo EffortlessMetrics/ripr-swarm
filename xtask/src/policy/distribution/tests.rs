@@ -744,7 +744,7 @@ fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Resu
     let dir = scratch_dir("scan")?;
     fs::write(
         dir.join("publish.yml"),
-        "jobs:\n  p:\n    steps:\n      - run: |\n          npm \\\n            publish\n",
+        "jobs:\n  job:\n    steps:\n      - run: |\n          npm \\\n            publish\n",
     )
     .map_err(|err| err.to_string())?;
     // A workflow whose bytes are not UTF-8 cannot be read as text and must fail closed.
