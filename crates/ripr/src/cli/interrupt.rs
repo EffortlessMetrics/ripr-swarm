@@ -87,3 +87,82 @@ impl Drop for SignalRegistration {
         // cli::run never installs process-lifetime signal actions.
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{InterruptFlags, SignalRegistration, check};
+    use crate::cli::CommandError;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn flags() -> (InterruptFlags, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let native = Arc::new(AtomicBool::new(false));
+        (
+            (Arc::clone(&interrupted), Arc::clone(&native)),
+            interrupted,
+            native,
+        )
+    }
+
+    #[test]
+    fn check_help_completes_without_interruption() {
+        let result = check(&["--help".to_string()]);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn check_unknown_flag_is_failure_not_interruption() -> Result<(), String> {
+        // Positive control: the same entry accepts a valid request.
+        assert_eq!(check(&["--help".to_string()]), Ok(()));
+        let Err(error) = check(&["--definitely-not-a-flag".to_string()]) else {
+            return Err("unknown flag must fail closed".to_string());
+        };
+        assert!(matches!(error, CommandError::Failure(_)), "{error:?}");
+        assert_eq!(error.exit_code(), 2);
+        assert!(
+            error.message().contains("--definitely-not-a-flag"),
+            "{error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn registration_leaves_flags_clear_until_drop_arms_native_termination() -> Result<(), String> {
+        let (pair, interrupted, native) = flags();
+        let registration = SignalRegistration::create(pair)?;
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert!(
+            !native.load(Ordering::SeqCst),
+            "native termination must stay disarmed while analysis settles"
+        );
+        drop(registration);
+        assert!(
+            native.load(Ordering::SeqCst),
+            "dropping the registration must arm native termination"
+        );
+        assert!(!interrupted.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[test]
+    fn first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String> {
+        let (pair, interrupted, native) = flags();
+        let registration = SignalRegistration::create(pair)?;
+        // Construction: nothing is requested or armed before the signal.
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert!(!native.load(Ordering::SeqCst));
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            interrupted.load(Ordering::SeqCst),
+            "first SIGINT must request cooperative cancellation"
+        );
+        assert!(
+            native.load(Ordering::SeqCst),
+            "first SIGINT must arm native termination for a repeated signal"
+        );
+        drop(registration);
+        Ok(())
+    }
+}
