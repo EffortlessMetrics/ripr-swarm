@@ -239,11 +239,26 @@ pub(crate) fn check_repo_exposure_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    check_repo_exposure_command_with_program_and_base("ripr", root, base, mode, out_path)
+}
+
+/// The repo-exposure producer command bound to an explicit `program`
+/// (#9500): a recovery that tells the user to rerun `ripr` from `PATH` loops
+/// when a stale binary wins `PATH` resolution, so a refusal names the
+/// running executable instead. Shared with the PATH-form builders above.
+pub(crate) fn check_repo_exposure_command_with_program_and_base(
+    program: &str,
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
     format!(
-        "ripr check --root {}{} --mode {} --format repo-exposure-json > {}",
+        "{} check --root {}{} --mode {} --format repo-exposure-json > {}",
+        shell_arg(program),
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
