@@ -110,8 +110,8 @@ use no_behavior::{
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
 use probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, contains_mock_initializer,
-    looks_like_call_expression,
+    canonical_python_gap_for, classify_probe_shape, classify_probe_shape_with_old,
+    contains_mock_initializer, looks_like_call_expression,
 };
 #[cfg(test)]
 use related_tests::{
