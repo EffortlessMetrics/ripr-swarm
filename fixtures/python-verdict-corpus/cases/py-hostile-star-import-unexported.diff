@@ -1,0 +1,9 @@
+diff --git a/hostile/stars.py b/hostile/stars.py
+--- a/hostile/stars.py
++++ b/hostile/stars.py
+@@ -6,4 +6,4 @@
+ 
+ 
+ def hidden_total(a, b):
+-    return a * b
++    return a + b

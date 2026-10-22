@@ -781,6 +781,10 @@ mod tests {
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
         assert!(PILOT_HELP.contains("--format FORMAT"));
         assert!(PILOT_HELP.contains("--format json"));
+        // #9368: every env var pilot honors appears in its help.
+        assert!(PILOT_HELP.contains("RIPR_PILOT_SEAM_BUDGET"));
+        assert!(PILOT_HELP.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"));
+        assert!(PILOT_HELP.contains("RIPR_GIT_TIMEOUT"));
         assert!(OUTCOME_HELP.starts_with("Compare before/after static evidence"));
         assert!(OUTCOME_HELP.contains("Usage: ripr outcome"));
         assert!(OUTCOME_HELP.contains("--before PATH"));
