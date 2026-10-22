@@ -5,6 +5,35 @@ use super::*;
 const ENUM: &str = "export enum Level { Low = 1, High = 2 }\nexport const Other = { High: 1 };\nexport function weight(level: number): number {\n  return level === Level.High ? 11 : 10;\n}\n";
 const OLD: &str = "  return level === Level.High ? 10 : 10;";
 
+#[test]
+fn reexports_do_not_invent_local_enum_bindings() -> Result<(), String> {
+    let test = "import { expect, it } from 'vitest';\nimport { weight, Level } from '../src/level';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    for (label, source, expected) in [
+        (
+            "synthetic-reexport-local-object",
+            "export { Level } from './constants';\nconst Level = { High: 1 };\nexport function weight(level: number): number {\n  return level === Level.High ? 11 : 10;\n}\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "actual-import-and-export",
+            "import { Level } from './constants';\nexport { Level };\nexport function weight(level: number): number {\n  return level === Level.High ? 11 : 10;\n}\n",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let finding = classify_enum_source(
+            label,
+            source,
+            test,
+            &[(
+                "src/constants.ts",
+                "export enum Level { Low = 1, High = 2 }\n",
+            )],
+        )?;
+        assert_eq!(finding.class, expected, "{label}");
+    }
+    Ok(())
+}
+
 fn classify_enum(
     label: &str,
     source: &str,

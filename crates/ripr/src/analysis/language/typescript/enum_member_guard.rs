@@ -120,22 +120,11 @@ pub(crate) fn ts_same_enum_member(
     {
         return false;
     }
-    let Some(owner_identity) = index.enum_member_identity(
-        &owner.file,
-        owner_path,
-        &owner.imports,
-        test,
-        alias_map,
-        workspace_root,
-    ) else {
+    let Some(owner_identity) =
+        index.enum_member_identity(&owner.file, owner_path, test, alias_map, workspace_root)
+    else {
         return false;
     };
-    index.enum_member_identity(
-        &test.file,
-        test_path,
-        &test.imports_in_file,
-        test,
-        alias_map,
-        workspace_root,
-    ) == Some(owner_identity)
+    index.enum_member_identity(&test.file, test_path, test, alias_map, workspace_root)
+        == Some(owner_identity)
 }

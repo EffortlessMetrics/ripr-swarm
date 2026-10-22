@@ -742,6 +742,10 @@ prove its condition costs an abstention or a gap, never a credit.
    file, including setup hooks. Distinct source files collapsed by extension
    stripping (for example `constants.ts` and `constants.mts`) make that
    module's enum identity unknown, even when an import names its extension.
+   A re-export statement supplies an exported binding, never a local import
+   for the owner's condition; owner roots use only actual module imports or
+   declarations. A same-named local object beside a canonical re-export is
+   still an unknown member root.
    Supported function type annotations and import/export syntax are not
    runtime escapes. The
    assertion must observe the owner's whole result (not `price(150) > 0`),

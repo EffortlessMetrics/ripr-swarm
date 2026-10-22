@@ -237,7 +237,6 @@ impl ReExportIndex {
         &self,
         file: &Path,
         path: &str,
-        imports: &[TypeScriptImport],
         test: &TypeScriptTest,
         alias_map: Option<&TsAliasMap>,
         workspace_root: Option<&Path>,
@@ -257,6 +256,14 @@ impl ReExportIndex {
         if self.ambiguous_enum_modules.contains(&module) {
             return None;
         }
+        // Owner.imports also carries synthetic re-export records for call
+        // discovery. A re-export creates no local binding, so only the
+        // actual-only imports collected from this module can anchor a root.
+        let imports = if normalized_path(file) == normalized_path(&test.file) {
+            &test.imports_in_file
+        } else {
+            self.enum_imports.get(&module)?
+        };
         if self
             .unstable_enum_roots
             .contains(&(module.clone(), (*root).to_string()))
