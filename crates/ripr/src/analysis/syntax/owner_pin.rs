@@ -3810,7 +3810,12 @@ fn eager_path(
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
             if block.async_token().is_some() {
-                return Err("an `async` block");
+                // `tokio::spawn(async { .. }).await.unwrap()` re-raises the
+                // task's panic on the test task, like a joined thread.
+                let Some(joined) = spawned_task_reaching_test(&block, function) else {
+                    return Err("an `async` block");
+                };
+                return eager_path(joined, function, true, first_return);
             }
             if block.const_token().is_some()
                 || block.gen_token().is_some()
@@ -4552,6 +4557,150 @@ fn spawned_thread_reaching_test(
         return Some(spawn.syntax().clone());
     }
     joined_and_unwrapped(spawn.syntax())
+}
+
+/// Where a spawned task's panic reaches the test task, for an `async` block
+/// that is the only argument of `tokio::spawn(..)` chained directly into
+/// `.await.unwrap()` or `.await.expect(..)` (RIPR-SPEC-0197): the awaited
+/// `JoinHandle` yields the task's panic as a `JoinError`, which `unwrap`
+/// re-raises. The test must be a `#[tokio::test]` that
+/// [`tokio_test_runs_body`] admits, and nothing in the file may be named
+/// `tokio` or `spawn`, so the path names the real crate's function.
+///
+/// Returns the expression from which the test task continues. A detached
+/// task, a handle kept in a binding, and an `.await` whose result is dropped,
+/// matched or converted lose the panic and stay refused.
+fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Option<SyntaxNode> {
+    if block.const_token().is_some()
+        || block.gen_token().is_some()
+        || block.try_block_modifier().is_some()
+        || block.label().is_some()
+    {
+        return None;
+    }
+    // `first_return` skips a `return` owned by an `async` block and the escape
+    // gate only reads closures, so an exit inside this block would skip the
+    // assertion unseen: refuse any `return` or `?` the block itself owns,
+    // including inside macro tokens.
+    let owns_exit = block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
+            )
+        })
+        .any(|token| {
+            token
+                .parent_ancestors()
+                .find(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::Fn::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node.clone())
+                            .is_some_and(|inner| inner.async_token().is_some())
+                })
+                .is_some_and(|owner| owner == *block.syntax())
+        });
+    if owns_exit {
+        return None;
+    }
+    let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if text.strip_prefix("::").unwrap_or(&text) != "tokio::spawn"
+        || path
+            .path()?
+            .segments()
+            .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    if !function
+        .attrs()
+        .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
+    {
+        return None;
+    }
+    let file = function.syntax().ancestors().last()?;
+    if file
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .any(|name| matches!(unraw(name.text()), "tokio" | "spawn"))
+    {
+        return None;
+    }
+    // A `use` can supply `tokio` or `spawn` without declaring a `Name`: a
+    // glob import may pull in another module's `tokio`, and a path segment such
+    // as `crate::fake::tokio` is a `NameRef`. Only the crate's own
+    // `use tokio::..` keeps the spelling honest.
+    let rebinds_through_use = file.descendants().filter_map(ast::Use::cast).any(|item| {
+        let Some(tree) = item.use_tree() else {
+            return true;
+        };
+        let own_root = tree
+            .path()
+            .and_then(|path| path.first_segment())
+            .and_then(|segment| segment.name_ref());
+        // `use super::*;` inside an inline `mod` only re-exports names this
+        // file declares, which the scan above already covers.
+        let parent_glob =
+            item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && tree
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                == "super::*";
+        tree.syntax().descendants().any(|node| {
+            ast::UseTree::cast(node.clone())
+                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                    matches!(unraw(name.text()), "tokio" | "spawn")
+                        && !(unraw(name.text()) == "tokio"
+                            && own_root.as_ref().is_some_and(|root| root == &name))
+                })
+        })
+    });
+    if rebinds_through_use {
+        return None;
+    }
+    let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
+    if awaited.expr()?.syntax() != call.syntax() {
+        return None;
+    }
+    let parent = awaited.syntax().parent()?;
+    let outer = ast::MethodCallExpr::cast(parent)?;
+    let arguments = outer.arg_list()?.args().count();
+    let name = outer.name_ref()?;
+    // The `expect` message runs before `expect` does, so only a literal keeps
+    // an exit out of the call.
+    let message_is_literal = arguments == 0
+        || outer
+            .arg_list()?
+            .args()
+            .all(|argument| matches!(argument, ast::Expr::Literal(_)));
+    (message_is_literal
+        && (outer.receiver()?.syntax() == awaited.syntax())
+        && outer.generic_arg_list().is_none()
+        && ((name.text() == "unwrap" && arguments == 0)
+            || (name.text() == "expect" && arguments == 1)))
+        .then(|| outer.syntax().clone())
 }
 
 /// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
