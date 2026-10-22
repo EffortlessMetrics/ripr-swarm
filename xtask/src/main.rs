@@ -10517,7 +10517,8 @@ struct RepoExposureOutputParity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RepoExposureParityCheck {
     format: String,
-    /// `pass`, `mismatch` or `not_checked`.
+    /// `pass`, `mismatch`, `fail` (the served run failed after a passing cold
+    /// run) or `not_checked`.
     status: &'static str,
     reason: Option<String>,
 }
@@ -10526,6 +10527,8 @@ impl RepoExposureOutputParity {
     fn label(&self) -> &'static str {
         if self.checks.iter().any(|check| check.status == "mismatch") {
             "mismatch"
+        } else if self.checks.iter().any(|check| check.status == "fail") {
+            "fail"
         } else if !self.checks.is_empty() && self.checks.iter().all(|check| check.status == "pass")
         {
             "pass"
@@ -10624,8 +10627,16 @@ enum RepoExposureMeasurement {
 /// the operator lane indefinitely.
 pub(crate) fn repo_exposure_latency_report_impl() -> Result<(), String> {
     let timeout_ms = repo_exposure_latency_timeout_ms();
-    run("cargo", &["build", "-p", "ripr"])?;
-    let binary = ripr_debug_binary();
+    // `RIPR_REPO_EXPOSURE_LATENCY_BINARY` names an already built `ripr` (for
+    // example to run the report against a small fixture root); otherwise the
+    // workspace debug binary is built and used.
+    let binary = match std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_BINARY") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            run("cargo", &["build", "-p", "ripr"])?;
+            ripr_debug_binary()
+        }
+    };
     write_repo_exposure_latency_report(
         &binary,
         timeout_ms,
@@ -10753,6 +10764,16 @@ fn repo_exposure_receipt_token() -> &'static str {
         use std::hash::{BuildHasher, Hasher};
         static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         TOKEN.get_or_init(|| {
+            use std::io::Read;
+            // Prefer the OS entropy source; fall back to std's randomly keyed
+            // hasher where `/dev/urandom` is absent (for example Windows).
+            let mut bytes = [0u8; 16];
+            if fs::File::open("/dev/urandom")
+                .and_then(|mut file| file.read_exact(&mut bytes))
+                .is_ok()
+            {
+                return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            }
             let mut token = String::new();
             for _ in 0..2 {
                 let value = std::collections::hash_map::RandomState::new()
@@ -10785,6 +10806,21 @@ fn repo_exposure_authenticated_receipts<'a>(
     (records, untrusted)
 }
 
+/// Final `cache_load` status from phase lines that carry this process's
+/// token; a bare phase line (forgeable like a bare receipt line) is ignored.
+fn repo_exposure_authenticated_cache_load(stderr: &str) -> Option<String> {
+    let prefix = format!(
+        "ripr_repo_exposure_latency token={} phase=cache_load status=",
+        repo_exposure_receipt_token()
+    );
+    stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .rfind(|status| matches!(*status, "hit" | "miss" | "corrupt_ignored"))
+        .map(str::to_string)
+}
+
 fn repo_exposure_latency_envs(token: &str) -> [(&str, &str); 2] {
     [
         (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
@@ -10809,9 +10845,22 @@ fn repo_exposure_latency_run(
 ) -> Result<RepoExposureLatencyRun, String> {
     let args = repo_exposure_latency_args(format);
     let binary_text = binary.display().to_string();
-    let envs = repo_exposure_latency_envs(repo_exposure_receipt_token());
-    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format)?;
-    Ok(repo_exposure_latency_run_from_output(format, output))
+    // A private, empty cache per format: every primary run is cold, so it
+    // computes and emits the file-fact receipt. With the shared default cache
+    // the second format (or a warm first one) takes the classified-seam cache
+    // hit, never reaches the file-fact phase, and `pass` would be unreachable.
+    let cache_dir = repo_exposure_private_cache_dir("primary", format)?;
+    repo_exposure_reset_dir(&cache_dir)?;
+    let cache_dir_text = cache_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", cache_dir.display()))?
+        .to_string();
+    let mut envs = repo_exposure_latency_envs(repo_exposure_receipt_token()).to_vec();
+    envs.push(("RIPR_CACHE_DIR", cache_dir_text.as_str()));
+    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
+    // Best effort: a leftover private cache is ignored build output.
+    let _ = fs::remove_dir_all(&cache_dir);
+    Ok(repo_exposure_latency_run_from_output(format, output?))
 }
 
 /// One half of a parity comparison: the same `ripr check` as the latency run,
@@ -10833,15 +10882,24 @@ struct RepoExposureParityRun {
     cache_load: Option<String>,
 }
 
-fn repo_exposure_parity_cache_dir(format: &str) -> Result<PathBuf, String> {
+fn repo_exposure_private_cache_dir(kind: &str, format: &str) -> Result<PathBuf, String> {
     let cwd = std::env::current_dir()
         .map_err(|err| format!("failed to read the current directory: {err}"))?;
     Ok(cwd
         .join("target")
         .join("ripr")
         .join("reports")
-        .join("repo-exposure-parity-cache")
+        .join(format!("repo-exposure-{kind}-cache"))
         .join(format))
+}
+
+fn repo_exposure_reset_dir(dir: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("failed to clear {}: {err}", dir.display())),
+    }
+    fs::create_dir_all(dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))
 }
 
 fn repo_exposure_parity_run(
@@ -10850,17 +10908,9 @@ fn repo_exposure_parity_run(
     phase: RepoExposureParityPhase,
     timeout: Duration,
 ) -> Result<RepoExposureParityRun, String> {
-    let cache_dir = repo_exposure_parity_cache_dir(format)?;
+    let cache_dir = repo_exposure_private_cache_dir("parity", format)?;
     if phase == RepoExposureParityPhase::Cold {
-        match fs::remove_dir_all(&cache_dir) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!("failed to clear {}: {err}", cache_dir.display()));
-            }
-        }
-        fs::create_dir_all(&cache_dir)
-            .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
+        repo_exposure_reset_dir(&cache_dir)?;
     }
     let cache_dir_text = cache_dir
         .to_str()
@@ -10870,6 +10920,10 @@ fn repo_exposure_parity_run(
     let binary_text = binary.display().to_string();
     let envs = [
         (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
+        (
+            REPO_EXPOSURE_RECEIPT_TOKEN_ENV,
+            repo_exposure_receipt_token(),
+        ),
         ("RIPR_CACHE_DIR", cache_dir_text.as_str()),
     ];
     let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
@@ -10885,13 +10939,7 @@ fn repo_exposure_parity_run(
     } else {
         "fail"
     };
-    let cache_load = repo_exposure_latency_trace(&output.stderr)
-        .into_iter()
-        .rfind(|trace| {
-            trace.phase == "cache_load"
-                && matches!(trace.status.as_str(), "hit" | "miss" | "corrupt_ignored")
-        })
-        .map(|trace| trace.status);
+    let cache_load = repo_exposure_authenticated_cache_load(&output.stderr);
     Ok(RepoExposureParityRun {
         status: status.to_string(),
         stdout: output.stdout,
@@ -10948,8 +10996,9 @@ where
     if run.status != "pass" {
         return not_checked(format!("primary_run_{}", run.status));
     }
-    let Ok(cold) = run_parity(binary, format, RepoExposureParityPhase::Cold, timeout) else {
-        return not_checked("cold_run_error".to_string());
+    let cold = match run_parity(binary, format, RepoExposureParityPhase::Cold, timeout) {
+        Ok(cold) => cold,
+        Err(err) => return not_checked(format!("cold_run_error: {err}")),
     };
     if cold.status != "pass" {
         return not_checked(format!("cold_run_{}", cold.status));
@@ -10957,17 +11006,37 @@ where
     if cold.cache_load.as_deref() == Some("hit") {
         return not_checked("cold_run_served_from_cache".to_string());
     }
-    let Ok(served) = run_parity(binary, format, RepoExposureParityPhase::Served, timeout) else {
-        return not_checked("served_run_error".to_string());
+    // The cold run just succeeded against the same binary and inputs, so a
+    // served run that errors or exits nonzero is the cache path failing, not
+    // infrastructure noise: it is a `fail`, not a quiet `not_checked`. A
+    // timeout stays unverified.
+    let failed = |reason: String| RepoExposureParityCheck {
+        format: format.to_string(),
+        status: "fail",
+        reason: Some(reason),
     };
+    let served = match run_parity(binary, format, RepoExposureParityPhase::Served, timeout) {
+        Ok(served) => served,
+        Err(err) => return failed(format!("served_run_error: {err}")),
+    };
+    if served.status == "fail" {
+        return failed("served_run_fail".to_string());
+    }
     if served.status != "pass" {
         return not_checked(format!("served_run_{}", served.status));
     }
     if served.cache_load.as_deref() != Some("hit") {
         return not_checked("served_run_not_cache_hit".to_string());
     }
-    let equal = repo_exposure_normalized_output(format, &cold.stdout)
-        == repo_exposure_normalized_output(format, &served.stdout);
+    // Equality of nothing, or of text that is not the expected document, is
+    // not parity.
+    let (Some(cold_text), Some(served_text)) = (
+        repo_exposure_normalized_output(format, &cold.stdout),
+        repo_exposure_normalized_output(format, &served.stdout),
+    ) else {
+        return not_checked("output_unparseable".to_string());
+    };
+    let equal = cold_text == served_text;
     RepoExposureParityCheck {
         format: format.to_string(),
         status: if equal { "pass" } else { "mismatch" },
@@ -10979,17 +11048,21 @@ where
 /// `generated_at` and a `content_sha256` that covers it, so those two keys
 /// differ between any two runs; every other byte must match. Markdown has no
 /// volatile field.
-fn repo_exposure_normalized_output(format: &str, stdout: &str) -> String {
-    if format == "repo-exposure-json"
-        && let Ok(mut value) = serde_json::from_str::<Value>(stdout)
-    {
-        if let Some(artifact) = value.get_mut("artifact").and_then(Value::as_object_mut) {
-            artifact.remove("generated_at");
-            artifact.remove("content_sha256");
-        }
-        return value.to_string();
+/// `None` when the text is empty, or for JSON is not a document with an
+/// `artifact` object: a raw-string fallback would false-mismatch on
+/// `generated_at` and an empty-equals-empty comparison would pass vacuously.
+fn repo_exposure_normalized_output(format: &str, stdout: &str) -> Option<String> {
+    if stdout.trim().is_empty() {
+        return None;
     }
-    stdout.to_string()
+    if format != "repo-exposure-json" {
+        return Some(stdout.to_string());
+    }
+    let mut value = serde_json::from_str::<Value>(stdout).ok()?;
+    let artifact = value.get_mut("artifact").and_then(Value::as_object_mut)?;
+    artifact.remove("generated_at");
+    artifact.remove("content_sha256");
+    Some(value.to_string())
 }
 
 fn repo_exposure_latency_run_from_output(
@@ -11250,6 +11323,11 @@ fn repo_exposure_latency_status_reasons(
         match check.status {
             "pass" => {}
             "mismatch" => reasons.push(format!("{}: output_parity_mismatch", check.format)),
+            "fail" => reasons.push(format!(
+                "{}: output_parity_fail_{}",
+                check.format,
+                check.reason.as_deref().unwrap_or("unknown")
+            )),
             _ => reasons.push(format!(
                 "{}: output_parity_not_checked_{}",
                 check.format,
@@ -11266,7 +11344,8 @@ fn repo_exposure_latency_status(
 ) -> String {
     // A cache-served output that differs from a cold recomputation is a
     // correctness failure of the cache path, not a performance warning.
-    if parity.label() == "mismatch" || runs.iter().any(|run| run.status == "fail") {
+    if matches!(parity.label(), "mismatch" | "fail") || runs.iter().any(|run| run.status == "fail")
+    {
         return "fail".to_string();
     }
     if runs
@@ -11448,7 +11527,7 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
             check
                 .reason
                 .as_deref()
-                .map(|reason| format!(" (`{reason}`)"))
+                .map(|reason| format!(" ({})", latency_markdown_cell(reason)))
                 .unwrap_or_default()
         ));
     }

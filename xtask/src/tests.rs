@@ -182,14 +182,14 @@ use super::{
     read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
     repo_badge_artifact_command_args, repo_badge_artifact_jobs,
     repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_cache_family_store_from_stderr,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
+    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
-    repo_exposure_normalized_output, repo_exposure_resource_cost_from_stderr,
-    repo_exposure_summary_report_timeout_ms_from_env, repo_root,
-    repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
+    repo_exposure_normalized_output, repo_exposure_parity_run,
+    repo_exposure_resource_cost_from_stderr, repo_exposure_summary_report_timeout_ms_from_env,
+    repo_root, repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
     report_index_missing_expected, report_index_next_commands, report_index_repo_ops_packets,
     report_index_repo_ops_status, report_packet_index_case_id_violation,
@@ -56319,13 +56319,13 @@ fn repo_exposure_output_parity_unverified_comparisons_stay_not_checked() -> Resu
     let runner_error = build_with_parity(no_parity_runner)?;
     assert_eq!(
         runner_error.output_parity.checks[0].reason.as_deref(),
-        Some("cold_run_error")
+        Some("cold_run_error: no parity runner in this test")
     );
     let reasons =
         repo_exposure_latency_status_reasons(&runner_error.runs, &runner_error.output_parity);
     assert!(
         reasons
-            .contains(&"repo-exposure-json: output_parity_not_checked_cold_run_error".to_string())
+            .contains(&"repo-exposure-json: output_parity_not_checked_cold_run_error: no parity runner in this test".to_string())
     );
 
     // A primary run that timed out never reaches the parity runner.
@@ -56357,11 +56357,185 @@ fn repo_exposure_normalized_output_ignores_only_the_per_run_envelope_stamps() {
     assert_ne!(normalize(PARITY_JSON_A), normalize(PARITY_JSON_C_FINDING));
     let other_tool = PARITY_JSON_A.replace("\"tool\":\"ripr\"", "\"tool\":\"other\"");
     assert_ne!(normalize(PARITY_JSON_A), normalize(&other_tool));
-    assert_ne!(normalize("not json a"), normalize("not json b"));
+    // Not the expected document: no comparable form (never a raw-string
+    // fallback that would false-mismatch on `generated_at`).
+    assert_eq!(normalize("not json a"), None);
+    assert_eq!(normalize(""), None);
+    assert_eq!(normalize("{\"seams\":[]}"), None);
+    assert_eq!(normalize("   \n"), None);
     assert_eq!(
-        repo_exposure_normalized_output("repo-exposure-md", "# a\n"),
-        "# a\n"
+        repo_exposure_normalized_output("repo-exposure-md", "# a\n").as_deref(),
+        Some("# a\n")
     );
+    assert_eq!(
+        repo_exposure_normalized_output("repo-exposure-md", ""),
+        None
+    );
+}
+
+/// #9633: parity never passes vacuously. Equal-but-empty or equal-but-not-JSON
+/// output is `not_checked` with `output_unparseable`.
+#[test]
+fn repo_exposure_output_parity_does_not_pass_on_empty_or_unparseable_output() -> Result<(), String>
+{
+    for body in ["", "not json", "{\"seams\":[]}"] {
+        let report = build_with_parity(parity_runner(body, body, Some("hit")))?;
+        assert_eq!(report.output_parity.label(), "not_checked", "{body:?}");
+        assert_ne!(report.status, "pass", "{body:?}");
+        assert_eq!(
+            report.output_parity.checks[0].reason.as_deref(),
+            Some("output_unparseable")
+        );
+    }
+    Ok(())
+}
+
+/// #9633: a served run that errors or exits nonzero after a passing cold run
+/// is a failure of the cache path, not a quiet warning; a timeout is not.
+#[test]
+fn repo_exposure_output_parity_served_failure_is_a_fail() -> Result<(), String> {
+    let served_status = |status: &'static str| {
+        build_with_parity(move |_, _, phase, _| {
+            Ok(RepoExposureParityRun {
+                status: if phase == RepoExposureParityPhase::Cold {
+                    "pass"
+                } else {
+                    status
+                }
+                .to_string(),
+                stdout: PARITY_JSON_A.to_string(),
+                cache_load: Some("miss".to_string()),
+            })
+        })
+    };
+    let failed = served_status("fail")?;
+    assert_eq!(failed.output_parity.label(), "fail");
+    assert_eq!(failed.status, "fail");
+    let reasons = repo_exposure_latency_status_reasons(&failed.runs, &failed.output_parity);
+    assert!(
+        reasons.contains(&"repo-exposure-json: output_parity_fail_served_run_fail".to_string())
+    );
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&failed))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(json["output_parity"], "fail");
+
+    let errored = build_with_parity(|_, _, phase, _| match phase {
+        RepoExposureParityPhase::Cold => Ok(RepoExposureParityRun {
+            status: "pass".to_string(),
+            stdout: PARITY_JSON_A.to_string(),
+            cache_load: Some("miss".to_string()),
+        }),
+        RepoExposureParityPhase::Served => Err("spawn boom".to_string()),
+    })?;
+    assert_eq!(errored.output_parity.label(), "fail");
+    assert_eq!(
+        errored.output_parity.checks[0].reason.as_deref(),
+        Some("served_run_error: spawn boom")
+    );
+    assert_eq!(
+        served_status("timeout")?.output_parity.label(),
+        "not_checked"
+    );
+    Ok(())
+}
+
+/// #9633: only phase lines carrying this process's token count, and the last
+/// `cache_load` status wins (a `miss` followed by a `hit` is a hit).
+#[test]
+fn authenticated_cache_load_takes_the_last_tokened_status() {
+    let line = |token: &str, status: &str| {
+        format!(
+            "ripr_repo_exposure_latency token={token} phase=cache_load status={status} duration_ms=1\n"
+        )
+    };
+    let both = format!(
+        "{}{}",
+        line("unittesttoken", "miss"),
+        line("unittesttoken", "hit")
+    );
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(&both).as_deref(),
+        Some("hit")
+    );
+    // A start marker is not a result; a bare or wrong-token line is ignored.
+    let noisy = format!(
+        "{}ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=0\n{}{}",
+        line("unittesttoken", "miss"),
+        line("guessed", "hit"),
+        line("unittesttoken", "start_files_2"),
+    );
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(&noisy).as_deref(),
+        Some("miss")
+    );
+    assert_eq!(repo_exposure_authenticated_cache_load(""), None);
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(
+            "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=0\n"
+        ),
+        None
+    );
+}
+
+/// #9633: the exact producer-shaped lines (as the analyzer writes them with
+/// the token env set) parse on the consumer side.
+#[test]
+fn producer_shaped_receipt_lines_parse() {
+    let cache = "ripr_file_fact_cache_receipt token=unittesttoken {\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}\n";
+    let (parsed, limitation) = repo_exposure_file_fact_cache_from_stderr(cache);
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(parsed.map(|cache| cache.misses), Some(2));
+    let family = "ripr_cache_family_store_receipt token=unittesttoken {\"schema_version\":\"0.1\",\"store_errors\":1,\"store_failures\":[{\"error\":\"create cache dir failed: Not a directory (os error 20)\",\"path\":\"repo-seam-facts\",\"stage\":\"classified_seam_store\"}],\"store_failures_dropped\":0}\n";
+    let (parsed, limitation) = repo_exposure_cache_family_store_from_stderr(family);
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(parsed.map(|store| store.store_failures.len()), Some(1));
+}
+
+/// #9633: a real, non-injected report run. `pass` is reachable end to end:
+/// the real runners drive a built `ripr` over a small fixture root, with the
+/// private caches making every primary receipt observable. Skipped (visibly)
+/// when no built debug `ripr` exists.
+#[test]
+fn real_latency_report_run_on_a_small_fixture_can_pass() -> Result<(), String> {
+    let binary = repo_root()?.join(ripr_debug_binary());
+    if !binary.exists() {
+        eprintln!("skipping: no built ripr at {}", binary.display());
+        return Ok(());
+    }
+    with_temp_cwd("repo-exposure-latency-real", |root| {
+        fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("tests/t.rs"),
+            "#[test]\nfn t() { assert!(fx::discount(5, 5)); }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        write_repo_exposure_latency_report(
+            &binary,
+            120_000,
+            repo_exposure_latency_run,
+            repo_exposure_parity_run,
+        )?;
+        let json: Value = serde_json::from_str(
+            &fs::read_to_string("target/ripr/reports/repo-exposure-latency.json")
+                .map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(json["status_reasons"], serde_json::json!([]), "{json}");
+        assert_eq!(json["output_parity"], "pass", "{json}");
+        assert_eq!(json["status"], "pass", "{json}");
+        Ok(())
+    })
 }
 
 /// #9633 (audit F-C4-3): a stderr line that merely starts with a receipt

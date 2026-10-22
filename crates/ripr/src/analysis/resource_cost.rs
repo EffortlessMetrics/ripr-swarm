@@ -118,8 +118,26 @@ pub(crate) fn trace_latency_phase(phase: &str, status: &str, duration: Duration)
 /// visible so a consumer's test can assert the exact wire shape without
 /// reading stderr.
 pub(crate) fn latency_trace_line(phase: &str, status: &str, duration: Duration) -> String {
+    latency_trace_line_with_token(
+        phase,
+        status,
+        duration,
+        std::env::var(RECEIPT_TOKEN_ENV).ok().as_deref(),
+    )
+}
+
+/// With a valid harness token the phase line reads
+/// `ripr_repo_exposure_latency token=<t> phase=...`; without one it keeps its
+/// original shape.
+fn latency_trace_line_with_token(
+    phase: &str,
+    status: &str,
+    duration: Duration,
+    token: Option<&str>,
+) -> String {
+    let token = receipt_prefix_with_token("", token);
     format!(
-        "ripr_repo_exposure_latency phase={phase} status={status} duration_ms={}",
+        "ripr_repo_exposure_latency {token}phase={phase} status={status} duration_ms={}",
         duration.as_millis()
     )
 }
@@ -539,6 +557,45 @@ mod tests {
         parse_resource_cost_receipt, receipt_serialization_failed_body, source_to_ms,
     };
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn receipt_prefix_carries_only_a_valid_token() {
+        use super::{latency_trace_line_with_token, receipt_prefix_with_token};
+        let base = "ripr_x_receipt ";
+        assert_eq!(
+            receipt_prefix_with_token(base, Some("abc123")),
+            "ripr_x_receipt token=abc123 "
+        );
+        let long_ok = "a".repeat(64);
+        assert_eq!(
+            receipt_prefix_with_token(base, Some(&long_ok)),
+            format!("ripr_x_receipt token={long_ok} ")
+        );
+        for rejected in [
+            None,
+            Some(""),
+            Some("has space"),
+            Some("a-b"),
+            Some("tok\nen"),
+        ] {
+            assert_eq!(receipt_prefix_with_token(base, rejected), base);
+        }
+        let too_long = "a".repeat(65);
+        assert_eq!(receipt_prefix_with_token(base, Some(&too_long)), base);
+        assert_eq!(
+            latency_trace_line_with_token(
+                "cache_load",
+                "hit",
+                Duration::from_millis(3),
+                Some("t1")
+            ),
+            "ripr_repo_exposure_latency token=t1 phase=cache_load status=hit duration_ms=3"
+        );
+        assert_eq!(
+            latency_trace_line_with_token("cache_load", "hit", Duration::from_millis(3), None),
+            "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=3"
+        );
+    }
 
     fn observation(host_os: &str) -> ResourceCostObservation {
         ResourceCostObservation {

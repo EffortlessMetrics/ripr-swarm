@@ -2452,6 +2452,39 @@ fn repo_exposure_latency_output_parity(artifact: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Readiness verdict for a non-`pass` latency report: `(status, required,
+/// summary, details)`. A served output that differs from the cold one
+/// (`mismatch`) or a served run that failed after a passing cold run (`fail`)
+/// is a correctness failure of the cache path and a required `fail`; every
+/// other non-pass state (unchecked parity, cache store errors, timeouts, a
+/// report without the field) stays a non-required `warn`.
+fn latency_readiness_from(
+    status: &str,
+    parity: Option<&str>,
+    reasons: Vec<String>,
+) -> (&'static str, bool, &'static str, Vec<String>) {
+    let mut details = vec![format!("report status: {status}")];
+    if let Some(parity) = parity {
+        details.push(format!("output parity: {parity}"));
+    }
+    details.extend(reasons);
+    if matches!(parity, Some("mismatch" | "fail")) {
+        (
+            "fail",
+            true,
+            "repo-exposure latency report found a cache-served output that differs from, or failed where, a cold recomputation succeeded",
+            details,
+        )
+    } else {
+        (
+            "warn",
+            false,
+            "repo-exposure latency report exists but is not passing",
+            details,
+        )
+    }
+}
+
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
     let command = "cargo xtask repo-exposure-latency-report";
     let artifact = "target/ripr/reports/repo-exposure-latency.json";
@@ -2477,22 +2510,15 @@ fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
                 // (unchecked parity, cache store errors, timeouts) stays a
                 // non-required `warn` naming the report's own reasons.
                 let parity = repo_exposure_latency_output_parity(Path::new(artifact));
-                let mut details = vec![format!("report status: {status}")];
-                if let Some(parity) = &parity {
-                    details.push(format!("output parity: {parity}"));
-                }
-                details.extend(repo_exposure_latency_status_reasons(Path::new(artifact)));
-                let mismatch = parity.as_deref() == Some("mismatch");
+                let reasons = repo_exposure_latency_status_reasons(Path::new(artifact));
+                let (check_status, required, summary, details) =
+                    latency_readiness_from(&status, parity.as_deref(), reasons);
                 readiness_check(
                     "repo-exposure-latency",
-                    if mismatch { "fail" } else { "warn" },
-                    mismatch,
+                    check_status,
+                    required,
                     command,
-                    if mismatch {
-                        "repo-exposure latency report found cache-served output that differs from a cold recomputation"
-                    } else {
-                        "repo-exposure latency report exists but is not passing"
-                    },
+                    summary,
                     vec![
                         artifact.to_string(),
                         "target/ripr/reports/repo-exposure-latency.md".to_string(),
@@ -3525,10 +3551,10 @@ mod tests {
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
-        init_pin_version_check_from, latest_released_version_in, missing_required_needles,
-        package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
-        readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_output_parity,
+        init_pin_version_check_from, latency_readiness_from, latest_released_version_in,
+        missing_required_needles, package_version, packaged_archive_commit,
+        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
+        release_readiness_markdown, release_readiness_status, repo_exposure_latency_output_parity,
         repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
         validate_installed_version, validate_installed_version_result, validate_package_entry,
         vsix_start_current_repair_command_present,
@@ -3554,6 +3580,22 @@ mod tests {
         assert_eq!(reasons, vec!["status reason: output_parity_not_checked"]);
         assert!(missing.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn latency_readiness_blocks_only_on_parity_mismatch_or_failure() {
+        let reasons = vec!["status reason: x".to_string()];
+        for parity in ["mismatch", "fail"] {
+            let (status, required, _, details) =
+                latency_readiness_from("fail", Some(parity), reasons.clone());
+            assert_eq!((status, required), ("fail", true), "{parity}");
+            assert!(details.contains(&format!("output parity: {parity}")));
+            assert!(details.contains(&"status reason: x".to_string()));
+        }
+        for parity in [Some("not_checked"), Some("pass"), None] {
+            let (status, required, _, _) = latency_readiness_from("warn", parity, reasons.clone());
+            assert_eq!((status, required), ("warn", false), "{parity:?}");
+        }
     }
 
     #[test]

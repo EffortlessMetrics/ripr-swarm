@@ -1758,15 +1758,20 @@ impl RepoExposureLatencySummary {
     }
 }
 
+fn latency_report_schema_is_readable(version: Option<&str>) -> bool {
+    version
+        .and_then(|version| version.split_once('.'))
+        .is_some_and(|(major, minor)| major == "0" && minor.parse::<u32>().is_ok())
+}
+
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
-    // 0.2 (#3864) only added the file-fact cache receipt and 0.3 (#5213) only
-    // added the analyzer's own resource cost; the run status and trace fields
-    // read here are unchanged, so every version stays usable.
-    if !matches!(
-        string_path(&report, &["schema_version"]).as_deref(),
-        Some("0.1" | "0.2" | "0.3")
-    ) || string_path(&report, &["tool"]).as_deref() != Some("ripr")
+    // Every 0.x revision so far only added fields (0.2 the file-fact cache
+    // receipt, 0.3 the analyzer's resource cost, 0.4 and 0.5 the output-parity
+    // and store receipts); the run status and trace fields read here are
+    // unchanged, so any 0.x version stays usable. A new major would not be.
+    if !latency_report_schema_is_readable(string_path(&report, &["schema_version"]).as_deref())
+        || string_path(&report, &["tool"]).as_deref() != Some("ripr")
         || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
     {
         return None;
@@ -3504,10 +3509,10 @@ mod tests {
 
     #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
-        // 0.2 is what `repo-exposure-latency-report` wrote since #3864 and
-        // 0.3 since #5213; 0.1 predates both. This consumer reads only status
+        // 0.2 is what `repo-exposure-latency-report` wrote since #3864, 0.3
+        // since #5213, 0.4 since #9503 and 0.5 since #9633; 0.1 predates all. This consumer reads only status
         // and trace fields, so it must accept every version rather than one.
-        for schema_version in ["0.1", "0.2", "0.3"] {
+        for schema_version in ["0.1", "0.2", "0.3", "0.4", "0.5"] {
             existing_latency_timeout_report_is_used(schema_version)?;
         }
         Ok(())
