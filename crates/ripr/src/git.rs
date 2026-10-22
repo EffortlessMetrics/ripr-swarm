@@ -51,14 +51,34 @@ pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE
 }
 
+/// Displayed character cap for each output stream in the unified failure
+/// message, after terminal escaping. Matches the documented contract
+/// ("stdout: <first 500 chars>"); stderr gets the same bound so a chatty or
+/// hostile git cannot flood the terminal (#9604 batch E).
+const GIT_OUTPUT_DISPLAY_MAX_CHARS: usize = 500;
+
+/// Bound and terminal-escape one git output stream for the unified failure
+/// message. Control characters are escaped before the cap so the displayed
+/// prefix is exactly what is limited.
+fn bounded_git_output(bytes: &[u8], max_chars: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let escaped = crate::terminal_text::terminal_safe(text.trim().to_string());
+    if escaped.chars().count() <= max_chars {
+        return escaped;
+    }
+    let mut bounded: String = escaped.chars().take(max_chars).collect();
+    bounded.push('…');
+    bounded
+}
+
 /// Run `git -C <root> <args...>` with no deadline and return trimmed stdout
 /// on success.
 ///
 /// Returns a unified error on failure:
 /// ```text
 /// git -C <root> <args...> failed
-/// stdout: <first 500 chars>
-/// stderr: <trimmed>
+/// stdout: <first 500 chars, terminal-escaped>
+/// stderr: <first 500 chars, terminal-escaped>
 /// ```
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, CoreError> {
     let output = run_git_output_with_deadline(root, args, None)?;
@@ -67,20 +87,18 @@ pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, CoreError> {
             .map(|value| value.trim().to_string())
             .map_err(|err| {
                 CoreError::message(format!(
-                    "git -C {} {:?} produced non-UTF-8 output: {err}",
+                    "git -C {} {} produced non-UTF-8 output: {err}",
                     root.display(),
-                    args
+                    args.join(" ")
                 ))
             })
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
         Err(CoreError::message(format!(
-            "git -C {} {:?} failed\nstdout: {}\nstderr: {}",
+            "git -C {} {} failed\nstdout: {}\nstderr: {}",
             root.display(),
-            args,
-            stdout.trim(),
-            stderr.trim()
+            args.join(" "),
+            bounded_git_output(&output.stdout, GIT_OUTPUT_DISPLAY_MAX_CHARS),
+            bounded_git_output(&output.stderr, GIT_OUTPUT_DISPLAY_MAX_CHARS),
         )))
     }
 }
@@ -108,7 +126,10 @@ pub(crate) fn run_git_output_with_deadline(
     args: &[&str],
     timeout: Option<Duration>,
 ) -> Result<Output, CoreError> {
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     let command = git_command(root, args);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
     // the spawn itself fails, preserving the established
@@ -467,7 +488,10 @@ pub(crate) fn run_git_output_with_deadline_and_env(
     envs: &[(&str, &std::ffi::OsStr)],
     timeout: Option<Duration>,
 ) -> Result<Output, CoreError> {
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     let mut command = git_command(root, args);
     for (key, value) in envs {
         command.env(key, value);
@@ -493,7 +517,10 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
             "git output limit must be greater than zero",
         ));
     }
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     collect_output_with_deadline_and_limit(
         git_command(root, args),
         timeout,
@@ -561,7 +588,10 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
             "git output limit must be greater than zero",
         ));
     }
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     collect_output_with_optional_deadline_and_limit(
         git_command(root, args),
         timeout,
@@ -1372,6 +1402,45 @@ mod tests {
     use super::*;
     use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
     use serial_test::serial;
+
+    #[test]
+    fn bounded_git_output_escapes_controls_and_marks_the_cap() {
+        let escaped = bounded_git_output(b"fatal: bad \x07bell\n", 500);
+        assert!(
+            !escaped.contains('\x07'),
+            "control characters must be escaped before display: {escaped:?}"
+        );
+        let long = "x".repeat(600);
+        let capped = bounded_git_output(long.as_bytes(), 500);
+        assert_eq!(capped.chars().count(), 501, "cap plus one ellipsis char");
+        assert!(capped.ends_with('…'), "the cap must be marked: {capped:?}");
+    }
+
+    #[test]
+    fn run_git_failure_uses_plain_argv_and_bounds_streams() {
+        // `rev-parse --verify --quiet` with an absurdly long bogus ref name
+        // fails with exit 128 and a stderr reason; any failing git argv works
+        // for the format assertions.
+        let root = std::env::temp_dir();
+        let err = run_git(
+            &root,
+            &["rev-parse", "--verify", "refs/heads/ripr-format-probe"],
+        )
+        .expect_err("a missing ref must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("git -C ") && message.contains("rev-parse --verify"),
+            "the command line must read as typed, got: {message}"
+        );
+        assert!(
+            !message.contains("[\"") && !message.contains(", \""),
+            "debug-format argv must not reach the user: {message}"
+        );
+        assert!(
+            message.contains("stderr: fatal:"),
+            "the failure must still name git's own reason: {message}"
+        );
+    }
 
     #[test]
     fn work_tree_root_timeout_omits_inapplicable_deadline_guidance() {
