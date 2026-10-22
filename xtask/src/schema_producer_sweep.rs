@@ -99,12 +99,10 @@ const BINDINGS: &[Binding] = &[
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
         ],
-        excluded: &[
-            (
-                "fixtures/evidence-promotion-honesty-corpus/reports/",
-                "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
-            ),
-        ],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -1307,7 +1305,10 @@ mod tests {
             let feed = step
                 .find(&format!("--artifact schemas/ripr/{schema}.schema.json="))
                 .ok_or_else(|| format!("sweep step does not feed {schema}"))?;
-            assert!(feed > guard, "{schema} feed sits outside the pull_request guard");
+            assert!(
+                feed > guard,
+                "{schema} feed sits outside the pull_request guard"
+            );
         }
         for schema in ["doctor", "pr-evidence", "review-comments"] {
             assert!(
