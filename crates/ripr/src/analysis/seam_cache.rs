@@ -475,11 +475,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.90`: an assertion in `tokio::spawn(async { .. })` joined by
 /// `.await.unwrap()` or `.expect(..)` pins the owner (RIPR-SPEC-0197). Old
 /// entries keep the async-block refusal.
-/// `1.91`: a match arm fed by a bounded caller loop inside an `Iterator::next`
+/// `1.91`: a table loop that opens with `if SKIPPED.contains(&key) {
+/// continue; }` over a literal `const` list lends the rows it lets through
+/// to an arm selection (RIPR-SPEC-0229 decision 7). Old entries keep the
+/// loop unread.
+/// `1.92`: a match arm fed by a bounded caller loop inside an `Iterator::next`
 /// and checked by a collect-and-compare test is withheld as
 /// `rust_caller_loop_selector_unresolved` (RIPR-SPEC-0240, #5503). Old entries
 /// keep the weak gap.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.91";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.92";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -616,8 +620,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.91";
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
 /// `0.96`: same mock call-count evidence as full `1.89`.
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
-/// `0.98`: same caller-loop selector limit as full `1.91`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.98";
+/// `0.98`: same skip-guarded table rows as full `1.91`.
+/// `0.99`: same caller-loop selector limit as full `1.92`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -756,8 +761,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.98";
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
 /// `0.96`: same mock call-count evidence as full `1.89`.
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
-/// `0.98`: same caller-loop selector limit as full `1.91`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.98";
+/// `0.98`: same skip-guarded table rows as full `1.91`.
+/// `0.99`: same caller-loop selector limit as full `1.92`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3110,6 +3116,7 @@ impl ShardedCacheEnvelope {
 std::thread_local! {
     // Thread-owned counters observe real codec work without interference from parallel tests.
     static INTEGRITY_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
+    static INTEGRITY_HASH_UPDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INTEGRITY_VEC_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -3200,11 +3207,13 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
 fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    // The serializer feeds SHA-256 directly: warm admission never buffers a second body.
+    // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
     impl std::io::Write for ChecksumWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.update(bytes);
+            #[cfg(test)]
+            INTEGRITY_HASH_UPDATES.with(|count| count.set(count.get().saturating_add(1)));
             Ok(bytes.len())
         }
 
@@ -3215,7 +3224,13 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     let mut writer = ChecksumWriter(Sha256::new());
     writer.0.update(domain.as_bytes());
     writer.0.update([0]);
+    // Coalesce tiny serializer fragments before SHA updates. Scratch stays
+    // fixed-size; draining before finalization preserves every trailing byte.
+    let mut writer = std::io::BufWriter::with_capacity(8 * 1024, writer);
     serde_json::to_writer(&mut writer, body)
+        .map_err(|err| format!("encode integrity body failed: {err}"))?;
+    let writer = writer
+        .into_inner()
         .map_err(|err| format!("encode integrity body failed: {err}"))?;
     #[cfg(test)]
     INTEGRITY_WORK.with(|work| {
@@ -3319,6 +3334,8 @@ impl CorpusFingerprintEnvelope {
 }
 
 /// Codec module owns serialization format and integrity emission.
+#[cfg(test)]
+mod digest_tests;
 mod related_test_table;
 
 mod codec {
@@ -4703,8 +4720,9 @@ mod tests {
         // 1.87 -> 1.88: the `debug_assert_eq!` profile limit (#8051).
         // 1.88 -> 1.89: mock call counts observe a guard's side flip (RIPR-SPEC-0305).
         // 1.89 -> 1.90: joined `tokio::spawn` assertions pin the owner (RIPR-SPEC-0197).
-        // 1.90 -> 1.91: caller-loop selector limit (RIPR-SPEC-0240, #5503).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.91");
+        // 1.90 -> 1.91: a literal skip list lends the rows its guard lets through (RIPR-SPEC-0229).
+        // 1.91 -> 1.92: caller-loop selector limit (RIPR-SPEC-0240, #5503).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.92");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4783,9 +4801,10 @@ mod tests {
         // 0.94 -> 0.95: same `debug_` assertion limit as full 1.88 (#8051).
         // 0.95 -> 0.96: same mock call-count evidence as full 1.89.
         // 0.96 -> 0.97: same spawned-task assertion pins as full 1.90.
-        // 0.97 -> 0.98: same caller-loop selector limit as full 1.91.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.98");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.98");
+        // 0.97 -> 0.98: same skip-guarded table rows as full 1.91.
+        // 0.98 -> 0.99: same caller-loop selector limit as full 1.92.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
     }
 
     #[test]

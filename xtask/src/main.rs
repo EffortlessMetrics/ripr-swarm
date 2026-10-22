@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod termination_qualification;
 mod types;
 mod work_adapter_identity;
 mod work_burndown_identity;
@@ -298,8 +299,8 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]

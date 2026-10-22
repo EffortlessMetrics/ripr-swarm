@@ -27,6 +27,8 @@ pub(super) struct SelectionPacket {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(super) struct PacketClaim {
     pub(super) claim_id: String,
+    #[serde(default)]
+    pub(super) owner_issue: u64,
     pub(super) resolution: String,
 }
 
@@ -88,6 +90,11 @@ pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     validate_selected_claims(ledger, context, &mut reasons);
     validate_open_prs(ledger, context, &mut reasons);
     validate_final(ledger, &mut reasons);
+    if ledger.stage == STAGE_FINAL && context.packet.is_none() {
+        reasons.push(
+            "a final ledger must be validated against the #2766 packet (--packet)".to_string(),
+        );
+    }
     validate_digests(ledger, context, &mut reasons);
     reasons
 }
@@ -360,9 +367,6 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
         PRESENT_EFFECTIVE if owned == 0 => {
             Some("present_effective needs a last-toucher path or a blamed line")
         }
-        PRESENT_EFFECTIVE if basis.alive_paths == 0 => {
-            Some("present_effective needs an alive touched path")
-        }
         PRESENT_BUT_SUPERSEDED if basis.alive_paths == 0 || owned > 0 => {
             Some("present_but_superseded needs alive paths and no owned path or line")
         }
@@ -390,22 +394,27 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
     }
 }
 
-/// The rule's first two steps are exact consequences of the tree effect.
+/// Rule v1: a commit reached only through a merge is historical-reachable-only
+/// whatever its effect; on a first-parent commit the tree effect decides the
+/// first two steps. An override may replace either.
 fn validate_disposition_effect(record: &Record, reasons: &mut Vec<String>) {
-    if record.override_ref.is_some() {
+    if record.override_ref.is_some() || record.release_disposition == BLOCKING {
         return;
     }
-    let expected = match record.final_tree_effect.as_str() {
-        PRESENT_BUT_SUPERSEDED => Some("included_superseded_by_later_fix"),
-        HISTORY_NO_BLOB_EFFECT => Some("included_historical_reachable_only"),
-        _ => None,
+    let expected = if record.first_parent_position.is_none() {
+        Some("included_historical_reachable_only")
+    } else {
+        match record.final_tree_effect.as_str() {
+            PRESENT_BUT_SUPERSEDED => Some("included_superseded_by_later_fix"),
+            HISTORY_NO_BLOB_EFFECT => Some("included_historical_reachable_only"),
+            _ => None,
+        }
     };
     if let Some(expected) = expected
         && record.release_disposition != expected
-        && record.release_disposition != BLOCKING
     {
         reasons.push(format!(
-            "{}: effect {} requires disposition {expected} without an override_ref",
+            "{}: effect {} on this commit requires disposition {expected} without an override_ref",
             record.commit_sha, record.final_tree_effect
         ));
     }

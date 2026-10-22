@@ -1,0 +1,10 @@
+diff --git a/idioms/grading.py b/idioms/grading.py
+--- a/idioms/grading.py
++++ b/idioms/grading.py
+@@ -1,5 +1,5 @@
+ def grade(score):
+-    if score >= 90:
++    if score > 90:
+         return "A"
+     if score >= 80:
+         return "B"
