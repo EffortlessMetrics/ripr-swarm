@@ -120,7 +120,7 @@ fn separated_on_probe_grid(
 /// reported as agreeing.
 fn same_value(a: &Val, b: &Val) -> bool {
     match (a, b) {
-        (Val::Num(x), Val::Num(y)) => x == y && x.is_sign_negative() == y.is_sign_negative(),
+        (Val::Num(x), Val::Num(y)) => !x.is_nan() && x.to_bits() == y.to_bits(),
         _ => a == b,
     }
 }
