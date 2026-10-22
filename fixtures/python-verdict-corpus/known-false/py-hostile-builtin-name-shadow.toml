@@ -1,0 +1,3 @@
+case = "py-hostile-builtin-name-shadow"
+issue = 9426
+reason = "False actionable: boundary check fires on a reversing comparison flip (#9426)."
