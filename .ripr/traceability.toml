@@ -13266,6 +13266,12 @@ name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/owner_pin_execution.rs::tokio_spawned_task_counts_only_when_joined_and_unwrapped",
+  "crates/ripr/tests/invisible_change.rs::an_input_where_pow_bases_agree_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::an_input_below_the_cap_does_not_expose_a_raised_cap",
+  "crates/ripr/tests/invisible_change.rs::a_second_input_that_separates_the_versions_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_input_that_hits_the_cap_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_owner_call_in_the_expected_operand_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_computed_argument_keeps_the_credit",
   "crates/ripr/tests/returned_comparison_boundary.rs::inputs_far_from_the_threshold_do_not_expose_the_returned_comparison",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_input_at_the_changed_boundary_keeps_the_returned_comparison_exposed",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_returned_compound_predicate_keeps_the_return_value_reading",
