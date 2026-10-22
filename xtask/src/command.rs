@@ -2233,8 +2233,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "report_only",
             "target/ripr/reports/schema-producer-sweep.json",
             false,
-            false,
-            "Release-only: validates every committed producer document and supplied live artifact against its published schema.",
+            true,
+            "Validates every committed producer document and supplied live artifact against its published schema; the required Rust gate runs it with doctor, pr-evidence and review-comments artifacts (#9505).",
         ),
         command_entry(
             "check-dependencies",
