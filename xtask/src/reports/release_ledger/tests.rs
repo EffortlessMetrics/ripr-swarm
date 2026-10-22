@@ -504,3 +504,22 @@ fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> 
         "present_effective needs a last-toucher path or a blamed line",
     )
 }
+
+#[test]
+fn markdown_projection_shows_every_records_theme() -> Result<(), String> {
+    let ledger = valid();
+    let markdown = super::report_markdown(&ledger, "pass", &[]);
+    if !(markdown.contains("| Theme | Count |") && markdown.contains("| Disposition | Theme |")) {
+        return Err("the theme count table or the records column is missing".to_string());
+    }
+    for record in &ledger.records {
+        let cell = format!("| `{}` |", record.theme);
+        let shown = markdown
+            .lines()
+            .any(|line| line.contains(&record.commit_sha) && line.contains(&cell));
+        if !shown {
+            return Err(format!("{} lacks its theme cell", record.commit_sha));
+        }
+    }
+    Ok(())
+}
