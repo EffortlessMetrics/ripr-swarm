@@ -5384,7 +5384,10 @@ mod tests {
             "relation evidence missing: {:?}",
             finding.evidence
         );
-        assert_eq!(finding.ripr.infect.state, crate::domain::StageState::Unknown);
+        assert_eq!(
+            finding.ripr.infect.state,
+            crate::domain::StageState::Unknown
+        );
         assert!(
             finding.evidence.iter().any(|line| line.contains(
                 "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
@@ -5422,7 +5425,10 @@ mod tests {
                     && finding.probe.expression.contains("end == start")
             })
             .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
-        assert_eq!(finding.ripr.infect.state, crate::domain::StageState::Unknown);
+        assert_eq!(
+            finding.ripr.infect.state,
+            crate::domain::StageState::Unknown
+        );
         assert!(
             finding
                 .evidence
