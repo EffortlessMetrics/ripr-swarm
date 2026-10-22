@@ -40,6 +40,11 @@ pub(crate) struct Ledger {
     /// (`verdict_corpus_known_false.rs`).
     #[serde(default)]
     pub(crate) known_false: Vec<super::known_false::KnownFalse>,
+    /// Most abstained rows whose tests do discriminate the change (missed
+    /// credit). Ratcheted both ways: a regression fails, and an improvement
+    /// must lower it (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) missed_credit_ceiling: Option<usize>,
     /// Coverage axes beyond spec examples: language shapes, test-library
     /// idioms and hostile inputs, each with the case count `check` protects.
     #[serde(default)]

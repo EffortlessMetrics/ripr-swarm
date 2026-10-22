@@ -8,7 +8,7 @@
 //! fails `check` as an unlisted false verdict.
 
 use super::coverage::Ledger;
-use super::{CaseRow, Outcome, coverage};
+use super::{CaseRow, Outcome, TruthState, coverage};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -101,6 +101,34 @@ pub(crate) fn known_false_gate(
     }
 }
 
+/// Rows where the tests discriminate the change but ripr abstained instead of
+/// crediting it: a safe answer that still leaves credit unclaimed.
+fn missed_credit(rows: &[CaseRow]) -> usize {
+    rows.iter()
+        .filter(|row| row.truth == TruthState::Discriminated && row.outcome == Outcome::Abstained)
+        .count()
+}
+
+/// Ratchet `missed_credit_ceiling`: above it is a regression, below it is an
+/// improvement the ledger must record so it cannot be given back unnoticed.
+/// A ledger without a ceiling does not gate missed credit.
+fn missed_credit_gate(missed: usize, ledger: &Ledger, ledger_label: &str) -> Result<(), String> {
+    let Some(ceiling) = ledger.missed_credit_ceiling else {
+        return Ok(());
+    };
+    if missed > ceiling {
+        return Err(format!(
+            "verdict-corpus: {missed} abstained rows had tests that catch the change, above the missed_credit_ceiling of {ceiling} in {ledger_label}; a verdict stopped crediting a discriminating test. Fix the regression; raising the ceiling is a reviewed edit with a reason"
+        ));
+    }
+    if missed < ceiling {
+        return Err(format!(
+            "verdict-corpus: {missed} abstained rows had tests that catch the change, below the missed_credit_ceiling of {ceiling} in {ledger_label}; lower the ceiling to {missed} so the improvement cannot regress"
+        ));
+    }
+    Ok(())
+}
+
 /// Join the ledger gate's failure to `existing`. A case subset cannot see the
 /// whole corpus's false rows, and a corpus without a ledger has no gate.
 pub(crate) fn apply_known_false_gate(
@@ -117,15 +145,22 @@ pub(crate) fn apply_known_false_gate(
         .iter()
         .map(|row| (row.case_id.as_str(), row.outcome))
         .collect();
-    Ok(
-        match known_false_gate(&scored, &ledger, &coverage::ledger_label(dir)) {
-            Ok(()) => existing,
-            Err(failure) => Some(match existing {
-                Some(existing) => format!("{existing}\n{failure}"),
-                None => failure,
-            }),
-        },
-    )
+    let label = coverage::ledger_label(dir);
+    let failures: Vec<String> = [
+        known_false_gate(&scored, &ledger, &label),
+        missed_credit_gate(missed_credit(rows), &ledger, &label),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .collect();
+    if failures.is_empty() {
+        return Ok(existing);
+    }
+    let failure = failures.join("\n");
+    Ok(Some(match existing {
+        Some(existing) => format!("{existing}\n{failure}"),
+        None => failure,
+    }))
 }
 
 #[cfg(test)]
@@ -196,6 +231,41 @@ mod tests {
         let ownerless = "[[known_false]]\ncase = \"a\"\nissue = 0\nreason = \" \"\n";
         let err = failure(&[("a", Outcome::FalseSilent)], ownerless);
         assert!(err.contains("owning `issue`"), "{err}");
+    }
+
+    fn ceiling(value: Option<usize>) -> Result<Ledger, String> {
+        let line = value.map_or(String::new(), |v| format!("missed_credit_ceiling = {v}\n"));
+        ledger(&line)
+    }
+
+    #[test]
+    fn missed_credit_ceiling_ratchets_both_ways() -> Result<(), String> {
+        missed_credit_gate(3, &ceiling(Some(3))?, "l.toml")?;
+        let up = missed_credit_gate(4, &ceiling(Some(3))?, "l.toml").err();
+        assert!(
+            up.is_some_and(|e| e.contains("above")),
+            "regression must fail"
+        );
+        let down = missed_credit_gate(2, &ceiling(Some(3))?, "l.toml").err();
+        assert!(down.is_some_and(|e| e.contains("lower the ceiling to 2")));
+        // No ceiling, no gate.
+        missed_credit_gate(99, &ceiling(None)?, "l.toml")
+    }
+
+    #[test]
+    fn missed_credit_counts_only_abstained_discriminated_rows() -> Result<(), String> {
+        let (_, rows) = committed_rust_rows()?;
+        let expected = rows
+            .iter()
+            .filter(|r| r.outcome == Outcome::Abstained && r.truth == TruthState::Discriminated)
+            .count();
+        assert_eq!(missed_credit(&rows), expected);
+        assert!(
+            rows.iter()
+                .any(|r| r.outcome == Outcome::Abstained && r.truth != TruthState::Discriminated)
+                || expected > 0
+        );
+        Ok(())
     }
 
     fn committed_rust_rows() -> Result<(std::path::PathBuf, Vec<CaseRow>), String> {
