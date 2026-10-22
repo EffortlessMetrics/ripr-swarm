@@ -10,9 +10,9 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 | Python | 25 | 191 |
 | Perl | 1 | 60 |
 
-Every false row is listed once in the `[[known_false]]` tables of
-`fixtures/<language>-verdict-corpus/spec-coverage.toml`, each with its owning
-issue. `verdict-corpus check` fails on a false row that is not listed, and on a
+Every false row has its own file, `fixtures/<language>-verdict-corpus/known-false/<case>.toml`
+(`case`, `issue`, `reason`), so a fix deletes one file and parallel PRs never
+edit neighbouring lines. `verdict-corpus check` fails on a false row that is not listed, and on a
 listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. Fix a row in the case, the
 spec or the analyzer. Never exclude or reclassify it.

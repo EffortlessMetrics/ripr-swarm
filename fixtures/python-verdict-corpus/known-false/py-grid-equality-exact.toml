@@ -1,0 +1,3 @@
+case = "py-grid-equality-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."

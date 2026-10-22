@@ -1,0 +1,3 @@
+case = "jest-mined-private-impl-dispatcher"
+issue = 6655
+reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
