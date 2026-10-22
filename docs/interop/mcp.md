@@ -532,7 +532,9 @@ so an id can never grow a reply past the response cap. The terminal
 response that still cannot be encoded.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
-Stdout carries only protocol messages; operational errors go to stderr, and
+Stdout carries only protocol messages; operational errors go to stderr (an
+unusable `--root` additionally prints one startup warning line on stderr; tools
+still fail closed with `workspace_unavailable`), and
 invalid command-line arguments exit with status 2.
 
 Supported protocol versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
