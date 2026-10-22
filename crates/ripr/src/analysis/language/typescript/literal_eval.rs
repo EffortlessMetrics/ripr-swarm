@@ -25,8 +25,12 @@ enum Val {
 type Env = Vec<(String, Val)>;
 
 /// `Some(true)` when the old and new `return` expressions evaluate to the
-/// same value for the literal `arguments` bound to `params`; `Some(false)`
-/// when they differ; `None` when either side or any argument is outside the
+/// same value for the literal `arguments` bound to `params` AND are not
+/// equivalent everywhere: some nearby probe input (each numeric argument
+/// shifted by one, zero, one, minus one) separates them. A behavior-preserving
+/// rewrite (`a + b` to `b + a`) never separates, so it returns `None` and the
+/// caller keeps the existing verdict. `Some(false)` when they differ on the
+/// asserted inputs; `None` when either side or any argument is outside the
 /// supported subset.
 pub(crate) fn return_expressions_agree(
     file: &Path,
@@ -43,35 +47,94 @@ pub(crate) fn return_expressions_agree(
     let params = params.to_vec();
     let arguments = arguments.to_vec();
     parse_on_worker(file, "", move |file, _source, allocator| {
-        let mut env: Env = Vec::new();
-        for (param, argument) in params.iter().zip(&arguments) {
-            let value = evaluate_text(file, allocator, argument, &Vec::new())?;
-            env.push((param.clone(), value));
+        let old = parse_expression(file, allocator, &old)?;
+        let new = parse_expression(file, allocator, &new)?;
+        let mut values = Vec::new();
+        for argument in &arguments {
+            let parsed = parse_expression(file, allocator, argument)?;
+            values.push(evaluate(&parsed.expression, &Vec::new(), 0)?);
         }
-        let old = evaluate_text(file, allocator, &old, &env)?;
-        let new = evaluate_text(file, allocator, &new, &env)?;
-        Some(old == new)
+        let env: Env = params.iter().cloned().zip(values.iter().cloned()).collect();
+        if evaluate(&old.expression, &env, 0)? != evaluate(&new.expression, &env, 0)? {
+            return Some(false);
+        }
+        separated_on_probe_grid(&old.expression, &new.expression, &params, &values).then_some(true)
     })
     .ok()
     .flatten()
 }
 
-fn evaluate_text(
+/// Whether some probe input makes the two expressions evaluate to different
+/// values. Only numeric arguments are varied; others keep their asserted
+/// value. Bounded so an owner with many parameters stays cheap.
+fn separated_on_probe_grid(
+    old: &Expression<'_>,
+    new: &Expression<'_>,
+    params: &[String],
+    values: &[Val],
+) -> bool {
+    const MAX_COMBINATIONS: usize = 4096;
+    let axes: Vec<Vec<Val>> = values
+        .iter()
+        .map(|value| match value {
+            Val::Num(n) => {
+                let mut axis = Vec::new();
+                for candidate in [*n, n - 1.0, n + 1.0, 0.0, 1.0, -1.0] {
+                    if !axis.contains(&Val::Num(candidate)) {
+                        axis.push(Val::Num(candidate));
+                    }
+                }
+                axis
+            }
+            other => vec![other.clone()],
+        })
+        .collect();
+    let mut combinations: usize = 1;
+    for axis in &axes {
+        combinations = combinations.saturating_mul(axis.len());
+    }
+    if combinations > MAX_COMBINATIONS {
+        return false;
+    }
+    for index in 0..combinations {
+        let mut rest = index;
+        let mut env: Env = Vec::new();
+        for (param, axis) in params.iter().zip(&axes) {
+            env.push((param.clone(), axis[rest % axis.len()].clone()));
+            rest /= axis.len();
+        }
+        let (Some(a), Some(b)) = (evaluate(old, &env, 0), evaluate(new, &env, 0)) else {
+            continue;
+        };
+        if a != b {
+            return true;
+        }
+    }
+    false
+}
+
+struct Parsed<'a> {
+    expression: Expression<'a>,
+}
+
+fn parse_expression<'a>(
     file: &Path,
-    allocator: &oxc_allocator::Allocator,
+    allocator: &'a oxc_allocator::Allocator,
     text: &str,
-    env: &Env,
-) -> Option<Val> {
+) -> Option<Parsed<'a>> {
     let snippet = format!("({});", text.trim());
     let snippet: &str = allocator.alloc_str(&snippet);
     let ret = Parser::new(allocator, snippet, source_type_for(file)).parse();
     if !ret.errors.is_empty() || ret.program.body.len() != 1 {
         return None;
     }
-    let Statement::ExpressionStatement(statement) = &ret.program.body[0] else {
-        return None;
-    };
-    evaluate(&statement.expression, env, 0)
+    let mut body = ret.program.body;
+    match body.pop()? {
+        Statement::ExpressionStatement(statement) => Some(Parsed {
+            expression: statement.unbox().expression,
+        }),
+        _ => None,
+    }
 }
 
 const MAX_DEPTH: usize = 32;
@@ -251,6 +314,20 @@ mod tests {
         assert_eq!(agree(old, new, &["attempt"], &["0"]), Some(true));
         assert_eq!(agree(old, new, &["attempt"], &["2"]), Some(true));
         assert_eq!(agree(old, new, &["attempt"], &["-1"]), Some(false));
+    }
+
+    #[test]
+    fn behavior_preserving_rewrites_are_not_reported_as_unexercised() {
+        assert_eq!(agree("a * 3 + 30", "30 + a * 3", &["a"], &["100"]), None);
+        assert_eq!(
+            agree(
+                "`Hello, ${n}!`",
+                "\"Hello, \" + n + \"!\"",
+                &["n"],
+                &["\"Ada\""]
+            ),
+            None
+        );
     }
 
     #[test]
