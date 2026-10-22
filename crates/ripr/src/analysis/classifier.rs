@@ -115,7 +115,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
             .owner_fn
             .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
     {
-        super::language::rust::oracles::apply_complete_proximity_macro_limit(
+        super::language::apply_complete_proximity_macro_limit(
             &mut finding,
             index,
             &owner.name,
