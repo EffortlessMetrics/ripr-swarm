@@ -10883,6 +10883,480 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "python_assertion_helper_field",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_field",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_field",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_wrong_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_wrong_receiver",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_wrong_receiver",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_wrong_field",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_wrong_field",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_wrong_field",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_weak_comparison",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_weak_comparison",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_weak_comparison",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_same_line_order",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_same_line_order",
+      "vector": "same_file_helper_requires_effect_identity_same_line_order",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_modified_code",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_modified_code",
+      "vector": "same_file_helper_requires_effect_identity_modified_code",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_method_token",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_method_token",
+      "vector": "same_file_helper_requires_effect_identity_method_token",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_inactive_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_inactive_call",
+      "vector": "same_file_helper_requires_executed_owner_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_definition_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_definition_call",
+      "vector": "same_file_helper_requires_body_receiver_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_method_rebinding",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_method_rebinding",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_method_rebinding",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_module_method",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_module_method",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_module_method",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_overwritten_field",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_overwritten_field",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_overwritten_field",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_derived_expected",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_derived_expected",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_derived_expected",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_aliased_expected",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_aliased_expected",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_aliased_expected",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_rebound_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_rebound_receiver",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_rebound_receiver",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_import_rebound_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_import_rebound_receiver",
+      "vector": "same_file_helper_requires_unmodified_discriminated_effect_import_rebound_receiver",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_literal_call",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_literal_call",
+      "vector": "same_file_helper_requires_executable_owner_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_rebound_class",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_rebound_class",
+      "vector": "same_file_helper_requires_unmodified_class_binding",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_async_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_async_owner",
+      "vector": "same_file_helper_refuses_deferred_owner_body",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_generator_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_generator_owner",
+      "vector": "same_file_helper_refuses_deferred_owner_body",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
     }
   ]
 }

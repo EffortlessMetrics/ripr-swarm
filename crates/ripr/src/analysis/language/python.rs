@@ -25,6 +25,8 @@ use super::super::{
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 use crate::analysis::workspace::{
@@ -374,6 +376,9 @@ struct PythonAssertion {
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
     callable_call: Option<String>,
+    /// An instantiated helper must observe an actual changed effect; naming
+    /// the owner in an unrelated comparison supplies no observation credit.
+    effect_only: bool,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,

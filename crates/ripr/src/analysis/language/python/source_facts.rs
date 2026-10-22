@@ -700,6 +700,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::oracles::helpers::attach_same_file_assertions(source, &module.body, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,

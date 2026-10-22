@@ -3,6 +3,7 @@ use super::{PythonAssertion, PythonOracleShape, expr_full_name};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
+pub(super) mod helpers;
 pub(super) mod unittest_list;
 
 pub(super) fn collect_assertions_from_statements(
@@ -334,6 +335,7 @@ fn assertion_from_assert(
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
         callable_call: None,
+        effect_only: false,
         // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
@@ -462,6 +464,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         return Some(PythonAssertion {
             gate_text: format!("{text}\n{callable_call}"),
             callable_call: Some(callable_call),
+            effect_only: false,
             text,
             line: line_for_range_start(source, call.range),
             oracle_kind,
@@ -484,6 +487,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         text,
         gate_text,
         callable_call: None,
+        effect_only: false,
         line: line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,
