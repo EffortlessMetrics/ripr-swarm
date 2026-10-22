@@ -2389,7 +2389,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/termination-qualification.{json,md}",
             false,
             false,
-            "Runs a deterministic adversarial corpus (Rust nesting, Python deep syntax) against one exact ripr binary in owned disposable workspaces with per-row deadlines, and emits one JSON/Markdown packet with the binary SHA-256, per-case input digests, subject counts, cleanup state and negative controls. Does not change product behavior, build or install a candidate, or qualify a release.",
+            "Runs a deterministic adversarial corpus (Rust nesting, Python deep syntax, many-star path globs) against one exact ripr binary in owned disposable workspaces with per-row deadlines, and emits one JSON/Markdown packet with the binary SHA-256, per-case input digests, subject counts, cleanup state and negative controls. Does not change product behavior, build or install a candidate, or qualify a release.",
         ),
         command_entry(
             "qualify-python-wheelhouse --receipts <file-or-dir>",
