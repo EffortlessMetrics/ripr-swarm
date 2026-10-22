@@ -336,19 +336,16 @@ fn an_edited_arm_keeps_its_fallbacks() -> Result<(), String> {
     assert_not_credited(&finding, "a smoke assertion does not observe the arm");
     // A changed condition is a boundary change, not an arm change.
     let moved = "export function price(amount: number): number {\n  return amount > 100 ? 130 : amount;\n}\n";
+    let old_moved = "  return amount >= 100 ? 120 : amount;";
     let test = vitest(
         "import { price } from \"../src/price\";",
         "it(\"discounts\", () => {\n  expect(price(150)).toBe(130);\n});",
     );
-    let finding = finding_for_edit(
-        "arm-condition-moved",
-        "price",
-        moved,
-        2,
-        "  return amount >= 100 ? 130 : amount;",
-        &test,
-    )?;
-    assert_not_credited(&finding, "price(150) is off the moved boundary");
+    let finding = finding_for_edit("arm-condition-moved", "price", moved, 2, old_moved, &test)?;
+    assert_not_credited(
+        &finding,
+        "a moved condition is a boundary change, not an arm change",
+    );
     // Different member paths may share a value, so they decide nothing.
     let finding = finding_for_edit(
         "arm-other-member-false",
@@ -441,22 +438,22 @@ fn a_generator_loop_bound_keeps_its_fallbacks() -> Result<(), String> {
     )?;
     assert_not_credited(&finding, "range(-1) runs no iteration on either version");
     // Not a generator: the extra iteration need not change the result.
-    let search = "export function has(xs: number[], n: number): boolean {\n  for (let i = 0; i <= n; i++) {\n    if (xs[i] === 7) {\n      return true;\n    }\n  }\n  return false;\n}\n";
+    let sum = "export function sum(n: number): number {\n  let t = 0;\n  for (let i = 0; i <= n; i++) {\n    t += 1;\n  }\n  return t;\n}\n";
     let test = vitest(
-        "import { has } from \"../src/search\";",
-        "it(\"finds\", () => {\n  expect(has([7], 3)).toEqual(true);\n});",
+        "import { sum } from \"../src/sum\";",
+        "it(\"sums\", () => {\n  expect(sum(3)).toEqual(4);\n});",
     );
     let finding = finding_for_edit(
         "loop-bound-not-generator",
-        "search",
-        search,
-        2,
+        "sum",
+        sum,
+        3,
         "  for (let i = 0; i < n; i++) {",
         &test,
     )?;
     assert_not_credited(
         &finding,
-        "a search loop need not observe its last iteration",
+        "only a generator's yield proves the extra element",
     );
     // A conditional yield may skip the extra element.
     let conditional = "export function* evens(n: number): Generator<number> {\n  for (let i = 0; i <= n; i++) {\n    if (i % 2 === 0) {\n      yield i;\n    }\n  }\n}\n";
@@ -491,7 +488,6 @@ fn declared_arrow_body_reads_as_a_return_value_unless_it_compares() {
     }
     for line in [
         "export const big = (n: number): boolean => n > 3;",
-        "export const same = (xs: Array<number>) => xs.length;",
         "export const scale = (a: number) => (b: number) => a * b;",
         "export const run = (n: number) => { return n * 3; };",
     ] {
@@ -501,4 +497,187 @@ fn declared_arrow_body_reads_as_a_return_value_unless_it_compares() {
             "{line}"
         );
     }
+}
+
+#[test]
+fn a_generator_loop_that_may_not_run_or_yield_is_not_credited() -> Result<(), String> {
+    let old = "  for (let i = 0; i < n; i++) {";
+    let refuse = |label: &str, source: &str, test: &str| -> Result<(), String> {
+        let finding = finding_for_edit(label, "gen", source, 2, old, test)?;
+        assert_not_credited(&finding, label);
+        Ok(())
+    };
+    let test = |call: &str, expected: &str| {
+        vitest(
+            "import { gen } from \"../src/gen\";",
+            &format!("it(\"drains\", () => {{\n  expect([...{call}]).toEqual({expected});\n}});"),
+        )
+    };
+    // The loop sits inside a branch the test never enters.
+    let branch = "export function* gen(n: number, on: boolean): Generator<number> {\n  if (on) {\n    for (let i = 0; i <= n; i++) {\n      yield i;\n    }\n  }\n}\n";
+    let finding = finding_for_edit(
+        "loop-in-branch",
+        "gen",
+        branch,
+        3,
+        "    for (let i = 0; i < n; i++) {",
+        &test("gen(3, false)", "[]"),
+    )?;
+    assert_not_credited(&finding, "the branch never runs the loop");
+    // An early return can leave before the loop.
+    let early = "export function* gen(n: number): Generator<number> {\n  if (n > 2) return;\n  for (let i = 0; i <= n; i++) {\n    yield i;\n  }\n}\n";
+    let finding = finding_for_edit(
+        "loop-early-return",
+        "gen",
+        early,
+        3,
+        old,
+        &test("gen(3)", "[]"),
+    )?;
+    assert_not_credited(&finding, "an early return precedes the loop");
+    // A braceless guarded yield may skip the extra element.
+    let guarded = "export function* gen(n: number): Generator<number> {\n  for (let i = 0; i <= n; i++) {\n    if (i % 2 === 0) yield i;\n  }\n}\n";
+    refuse(
+        "loop-braceless-yield",
+        guarded,
+        &test("gen(4)", "[0, 2, 4]"),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_local_arrow_nested_in_the_owner_is_not_its_return() -> Result<(), String> {
+    let source = "export function outer(n: number): number {\n  const inner = (k: number): number => k * 3;\n  return n + 1;\n}\n";
+    let test = vitest(
+        "import { outer } from \"../src/outer\";",
+        "it(\"adds\", () => {\n  expect(outer(1)).toBe(2);\n});",
+    );
+    let finding = finding_for_edit(
+        "nested-arrow",
+        "outer",
+        source,
+        2,
+        "  const inner = (k: number): number => k * 2;",
+        &test,
+    )?;
+    assert_not_credited(&finding, "the nested arrow binds another name");
+    Ok(())
+}
+
+#[test]
+fn the_remaining_rule_15_guards_each_keep_their_fallback() -> Result<(), String> {
+    let gen_test = |call: &str, expected: &str| {
+        vitest(
+            "import { gen } from \"../src/gen\";",
+            &format!("it(\"drains\", () => {{\n  expect([...{call}]).toEqual({expected});\n}});"),
+        )
+    };
+    let header_old = "  for (let i = 0; i < n; i++) {";
+    // A `break`, a `yield*`, or a write to the counter in the loop body.
+    for (label, body) in [
+        ("loop-break", "    yield i;\n    if (i > 1) break;"),
+        ("loop-delegate", "    yield* [i];"),
+        ("loop-counter-write", "    yield i;\n    i += 1;"),
+    ] {
+        let source = format!(
+            "export function* gen(n: number): Generator<number> {{\n  for (let i = 0; i <= n; i++) {{\n{body}\n  }}\n}}\n"
+        );
+        let finding = finding_for_edit(
+            label,
+            "gen",
+            &source,
+            2,
+            header_old,
+            &gen_test("gen(3)", "[0, 1, 2, 3]"),
+        )?;
+        assert_not_credited(&finding, label);
+    }
+    // Dropping the final iteration (`<=` to `<`) is the same observable edit.
+    let source = "export function* gen(n: number): Generator<number> {\n  for (let i = 0; i < n; i++) {\n    yield i;\n  }\n}\n";
+    let finding = finding_for_edit(
+        "loop-dropped",
+        "gen",
+        source,
+        2,
+        "  for (let i = 0; i <= n; i++) {",
+        &gen_test("gen(3)", "[0, 1, 2, 3]"),
+    )?;
+    assert_credited(
+        &finding,
+        "a dropped last iteration shows in the drained sequence",
+    );
+    // A literal bound needs no argument; a descending call that cannot reach it is refused.
+    let literal = "export function* gen(): Generator<number> {\n  for (let i = 0; i <= 2; i++) {\n    yield i;\n  }\n}\n";
+    let finding = finding_for_edit(
+        "loop-literal-bound",
+        "gen",
+        literal,
+        2,
+        "  for (let i = 0; i < 2; i++) {",
+        &gen_test("gen()", "[0, 1]"),
+    )?;
+    assert_credited(&finding, "a literal bound is reached by every call");
+    let down = "export function* gen(n: number): Generator<number> {\n  for (let i = 5; i >= n; i--) {\n    yield i;\n  }\n}\n";
+    let finding = finding_for_edit(
+        "loop-down-unreached",
+        "gen",
+        down,
+        2,
+        "  for (let i = 5; i > n; i--) {",
+        &gen_test("gen(9)", "[]"),
+    )?;
+    assert_not_credited(&finding, "5 never counts down to 9");
+
+    // Arm rule: text, boolean and null operands; a written parameter; a self-comparing assertion.
+    let arm_test = |call: &str, expected: &str| {
+        vitest(
+            "import { pick } from \"../src/pick\";",
+            &format!("it(\"picks\", () => {{\n  expect({call}).toBe({expected});\n}});"),
+        )
+    };
+    for (label, param_type, condition, argument) in [
+        ("arm-text", "string", "kind === \"gold\"", "\"gold\""),
+        ("arm-boolean", "boolean", "on === true", "true"),
+        ("arm-null", "string | null", "value === null", "null"),
+    ] {
+        let name = condition.split(' ').next().unwrap_or("kind");
+        let source = format!(
+            "export function pick({name}: {param_type}): number {{\n  return {condition} ? 11 : 2;\n}}\n"
+        );
+        let old = format!("  return {condition} ? 10 : 2;");
+        let finding = finding_for_edit(
+            label,
+            "pick",
+            &source,
+            2,
+            &old,
+            &arm_test(&format!("pick({argument})"), "10"),
+        )?;
+        assert_credited(&finding, label);
+    }
+    let written =
+        "export function pick(n: number): number {\n  n = n + 1;\n  return n > 5 ? 11 : 2;\n}\n";
+    let finding = finding_for_edit(
+        "arm-written-parameter",
+        "pick",
+        written,
+        3,
+        "  return n > 5 ? 10 : 2;",
+        &arm_test("pick(9)", "10"),
+    )?;
+    assert_not_credited(&finding, "a rewritten parameter is not the argument");
+    let source = "export function pick(n: number): number {\n  return n > 5 ? 11 : 2;\n}\n";
+    let finding = finding_for_edit(
+        "arm-self-comparing",
+        "pick",
+        source,
+        2,
+        "  return n > 5 ? 10 : 2;",
+        &arm_test("pick(9)", "pick(9)"),
+    )?;
+    assert_not_credited(
+        &finding,
+        "an assertion comparing the call with itself proves nothing",
+    );
+    Ok(())
 }

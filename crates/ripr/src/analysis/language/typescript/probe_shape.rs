@@ -490,11 +490,30 @@ pub(super) fn returned_expression(leading: &str) -> Option<&str> {
 /// operator or a type argument (`<`, `>`, outside the `=>` of a callback) may
 /// be a predicate whose boundary an exact value does not witness, so it keeps
 /// the unrecognised-shape fallback.
-fn declared_arrow_value_body(leading: &str) -> bool {
+pub(crate) fn declared_arrow_value_body(leading: &str) -> bool {
     returned_expression(leading).is_some_and(|body| {
         let masked = ts_mask_literals_and_comments(body);
         !masked.replace("=>", "").contains(['<', '>'])
     })
+}
+
+/// The name a declared concise arrow line binds (`double` for
+/// `export const double = (n) => n * 2;`), or `None` when the line is not a
+/// declared arrow value. A nested local arrow binds another name than the
+/// owner it sits in.
+pub(crate) fn declared_arrow_value_name(line_text: &str) -> Option<&str> {
+    let trimmed = line_text.trim_start();
+    let leading = trimmed.strip_prefix("} ").unwrap_or(trimmed).trim_start();
+    if leading.starts_with("return ") || !declared_arrow_value_body(leading) {
+        return None;
+    }
+    let declaration = leading.strip_prefix("export ").unwrap_or(leading);
+    let declaration = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| declaration.strip_prefix(keyword))?;
+    let (head, _) = declaration.split_once(" = ")?;
+    let name = head.split(':').next()?.trim();
+    (!name.is_empty()).then_some(name)
 }
 
 /// `x => ...`, `(a, b) => ...` or `async (a): T => ...` at the start of `text`.

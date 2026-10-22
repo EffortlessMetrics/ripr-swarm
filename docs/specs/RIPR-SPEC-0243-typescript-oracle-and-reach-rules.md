@@ -689,8 +689,9 @@ strong exact assertion on the owner stays `weakly_exposed` with
 below holds, and keeps the old reading otherwise. A shape that does not
 prove its condition costs an abstention or a gap, never a credit.
 
-1. **Declared concise arrow.** `export const f = (n) => n * 2;` returns its
-   body, including a body that passes a callback
+1. **Declared concise arrow.** `export const f = (n) => n * 2;`, when `f` is
+   the owner itself (a local arrow nested in the owner binds another name
+   and returns nothing), returns its body, including a body that passes a callback
    (`xs.reduce((a, b) => a + b, 0)`). A body with a comparison operator or
    a type argument (`<`, `>` outside the `=>` of a callback), a curried
    arrow (the body is itself an arrow head) and a block body keep the old
@@ -702,7 +703,9 @@ prove its condition costs an abstention or a gap, never a credit.
    statement wrote the same target, and the owner body has exactly one
    `return`, at its top level and after the assignment, whose whole
    expression is the target. Every block enclosing the assignment is a
-   `for`, `while` or `do` loop (a branch may skip it), the body has no
+   `for`, `while` or `do` loop (a branch may skip it; a loop over an empty
+   input may run zero times, the same limit every return-value credit has
+   when the test's inputs never reach the changed line), the body has no
    nested function, class or method, and no other statement writes the
    target between the declaration and the return. The changed span is the
    statement between the common prefix and suffix of the old and new line,
@@ -710,8 +713,10 @@ prove its condition costs an abstention or a gap, never a credit.
    line is read alone.
 3. **Edited arm of an unchanged conditional.** `return c ? a : b` where old
    and new differ in exactly one arm and `c` is one comparison of an owner
-   parameter the body never writes with a number, a plain string, a
-   boolean, `null`, `undefined` or a member path (`Level.High`). It is
+   parameter the body never writes (`===`, `!==`, `==`, `!=`, `<`, `<=`,
+   `>`, `>=`, either operand order) with a number, a plain string (no quote
+   or backslash inside), a boolean, `null`, `undefined` or a member path
+   (`Level.High`). It is
    credited when a strong, pinned, exact-value assertion of an oracle
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
@@ -720,8 +725,12 @@ prove its condition costs an abstention or a gap, never a credit.
    value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
    rule.
 4. **Generator loop bound.** `for (let i = 0; i <= n; i++)` against
-   `i < n` (or the descending `>=`/`>` with `i--`), in a generator whose
-   loop body has a plain `yield` at its own top level and no `break`,
+   `i < n` (or the descending `>=`/`>` with `i--`; the header is
+   `let`/`var i = <integer literal>` stepping by one, and the bound is a
+   read-only owner parameter or an integer literal), in a generator whose
+   loop is a direct child of the generator body with no `return` or `throw`
+   before it, and whose loop body has a plain `yield` at its own top level
+   (no `if`, `?`, `&&` or `||` before it there) and no `break`,
    `continue`, `return`, `throw` or write to the counter. The extra
    iteration yields one more element when the counter reaches the bound,
    so an exact assertion on the whole drained sequence (`[...gen(3)]` or

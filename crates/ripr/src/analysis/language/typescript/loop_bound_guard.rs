@@ -186,6 +186,19 @@ fn loop_yields_every_iteration(masked: &str, header_line: &str, counter: &str) -
     let (Some(header_at), None) = (found.next(), found.next()) else {
         return false;
     };
+    // The loop must be a direct child of the generator's own body, reached
+    // without a `return` or `throw` first: a loop inside a branch, or after an
+    // early exit, may never run.
+    let before_loop = &masked[..header_at];
+    let body_depth =
+        before_loop.matches('{').count() as isize - before_loop.matches('}').count() as isize;
+    if body_depth != 1
+        || ["return", "throw"]
+            .iter()
+            .any(|word| !identifier_offsets(before_loop, word).is_empty())
+    {
+        return false;
+    }
     let after_header = header_at + header.len();
     let Some(rest) = masked.get(after_header..) else {
         return false;
@@ -229,27 +242,38 @@ fn loop_yields_every_iteration(masked: &str, header_line: &str, counter: &str) -
     {
         return false;
     }
-    // A `yield` at the block's own top level runs on every iteration.
+    // A `yield` at the block's own top level runs on every iteration unless a
+    // control keyword or conditional operator at that level can skip it:
+    // braceless `if (c) yield x;`, `c && (yield x)` and `c ? yield x : y` all
+    // keep the `yield` at brace depth 0.
+    const CONTROL_KEYWORDS: [&str; 6] = ["if", "else", "switch", "while", "for", "do"];
+    let word_at = |at: usize, word: &str| -> bool {
+        block[at..].starts_with(word)
+            && block[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|before| !is_identifier_part(before))
+            && block[at + word.len()..]
+                .chars()
+                .next()
+                .is_none_or(|after| !is_identifier_part(after))
+    };
     let mut level = 0usize;
+    let mut guarded = false;
     let mut yields_at_top = false;
     for (at, c) in block.char_indices() {
         match c {
             '{' => level += 1,
             '}' => level = level.saturating_sub(1),
-            _ if level == 0 && block[at..].starts_with("yield") => {
-                let boundary_before = block[..at]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|before| !is_identifier_part(before));
-                let boundary_after = block[at + "yield".len()..]
-                    .chars()
-                    .next()
-                    .is_none_or(|after| !is_identifier_part(after));
-                // `yield*` delegates to a sequence of unknown length; the
-                // extra iteration still adds elements, but keep to plain yield.
-                if boundary_before
-                    && boundary_after
-                    && !block[at + "yield".len()..].starts_with('*')
+            '?' | '&' | '|' if level == 0 => guarded = true,
+            _ if level == 0 => {
+                if CONTROL_KEYWORDS.iter().any(|keyword| word_at(at, keyword)) {
+                    guarded = true;
+                } else if word_at(at, "yield")
+                    // `yield*` delegates to a sequence of unknown length; keep
+                    // to a plain yield.
+                    && !guarded
+                    && !block[at + "yield".len()..].trim_start().starts_with('*')
                 {
                     yields_at_top = true;
                 }

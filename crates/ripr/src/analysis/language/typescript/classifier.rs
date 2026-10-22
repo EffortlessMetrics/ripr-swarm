@@ -5042,6 +5042,16 @@ pub(crate) fn classify_change_with_alias_state(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
+    // RIPR-SPEC-0243 rule 15: a declared concise arrow is the owner's return
+    // only when it declares the owner itself; a local arrow nested in the
+    // owner binds another name and returns nothing.
+    let probe_shape = if probe_shape.family == ProbeFamily::ReturnValue
+        && declared_arrow_value_name(line_text).is_some_and(|name| name != owner.name)
+    {
+        TypeScriptProbeShape::ambiguous_fallback()
+    } else {
+        probe_shape
+    };
     // RIPR-SPEC-0254 rule 1: a changed entry of a lookup table the owner
     // returns from is a return-value change, credited only under rule 2.
     let lookup_change = (!probe_shape.specific)

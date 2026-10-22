@@ -255,7 +255,8 @@ fn evaluate(
     use ArmComparison::{Equal, Greater, GreaterOrEqual, Less, LessOrEqual, NotEqual};
     match (argument, operand) {
         (ArmConstant::Number(a), ArmConstant::Number(b)) => {
-            let order = a.total_cmp(b);
+            // `partial_cmp` keeps `-0 === 0` and refuses NaN.
+            let order = a.partial_cmp(b)?;
             Some(match comparison {
                 Equal => order.is_eq(),
                 NotEqual => order.is_ne(),
