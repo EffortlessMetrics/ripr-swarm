@@ -150,14 +150,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let source = fs::canonicalize(&source)
         .map_err(|error| format!("failed to resolve {}: {error}", source.display()))?;
     let worktree = out.join("src");
-    let result = build_all(&source, &out, &worktree, release);
+    let built = build_all(&source, &out, &worktree, release);
     // The detached worktree is scratch; the binaries and manifest are the output.
-    let _ = tool(
+    let removed = tool(
         "git",
         &["worktree", "remove", "--force", &path_text(&worktree)],
         &source,
     );
-    let manifest = result?;
+    let manifest = finish(built, removed, &worktree)?;
     let path = out.join("manifest.json");
     let text = serde_json::to_string_pretty(&manifest)
         .map_err(|error| format!("failed to render the manifest: {error}"))?;
@@ -169,6 +169,27 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         PATCHES.len()
     );
     Ok(())
+}
+
+/// A build only counts if its scratch worktree is gone too, and a build error
+/// is never hidden by a cleanup error.
+fn finish(
+    built: Result<Value, String>,
+    removed: Result<String, String>,
+    worktree: &Path,
+) -> Result<Value, String> {
+    match (built, removed) {
+        (Ok(manifest), Ok(_)) => Ok(manifest),
+        (Ok(_), Err(error)) => Err(format!(
+            "the build succeeded but the scratch worktree {} could not be removed: {error}",
+            worktree.display()
+        )),
+        (Err(error), Ok(_)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(format!(
+            "{error}; the scratch worktree {} was also retained: {cleanup}",
+            worktree.display()
+        )),
+    }
 }
 
 fn build_all(source: &Path, out: &Path, worktree: &Path, release: bool) -> Result<Value, String> {
@@ -314,12 +335,30 @@ pub(super) fn load_manifest(path: &Path) -> Result<Manifest, String> {
                     .ok_or_else(|| format!("manifest names unknown family `{name}`"))?,
             );
         }
+        // The manifest only vouches for what this build tool would have made:
+        // a known repair, on the families it disables, with its recorded edits.
+        let id = field(entry, "id")?;
+        let patch = PATCHES
+            .iter()
+            .find(|patch| patch.id == id)
+            .ok_or_else(|| format!("manifest control `{id}` is not a known repair"))?;
+        if families != patch.families {
+            return Err(format!(
+                "manifest control `{id}` names families that do not match the repair it disables"
+            ));
+        }
+        let edits_sha256 = field(entry, "edits_sha256")?;
+        if edits_sha256 != edits_digest(patch) {
+            return Err(format!(
+                "manifest control `{id}` records edits that differ from this tool's repair"
+            ));
+        }
         controls.push(ManifestControl {
-            id: field(entry, "id")?,
+            id,
             families,
             path: base.join(field(entry, "binary")?),
             sha256: field(entry, "sha256")?,
-            edits_sha256: field(entry, "edits_sha256")?,
+            edits_sha256,
         });
     }
     Ok(Manifest {
@@ -383,4 +422,24 @@ fn tool_env(
 
 fn usage() -> &'static str {
     "usage: cargo xtask termination-removal-builds [--source <repo>] [--out <dir>] [--profile release|dev]"
+}
+
+#[cfg(test)]
+pub(super) fn rust_nesting_digest() -> String {
+    edits_digest(&PATCHES[0])
+}
+
+#[cfg(test)]
+pub(super) fn finish_for_test(build_ok: bool, removed_ok: bool) -> Result<(), String> {
+    let built = if build_ok {
+        Ok(json!({}))
+    } else {
+        Err("build failed".to_string())
+    };
+    let removed = if removed_ok {
+        Ok(String::new())
+    } else {
+        Err("denied".to_string())
+    };
+    finish(built, removed, Path::new("wt")).map(|_| ())
 }

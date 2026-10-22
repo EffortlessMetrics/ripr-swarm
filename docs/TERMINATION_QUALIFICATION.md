@@ -97,8 +97,9 @@ host-local binary path and itself; owned workspace paths become `<case-root>`.
 ## Claim boundary
 
 A green packet says one exact binary terminated honestly on this retained
-corpus. It does not bind the binary to a source SHA or candidate ref, exercise
-LSP, prove absence of every crash or hang class, or establish latency.
+corpus. Unless `--expected-commit` is given, it does not bind the binary to a
+source SHA or candidate ref, and even then the bind is the commit the binary
+reports in `--version`, not the build that produced it. It does not exercise LSP, prove absence of every crash or hang class, or establish latency.
 
 Known gaps against the child issues, each deliberate for this first harness:
 

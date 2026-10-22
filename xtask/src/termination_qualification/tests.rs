@@ -923,6 +923,44 @@ mod unix_stubs {
     }
 
     #[test]
+    fn a_manifest_may_only_vouch_for_the_repairs_the_tool_builds() -> TestResult {
+        use super::super::removal_builds::{finish_for_test, load_manifest};
+        let root = scratch("manifest")?;
+        let write = |name: &str, family: &str, digest: &str| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            let text = format!(
+                "{{\"schema\":\"ripr.termination_removal_builds.v1\",\"source_commit\":\"abc\",\"controls\":[{{\"id\":\"rust-nesting-refusal-off\",\"families\":[\"{family}\"],\"binary\":\"b\",\"sha256\":\"s\",\"edits_sha256\":\"{digest}\"}}]}}"
+            );
+            fs::write(&path, text).map_err(|error| format!("write: {error}"))?;
+            Ok(path)
+        };
+        let digest = super::super::removal_builds::rust_nesting_digest();
+        let good = load_manifest(&write("good.json", "rust_nesting", &digest)?);
+        let wrong_family = load_manifest(&write("family.json", "python_nesting", &digest)?);
+        let wrong_digest = load_manifest(&write("digest.json", "rust_nesting", "0")?);
+        let _ = fs::remove_dir_all(&root);
+        if good.is_err() {
+            return Err("a manifest the tool could have written must load".to_string());
+        }
+        if wrong_family.is_ok() || wrong_digest.is_ok() {
+            return Err("a mislabeled family or edit digest must be refused".to_string());
+        }
+        let kept = finish_for_test(true, true);
+        let retained = finish_for_test(true, false);
+        let both = finish_for_test(false, false);
+        if kept.is_err()
+            || !retained.is_err_and(|error| error.contains("could not be removed"))
+            || !both
+                .is_err_and(|error| error.contains("build failed") && error.contains("retained"))
+        {
+            return Err(
+                "a retained worktree must fail the run without hiding a build error".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_manifest_bound_control_needs_the_recorded_bytes_and_commit() -> TestResult {
         use super::super::controls::Binding;
         let root = scratch("bound")?;
