@@ -46,6 +46,7 @@ pub(super) fn credit_bare_bool_asserts<'a>(
     read_source: impl Fn(&Path) -> Option<&'a str>,
 ) {
     let mut parsed: BTreeMap<PathBuf, Option<(Mod, &'a str)>> = BTreeMap::new();
+    let mut kept: BTreeMap<(PathBuf, String), bool> = BTreeMap::new();
     let mut credits: Vec<(usize, usize, bool)> = Vec::new();
     for (test_index, test) in tests.iter().enumerate() {
         for (assertion_index, assertion) in test.assertions.iter().enumerate() {
@@ -59,7 +60,13 @@ pub(super) fn credit_bare_bool_asserts<'a>(
                 continue;
             };
             // A patched or locally rebound callee is not the owner under test.
-            if read_source(&test.file).is_none_or(|source| test_may_replace(source, &call.callee)) {
+            let keeps_callee = *kept
+                .entry((test.file.clone(), call.callee.clone()))
+                .or_insert_with(|| {
+                    read_source(&test.file)
+                        .is_some_and(|source| test_keeps_callee(source, &test.file, &call.callee))
+                });
+            if !keeps_callee {
                 continue;
             }
             let module = parsed.entry(owner.file.clone()).or_insert_with(|| {
@@ -113,21 +120,38 @@ fn unique_callee_owner<'o>(
     .then_some(owner)
 }
 
-/// Whether the test file could swap the callee for something else: a mock or
-/// monkeypatch anywhere in the file, or a local binding of the callee name.
-/// Textual on purpose; a false positive only leaves the assertion smoke.
-fn test_may_replace(source: &str, callee: &str) -> bool {
-    let patched = ["patch", "mock", "Mock", "setattr"]
-        .iter()
-        .any(|marker| source.contains(marker));
-    let rebound = source.lines().any(|line| {
-        let line = line.trim_start();
-        line.strip_prefix(callee).is_some_and(|rest| {
-            rest.trim_start().starts_with('=') && !rest.trim_start().starts_with("==")
-        }) || line.starts_with(&format!("def {callee}("))
-            || line.starts_with(&format!("class {callee}"))
-    });
-    patched || rebound
+/// Markers of dynamic rebinding or patching. Textual on purpose: a hit in a
+/// comment or string only leaves the assertion smoke.
+const DYNAMIC_MARKERS: [&str; 12] = [
+    "patch",
+    "mock",
+    "Mock",
+    "setattr",
+    "globals(",
+    "vars(",
+    "exec(",
+    "eval(",
+    "__code__",
+    "__dict__",
+    "sys.modules",
+    "importlib",
+];
+
+fn may_rebind_dynamically(source: &str, name: &str) -> bool {
+    DYNAMIC_MARKERS.iter().any(|marker| source.contains(marker)) || binds_by_walrus(source, name)
+}
+
+/// Whether the test file keeps `callee` bound to the one import that brought it
+/// in: exactly one binding of the name anywhere in the file (the import itself)
+/// and no dynamic rebinding. A file that does not parse is not trusted.
+fn test_keeps_callee(source: &str, path: &Path, callee: &str) -> bool {
+    if may_rebind_dynamically(source, callee) {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = parse_module_result(path, source) else {
+        return false;
+    };
+    count_bindings(&module.body, callee) == 1
 }
 
 fn credit(assertion: &mut PythonAssertion, negated: bool) {
@@ -162,16 +186,9 @@ fn owner_returns_bool(
     let (Some(function), None) = (definitions.next(), definitions.next()) else {
         return false;
     };
-    // An assignment expression binds wherever it sits (`if (f := ..):`, a match
-    // subject or guard), so it is scanned textually over the whole module.
-    if binds_by_walrus(source, &owner.name) {
-        return false;
-    }
-    // Any other binding of the name, at any depth, can swap the function out.
-    if module
-        .iter()
-        .any(|stmt| binds_name(stmt, &owner.name, Some(function)))
-    {
+    // Dynamic rebinding, then any binding of the name besides the owner's own
+    // definition, at any depth (the definition itself is the one allowed).
+    if may_rebind_dynamically(source, &owner.name) || count_bindings(module, &owner.name) != 1 {
         return false;
     }
     let args = &function.args;
@@ -213,86 +230,126 @@ fn owner_returns_bool(
     bool_valued(value, &parameters, bool_arguments)
 }
 
-/// Whether `stmt`, or anything nested in it, binds `name` other than the
-/// owner's own definition (`definition`).
-fn binds_name(stmt: &Stmt, name: &str, definition: Option<&ast::StmtFunctionDef>) -> bool {
-    let target_is = |target: &Expr| names_target(target, name);
-    let any = |body: &[Stmt]| body.iter().any(|stmt| binds_name(stmt, name, definition));
+/// How many statements, at any depth including function and class bodies,
+/// bind `name`. A star import counts as binding every name.
+fn count_bindings(body: &[Stmt], name: &str) -> usize {
+    body.iter().map(|stmt| stmt_bindings(stmt, name)).sum()
+}
+
+fn stmt_bindings(stmt: &Stmt, name: &str) -> usize {
+    let target = |target: &Expr| usize::from(names_target(target, name));
+    let nested = |body: &[Stmt]| count_bindings(body, name);
+    let parameters = |args: &ast::Arguments| {
+        args.posonlyargs
+            .iter()
+            .chain(&args.args)
+            .chain(&args.kwonlyargs)
+            .map(|arg| arg.def.arg.as_str())
+            .chain(args.vararg.iter().map(|arg| arg.arg.as_str()))
+            .chain(args.kwarg.iter().map(|arg| arg.arg.as_str()))
+            .filter(|parameter| *parameter == name)
+            .count()
+    };
     match stmt {
         Stmt::FunctionDef(function) => {
-            definition.is_none_or(|owner| !std::ptr::eq(owner, function))
-                && function.name.as_str() == name
+            usize::from(function.name.as_str() == name)
+                + parameters(&function.args)
+                + nested(&function.body)
         }
-        Stmt::AsyncFunctionDef(function) => function.name.as_str() == name,
-        Stmt::ClassDef(class) => class.name.as_str() == name,
-        Stmt::Assign(assign) => assign.targets.iter().any(target_is),
-        Stmt::AugAssign(assign) => target_is(&assign.target),
-        Stmt::AnnAssign(assign) => target_is(&assign.target),
-        Stmt::Delete(delete) => delete.targets.iter().any(target_is),
-        Stmt::Import(import) => import.names.iter().any(|alias| alias_binds(alias, name)),
-        Stmt::ImportFrom(import) => import.names.iter().any(|alias| alias_binds(alias, name)),
-        Stmt::For(stmt) => target_is(&stmt.target) || any(&stmt.body) || any(&stmt.orelse),
-        Stmt::AsyncFor(stmt) => target_is(&stmt.target) || any(&stmt.body) || any(&stmt.orelse),
-        Stmt::While(stmt) => any(&stmt.body) || any(&stmt.orelse),
-        Stmt::If(stmt) => any(&stmt.body) || any(&stmt.orelse),
+        Stmt::AsyncFunctionDef(function) => {
+            usize::from(function.name.as_str() == name)
+                + parameters(&function.args)
+                + nested(&function.body)
+        }
+        Stmt::ClassDef(class) => usize::from(class.name.as_str() == name) + nested(&class.body),
+        Stmt::Assign(assign) => assign.targets.iter().map(target).sum(),
+        Stmt::TypeAlias(alias) => target(&alias.name),
+        Stmt::AugAssign(assign) => target(&assign.target),
+        Stmt::AnnAssign(assign) => target(&assign.target),
+        Stmt::Delete(delete) => delete.targets.iter().map(target).sum(),
+        Stmt::Import(import) => import
+            .names
+            .iter()
+            .filter(|alias| alias_binds(alias, name))
+            .count(),
+        Stmt::ImportFrom(import) => import
+            .names
+            .iter()
+            .filter(|alias| alias_binds(alias, name))
+            .count(),
+        Stmt::For(stmt) => target(&stmt.target) + nested(&stmt.body) + nested(&stmt.orelse),
+        Stmt::AsyncFor(stmt) => target(&stmt.target) + nested(&stmt.body) + nested(&stmt.orelse),
+        Stmt::While(stmt) => nested(&stmt.body) + nested(&stmt.orelse),
+        Stmt::If(stmt) => nested(&stmt.body) + nested(&stmt.orelse),
         Stmt::With(stmt) => {
             stmt.items
                 .iter()
-                .any(|item| item.optional_vars.as_deref().is_some_and(target_is))
-                || any(&stmt.body)
+                .filter(|item| item.optional_vars.as_deref().is_some_and(names_name(name)))
+                .count()
+                + nested(&stmt.body)
         }
         Stmt::AsyncWith(stmt) => {
             stmt.items
                 .iter()
-                .any(|item| item.optional_vars.as_deref().is_some_and(target_is))
-                || any(&stmt.body)
+                .filter(|item| item.optional_vars.as_deref().is_some_and(names_name(name)))
+                .count()
+                + nested(&stmt.body)
         }
-        Stmt::Try(stmt) => try_binds(
+        Stmt::Try(stmt) => try_bindings(
             &stmt.body,
             &stmt.handlers,
             &stmt.orelse,
             &stmt.finalbody,
             name,
-            definition,
         ),
-        Stmt::TryStar(stmt) => try_binds(
+        Stmt::TryStar(stmt) => try_bindings(
             &stmt.body,
             &stmt.handlers,
             &stmt.orelse,
             &stmt.finalbody,
             name,
-            definition,
         ),
         Stmt::Match(stmt) => stmt
             .cases
             .iter()
-            .any(|case| pattern_binds_name(&case.pattern, name) || any(&case.body)),
-        Stmt::Global(global) => global.names.iter().any(|bound| bound.as_str() == name),
-        Stmt::Nonlocal(nonlocal) => nonlocal.names.iter().any(|bound| bound.as_str() == name),
-        _ => false,
+            .map(|case| usize::from(pattern_binds_name(&case.pattern, name)) + nested(&case.body))
+            .sum(),
+        Stmt::Global(global) => {
+            usize::from(global.names.iter().any(|bound| bound.as_str() == name))
+        }
+        Stmt::Nonlocal(nonlocal) => {
+            usize::from(nonlocal.names.iter().any(|bound| bound.as_str() == name))
+        }
+        _ => 0,
     }
 }
 
-fn try_binds(
+fn names_name(name: &str) -> impl Fn(&Expr) -> bool + '_ {
+    move |target| names_target(target, name)
+}
+
+fn try_bindings(
     body: &[Stmt],
     handlers: &[ast::ExceptHandler],
     orelse: &[Stmt],
     finalbody: &[Stmt],
     name: &str,
-    definition: Option<&ast::StmtFunctionDef>,
-) -> bool {
-    let any = |body: &[Stmt]| body.iter().any(|stmt| binds_name(stmt, name, definition));
-    any(body)
-        || any(orelse)
-        || any(finalbody)
-        || handlers.iter().any(|handler| {
-            let ast::ExceptHandler::ExceptHandler(handler) = handler;
-            handler
-                .name
-                .as_ref()
-                .is_some_and(|bound| bound.as_str() == name)
-                || any(&handler.body)
-        })
+) -> usize {
+    count_bindings(body, name)
+        + count_bindings(orelse, name)
+        + count_bindings(finalbody, name)
+        + handlers
+            .iter()
+            .map(|handler| {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                usize::from(
+                    handler
+                        .name
+                        .as_ref()
+                        .is_some_and(|bound| bound.as_str() == name),
+                ) + count_bindings(&handler.body, name)
+            })
+            .sum::<usize>()
 }
 
 fn names_target(target: &Expr, name: &str) -> bool {
@@ -301,11 +358,16 @@ fn names_target(target: &Expr, name: &str) -> bool {
         Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| names_target(elt, name)),
         Expr::List(list) => list.elts.iter().any(|elt| names_target(elt, name)),
         Expr::Starred(starred) => names_target(&starred.value, name),
+        // `module.name = ...` replaces the attribute the import resolved through.
+        Expr::Attribute(attribute) => attribute.attr.as_str() == name,
         _ => false,
     }
 }
 
 fn alias_binds(alias: &ast::Alias, name: &str) -> bool {
+    if alias.name.as_str() == "*" {
+        return true;
+    }
     let bound = alias.asname.as_ref().map_or_else(
         || alias.name.as_str().split('.').next().unwrap_or(""),
         |asname| asname.as_str(),

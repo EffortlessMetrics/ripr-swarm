@@ -194,6 +194,13 @@ fn given_another_binding_of_the_owner_name_anywhere_in_its_module_then_the_asser
         "if (is_adult := lambda age: True):\n    pass\n",
         "while (is_adult := lambda age: True):\n    break\n",
         "match 1:\n    case 1 if (is_adult := None):\n        pass\n",
+        "from legacy import *\n",
+        "def swap():\n    global is_adult\n    is_adult = lambda age: True\n\n\nswap()\n",
+        "globals()['is_adult'] = lambda age: True\n",
+        "setattr(sys.modules[__name__], 'is_adult', None)\n",
+        "is_adult.__code__ = other.__code__\n",
+        "type is_adult = int\n",
+        "import sys\nsys.modules[__name__].is_adult = None\n",
     ] {
         let strengths = strengths_with_owner(&format!("{BOOL_OWNER}{rebinding}"));
         assert_eq!(strengths, vec![OracleStrength::Smoke; 2], "{rebinding}");
@@ -258,5 +265,39 @@ fn given_not_and_literal_returns_and_a_docstring_then_the_owner_is_a_bool_owner(
             vec![OracleStrength::Strong; 2],
             "{owner}"
         );
+    }
+}
+
+#[test]
+fn given_a_test_file_that_binds_the_callee_a_second_time_then_the_assertion_stays_smoke() {
+    for extra in [
+        "from src.legacy import is_adult\n",
+        "import src.legacy as is_adult\n",
+        "from src.legacy import *\n",
+        "is_adult: object = None\n",
+        "other, is_adult = 1, 2\n",
+        "for is_adult in [lambda age: True]:\n    pass\n",
+        "(is_adult := lambda age: True)\n",
+        "import src.rules as r\nr.is_adult = lambda age: True\n",
+        "globals()['is_adult'] = lambda age: True\n",
+        "type is_adult = int\n",
+    ] {
+        let tests = format!(
+            "from src.rules import is_adult\n{extra}\n\ndef test_adult():\n    assert is_adult(18)\n"
+        );
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{extra}");
+    }
+}
+
+#[test]
+fn given_a_test_function_that_shadows_the_callee_then_the_assertion_stays_smoke() {
+    for body in [
+        "def test_adult(is_adult):\n    assert is_adult(18)\n",
+        "def test_adult():\n    from src.legacy import is_adult\n    assert is_adult(18)\n",
+    ] {
+        let tests = format!("from src.rules import is_adult\n\n\n{body}");
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{body}");
     }
 }
