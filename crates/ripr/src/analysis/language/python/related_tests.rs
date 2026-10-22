@@ -1934,10 +1934,13 @@ pub(super) fn strong_test_imports_owner_from_module(
 }
 
 /// Whether `import` brings the owner's own name into the test: the named
-/// import, or `from module import *` for a public owner. A leading underscore
-/// keeps a name out of a star import, so a private owner never binds this way.
+/// import, or `from module import *` for a public owner the module's
+/// `__all__` exports. A leading underscore keeps a name out of a star import,
+/// and a module whose `__all__` omits the name (or is unresolved) does not
+/// export it, so neither binds this way.
 fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
-    import.imported == owner.name || (import.imported == "*" && !owner.name.starts_with('_'))
+    import.imported == owner.name
+        || (import.imported == "*" && !owner.name.starts_with('_') && owner.star_exported)
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
