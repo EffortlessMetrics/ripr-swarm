@@ -127,6 +127,16 @@ and without execution authority (ADR 0022):
   (RIPR-SPEC-0198), no live-head binding window exists: the MCP adapter
   never re-resolves git state per read, and the document says so.
 
+- The refresh's seam inventory evaluates evidence only for seams that can
+  bind a snapshot item: seams in a changed file or owned by a changed gap
+  (#9210). Caller-file seams widen the scope but are not evaluated and are
+  counted as unevaluated; every seam the card binding and the shared repair
+  validator can name is evaluated exactly as before. The classified result,
+  with its repo-wide seam-limit fact, is reused only for an identical
+  workspace cache key, changed-file set and owner set, so a reuse hit
+  returns the completeness fact its cold run derived and any corpus,
+  configuration, scope or seam-limit change misses.
+
 ## Required Evidence
 
 - Unit controls over the projection: strict resource-template id parsing;

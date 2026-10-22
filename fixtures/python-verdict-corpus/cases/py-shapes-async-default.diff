@@ -1,0 +1,9 @@
+diff --git a/shapes/aio.py b/shapes/aio.py
+--- a/shapes/aio.py
++++ b/shapes/aio.py
+@@ -11,4 +11,4 @@
+ async def first_or_default(items, default):
+     for item in items:
+         return item
+-    return default
++    return None

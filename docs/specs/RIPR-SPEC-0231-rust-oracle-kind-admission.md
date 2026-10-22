@@ -352,8 +352,9 @@ Two pattern terms are used below.
    and a field or method on a wrapper or struct literal that holds a test
    (`Wrapper(x == 1).0`, `Some(x == 3).unwrap_or(false)`) caps, except that a
    plain field read compared with `true` still pins the held test (#8615).
-   An index, a parenthesized or `&`-prefixed wrapper and a bare tuple are not
-   yet read this way (#8654).
+   An index read (`vec![x == 1, y][0]`), a parenthesized or `&`-prefixed
+   wrapper and a bare tuple (`(x == 1, y).0`) are read the same way, and two
+   tuples pair their elements like two lists (#8654).
    Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a

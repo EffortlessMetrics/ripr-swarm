@@ -437,6 +437,37 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
 
+### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
+
+A read-only, static registry of what this ripr build can establish, projected
+from one closed table (`domain::language_capability`). Top-level fields:
+`schema_version`, `kind` (`ripr_language_capabilities`), `semantic_digest`
+(`sha256:` over the cells, independent of row order, over the whole table even
+when `--language` narrows `cells`), `digest_scope` (always `whole_table`),
+`filtered_by` (`null`, or `{"language": ...}` when `--language` narrowed
+`languages[]` and `cells[]`), `availability_note`, `languages[]`,
+`support_state_vocabulary`,
+`absent_cell_meaning` (`not_proven`), `cells[]`, `non_claims`, and
+`claim_boundary`.
+
+- `languages[]`: `language`, `language_status` (`stable` or `preview`),
+  `adapter_compiled`, `required_feature`. This is build availability only. It
+  neither implies nor limits any cell, and it is not per-repository enablement
+  (use `ripr doctor --json`).
+- `cells[]`: `id` (`language/framework/mode/family`), `language`, `framework`
+  (`any` or a named framework; a framework-specific cell never widens to
+  `any`), `mode` (`diff` or `repo`), `family` (`static_facts` or
+  `repair_routing`), `state`, `tier_ceiling` (`usable_alpha` or `preview`),
+  `limit` (the typed fallback or limitation to honor), and `proof_refs`.
+- `state` is one of `exact_supported`, `conservative_overapproximation`,
+  `supported_with_required_fallback`, `unsupported_with_typed_limit`,
+  `not_applicable_with_evidence`, `stale`, `not_proven`. There is no numeric
+  confidence score.
+
+TypeScript and JavaScript keep distinct cells under one adapter. The registry
+promotes no support tier and runs nothing; `docs/status/SUPPORT_TIERS.md`
+remains the human tier statement.
+
 ### Doctor environment fields (schema `0.4`, #5214)
 
 The published schema for this document is
@@ -845,6 +876,15 @@ the owner but those tests were not extracted), the Rust adapter emits one
 `rust_lexical_test_index_partial`. Unrelated parser-refused test files in the
 same crate do not make the run partial. Changed files that fall back lexically
 are a separate `producer_failure` lane (#4722), not this limitation.
+
+A Rust file outside the diff that a typed parse limit declined
+(`rust_nesting_budget`, or a source that is not UTF-8) makes the run partial
+whether or not it is a related test file: one aggregate `producer_failure`
+limitation names up to three files with their limit token and counts the rest in
+`affected_items`, so a declined file is never complete by omission (#9308,
+#4511). Plain syntax errors in unchanged files stay on the narrower
+`rust_lexical_test_index_partial` rule above. Changed declined files keep their
+own per-file #4722 limitation.
 
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is
@@ -4142,10 +4182,15 @@ Field contract:
   `helper_owner_call` extends the existing relation taxonomy without
   changing the field shape.
 - `scope` — always `"repo"`.
-- `run_status` — always present; one of `"complete"` or
-  `"seam_limit_applied"`. `"complete"` means the run analyzed all
-  seams. `"seam_limit_applied"` means the inventory cap or pilot artifact
-  budget truncated the reported population. Consumers must read `run_status` before
+- `run_status` — always present; one of `"complete"`,
+  `"seam_limit_applied"` or `"limited_declined_files"`. `"complete"` means the
+  run analyzed all seams. `"seam_limit_applied"` means the inventory cap or
+  pilot artifact budget truncated the reported population.
+  `"limited_declined_files"` means a parse limit declined one or more Rust
+  files (`rust_nesting_budget`, or a source that is not UTF-8), which were read
+  lexically and emit no probe shapes, so their seams are under-credited; a seam
+  cut keeps `"seam_limit_applied"` and still lists the declined files in
+  `limitations[]` (#9308). Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
 - `limitations[]` — present when repo exposure has a named run limitation or
@@ -4157,6 +4202,10 @@ Field contract:
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
     `control` and `repair_route` name that inventory control.
+  - `category: "rust_files_declined"` names the declined Rust files:
+    `declined_file_count`, up to three `declined_files[]` entries of
+    `{path, reason}` (the typed static-limit reason), `declined_files_omitted`
+    when more exist, `repair_route` and `detail` (#9308).
   - `category: "pilot_seam_budget_applied"` identifies a pilot artifact
     budget cut, with the same count/source fields and `control:
     "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
@@ -8376,12 +8425,16 @@ tightening, not a current guarantee.
 
 ### Declared limitations
 
-- **Descendant containment.** Only the owned child is terminated. The workspace
-  forbids `unsafe_code` and the dependency policy admits neither `libc` nor
-  `windows-sys`, so no process-group or job-object substrate is available. The
-  authority boundary compensates structurally: the only executable route is one
-  leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
-  The posture is disclosed as `descendant_containment` in the response.
+- **Descendant containment.** The child is spawned through the shared owned
+  process authority (#3803). On Windows a Job Object owns the whole tree and
+  every terminal path (timeout, cancellation, output overflow, exit) ends it
+  before the output is read. On other platforms only the owned child is
+  terminated: the workspace forbids `unsafe_code` and the dependency policy
+  admits neither `libc` nor `windows-sys`, so no process-group substrate is
+  available. The authority boundary compensates structurally: the only
+  executable route is one leaf `ripr agent verify` invocation, which spawns no
+  long-lived descendants. The posture is disclosed as `descendant_containment`
+  in the response (`job_object` or `owned_child_only`).
 - **`verification_executed_fail`**, **`verification_timed_out`**, and
   **`verification_command_not_found`** are mapped and unit-tested but are not
   reachable end-to-end today. The only executable route is `ripr agent verify`
@@ -10098,9 +10151,13 @@ Field contract:
   fallback identity. The sole allowed value is `"legacy_path_line_class"`.
   The field is omitted for canonical identity matches and for baseline-new
   candidates, so their rendered decisions stay byte-identical. During the
-  compatibility window a fallback-only match still suppresses blocking but
-  also produces a report-level warning naming the candidate and the matched
-  legacy identity.
+  compatibility window a fallback-only match against a baseline entry with no
+  canonical gap id still suppresses blocking but also produces a report-level
+  warning naming the candidate and the matched legacy identity. A candidate
+  with no canonical gap id of its own also still joins a canonical-bearing
+  fallback, disclosed as `legacy_path_line_class`, because no divergence can be
+  shown (same as `ripr baseline diff`). Only two differing canonical ids refuse
+  the join.
 - `decisions[].evidence` - static evidence and optional calibration confidence
   effects used for the candidate.
 - `decisions[].repair_route` - uniform failure-time route object, present on
@@ -14137,7 +14194,8 @@ Field contract:
   strengthening the oracle of the related test by hand (or that the seam
   could not be verified, naming `ripr check`), and the matching
   `repair_attempts[].command` is `null`. The withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
-  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` or
+  `limited_declined_files` it
   reads the count as "at least N" and names raising the seam limits and
   rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
@@ -14871,6 +14929,55 @@ candidate-tree commit list is the ordered projection of reviewed
 `candidate_tree_state` values. Unreviewed rows after a pinned cutoff remain
 pending and do not enter that projection; once adjudicated through the
 selected cut, each row carries its reviewed tree state into the projection.
+
+## Release Ledger Report
+
+`release-ledger` validates a captured direct-main ledger (`kind: release_ledger`,
+RIPR-SPEC-0301) and writes `target/ripr/reports/release-ledger.{json,md}` from
+the same normalized DTO. The command exits nonzero unless `status` is `valid`.
+The stable top-level report shape is:
+
+```json
+{
+  "report": "release-ledger",
+  "schema_version": "0.1",
+  "status": "valid | invalid",
+  "stage": "dry_run | final",
+  "final_eligible": false,
+  "adjudication_basis": "rule_derived",
+  "rule_version": "v1",
+  "first_parent_commits": 0,
+  "reachable_commits": 0,
+  "blocking_unresolved_records": 0,
+  "digests": {
+    "first_parent": "sha256:...",
+    "reachable": "sha256:...",
+    "records": "sha256:...",
+    "tree": "sha256:..."
+  },
+  "counts_by_disposition": {},
+  "counts_by_final_tree_effect": {},
+  "reconciliation_reasons": [],
+  "ledger": {},
+  "authority_boundary": "direct_main_ledger_only",
+  "must_not_claim": []
+}
+```
+
+`ledger` holds the input DTO: `source` (base, cut, cut tree, observed main
+tip), `range` (`first_parent` and `reachable`, kept separate), `merged_prs`,
+`selected_claims`, `open_prs`, `digests`, an optional `audit` reference and one
+`records` entry per reachable commit. Dispositions use the closed eleven-value
+vocabulary and `final_tree_effect` is a separate closed field backed by an
+`effect_basis`. Markdown carries the same digests as
+`first-parent digest: \`...\`` lines. A `final` ledger rejects any
+`blocking_unresolved` row and requires an audit digest.
+
+`release-ledger capture` writes a `release_ledger_git_facts` document with the
+same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
+`blamed_paths` and one `commits` entry per reachable commit (`paths`,
+`final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
+first-parent subject, `issue_refs` for other `#N` mentions).
 
 ## Operator Cockpit Report
 
@@ -15752,7 +15859,11 @@ Field contract:
   contract, not a second packet schema.
 - `run_status` — `"complete"` when neither cap bounded the pilot artifact,
   or `"seam_limit_applied"` when the inventory cap or pilot artifact budget
-  fired. Packet admission remains independent of this status.
+  fired, or `"limited_declined_files"` when a parse limit declined Rust files
+  and no cap fired (#9308), with a `category: "rust_files_declined"` entry in
+  `limitations[]` (`declined_file_count`, up to three `declined_files[]` of
+  `{path, reason}`, `repair_route`). Packet admission remains independent of
+  this status.
 - `limitations[]` — present for a pilot artifact cap, with one object carrying
   `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
   `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
@@ -16622,7 +16733,8 @@ Field contract:
 - `actionable_seams_total_is_lower_bound` — complete summaries only. `true`
   when a seam limit cut the classified seams before ranking, so
   `actionable_seams_total` counts only the kept seams and seams past the cut
-  may hold more; `false` when no limit applied and the total is exact. The
+  may hold more, or when `declined_rust_files` is present (#9308); `false` when
+  no limit applied and the total is exact. The
   Markdown summary says "at least N" in the same case.
 - `seam_limit` — complete summaries only. `null` when no limit applied;
   otherwise `{"analyzed": <kept>, "total": <available>, "source":
@@ -16712,6 +16824,11 @@ Field contract:
   file_count, enabled: false, guidance}`; pilot bypasses the Rust inventory
   in that state, so the empty ranking discloses the exclusion rather than a
   clean result, on the terminal and Markdown as well as here.
+  `declined_rust_files` is a separate top-level field next to `seam_limit`,
+  additive and present only when a parse limit declined Rust files (#9308): it
+  carries `{file_count, files[] of {path, reason}, files_omitted, guidance}`.
+  `status` stays `"complete"` (the run finished and ranked); the matching
+  `repo-exposure.json` reports `run_status: "limited_declined_files"`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
@@ -18186,7 +18303,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.88",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.90",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18952,7 +19069,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.88",
+      "schema_version": "1.90",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
