@@ -1,0 +1,12 @@
+diff --git a/idioms/texts.py b/idioms/texts.py
+--- a/idioms/texts.py
++++ b/idioms/texts.py
+@@ -13,7 +13,7 @@
+     >>> truncate("abc", 5)
+     'abc'
+     """
+-    return text[:limit]
++    return text[: limit + 1]
+ 
+ 
+ def shout(text):
