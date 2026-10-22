@@ -827,7 +827,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(attempt_id) {
@@ -888,7 +888,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(receipt_id) {
