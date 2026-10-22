@@ -64,7 +64,7 @@ jobs:
       # job, and the log is uploaded even when it does.
       # `timeout` ends a run nextest cannot: shard 4 of run 39843731107 hit the
       # 60-minute job cap with no log. Exit 124 is recorded like any other status,
-      # and the SLOW rows already in the log name the stuck tests.
+      # and any SLOW rows already in the log usually name the stuck tests.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 50
         shell: bash
