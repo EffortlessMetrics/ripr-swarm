@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_enum_wrong_export (3)
+
+Reason:
+RIPR-SPEC-0224: re-bless after #9798 and #9056 combined; the wrong-export related-test row now carries the row-local observation_unconfirmed miss (unconfirmed suffix), no verdict change
+
+Command:
+`cargo xtask goldens bless typescript_enum_wrong_export --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
