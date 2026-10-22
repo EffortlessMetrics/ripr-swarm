@@ -223,7 +223,13 @@ without a test saying so. The `catch` keyword must follow a closing `}`
 line or any changed line starting with `}` is excluded. The throw-capable
 text list also holds `invalid`, `bad`, `malformed`, `corrupt`, `parse`,
 `missing`, `nonexist`, `null`, `undefined`, `empty` and `nan`. Any piece the
-rule cannot read keeps the ladder result. Rule 5 only removes credit and runs
+rule cannot read keeps the ladder result.
+
+Known limits (false gap, never false credit): an owner parameter that is
+absent or not callable, a rejection built without throw-capable text
+(`new Promise((_, r) => r(1))`), and destructured `catch ({ message })`
+clauses are not modeled; each can leave a reachable arm read as
+`weakly_exposed`. Rule 5 only removes credit and runs
 after the #8569 unentered-guard rule.
 
 ### Decisions
