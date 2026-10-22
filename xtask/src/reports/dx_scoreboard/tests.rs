@@ -558,6 +558,36 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Value(1.0))
     );
 
+    // A receipt from before `verdict_reading`, or one missing a case's
+    // reading, leaves the count unmeasured instead of reading as a drop.
+    let mut old_receipt = first_run_receipt(true);
+    if let Some(cases) = old_receipt["cases"].as_array_mut() {
+        for case in cases.iter_mut() {
+            case.as_object_mut()
+                .map(|fields| fields.remove("verdict_reading"));
+        }
+    }
+    let samples = parse_ingest(&old_receipt, &config)?;
+    assert!(
+        !samples
+            .iter()
+            .any(|s| s.metric == "first_run.decisive_verdicts")
+    );
+    let mut one_missing = first_run_receipt(true);
+    if let Some(cases) = one_missing["cases"].as_array_mut()
+        && let Some(first) = cases.first_mut()
+    {
+        first
+            .as_object_mut()
+            .map(|fields| fields.remove("verdict_reading"));
+    }
+    let samples = parse_ingest(&one_missing, &config)?;
+    assert!(
+        !samples
+            .iter()
+            .any(|s| s.metric == "first_run.decisive_verdicts")
+    );
+
     // An install step with no duration must not pass as a faster install.
     let mut partial = first_run_receipt(true);
     if let Some(setup) = partial["setup"].as_array_mut() {
@@ -1331,6 +1361,35 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert_eq!(
         get("first_run.decisive_verdicts")[0]["evidence"],
         json!("readings: a=unresolved")
+    );
+    // One case with steps and no reading row is an incomplete sample, and a
+    // file with no readings at all publishes no count.
+    let cut_off = [
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":1.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict_reading","value":"agrees with the tests","budget":null,"better":"review_on_change"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"b","step":"check","metric":"secs","value":1.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"b","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+    ];
+    let partial = parse_ingest_text(&cut_off.join("\n")).unwrap_or_default();
+    let partial = first_run_rows_to_input(&partial).unwrap_or_default();
+    let count = partial["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.decisive_verdicts"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(count["value"], json!(1));
+    assert_eq!(count["completed"], json!(false));
+    let none = parse_ingest_text(&[cut_off[0], cut_off[1]].join("\n")).unwrap_or_default();
+    let none = first_run_rows_to_input(&none).unwrap_or_default();
+    assert!(
+        !none["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["id"].as_str() == Some("first_run.decisive_verdicts"))
     );
     assert_eq!(get("first_run.walk_secs")[0]["value"], json!(13.5));
     // install 40 + doctor 0.5 + check 12 = first useful result at 52.5 s

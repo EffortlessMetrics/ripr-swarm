@@ -745,11 +745,13 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     let mut friction = friction_in(setup);
     let mut unknown = 0_usize;
     let mut decisive = 0_usize;
+    let mut read = 0_usize;
     let mut rows = Vec::new();
     for case in cases {
         let name = case["case"].as_str().unwrap_or("case");
-        if case["verdict_reading"].as_str() == Some(FIRST_RUN_AGREEING_READING) {
-            decisive += 1;
+        if let Some(reading) = case["verdict_reading"].as_str() {
+            read += 1;
+            decisive += usize::from(reading == FIRST_RUN_AGREEING_READING);
         }
         let steps = case["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
         friction += friction_in(steps);
@@ -798,7 +800,12 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
-    rows.push(json!({"id": "first_run.decisive_verdicts", "value": decisive}));
+    // A receipt from before `verdict_reading` (or one missing a case's
+    // reading) leaves the metric unmeasured: a count over fewer readings than
+    // cases would read as a false drop.
+    if read == cases.len() {
+        rows.push(json!({"id": "first_run.decisive_verdicts", "value": decisive}));
+    }
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "first-run",
@@ -1082,13 +1089,19 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         out.push(json!({"id": "first_run.friction_events", "value": friction}));
         out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
         // Rows from a walk that predates `verdict_reading` carry none, so the
-        // count is left unmeasured rather than read as zero decisive verdicts.
+        // count is left unmeasured rather than read as zero decisive verdicts;
+        // a cut-off file with fewer readings than cases is an incomplete
+        // sample, not a lower count.
         if !readings.is_empty() {
             let decisive = readings
                 .iter()
                 .filter(|reading| reading.ends_with(&format!("={FIRST_RUN_AGREEING_READING}")))
                 .count();
-            out.push(json!({"id": "first_run.decisive_verdicts", "value": decisive, "evidence": format!("readings: {}", list(&readings))}));
+            let mut row = json!({"id": "first_run.decisive_verdicts", "value": decisive, "evidence": format!("readings: {}", list(&readings))});
+            if readings.len() < cases.len() {
+                row["completed"] = json!(false);
+            }
+            out.push(row);
         }
     }
     if let Some(install) = install {

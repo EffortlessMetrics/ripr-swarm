@@ -1212,17 +1212,18 @@ fn scoreboard_rows(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
                 Value::Null,
                 "review_on_change",
             ));
-
-            rows.push(row(
-                &case.name,
-                "check",
-                "verdict_reading",
-                json!(verdict_reading(Some(verdict), !case.caught_by.is_empty())),
-                "class",
-                Value::Null,
-                "review_on_change",
-            ));
         }
+        // One reading per case, `no verdict` included, so the scoreboard can
+        // tell a case that did not agree from a walk that never wrote one.
+        rows.push(row(
+            &case.name,
+            "check",
+            "verdict_reading",
+            json!(verdict_reading(case.verdict, !case.caught_by.is_empty())),
+            "class",
+            Value::Null,
+            "review_on_change",
+        ));
     }
     rows
 }
@@ -1404,6 +1405,12 @@ mod tests {
             Value::Null
         );
         assert_eq!(find("demo-1.0.0", "check", "secs")?["budget"], json!(10.0));
+        // Every case writes a reading (this one has no catching tests, so a
+        // weak verdict agrees), which is what the scoreboard counts.
+        assert_eq!(
+            find("demo-1.0.0", "check", "verdict_reading")?["value"],
+            json!("agrees with the tests")
+        );
         assert_eq!(
             find("demo-1.0.0", "check", "stdout_lines")?["value"],
             json!(2)
