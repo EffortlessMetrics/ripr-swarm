@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod arm_activation;
 mod bool_oracle;
 mod boundary;
 mod classify;
@@ -208,6 +209,11 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Whether a `from <owner module> import *` binds this owner: the name is
+    /// public and the module's `__all__` is absent or lists it. `false` until
+    /// the workspace pass fills it, and when the module source is unavailable
+    /// or its `__all__` is unresolved (`reexports.rs`).
+    star_exported: bool,
     /// Src-layout short module names of this owner's file that another
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
@@ -1104,6 +1110,9 @@ impl PythonAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod arm_activation_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;

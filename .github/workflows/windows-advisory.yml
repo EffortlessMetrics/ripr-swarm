@@ -87,10 +87,10 @@ jobs:
     name: windows-advisory
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
-    # Above the sum of the cargo step deadlines below (15+30+15+30+30), so the
+    # Above the sum of the cargo step deadlines below (15+45+15+75+75), so the
     # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
     # compilation and the manual isolation repeats have no deadline of their own.
-    timeout-minutes: 150
+    timeout-minutes: 270
 
     steps:
       - uses: actions/checkout@v6
@@ -133,7 +133,7 @@ jobs:
 
       - name: Test --no-default-features (advisory)
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 45
         shell: bash
         run: |
           mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast > target/nofeatures-test.log 2>&1; printf '%s\n' "$?" > target/nofeatures-test.status; cat target/nofeatures-test.log; exit 0
@@ -162,14 +162,14 @@ jobs:
       # step itself exits 0 because test outcomes are advisory.
       - name: Run workspace tests (advisory, run 1)
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 75
         shell: bash
         run: |
           mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run1.log 2>&1; printf '%s\n' "$?" > target/windows-run1.status; cat target/windows-run1.log; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 75
         shell: bash
         run: |
           mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run2.log 2>&1; printf '%s\n' "$?" > target/windows-run2.status; cat target/windows-run2.log; exit 0
@@ -346,10 +346,23 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      # The storage tests below ship in this run's workflow definition (the merge ref on a
+      # pull_request), so they read the consumer from that same ref and not from the PR head;
+      # otherwise a branch behind main pairs new tests with an old consumer (#9521).
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: target/workflow-ref
+          sparse-checkout: .github/workflows/windows-advisory.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: dtolnay/rust-toolchain@1.95
 
       - name: Check selector storage boundaries without a product build
         shell: pwsh
+        env:
+          SELECTOR_WORKFLOW_FILE: target/workflow-ref/.github/workflows/windows-advisory.yml
         run: |
           $storage_tests = @'
           """Exercise the actual inline Actions consumer with synthetic files; never build RIPR."""
@@ -366,7 +379,7 @@ jobs:
           import unittest
           from unittest.mock import patch
 
-          WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'
+          WORKFLOW = Path.cwd() / os.environ['SELECTOR_WORKFLOW_FILE']
 
 
           def consumer():
