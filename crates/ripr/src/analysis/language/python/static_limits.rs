@@ -786,6 +786,7 @@ mod tests {
             unplain_decorators: Vec::new(),
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
+            star_exported: false,
             ambiguous_src_modules: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),

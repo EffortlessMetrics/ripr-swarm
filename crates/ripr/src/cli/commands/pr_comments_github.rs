@@ -496,9 +496,12 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
 mod tests {
     use super::{
         is_request_file, parse_pr_comments_existing_options, parse_pr_comments_requests_options,
-        pr_comments_existing, pr_comments_requests, store_raw_copy, validate_out_dir,
-        validate_out_file,
+        pr_comments_existing, pr_comments_requests, validate_out_dir, validate_out_file,
     };
+    // Only the unix planted-leaf-link test calls this; importing it
+    // unconditionally is an unused import on Windows.
+    #[cfg(unix)]
+    use super::store_raw_copy;
     use std::path::{Path, PathBuf};
 
     fn strings(args: &[&str]) -> Vec<String> {

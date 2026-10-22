@@ -7,7 +7,8 @@ Owner: product-analysis
 Created: 2026-10-14
 
 Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
-[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002).
+[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
+[#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -68,6 +69,30 @@ bind:
   holds): both integer-form operands compare as `i128`, refusing on
   overflow, while float literals keep the f64 path because Python rounds
   them at parse time too (#7874).
+
+## Unreached `match` arms and `.get` defaults (#9429)
+
+The same all-rows-excluded rule covers two more branch shapes, in
+`arm_activation.rs`:
+
+- A changed line directly in a `case` arm of `match NAME:` where `NAME` is an
+  owner parameter the owner does not rebind. A row is excluded when its
+  literal binding matches an earlier unguarded arm, or does not match any
+  alternative of the changed arm. Patterns read: scalar literals (compared
+  with Python `==`, so `True` takes `case 1`), `None`/`True`/`False` by
+  identity, builtin `int()`, `float()`, `str()`, `bool()` class patterns,
+  `_`, a capture name and `|` alternatives. Any other pattern, or a guarded
+  earlier arm, leaves the row not excluded.
+- An edit that changes only the literal default of `TABLE.get(key, default)`,
+  where `TABLE` is one module-level dict literal of scalar keys that nothing
+  in the file but `.get` reads touches and no related test mentions or
+  rebinds. A row is excluded when its literal key equals a table key.
+
+Both fail open exactly like the guard rule: an unbound call row, a `*args`
+unpack, a non-literal input or any unreadable structure keeps the existing
+verdict. A derived observation (`Owner.make().method()` where the edited
+constructor argument only reaches the assertion through `method`) is not
+covered and still reads `exposed` (#9429, third shape).
 
 ## Required Evidence
 
@@ -130,8 +155,15 @@ text is display only and never feeds a decision:
   `or_guard_*`, `unreadable_strong_call_*`, `rebound_parameter_*`, and
   `bool_numeric_guard_*` cases cover the end-to-end verdicts.
 
+- `analysis::language::python::arm_activation_tests` covers the unreached
+  wildcard and literal arms, the controls that reach them, the fail-open
+  patterns, and the `.get` default with its table-mutation fail-opens.
+
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/arm_activation.rs` owns the
+  `match` arm and `.get` default exclusion, chained after the guard rule in
+  `classify.rs`.
 - `crates/ripr/src/analysis/language/python/guard_activation.rs` owns the
   guard reading, row exclusion, and fail-open shapes.
 - `crates/ripr/src/analysis/language/python/boundary.rs::strong_owner_call_rows_with_gaps`

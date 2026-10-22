@@ -250,19 +250,31 @@ fn plan_publication(
     record_limit: usize,
     byte_ceiling: usize,
 ) -> Result<PublicationPlan, String> {
+    let mut concurrent_plan = None;
     if seams.len() <= record_limit {
         let single = borrowed_cache_envelope(key, seams, limit_info, lexical_fallback_files);
-        if checksummed_pretty_fits(&single, byte_ceiling)? {
-            return Ok(PublicationPlan::Single);
-        }
-        if seams.is_empty() {
-            return Ok(PublicationPlan::SkipOversized {
-                index: None,
-                encoded_bytes: checksummed_pretty_len(&single)?,
-            });
+        if seams.is_empty() || !plan_overlap_enabled() {
+            if checksummed_pretty_fits(&single, byte_ceiling)? {
+                return Ok(PublicationPlan::Single);
+            }
+            if seams.is_empty() {
+                return Ok(PublicationPlan::SkipOversized {
+                    index: None,
+                    encoded_bytes: checksummed_pretty_len(&single)?,
+                });
+            }
+        } else {
+            match probe_single_while_planning(&single, key, seams, record_limit, byte_ceiling)? {
+                SingleProbe::Fits => return Ok(PublicationPlan::Single),
+                SingleProbe::Sharded(plan) => concurrent_plan = Some(plan),
+            }
         }
     }
-    let ranges = match plan_shard_ranges(key, seams, record_limit, byte_ceiling)? {
+    let plan = match concurrent_plan {
+        Some(plan) => plan,
+        None => plan_shard_ranges(key, seams, record_limit, byte_ceiling)?,
+    };
+    let ranges = match plan {
         ShardPlan::Ranges(ranges) => ranges,
         ShardPlan::Oversized { index } => {
             let encoded_bytes = single_record_shard_len(key, seams, index)?;
@@ -271,8 +283,86 @@ fn plan_publication(
                 encoded_bytes,
             });
         }
+        ShardPlan::Superseded => {
+            return Err("classified cache shard plan was superseded without a result".to_string());
+        }
     };
     Ok(PublicationPlan::Sharded(ranges))
+}
+
+enum SingleProbe {
+    Fits,
+    Sharded(ShardPlan),
+}
+
+/// Whether one entry holds every seam, answered while the shard plan runs on
+/// this thread: both cost one serialization pass, so a store too large for one
+/// entry (the common cold case) no longer pays for them in sequence. The
+/// answer that finishes first ends the other early, so a store that fits one
+/// entry pays no more than the probe alone, and a failed plan stops the probe.
+fn probe_single_while_planning(
+    single: &(impl Serialize + Sync),
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    record_limit: usize,
+    byte_ceiling: usize,
+) -> Result<SingleProbe, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let token = crate::analysis::cancellation::current_token();
+    let plan_abort = AtomicBool::new(false);
+    let probe_abort = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let probe = if shard_spawn_blocked() {
+            Err(io::Error::other("injected plan probe spawn failure"))
+        } else {
+            std::thread::Builder::new()
+                .name("ripr-cache-plan-probe".to_string())
+                .stack_size(SHARD_PUBLISH_WORKER_STACK_BYTES)
+                .spawn_scoped(scope, || {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        let outcome = checksummed_pretty_len_within_abortable(
+                            single,
+                            byte_ceiling,
+                            &probe_abort,
+                        );
+                        if matches!(outcome, Ok(Some(_))) {
+                            plan_abort.store(true, Ordering::Release);
+                        }
+                        outcome
+                    })
+                })
+        };
+        let Ok(probe) = probe else {
+            // No thread for the probe: answer in sequence.
+            if checksummed_pretty_fits(single, byte_ceiling)? {
+                return Ok(SingleProbe::Fits);
+            }
+            return Ok(SingleProbe::Sharded(plan_shard_ranges(
+                key,
+                seams,
+                record_limit,
+                byte_ceiling,
+            )?));
+        };
+        let planned =
+            plan_shard_ranges_overlapped(key, seams, record_limit, byte_ceiling, Some(&plan_abort));
+        if planned.is_err() {
+            probe_abort.store(true, Ordering::Release);
+        }
+        let probed = probe
+            .join()
+            .map_err(|panic| format!("classified cache plan probe panicked: {panic:?}"))?;
+        match probed {
+            Ok(Some(_)) => Ok(SingleProbe::Fits),
+            Ok(None) => Ok(SingleProbe::Sharded(planned?)),
+            Err(error) => {
+                // An aborted probe only follows a plan failure, which wins.
+                planned?;
+                Err(error)
+            }
+        }
+    })
 }
 
 fn single_record_shard_len(
@@ -311,7 +401,11 @@ fn oversized_skip_status(
 
 enum ShardPlan {
     Ranges(Vec<Range<usize>>),
-    Oversized { index: usize },
+    Oversized {
+        index: usize,
+    },
+    /// The concurrent single-entry probe found that everything fits one entry.
+    Superseded,
 }
 
 fn plan_shard_ranges(
@@ -320,6 +414,9 @@ fn plan_shard_ranges(
     record_limit: usize,
     byte_ceiling: usize,
 ) -> Result<ShardPlan, String> {
+    if plan_overlap_enabled() {
+        return plan_shard_ranges_overlapped(key, seams, record_limit, byte_ceiling, None);
+    }
     if seams.is_empty() {
         return Ok(ShardPlan::Ranges(Vec::new()));
     }
@@ -360,6 +457,183 @@ fn plan_shard_ranges(
     Ok(ShardPlan::Ranges(ranges))
 }
 
+/// A shard end from the size model whose real encode is still being checked.
+#[derive(Clone, Copy)]
+struct ModeledShard {
+    start: usize,
+    end: usize,
+    length: usize,
+}
+
+enum Verification<'scope> {
+    Running(std::thread::ScopedJoinHandle<'scope, Result<bool, String>>),
+    Done(Result<bool, String>),
+}
+
+struct PendingShard<'scope> {
+    index: usize,
+    start: usize,
+    verification: Verification<'scope>,
+}
+
+impl PendingShard<'_> {
+    fn matches_real_encode(self) -> Result<bool, String> {
+        match self.verification {
+            Verification::Done(outcome) => outcome,
+            Verification::Running(handle) => handle.join().map_err(|panic| {
+                format!("classified cache shard verification panicked: {panic:?}")
+            })?,
+        }
+    }
+}
+
+/// [`plan_shard_ranges`] with each shard's real-encode check running while the
+/// next shard is modeled. The next shard starts where the unchecked one ends;
+/// if the check disagrees with the model, that speculation is dropped and the
+/// shard is replanned by the probing search, so the ranges are the ones the
+/// sequential planner chooses. `abort` ends planning with
+/// [`ShardPlan::Superseded`] once the whole store is known to fit one entry.
+fn plan_shard_ranges_overlapped(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    record_limit: usize,
+    byte_ceiling: usize,
+    abort: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<ShardPlan, String> {
+    if seams.is_empty() {
+        return Ok(ShardPlan::Ranges(Vec::new()));
+    }
+    let conservative_shard_count = seams.len();
+    std::thread::scope(|scope| {
+        let mut ranges: Vec<Range<usize>> = Vec::new();
+        let mut pending: Option<PendingShard<'_>> = None;
+        let mut start: usize = 0;
+        loop {
+            if abort.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+                if let Some(pending) = pending.take() {
+                    let _ = pending.matches_real_encode();
+                }
+                return Ok(ShardPlan::Superseded);
+            }
+            let index = ranges.len();
+            let max_end = start.saturating_add(record_limit).min(seams.len());
+            // Modeled while the previous shard's real encode runs.
+            let modeled = if start < seams.len() {
+                model_shard_end(
+                    key,
+                    seams,
+                    start,
+                    max_end,
+                    index,
+                    conservative_shard_count,
+                    byte_ceiling,
+                )?
+            } else {
+                None
+            };
+            if let Some(previous) = pending.take() {
+                let (previous_index, previous_start) = (previous.index, previous.start);
+                if !previous.matches_real_encode()? {
+                    #[cfg(test)]
+                    PLAN_MODEL_MISMATCHES.with(|count| count.set(count.get().saturating_add(1)));
+                    // Whatever was modeled after it started from the wrong end.
+                    ranges.truncate(previous_index);
+                    let previous_max = previous_start.saturating_add(record_limit).min(seams.len());
+                    let Some(end) = largest_fitting_end(
+                        key,
+                        seams,
+                        previous_start,
+                        previous_max,
+                        previous_index,
+                        conservative_shard_count,
+                        byte_ceiling,
+                    )?
+                    else {
+                        return Ok(ShardPlan::Oversized {
+                            index: previous_start,
+                        });
+                    };
+                    ranges.push(previous_start..end);
+                    start = end;
+                    continue;
+                }
+            }
+            if start >= seams.len() {
+                return Ok(ShardPlan::Ranges(ranges));
+            }
+            let Some(modeled) = modeled else {
+                let Some(end) = largest_fitting_end(
+                    key,
+                    seams,
+                    start,
+                    max_end,
+                    index,
+                    conservative_shard_count,
+                    byte_ceiling,
+                )?
+                else {
+                    return Ok(ShardPlan::Oversized { index: start });
+                };
+                ranges.push(start..end);
+                start = end;
+                continue;
+            };
+            let verification = spawn_shard_verification(
+                scope,
+                key,
+                seams,
+                index,
+                conservative_shard_count,
+                byte_ceiling,
+                modeled,
+            );
+            ranges.push(start..modeled.end);
+            pending = Some(PendingShard {
+                index,
+                start,
+                verification,
+            });
+            start = modeled.end;
+        }
+    })
+}
+
+fn spawn_shard_verification<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    key: &'env RepoSeamCacheKey,
+    seams: &'env [ClassifiedSeam],
+    shard_index: usize,
+    conservative_shard_count: usize,
+    byte_ceiling: usize,
+    modeled: ModeledShard,
+) -> Verification<'scope> {
+    // Copy: it runs on a new thread, or here when none can be started.
+    let verify = move || {
+        verify_modeled_shard(
+            key,
+            seams,
+            shard_index,
+            conservative_shard_count,
+            byte_ceiling,
+            &modeled,
+        )
+    };
+    if shard_spawn_blocked() {
+        return Verification::Done(verify());
+    }
+    let token = crate::analysis::cancellation::current_token();
+    match std::thread::Builder::new()
+        .name("ripr-cache-plan-verify".to_string())
+        .stack_size(SHARD_PUBLISH_WORKER_STACK_BYTES)
+        .spawn_scoped(scope, move || {
+            crate::analysis::cancellation::with_optional_token(token.as_ref(), verify)
+        }) {
+        Ok(handle) => Verification::Running(handle),
+        // No thread for it: check here, in sequence.
+        Err(_) => Verification::Done(verify()),
+    }
+}
+
 /// The shard's end from [`PrettyTableSizer`]: one encode per seam instead of
 /// one per probe of a growing prefix (#5364). The modeled length of the
 /// chosen shard is checked against one real encode, bounded by the ceiling,
@@ -375,6 +649,44 @@ fn modeled_fitting_end(
     conservative_shard_count: usize,
     byte_ceiling: usize,
 ) -> Result<Option<usize>, String> {
+    let Some(modeled) = model_shard_end(
+        key,
+        seams,
+        start,
+        max_end,
+        shard_index,
+        conservative_shard_count,
+        byte_ceiling,
+    )?
+    else {
+        return Ok(None);
+    };
+    if verify_modeled_shard(
+        key,
+        seams,
+        shard_index,
+        conservative_shard_count,
+        byte_ceiling,
+        &modeled,
+    )? {
+        return Ok(Some(modeled.end));
+    }
+    #[cfg(test)]
+    PLAN_MODEL_MISMATCHES.with(|count| count.set(count.get().saturating_add(1)));
+    Ok(None)
+}
+
+/// The end and modeled length of the shard starting at `start`, from the
+/// sizer alone. `None` when the first seam does not fit.
+fn model_shard_end(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    start: usize,
+    max_end: usize,
+    shard_index: usize,
+    conservative_shard_count: usize,
+    byte_ceiling: usize,
+) -> Result<Option<ModeledShard>, String> {
     let empty = borrowed_shard_envelope(key, shard_index, conservative_shard_count, &[]);
     let Some(base) = checksummed_pretty_len_within(&empty, byte_ceiling)? else {
         return Ok(None);
@@ -396,19 +708,27 @@ fn modeled_fitting_end(
     if end == start {
         return Ok(None);
     }
-    let modeled = base.saturating_add(sizer.bytes_over_empty());
+    let length = base.saturating_add(sizer.bytes_over_empty());
     #[cfg(test)]
-    let modeled = modeled.saturating_add(MODEL_SKEW.with(std::cell::Cell::get));
-    let Some(slice) = seams.get(start..end) else {
-        return Ok(None);
+    let length = length.saturating_add(MODEL_SKEW.with(std::cell::Cell::get));
+    Ok(Some(ModeledShard { start, end, length }))
+}
+
+/// Whether one real encode of the modeled shard, bounded by the ceiling, has
+/// the modeled length.
+fn verify_modeled_shard(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    shard_index: usize,
+    conservative_shard_count: usize,
+    byte_ceiling: usize,
+    modeled: &ModeledShard,
+) -> Result<bool, String> {
+    let Some(slice) = seams.get(modeled.start..modeled.end) else {
+        return Ok(false);
     };
     let envelope = borrowed_shard_envelope(key, shard_index, conservative_shard_count, slice);
-    if checksummed_pretty_len_within(&envelope, byte_ceiling)? == Some(modeled) {
-        return Ok(Some(end));
-    }
-    #[cfg(test)]
-    PLAN_MODEL_MISMATCHES.with(|count| count.set(count.get().saturating_add(1)));
-    Ok(None)
+    Ok(checksummed_pretty_len_within(&envelope, byte_ceiling)? == Some(modeled.length))
 }
 
 fn largest_fitting_end(
@@ -703,6 +1023,12 @@ fn shard_publish_workers(shard_count: usize) -> usize {
         .map_or(1, std::num::NonZeroUsize::get)
         .clamp(1, SHARD_PUBLISH_MAX_WORKERS)
         .min(shard_count)
+}
+
+/// Planning overlaps its encode checks and the single-entry probe only where
+/// a second thread can run; tests plan serially unless they ask for workers.
+fn plan_overlap_enabled() -> bool {
+    shard_publish_workers(2) > 1
 }
 
 /// Write every shard with `workers` threads. Shards are claimed in index order;
@@ -1106,10 +1432,29 @@ fn checksummed_pretty_len_within<T: Serialize>(
     body: &T,
     ceiling: usize,
 ) -> Result<Option<usize>, String> {
+    checksummed_pretty_len_bounded(body, ceiling, None)
+}
+
+/// [`checksummed_pretty_len_within`] that also stops, with an error, once
+/// `abort` is set.
+fn checksummed_pretty_len_within_abortable<T: Serialize>(
+    body: &T,
+    ceiling: usize,
+    abort: &std::sync::atomic::AtomicBool,
+) -> Result<Option<usize>, String> {
+    checksummed_pretty_len_bounded(body, ceiling, Some(abort))
+}
+
+fn checksummed_pretty_len_bounded<T: Serialize>(
+    body: &T,
+    ceiling: usize,
+    abort: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Option<usize>, String> {
     let mut counter = CeilingCounter {
         count: 0,
         ceiling,
         exceeded: false,
+        abort,
     };
     match encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter) {
         Ok(()) => Ok(Some(counter.count)),
@@ -1134,14 +1479,21 @@ impl Write for DiscardingCounter {
     }
 }
 
-struct CeilingCounter {
+struct CeilingCounter<'a> {
     count: usize,
     ceiling: usize,
     exceeded: bool,
+    abort: Option<&'a std::sync::atomic::AtomicBool>,
 }
 
-impl Write for CeilingCounter {
+impl Write for CeilingCounter<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self
+            .abort
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return Err(io::Error::other("encoding aborted"));
+        }
         self.count = self.count.saturating_add(buf.len());
         #[cfg(test)]
         PLAN_ENCODE_HIGH_WATER.with(|water| water.set(water.get().max(self.count)));
@@ -1689,7 +2041,7 @@ mod tests {
                 for record_limit in [5, 64, count] {
                     let modeled = match plan_shard_ranges(&key, &seams, record_limit, ceiling)? {
                         ShardPlan::Ranges(ranges) => Some(ranges),
-                        ShardPlan::Oversized { .. } => None,
+                        ShardPlan::Oversized { .. } | ShardPlan::Superseded => None,
                     };
                     let probed = probed_shard_ranges(&key, &seams, record_limit, ceiling)?;
                     assert_eq!(
@@ -1708,6 +2060,118 @@ mod tests {
             0,
             "the size model disagreed with a real encode"
         );
+        Ok(())
+    }
+
+    fn planned_ranges(
+        key: &RepoSeamCacheKey,
+        seams: &[ClassifiedSeam],
+        record_limit: usize,
+        ceiling: usize,
+    ) -> Result<Option<Vec<Range<usize>>>, String> {
+        Ok(
+            match plan_shard_ranges(key, seams, record_limit, ceiling)? {
+                ShardPlan::Ranges(ranges) => Some(ranges),
+                ShardPlan::Oversized { .. } | ShardPlan::Superseded => None,
+            },
+        )
+    }
+
+    #[test]
+    fn overlapped_shard_plan_matches_the_serial_plan() -> Result<(), String> {
+        let key = empty_key();
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        let mut sharded_plans = 0;
+        for (count, distinct, seed) in [(40, 3, 1), (180, 150, 2), (300, 40, 3), (64, 1, 4)] {
+            let seams = mixed_seams(count, distinct, seed);
+            let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, count, &seams))?;
+            for divisor in [1, 2, 3, 7, 20] {
+                let ceiling = whole / divisor;
+                for record_limit in [5, 64, count] {
+                    let serial = planned_ranges(&key, &seams, record_limit, ceiling)?;
+                    let overlapped = with_shard_publish_workers(4, || {
+                        planned_ranges(&key, &seams, record_limit, ceiling)
+                    })?;
+                    assert_eq!(
+                        overlapped, serial,
+                        "{count} seams, {distinct} tests, ceiling {ceiling}, limit {record_limit}"
+                    );
+                    if serial.as_ref().is_some_and(|ranges| ranges.len() > 1) {
+                        sharded_plans += 1;
+                    }
+                }
+            }
+        }
+        assert!(sharded_plans > 20, "only {sharded_plans} plans sharded");
+        assert_eq!(PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn overlapped_shard_plan_replans_a_shard_the_encode_rejects() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(60, 20, 5);
+        let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 60, &seams))?;
+        let ceiling = whole / 4;
+        let expected = planned_ranges(&key, &seams, 60, ceiling)?;
+        assert!(expected.as_ref().is_some_and(|ranges| ranges.len() > 2));
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        MODEL_SKEW.with(|skew| skew.set(1));
+        let skewed = with_shard_publish_workers(4, || planned_ranges(&key, &seams, 60, ceiling));
+        MODEL_SKEW.with(|skew| skew.set(0));
+        assert_eq!(skewed?, expected);
+        assert_eq!(
+            PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+            expected.map_or(0, |ranges| ranges.len()),
+            "every shard's modeled length must be checked and rejected"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_single_entry_probe_agrees_with_the_serial_decision() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(120, 30, 7);
+        let single_len = checksummed_pretty_len(&borrowed_cache_envelope(&key, &seams, None, &[]))?;
+        let plan_kind = |plan: PublicationPlan| match plan {
+            PublicationPlan::Single => "single".to_string(),
+            PublicationPlan::Sharded(ranges) => format!("sharded {ranges:?}"),
+            PublicationPlan::SkipOversized { index, .. } => format!("oversized {index:?}"),
+        };
+        // One record far above the ceiling, mid-store: both planners must
+        // name the same oversized record.
+        let mut with_oversized_record = mixed_seams(120, 30, 7);
+        if let Some(record) = with_oversized_record.get_mut(70) {
+            record.evidence.reach =
+                StageEvidence::new(StageState::Yes, Confidence::High, "r".repeat(single_len));
+        }
+        for (seams, ceiling) in [
+            (&seams, single_len),
+            (&seams, single_len.saturating_sub(1)),
+            (&seams, single_len / 3),
+            (&seams, single_len.saturating_mul(4)),
+            (&seams, 1),
+            (&with_oversized_record, single_len / 2),
+        ] {
+            let serial = plan_publication(&key, seams, None, &[], 120, ceiling)?;
+            let concurrent = with_shard_publish_workers(4, || {
+                plan_publication(&key, seams, None, &[], 120, ceiling)
+            })?;
+            assert_eq!(
+                plan_kind(concurrent),
+                plan_kind(serial),
+                "ceiling {ceiling}"
+            );
+            let blocked = with_shard_publish_workers(4, || {
+                with_blocked_shard_spawns(|| plan_publication(&key, seams, None, &[], 120, ceiling))
+            })?;
+            let again = plan_publication(&key, seams, None, &[], 120, ceiling)?;
+            assert_eq!(
+                plan_kind(blocked),
+                plan_kind(again),
+                "blocked, ceiling {ceiling}"
+            );
+        }
         Ok(())
     }
 

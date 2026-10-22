@@ -1,0 +1,22 @@
+{
+  "case_id": "hostile-line-comment-assertion",
+  "subject_id": "authored-ts-vitest-hostile",
+  "origin": "authored",
+  "anchor": "src/commented.ts:2",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_assertion_in_line_comment",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

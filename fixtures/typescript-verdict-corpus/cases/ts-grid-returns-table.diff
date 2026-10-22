@@ -1,0 +1,12 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function initial(name: string): string {
+-  return name.slice(0, 1);
++  return name.substring(0, 1);
+ }
+ 
+ export function normalize(text: string): string {

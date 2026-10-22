@@ -1,0 +1,12 @@
+diff --git a/src/ops.rs b/src/ops.rs
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -71,7 +71,7 @@
+ 
+ impl PartialOrd for Version {
+     fn partial_cmp(&self, other: &Version) -> Option<Ordering> {
+-        (self.0, self.1).partial_cmp(&(other.0, other.1))
++        Some((self.0, self.1).cmp(&(other.0, other.1)))
+     }
+ }
+ 

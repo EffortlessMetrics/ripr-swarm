@@ -244,6 +244,7 @@ fn selected_claim_totals_must_match_rows_and_packet() -> Result<(), String> {
             .iter()
             .map(|id| PacketClaim {
                 claim_id: (*id).to_string(),
+                owner_issue: 0,
                 resolution: "accepted_defer_with_non_claim".to_string(),
             })
             .collect(),
@@ -344,6 +345,7 @@ fn packet_roster_and_final_capture_commit_are_compared() -> Result<(), String> {
         digest: "sha256:packet".to_string(),
         claims: vec![PacketClaim {
             claim_id: "claim-a".to_string(),
+            owner_issue: 0,
             resolution: "accepted_defer_with_non_claim".to_string(),
         }],
         open_prs: PacketOpenPrs {
@@ -471,4 +473,98 @@ fn markdown_with_a_conflicting_second_digest_line_is_rejected() -> Result<(), St
         .any(|reason| reason.contains("first-parent digest"))
         .then_some(())
         .ok_or_else(|| format!("expected a digest reason, got {found:?}"))
+}
+
+#[test]
+fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[3].release_disposition = "included_accepted_product".to_string();
+    require_reason(
+        &ledger,
+        "requires disposition included_historical_reachable_only",
+    )?;
+    // Ownership through a renamed path: owned lines, no alive touched path.
+    let mut ledger = valid();
+    ledger.records[0].effect_basis = EffectBasis {
+        alive_paths: 0,
+        absent_paths: 1,
+        last_toucher_paths: 0,
+        blamed_lines: 3,
+    };
+    redigest(&mut ledger);
+    let found = reasons(&ledger);
+    found
+        .is_empty()
+        .then_some(())
+        .ok_or_else(|| format!("rename-owned lines must validate: {found:?}"))?;
+    ledger.records[0].effect_basis.blamed_lines = 0;
+    redigest(&mut ledger);
+    require_reason(
+        &ledger,
+        "present_effective needs a last-toucher path or a blamed line",
+    )
+}
+
+#[test]
+fn markdown_projection_shows_every_records_theme() -> Result<(), String> {
+    let mut ledger = valid();
+    let total = ledger.records.len();
+    if total < 2 {
+        return Err("the fixture needs at least two records".to_string());
+    }
+    ledger.records[0].theme = "automation".to_string();
+    ledger.records[1].theme = "release_or_control".to_string();
+    let markdown = super::report_markdown(&ledger, "pass", &[]);
+    for expected in [
+        "| Theme | Count |".to_string(),
+        "| Disposition | Theme |".to_string(),
+        "| `automation` | 1 |".to_string(),
+        "| `release_or_control` | 1 |".to_string(),
+        format!("| `core` | {} |", total - 2),
+    ] {
+        if !markdown.contains(&expected) {
+            return Err(format!("missing `{expected}` in:\n{markdown}"));
+        }
+    }
+    for record in &ledger.records {
+        let cell = format!("| `{}` |", record.theme);
+        let shown = markdown
+            .lines()
+            .any(|line| line.contains(&record.commit_sha) && line.contains(&cell));
+        if !shown {
+            return Err(format!("{} lacks its theme cell", record.commit_sha));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn input_over_the_byte_cap_is_rejected_not_truncated() -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-input-cap-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("input.json");
+    let path = path.to_string_lossy().to_string();
+    std::fs::write(&path, b"0123456789").map_err(|error| error.to_string())?;
+    let at_cap = super::read_capped(&path, "facts", 10)?;
+    if at_cap.len() != 10 {
+        return Err(format!(
+            "a file exactly at the cap read {} bytes",
+            at_cap.len()
+        ));
+    }
+    let over = match super::read_capped(&path, "facts", 9) {
+        Ok(bytes) => return Err(format!("an oversize file read {} bytes", bytes.len())),
+        Err(error) => error,
+    };
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    if !over.contains("facts") || !over.contains("9-byte release-ledger input limit") {
+        return Err(format!(
+            "the error does not name the input and limit: {over}"
+        ));
+    }
+    Ok(())
 }

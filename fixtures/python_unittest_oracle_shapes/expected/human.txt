@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/notifications.py:warn_coupon:return_value:return_value:coupon_expired
   Changed behavior: return "coupon expired"
   Missing discriminator (1 of 2): Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value
-  Related test: tests/test_notifications.py:7 test_warn_coupon_output_message
+  Related test: tests/test_notifications.py:7 test_warn_coupon_output_message (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_notifications.py
   Suggested test: test_warn_coupon_output_message
   Verify command: python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_output_message (high)

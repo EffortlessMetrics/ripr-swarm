@@ -299,8 +299,8 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]
@@ -21491,7 +21491,7 @@ fn guarded_allow_attributes_in_text(
             cursor += 1;
         }
         let kind = &text[ident_start..cursor];
-        if kind != "allow" && kind != "expect" {
+        if kind != "allow" && kind != "expect" && kind != "cfg_attr" {
             index += 1;
             continue;
         }
@@ -21506,6 +21506,20 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        if kind == "cfg_attr" {
+            // #9501: `#[cfg_attr(<predicate>, allow(..), expect(..))]` is the
+            // same suppression under a condition; it spends the same budget
+            // as the plain attribute.
+            let mut line = None;
+            for (wrapped, lint) in cfg_attr_suppressed_lints(&text[content_start..content_end]) {
+                if guarded.contains(lint.as_str()) {
+                    let line = *line.get_or_insert_with(|| byte_line_number(text, index));
+                    findings.push((line, format!("{wrapped}({lint})")));
+                }
+            }
+            index = next_index;
+            continue;
+        }
         let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
@@ -21519,11 +21533,96 @@ fn guarded_allow_attributes_in_text(
     findings
 }
 
+/// `allow`/`expect` lints named by the attributes a `cfg_attr(<predicate>, ..)`
+/// conditionally applies, including nested `cfg_attr` wrappers. Splitting is
+/// parenthesis- and string-aware so predicates such as `all(a, b)` and reason
+/// strings do not shift the attribute boundaries.
+fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    // The first top-level part is the predicate; the rest are attributes.
+    for part in split_top_level_commas(content).into_iter().skip(1) {
+        let part = part.trim();
+        let Some((name, rest)) = part.split_once('(') else {
+            continue;
+        };
+        let inner = rest.trim_end().strip_suffix(')').unwrap_or(rest);
+        match name.trim() {
+            "allow" => found.extend(attribute_lints(inner).into_iter().map(|l| ("allow", l))),
+            "expect" => found.extend(attribute_lints(inner).into_iter().map(|l| ("expect", l))),
+            "cfg_attr" => found.extend(cfg_attr_suppressed_lints(inner)),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn split_top_level_commas(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let bytes = content.as_bytes();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index = attribute_string_end(bytes, index);
+            continue;
+        }
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(&content[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&content[start..]);
+    parts
+}
+
+/// Read a string from its opening quote. Raw strings close only at a quote
+/// followed by the opening hash suffix; backslashes escape only cooked strings.
+fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
+    let mut marker = quote;
+    while marker > 0 && bytes[marker - 1] == b'#' {
+        marker -= 1;
+    }
+    let raw_suffix = (marker > 0 && bytes[marker - 1] == b'r').then_some(&bytes[marker..quote]);
+    let mut index = quote + 1;
+    while index < bytes.len() {
+        if raw_suffix.is_none() && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let after_quote = index + 1;
+            if let Some(hashes) = raw_suffix {
+                if bytes[after_quote..].starts_with(hashes) {
+                    return after_quote + hashes.len();
+                }
+            } else {
+                return after_quote;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
     while index < bytes.len() {
         match bytes[index] {
+            // A parenthesis inside a `reason = ")"` string is not attribute
+            // syntax; skipping the literal keeps a later suppression in the
+            // same attribute visible to the budget.
+            b'"' => {
+                index = attribute_string_end(bytes, index);
+                continue;
+            }
             b'(' => depth += 1,
             b')' => {
                 depth = depth.saturating_sub(1);

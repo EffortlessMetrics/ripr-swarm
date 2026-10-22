@@ -466,7 +466,7 @@ fn parse_options_rejects_unknown_boards() {
 fn first_run_config() -> Result<Config, String> {
     parse_config(&MINIMAL.replace(
         "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.decisive_verdicts\"\nboard = \"first_run\"\ntitle = \"d\"\nunit = \"cases\"\ndirection = \"higher_is_better\"\ntarget = 2\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
     ))
 }
 
@@ -510,12 +510,12 @@ fn first_run_receipt(with_install: bool) -> Value {
         "ripr": "ripr 0.11.0",
         "setup": setup,
         "cases": [
-            {"case": "semver", "verdict": "infection_unknown", "steps": [
+            {"case": "semver", "verdict": "infection_unknown", "verdict_reading": "unresolved", "steps": [
                 {"step": "doctor", "secs": 0.5, "exit": 0, "friction": []},
                 {"step": "check", "secs": 1.5, "exit": 0, "friction": []},
                 {"step": "init_ci", "secs": 0.1, "exit": 0, "friction": ["workflow is 2374 lines"]},
             ]},
-            {"case": "bytesize", "verdict": "weakly_exposed", "steps": [
+            {"case": "bytesize", "verdict": "weakly_exposed", "verdict_reading": "agrees with the tests", "steps": [
                 {"step": "check", "secs": 2.0, "exit": 2, "friction": ["check exited 2"]},
             ]},
         ],
@@ -551,6 +551,41 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
     assert_eq!(
         find("first_run.unknown_verdicts", None),
         Some(SampleOutcome::Value(1.0))
+    );
+    // An unknown verdict never counts as decisive, whatever its reading.
+    assert_eq!(
+        find("first_run.decisive_verdicts", None),
+        Some(SampleOutcome::Value(1.0))
+    );
+
+    // A receipt from before `verdict_reading`, or one missing a case's
+    // reading, leaves the count unmeasured instead of reading as a drop.
+    let mut old_receipt = first_run_receipt(true);
+    if let Some(cases) = old_receipt["cases"].as_array_mut() {
+        for case in cases.iter_mut() {
+            case.as_object_mut()
+                .map(|fields| fields.remove("verdict_reading"));
+        }
+    }
+    let samples = parse_ingest(&old_receipt, &config)?;
+    assert!(
+        !samples
+            .iter()
+            .any(|s| s.metric == "first_run.decisive_verdicts")
+    );
+    let mut one_missing = first_run_receipt(true);
+    if let Some(cases) = one_missing["cases"].as_array_mut()
+        && let Some(first) = cases.first_mut()
+    {
+        first
+            .as_object_mut()
+            .map(|fields| fields.remove("verdict_reading"));
+    }
+    let samples = parse_ingest(&one_missing, &config)?;
+    assert!(
+        !samples
+            .iter()
+            .any(|s| s.metric == "first_run.decisive_verdicts")
     );
 
     // An install step with no duration must not pass as a faster install.
@@ -1284,6 +1319,7 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict","value":"infection_unknown","budget":null,"better":"review_on_change"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict_reading","value":"unresolved","budget":null,"better":"review_on_change"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"secs","value":1.0,"budget":30,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":2,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
@@ -1320,6 +1356,40 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert_eq!(
         get("first_run.unknown_verdicts")[0]["evidence"],
         json!("verdicts: a=infection_unknown")
+    );
+    assert_eq!(get("first_run.decisive_verdicts")[0]["value"], json!(0));
+    assert_eq!(
+        get("first_run.decisive_verdicts")[0]["evidence"],
+        json!("readings: a=unresolved")
+    );
+    // One case with steps and no reading row is an incomplete sample, and a
+    // file with no readings at all publishes no count.
+    let cut_off = [
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":1.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict_reading","value":"agrees with the tests","budget":null,"better":"review_on_change"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"b","step":"check","metric":"secs","value":1.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"b","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+    ];
+    let partial = parse_ingest_text(&cut_off.join("\n")).unwrap_or_default();
+    let partial = first_run_rows_to_input(&partial).unwrap_or_default();
+    let count = partial["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.decisive_verdicts"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(count["value"], json!(1));
+    assert_eq!(count["completed"], json!(false));
+    let none = parse_ingest_text(&[cut_off[0], cut_off[1]].join("\n")).unwrap_or_default();
+    let none = first_run_rows_to_input(&none).unwrap_or_default();
+    assert!(
+        !none["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["id"].as_str() == Some("first_run.decisive_verdicts"))
     );
     assert_eq!(get("first_run.walk_secs")[0]["value"], json!(13.5));
     // install 40 + doctor 0.5 + check 12 = first useful result at 52.5 s
