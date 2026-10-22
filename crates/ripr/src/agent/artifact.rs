@@ -93,7 +93,7 @@ impl RepoExposureArtifactContext {
             root,
             mode,
             base_revision,
-            config,
+            crate::config::repo_exposure_config_identity_hash(config),
             REPO_EXPOSURE_ANALYSIS_FORMAT,
         )
     }
@@ -112,7 +112,7 @@ impl RepoExposureArtifactContext {
             root,
             mode,
             base_revision,
-            config,
+            crate::config::repo_exposure_config_identity_hash(config),
             REPO_SEAMS_ANALYSIS_FORMAT,
         )
     }
@@ -127,11 +127,14 @@ impl RepoExposureArtifactContext {
         base_revision: Option<String>,
         config: &crate::config::RiprConfig,
     ) -> Result<Self, String> {
+        // The diff check consumes language selection and TypeScript settings
+        // the Rust-only inventory never reads, so its identity covers every
+        // finding-affecting field.
         Self::for_analysis_format(
             root,
             mode,
             base_revision,
-            config,
+            crate::config::check_artifact_config_identity_hash(config),
             CHECK_FINDINGS_ANALYSIS_FORMAT,
         )
     }
@@ -140,7 +143,7 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
+        config_identity: String,
         analysis_format: &str,
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
@@ -158,7 +161,7 @@ impl RepoExposureArtifactContext {
             analysis_format,
             manifest_identity,
             lockfile_identity,
-            crate::config::repo_exposure_config_identity_hash(config),
+            config_identity,
             env!("CARGO_PKG_VERSION"),
         );
         let input_identity = format!(
@@ -3718,6 +3721,51 @@ mod tests {
             }
             if before_metadata["snapshot_identity"] == after_metadata["snapshot_identity"] {
                 return Err("revision movement must change the snapshot identity".to_string());
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    /// A diff check consumes language selection the Rust-only inventory never
+    /// reads, so the findings artifact's input identity must move with it
+    /// while the repo-exposure identity stays put (#9103 review).
+    #[test]
+    fn check_findings_identity_tracks_language_selection_but_repo_exposure_does_not()
+    -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let plain = crate::config::RiprConfig::default();
+            let typescript =
+                crate::config::tests_only_parse("[languages]\nenabled = [\"typescript\"]\n")?;
+            let findings = |config: &crate::config::RiprConfig| {
+                RepoExposureArtifactContext::for_check_findings(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    config,
+                )
+            };
+            let exposure = |config: &crate::config::RiprConfig| {
+                RepoExposureArtifactContext::for_repo_exposure(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    config,
+                )
+            };
+            if findings(&plain)?.input_identity == findings(&typescript)?.input_identity {
+                return Err("language selection must change the findings identity".to_string());
+            }
+            if exposure(&plain)?.input_identity != exposure(&typescript)?.input_identity {
+                return Err(
+                    "the Rust-only inventory identity must ignore language selection".to_string(),
+                );
             }
             Ok(())
         })();

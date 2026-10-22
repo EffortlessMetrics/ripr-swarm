@@ -17887,6 +17887,7 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_a_missing_or_incomplete_analysis",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_duplicate_and_malformed_findings",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_refuse_a_partial_scope_or_any_run_limitation",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_identity_tracks_language_selection_but_repo_exposure_does_not",
   "crates/ripr/src/agent/artifact.rs::tests::verify_snapshot_dispatch_routes_only_the_declared_findings_kind",
 ]
 fixtures = []
