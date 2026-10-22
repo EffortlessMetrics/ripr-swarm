@@ -4,10 +4,14 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Three small authored Perl distributions under `subjects/`, our own code under
+Seven small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
-`authored-perl-test2-ledger` (Test2::V0) and
-`authored-perl-testexception-account` (Test::Exception). Each case is a
+`authored-perl-test2-ledger` (Test2::V0),
+`authored-perl-testexception-account` (Test::Exception),
+`authored-perl-testdeep-inventory` (Test::Deep),
+`authored-perl-moose-profile` (Moose and blessed hashes),
+`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and
+`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
