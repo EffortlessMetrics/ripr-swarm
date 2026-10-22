@@ -133,7 +133,7 @@ jobs:
               foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
               New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
               [System.IO.File]::WriteAllText($to, $text)
-            } catch { Write-Host "skipped $source: $_" }
+            } catch { Write-Host "skipped ${source}: $_" }
           }
           function Save-HostLogs([string]$logs, [string]$dest) {
             if (-not (Test-Path $logs)) { return }
