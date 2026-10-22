@@ -756,6 +756,18 @@ fn scope_disclosure_schema() -> Value {
                 },
                 "required": ["files", "total", "more", "listing_example", "remedy"],
                 "additionalProperties": false
+            },
+            "ignored_edits": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 3 },
+                    "total": { "type": "integer", "minimum": 1 },
+                    "more": { "type": "integer", "minimum": 0 },
+                    "languages_analyzed": { "type": "string" },
+                    "remedy": { "type": "string" }
+                },
+                "required": ["files", "total", "more", "languages_analyzed", "remedy"],
+                "additionalProperties": false
             }
         },
         "required": ["analyzed", "uncommitted_edits", "note"],
@@ -1093,6 +1105,31 @@ fn gap_list_output_schema() -> Value {
                     "schema_version": { "type": "string", "const": super::gaps::GAP_LIST_SCHEMA_VERSION },
                     "snapshot_id": { "type": "string" },
                     "requested_snapshot_id": { "type": ["string", "null"] },
+                    "outcome": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "no_scope",
+                                    "no_changed_lines",
+                                    "no_behavioral_candidates",
+                                    "complete_no_findings",
+                                    "complete_with_findings",
+                                    "partial_with_limitations",
+                                    "unsupported_input",
+                                    "analysis_failed"
+                                ]
+                            },
+                            "label": { "type": "string" },
+                            "limitations": {
+                                "type": "array",
+                                "items": { "type": "string" }
+                            }
+                        },
+                        "required": ["kind", "label", "limitations"],
+                        "additionalProperties": false
+                    },
                     "snapshot_profile_budget_identity": { "type": "string" },
                     "selection_basis_version": { "type": "string" },
                     "budget": {
@@ -1174,6 +1211,7 @@ fn gap_list_output_schema() -> Value {
                     "schema_version",
                     "snapshot_id",
                     "requested_snapshot_id",
+                    "outcome",
                     "snapshot_profile_budget_identity",
                     "selection_basis_version",
                     "budget",
@@ -1389,7 +1427,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v2",
+                "schema_version": "ripr-mcp-gap-list-v3",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1430,7 +1468,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v2")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v3")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 

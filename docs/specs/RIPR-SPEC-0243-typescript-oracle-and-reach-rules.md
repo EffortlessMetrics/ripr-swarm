@@ -766,9 +766,9 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
-**Rule 16. Playwright Test specs of pure functions (#9434, #9652).** A spec
+**Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
 that imports `expect` and `test` from `@playwright/test` reads like its
-plain form in five places:
+plain form in six places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -800,6 +800,14 @@ plain form in five places:
    fits neither or both versions, a changed or different interpolated
    expression, a second throw site, and unanchored, flagged or substring
    payloads (`toThrow("...")`) keep the old reading.
+6. A changed field of a single-line returned object literal
+   (`return { area: w * h, perimeter: 2 * w + h };`, one `key: value`
+   differing from the removed line) is observed by an assertion on that
+   field of the owner's result: `d.perimeter` for `const d = dims(3, 4)` or
+   `dims(3, 4).perimeter`, including the second term of an `expect.soft`
+   pair. The base must be the owner call or a local alias of it; a field
+   whose value is unchanged, another object's field and another owner keep
+   the old reading.
 
 ### Static limits
 
@@ -1274,6 +1282,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
     old pieces for some fill of `${text}`). With `/^something else$/`,
     `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
     unchanged.
+39. `src/soft.ts` returns `{ area: w * h, perimeter: 2 * w + h }` where it
+    returned `perimeter: 2 * (w + h)`, and the Playwright spec runs
+    `const d = dims(3, 4); expect.soft(d.area).toBe(12);
+    expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
+    (today `weakly_exposed`: only the unchanged `area` term reached the
+    changed-value check). With only the `d.area` assertion: unchanged.
 
 ## Test Mapping
 

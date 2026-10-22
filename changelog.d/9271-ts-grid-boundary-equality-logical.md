@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- The TypeScript verdict corpus gains the operator-grid cases for boundary, equality and logical mutations (exact, table, helper, property and none test styles; 15 cases). Four rows are visible false actionables (`ts-grid-boundary-exact`, `ts-grid-boundary-table`, `ts-grid-equality-exact`, `ts-grid-logical-exact`): bare boolean asserts on a predicate owner read as weak. Fixture-only; no analyzer change (#9271).
