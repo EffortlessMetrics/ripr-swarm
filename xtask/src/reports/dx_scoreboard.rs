@@ -47,6 +47,10 @@ const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
+/// The walk's reading of a verdict that is decisive (not `*_unknown`) and
+/// matches what the committed edit's tests catch (`verdict_reading` in
+/// `xtask/src/first_run.rs`).
+const FIRST_RUN_AGREEING_READING: &str = "agrees with the tests";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
@@ -740,9 +744,13 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     };
     let mut friction = friction_in(setup);
     let mut unknown = 0_usize;
+    let mut decisive = 0_usize;
     let mut rows = Vec::new();
     for case in cases {
         let name = case["case"].as_str().unwrap_or("case");
+        if case["verdict_reading"].as_str() == Some(FIRST_RUN_AGREEING_READING) {
+            decisive += 1;
+        }
         let steps = case["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
         friction += friction_in(steps);
         if case["verdict"]
@@ -790,6 +798,7 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
+    rows.push(json!({"id": "first_run.decisive_verdicts", "value": decisive}));
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "first-run",
@@ -883,6 +892,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
+    let mut readings = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let line = index + 1;
         let text = |key: &str| {
@@ -952,6 +962,12 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                     format!("row {line} ({case}/{step} verdict): value must be a class name")
                 })?;
                 verdicts.push(format!("{case}={class}"));
+            }
+            "verdict_reading" => {
+                let reading = row["value"].as_str().ok_or_else(|| {
+                    format!("row {line} ({case}/{step} verdict_reading): value must be a reading")
+                })?;
+                readings.push(format!("{case}={reading}"));
             }
             _ => {}
         }
@@ -1065,6 +1081,15 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     if !cases.is_empty() {
         out.push(json!({"id": "first_run.friction_events", "value": friction}));
         out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
+        // Rows from a walk that predates `verdict_reading` carry none, so the
+        // count is left unmeasured rather than read as zero decisive verdicts.
+        if !readings.is_empty() {
+            let decisive = readings
+                .iter()
+                .filter(|reading| reading.ends_with(&format!("={FIRST_RUN_AGREEING_READING}")))
+                .count();
+            out.push(json!({"id": "first_run.decisive_verdicts", "value": decisive, "evidence": format!("readings: {}", list(&readings))}));
+        }
     }
     if let Some(install) = install {
         // The install alone, so a slower compile is visible even when the

@@ -1212,6 +1212,16 @@ fn scoreboard_rows(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
                 Value::Null,
                 "review_on_change",
             ));
+
+            rows.push(row(
+                &case.name,
+                "check",
+                "verdict_reading",
+                json!(verdict_reading(Some(verdict), !case.caught_by.is_empty())),
+                "class",
+                Value::Null,
+                "review_on_change",
+            ));
         }
     }
     rows

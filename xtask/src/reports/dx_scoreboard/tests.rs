@@ -466,7 +466,7 @@ fn parse_options_rejects_unknown_boards() {
 fn first_run_config() -> Result<Config, String> {
     parse_config(&MINIMAL.replace(
         "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.decisive_verdicts\"\nboard = \"first_run\"\ntitle = \"d\"\nunit = \"cases\"\ndirection = \"higher_is_better\"\ntarget = 2\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
     ))
 }
 
@@ -510,12 +510,12 @@ fn first_run_receipt(with_install: bool) -> Value {
         "ripr": "ripr 0.11.0",
         "setup": setup,
         "cases": [
-            {"case": "semver", "verdict": "infection_unknown", "steps": [
+            {"case": "semver", "verdict": "infection_unknown", "verdict_reading": "unresolved", "steps": [
                 {"step": "doctor", "secs": 0.5, "exit": 0, "friction": []},
                 {"step": "check", "secs": 1.5, "exit": 0, "friction": []},
                 {"step": "init_ci", "secs": 0.1, "exit": 0, "friction": ["workflow is 2374 lines"]},
             ]},
-            {"case": "bytesize", "verdict": "weakly_exposed", "steps": [
+            {"case": "bytesize", "verdict": "weakly_exposed", "verdict_reading": "agrees with the tests", "steps": [
                 {"step": "check", "secs": 2.0, "exit": 2, "friction": ["check exited 2"]},
             ]},
         ],
@@ -550,6 +550,11 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
     );
     assert_eq!(
         find("first_run.unknown_verdicts", None),
+        Some(SampleOutcome::Value(1.0))
+    );
+    // An unknown verdict never counts as decisive, whatever its reading.
+    assert_eq!(
+        find("first_run.decisive_verdicts", None),
         Some(SampleOutcome::Value(1.0))
     );
 
@@ -1284,6 +1289,7 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict","value":"infection_unknown","budget":null,"better":"review_on_change"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict_reading","value":"unresolved","budget":null,"better":"review_on_change"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"secs","value":1.0,"budget":30,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":2,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
@@ -1320,6 +1326,11 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert_eq!(
         get("first_run.unknown_verdicts")[0]["evidence"],
         json!("verdicts: a=infection_unknown")
+    );
+    assert_eq!(get("first_run.decisive_verdicts")[0]["value"], json!(0));
+    assert_eq!(
+        get("first_run.decisive_verdicts")[0]["evidence"],
+        json!("readings: a=unresolved")
     );
     assert_eq!(get("first_run.walk_secs")[0]["value"], json!(13.5));
     // install 40 + doctor 0.5 + check 12 = first useful result at 52.5 s
