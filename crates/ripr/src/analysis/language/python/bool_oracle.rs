@@ -20,6 +20,12 @@
 //!   `and` / `or` whose every operand is one of those or a parameter that the
 //!   assertion binds to a `True`/`False` literal.
 //!
+//! The name must also have no other binding anywhere in the owner's module
+//! (imports, `if`/`try` redefinitions, `del`, loops), the owner must not be a
+//! generator, and the test file must not patch, mock or rebind the callee. A
+//! `Compare` is taken as a `bool`; a type with a custom `__eq__` returning
+//! another value is an accepted residual.
+//!
 //! Anything else — a non-literal argument, a method, a decorated or
 //! re-exported-under-another-name owner, two candidate owners, a `bool`
 //! operand the assertion does not pin — stays smoke.
@@ -38,7 +44,7 @@ pub(super) fn credit_bare_bool_asserts<'a>(
     owners: &[PythonOwner],
     read_source: impl Fn(&Path) -> Option<&'a str>,
 ) {
-    let mut parsed: BTreeMap<PathBuf, Option<Mod>> = BTreeMap::new();
+    let mut parsed: BTreeMap<PathBuf, Option<(Mod, &'a str)>> = BTreeMap::new();
     let mut credits: Vec<(usize, usize, bool)> = Vec::new();
     for (test_index, test) in tests.iter().enumerate() {
         for (assertion_index, assertion) in test.assertions.iter().enumerate() {
@@ -51,12 +57,17 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             let Some(owner) = unique_callee_owner(test, owners, call) else {
                 continue;
             };
+            // A patched or locally rebound callee is not the owner under test.
+            if read_source(&test.file).is_none_or(|source| test_may_replace(source, &call.callee)) {
+                continue;
+            }
             let module = parsed.entry(owner.file.clone()).or_insert_with(|| {
-                read_source(&owner.file)
-                    .and_then(|source| parse_module_result(&owner.file, source).ok())
+                let source = read_source(&owner.file)?;
+                let module = parse_module_result(&owner.file, source).ok()?;
+                Some((module, source))
             });
-            if let Some(Mod::Module(module)) = module
-                && owner_returns_bool(&module.body, owner, &call.bool_arguments)
+            if let Some((Mod::Module(module), source)) = module
+                && owner_returns_bool(&module.body, source, owner, &call.bool_arguments)
             {
                 credits.push((test_index, assertion_index, call.negated));
             }
@@ -101,6 +112,23 @@ fn unique_callee_owner<'o>(
     .then_some(owner)
 }
 
+/// Whether the test file could swap the callee for something else: a mock or
+/// monkeypatch anywhere in the file, or a local binding of the callee name.
+/// Textual on purpose; a false positive only leaves the assertion smoke.
+fn test_may_replace(source: &str, callee: &str) -> bool {
+    let patched = ["patch", "mock", "Mock", "setattr"]
+        .iter()
+        .any(|marker| source.contains(marker));
+    let rebound = source.lines().any(|line| {
+        let line = line.trim_start();
+        line.strip_prefix(callee).is_some_and(|rest| {
+            rest.trim_start().starts_with('=') && !rest.trim_start().starts_with("==")
+        }) || line.starts_with(&format!("def {callee}("))
+            || line.starts_with(&format!("class {callee}"))
+    });
+    patched || rebound
+}
+
 fn credit(assertion: &mut PythonAssertion, negated: bool) {
     let Some(call) = &assertion.bare_bool_call else {
         return;
@@ -119,6 +147,7 @@ fn credit(assertion: &mut PythonAssertion, negated: bool) {
 
 fn owner_returns_bool(
     module: &[Stmt],
+    source: &str,
     owner: &PythonOwner,
     bool_arguments: &[Option<bool>],
 ) -> bool {
@@ -132,12 +161,22 @@ fn owner_returns_bool(
     let (Some(function), None) = (definitions.next(), definitions.next()) else {
         return false;
     };
-    // A rebinding of the name after the definition can swap the function out.
-    if module.iter().any(|stmt| rebinds_name(stmt, &owner.name)) {
+    // Any other binding of the name, at any depth, can swap the function out.
+    if module
+        .iter()
+        .any(|stmt| binds_name(stmt, &owner.name, Some(function)))
+    {
         return false;
     }
     let args = &function.args;
     if args.vararg.is_some() || args.kwarg.is_some() || !function.decorator_list.is_empty() {
+        return false;
+    }
+    // A generator returns a generator object whatever it is annotated with.
+    let body_text = source
+        .get(usize::from(function.range.start())..usize::from(function.range.end()))
+        .unwrap_or("yield");
+    if body_text.contains("yield") {
         return false;
     }
     if function.returns.as_deref().is_some_and(
@@ -168,19 +207,101 @@ fn owner_returns_bool(
     bool_valued(value, &parameters, bool_arguments)
 }
 
-fn rebinds_name(stmt: &Stmt, name: &str) -> bool {
+/// Whether `stmt`, or anything nested in it, binds `name` other than the
+/// owner's own definition (`definition`).
+fn binds_name(stmt: &Stmt, name: &str, definition: Option<&ast::StmtFunctionDef>) -> bool {
+    let target_is = |target: &Expr| names_target(target, name);
+    let any = |body: &[Stmt]| body.iter().any(|stmt| binds_name(stmt, name, definition));
     match stmt {
-        Stmt::Assign(assign) => assign
-            .targets
-            .iter()
-            .any(|target| matches!(target, Expr::Name(target) if target.id.as_str() == name)),
-        Stmt::AnnAssign(assign) => {
-            matches!(assign.target.as_ref(), Expr::Name(target) if target.id.as_str() == name)
+        Stmt::FunctionDef(function) => {
+            definition.is_none_or(|owner| !std::ptr::eq(owner, function))
+                && function.name.as_str() == name
         }
-        Stmt::ClassDef(class) => class.name.as_str() == name,
         Stmt::AsyncFunctionDef(function) => function.name.as_str() == name,
+        Stmt::ClassDef(class) => class.name.as_str() == name,
+        Stmt::Assign(assign) => assign.targets.iter().any(target_is),
+        Stmt::AugAssign(assign) => target_is(&assign.target),
+        Stmt::AnnAssign(assign) => target_is(&assign.target),
+        Stmt::Delete(delete) => delete.targets.iter().any(target_is),
+        Stmt::Import(import) => import.names.iter().any(|alias| alias_binds(alias, name)),
+        Stmt::ImportFrom(import) => import.names.iter().any(|alias| alias_binds(alias, name)),
+        Stmt::For(stmt) => target_is(&stmt.target) || any(&stmt.body) || any(&stmt.orelse),
+        Stmt::AsyncFor(stmt) => target_is(&stmt.target) || any(&stmt.body) || any(&stmt.orelse),
+        Stmt::While(stmt) => any(&stmt.body) || any(&stmt.orelse),
+        Stmt::If(stmt) => any(&stmt.body) || any(&stmt.orelse),
+        Stmt::With(stmt) => {
+            stmt.items
+                .iter()
+                .any(|item| item.optional_vars.as_deref().is_some_and(target_is))
+                || any(&stmt.body)
+        }
+        Stmt::AsyncWith(stmt) => {
+            stmt.items
+                .iter()
+                .any(|item| item.optional_vars.as_deref().is_some_and(target_is))
+                || any(&stmt.body)
+        }
+        Stmt::Try(stmt) => try_binds(
+            &stmt.body,
+            &stmt.handlers,
+            &stmt.orelse,
+            &stmt.finalbody,
+            name,
+            definition,
+        ),
+        Stmt::TryStar(stmt) => try_binds(
+            &stmt.body,
+            &stmt.handlers,
+            &stmt.orelse,
+            &stmt.finalbody,
+            name,
+            definition,
+        ),
+        Stmt::Match(stmt) => stmt.cases.iter().any(|case| any(&case.body)),
+        Stmt::Global(global) => global.names.iter().any(|bound| bound.as_str() == name),
+        Stmt::Nonlocal(nonlocal) => nonlocal.names.iter().any(|bound| bound.as_str() == name),
         _ => false,
     }
+}
+
+fn try_binds(
+    body: &[Stmt],
+    handlers: &[ast::ExceptHandler],
+    orelse: &[Stmt],
+    finalbody: &[Stmt],
+    name: &str,
+    definition: Option<&ast::StmtFunctionDef>,
+) -> bool {
+    let any = |body: &[Stmt]| body.iter().any(|stmt| binds_name(stmt, name, definition));
+    any(body)
+        || any(orelse)
+        || any(finalbody)
+        || handlers.iter().any(|handler| {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            handler
+                .name
+                .as_ref()
+                .is_some_and(|bound| bound.as_str() == name)
+                || any(&handler.body)
+        })
+}
+
+fn names_target(target: &Expr, name: &str) -> bool {
+    match target {
+        Expr::Name(target) => target.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| names_target(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| names_target(elt, name)),
+        Expr::Starred(starred) => names_target(&starred.value, name),
+        _ => false,
+    }
+}
+
+fn alias_binds(alias: &ast::Alias, name: &str) -> bool {
+    let bound = alias.asname.as_ref().map_or_else(
+        || alias.name.as_str().split('.').next().unwrap_or(""),
+        |asname| asname.as_str(),
+    );
+    bound == name
 }
 
 /// Whether `expr` is a `bool` for the literal arguments the assertion passes.

@@ -5,11 +5,28 @@ use super::*;
 use std::path::Path;
 
 const RULES: &str = "src/rules.py";
+const TESTS_PATH: &str = "tests/test_rules.py";
+
+/// Run the pass with each file's own source, as the workspace pass does.
+fn credit(
+    tests: &mut [PythonTest],
+    owners: &[PythonOwner],
+    owner_source: &str,
+    tests_source: &str,
+) {
+    bool_oracle::credit_bare_bool_asserts(tests, owners, |path| {
+        Some(if path == Path::new(TESTS_PATH) {
+            tests_source
+        } else {
+            owner_source
+        })
+    });
+}
 
 fn credited_strengths(owner_source: &str, tests_source: &str) -> Vec<OracleStrength> {
     let owners = extract_owners(Path::new(RULES), owner_source);
     let mut tests = extract_tests(Path::new("tests/test_rules.py"), tests_source);
-    bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |_| Some(owner_source));
+    credit(&mut tests, &owners, owner_source, tests_source);
     tests
         .iter()
         .flat_map(|test| test.assertions.iter())
@@ -21,7 +38,7 @@ fn is_adult_finding(tests_source: &str) -> Result<Finding, String> {
     let owner_source = "def is_adult(age):\n    return 18 <= age\n";
     let owners = extract_owners(Path::new(RULES), owner_source);
     let mut tests = extract_tests(Path::new("tests/test_rules.py"), tests_source);
-    bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |_| Some(owner_source));
+    credit(&mut tests, &owners, owner_source, tests_source);
     classify_change(Path::new(RULES), 2, "    return 18 <= age", &owners, &tests)
         .ok_or_else(|| "expected a finding for the changed predicate".to_string())
 }
@@ -41,7 +58,7 @@ fn given_a_credited_bare_assert_then_the_gate_reads_the_equivalent_comparison() 
     let owner_source = "def is_adult(age):\n    return age >= 18\n";
     let owners = extract_owners(Path::new(RULES), owner_source);
     let mut tests = extract_tests(Path::new("tests/test_rules.py"), ADULT_TEST);
-    bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |_| Some(owner_source));
+    credit(&mut tests, &owners, owner_source, ADULT_TEST);
 
     let gates: Vec<_> = tests[0]
         .assertions
@@ -153,4 +170,87 @@ fn given_an_unrelated_callee_then_the_assertion_stays_smoke() {
     );
 
     assert_eq!(strengths, vec![OracleStrength::Smoke]);
+}
+
+const BOOL_OWNER: &str = "def is_adult(age):\n    return age >= 18\n";
+
+fn strengths_with_owner(owner_source: &str) -> Vec<OracleStrength> {
+    credited_strengths(owner_source, ADULT_TEST)
+}
+
+#[test]
+fn given_another_binding_of_the_owner_name_anywhere_in_its_module_then_the_assertion_stays_smoke() {
+    for rebinding in [
+        "if True:\n    def is_adult(age):\n        return 1\n",
+        "try:\n    from fast import is_adult\nexcept ImportError:\n    pass\n",
+        "from legacy import is_adult\n",
+        "is_adult += 1\n",
+        "del is_adult\n",
+        "for is_adult in range(2):\n    pass\n",
+        "with open('x') as is_adult:\n    pass\n",
+    ] {
+        let strengths = strengths_with_owner(&format!("{BOOL_OWNER}{rebinding}"));
+        assert_eq!(strengths, vec![OracleStrength::Smoke; 2], "{rebinding}");
+    }
+}
+
+#[test]
+fn given_a_generator_annotated_bool_then_the_assertion_stays_smoke() {
+    let strengths = strengths_with_owner("def is_adult(age) -> bool:\n    yield age >= 18\n");
+
+    assert_eq!(strengths, vec![OracleStrength::Smoke; 2]);
+}
+
+#[test]
+fn given_a_test_that_patches_or_rebinds_the_callee_then_the_assertion_stays_smoke() {
+    for tests in [
+        "from unittest import mock\nfrom src.rules import is_adult\n\n\n@mock.patch('src.rules.is_adult')\ndef test_adult(m):\n    assert is_adult(18)\n",
+        "from src.rules import is_adult\n\n\ndef test_adult(monkeypatch):\n    monkeypatch.setattr('src.rules.is_adult', None)\n    assert is_adult(18)\n",
+        "from src.rules import is_adult\n\n\ndef test_adult():\n    is_adult = lambda a: 1\n    assert is_adult(18)\n",
+    ] {
+        let strengths = credited_strengths(BOOL_OWNER, tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+    }
+}
+
+#[test]
+fn given_keyword_dotted_or_nested_arguments_then_the_assertion_stays_smoke() {
+    for call in [
+        "is_adult(age=18)",
+        "rules.is_adult(18)",
+        "is_adult(int('18'))",
+    ] {
+        let tests = format!(
+            "from src import rules\nfrom src.rules import is_adult\n\n\ndef test_adult():\n    assert {call}\n"
+        );
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{call}");
+    }
+}
+
+#[test]
+fn given_an_off_boundary_literal_then_the_credited_pin_does_not_expose_the_boundary_change()
+-> Result<(), String> {
+    let finding = is_adult_finding(
+        "from src.rules import is_adult\n\n\ndef test_adult():\n    assert is_adult(100)\n",
+    )?;
+
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn given_not_and_literal_returns_and_a_docstring_then_the_owner_is_a_bool_owner() {
+    for owner in [
+        "def is_adult(age):\n    return not age < 18\n",
+        "def is_adult(age):\n    return True\n",
+        "def is_adult(age):\n    \"\"\"Adults.\"\"\"\n    return age >= 18\n",
+        "def is_adult(age):\n    return age >= 18 or age == 17\n",
+    ] {
+        assert_eq!(
+            strengths_with_owner(owner),
+            vec![OracleStrength::Strong; 2],
+            "{owner}"
+        );
+    }
 }

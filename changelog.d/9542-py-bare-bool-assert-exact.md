@@ -1,4 +1,4 @@
-<!-- section: Internal / CI -->
+<!-- section: Changed -->
 - Python: a bare `assert f(lit, ..)` or `assert not f(lit, ..)` now counts as
   an exact pin when its single resolved workspace callee provably returns a
   `bool` (a `-> bool` annotation, or a lone comparison, `not` or boolean-literal
