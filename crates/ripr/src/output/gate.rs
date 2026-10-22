@@ -720,9 +720,24 @@ fn gate_decision(
         .iter()
         .filter(|identity| fallback_identity.as_ref() != Some(*identity))
         .any(|identity| baseline.identities.contains(identity));
-    let fallback_hit = fallback_identity
-        .as_ref()
-        .is_some_and(|identity| baseline.identities.contains(identity));
+    // One divergence rule shared with `ripr baseline diff` (issue #1964): a
+    // fallback join through a canonical-bearing baseline entry is stale
+    // evidence when both canonical ids exist and differ.
+    let fallback_hit = fallback_identity.as_ref().is_some_and(|identity| {
+        baseline.identities.contains(identity)
+            || baseline
+                .fallback_canonical
+                .get(identity)
+                .is_some_and(|ids| {
+                    ids.iter().any(|baseline_canonical| {
+                        super::baseline_delta::canonical_identity_divergence(
+                            Some(baseline_canonical),
+                            candidate.canonical_gap_id.as_deref(),
+                        )
+                        .is_none()
+                    })
+                })
+    });
     let is_baseline_new = !canonical_hit && !fallback_hit;
     // DISCLOSE-FIRST (issue #1934, RIPR-SPEC-0014 § Baseline Comparison): a
     // fallback-only match still suppresses blocking during the legacy
