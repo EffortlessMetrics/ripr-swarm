@@ -615,7 +615,7 @@ Updated:
 ## Pending — typescript_owner_kinds (20)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+A column-zero module scalar const edit (DEFAULT_RATE = 0.09) is now a return_value/value probe instead of the ambiguous predicate fallback (RIPR-SPEC-0027).
 
 Command:
 `cargo xtask goldens bless typescript_owner_kinds --reason "..."`
@@ -625,6 +625,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — typescript_owner_kinds (21)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_owner_kinds (22)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs

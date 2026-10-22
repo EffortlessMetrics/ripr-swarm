@@ -3277,6 +3277,12 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::exported_scalar_constants_read_as_a_return_value_change",
+  "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::non_ascii_constant_name_is_matched_in_the_tests",
+  "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::computed_or_structured_initializers_are_not_scalar_constants",
+  "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::a_test_expecting_the_edited_literal_does_not_credit_the_edit",
+  "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::a_neighbouring_non_ascii_letter_is_not_a_match",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs::spy_binding_unicode_tests::a_non_ascii_qualifier_before_the_spy_call_does_not_split_a_char",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_collapses_complete_multiline_spans_before_bounding",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_keeps_selected_file_boundaries_and_refuses_invalid_spans",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::report_snippet_marks_only_display_overflow_and_counts_unicode_scalars",
@@ -11424,6 +11430,7 @@ id = "RIPR-SPEC-0158"
 name = "Bounded value transfer from exact test inputs"
 spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
+  "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
@@ -11440,6 +11447,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/value_transfer.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
 ]
 outputs = []
 metrics = [
