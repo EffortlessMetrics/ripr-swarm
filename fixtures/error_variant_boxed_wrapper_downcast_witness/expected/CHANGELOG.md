@@ -500,3 +500,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (36)
+
+Reason:
+RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -231,6 +231,11 @@ written and must not copy these gaps.
   no recorded oracle shows only the reason, where human-full still prints its
   `uses no oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
+- Human evidence rows stay one line (#9165): a related-test oracle or an
+  observed source value whose text spans lines (a closure body, a snapshot, a
+  multi-line string literal) collapses its whitespace through
+  `output::related_test_miss::single_line_evidence_text`; single-line text is
+  byte-identical and JSON keeps the raw text.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
   Human-full, `ripr explain`, LSP hover and LSP related information use it;
