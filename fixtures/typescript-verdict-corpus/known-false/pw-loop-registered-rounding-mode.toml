@@ -1,0 +1,3 @@
+case = "pw-loop-registered-rounding-mode"
+issue = 9434
+reason = "Playwright loop-registered test read as a gap (#9434)."

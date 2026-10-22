@@ -1295,9 +1295,17 @@ mod tests {
             BASELINE_PARSER_RS,
             &["parse_baseline_update_options"],
         ),
-        ("cache clear", CACHE_PARSER_RS, &["parse_clear_args"]),
+        (
+            "cache clear",
+            CACHE_PARSER_RS,
+            &["parse_clear_args", "split_root_arg"],
+        ),
         ("cache export", CACHE_PARSER_RS, &["parse_export_args"]),
-        ("cache status", CACHE_PARSER_RS, &["parse_status_args"]),
+        (
+            "cache status",
+            CACHE_PARSER_RS,
+            &["parse_status_args", "split_root_arg"],
+        ),
         (
             "calibrate cargo-mutants",
             CLI_COMMANDS_RS,
