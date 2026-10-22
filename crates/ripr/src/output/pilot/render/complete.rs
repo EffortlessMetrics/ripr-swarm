@@ -20,8 +20,9 @@ use crate::output::pilot::ranking::{
     withheld_static_limitations,
 };
 use crate::output::pilot::{
-    ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
-    PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
+    ChangeSeams, DECLINED_RUST_GUIDANCE, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange,
+    PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext,
+    RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -1311,8 +1312,6 @@ fn declined_rust_files(context: PilotSummaryContext<'_>) -> &[crate::analysis::D
         .map(|routes| routes.declined_rust_files.as_slice())
         .unwrap_or(&[])
 }
-
-const DECLINED_RUST_GUIDANCE: &str = "These files were read lexically, which emits no probe shapes, so their tests and seams are under-credited and this run is not a complete result. Split them below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`.";
 
 fn declined_path(file: &crate::analysis::DeclinedRustFile) -> String {
     crate::terminal_text::terminal_safe(file.path.to_string_lossy().replace('\\', "/"))

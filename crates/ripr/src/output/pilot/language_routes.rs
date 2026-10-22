@@ -29,6 +29,10 @@ const ROUTED_LANGUAGE_ORDER: &[LanguageId] = &[
     LanguageId::Perl,
 ];
 
+/// Remedy for Rust files a parse limit declined (#9308), shared by every pilot
+/// surface and agent status.
+pub(crate) const DECLINED_RUST_GUIDANCE: &str = "These files were read lexically, which emits no probe shapes, so their tests and seams are under-credited and this run is not a complete result. Split them below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`.";
+
 /// Remedy when Rust files exist but Rust is not enabled (#5205). Shared by
 /// the terminal, Markdown, and JSON renderers so the three surfaces cannot
 /// disagree. `ripr check` is deliberately not the remedy: it honors the same

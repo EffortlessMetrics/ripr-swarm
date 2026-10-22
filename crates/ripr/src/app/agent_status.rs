@@ -1595,6 +1595,70 @@ fn pilot_declined_files(root: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Rust files a complete `ripr pilot` run declined with a parse limit when it
+/// ranked no seam, withheld none and recorded no repair start (#9371). Running
+/// pilot again unchanged declines the same files, so status must not send the
+/// user back. A missing, unreadable, timed-out or seam-ranking summary is not
+/// this fact.
+struct PilotDeclinedOnly {
+    file_count: u64,
+    named: Vec<String>,
+}
+
+fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let file_count = summary
+        .pointer("/declined_rust_files/file_count")
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)?;
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let named = summary
+        .pointer("/declined_rust_files/files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .take(3)
+                .filter_map(|file| {
+                    let path = file.pointer("/path").and_then(Value::as_str)?;
+                    let reason = file.pointer("/reason").and_then(Value::as_str)?;
+                    Some(format!("`{path}` ({reason})"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PilotDeclinedOnly { file_count, named })
+}
+
+fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
+    let files = if declined.file_count == 1 {
+        "1 Rust file".to_string()
+    } else {
+        format!("{} Rust files", declined.file_count)
+    };
+    let named = if declined.named.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", declined.named.join(", "))
+    };
+    // No trailing pilot command: rerunning unchanged declines the same files.
+    format!(
+        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}{named}, so their seams were never analyzed, and running pilot again unchanged declines them again: {}",
+        crate::output::pilot::DECLINED_RUST_GUIDANCE,
+    )
+}
+
 fn pilot_withheld_message(
     withheld: u64,
     seam_limit_applied: Option<bool>,
@@ -1866,6 +1930,16 @@ fn legacy_next_command(
                     pilot_seam_limit_applied(root),
                     pilot_declined_files(root),
                 ),
+            });
+            return None;
+        }
+        // #9371: every Rust file with seams was declined by a parse limit, so
+        // a rerun ranks nothing again; name the files and the repair.
+        if let Some(declined) = pilot_declined_only(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_declined_rust_files_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_declined_only_message(&declined),
             });
             return None;
         }
@@ -5621,6 +5695,56 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #9371: a complete pilot run whose only Rust files were declined by a
+    /// parse limit ranks nothing and withholds nothing, so `select_seam` would
+    /// rerun the same pilot forever. Status stops, names the files and the fix.
+    #[test]
+    fn agent_status_names_declined_files_when_pilot_ranked_and_withheld_nothing()
+    -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-declined-only");
+        let summary = |status: &str, seams: &str, declined: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": 0, "declined_rust_files": {declined}, "next": {{"repair_command": null}}}}"#
+            )
+        };
+        let declined = r#"{"file_count": 1, "files": [{"path": "src/deep.rs", "reason": "rust_nesting_budget"}], "files_omitted": 0}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", declined),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "declined 1 Rust file: `src/deep.rs` (rust_nesting_budget)",
+            "running pilot again unchanged declines them again",
+            "Split them below the Rust parse budget",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // Controls: a timed-out run, or no declined files
+        // keeps status on `select_seam`.
+        for (control, text) in [
+            ("partial", summary("timed_out", "[]", declined)),
+            (
+                "none",
+                summary("complete", "[]", r#"{"file_count": 0, "files": []}"#),
+            ),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &text)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let step = report.next_command.as_ref().map(|next| next.step.as_str());
+            assert_eq!(step, Some("select_seam"), "{control}");
+        }
         Ok(())
     }
 

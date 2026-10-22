@@ -13,7 +13,9 @@ mod render;
 mod types;
 
 pub(crate) use current_change::{ChangeSeams, PilotCurrentChange};
-pub(crate) use language_routes::{PilotLanguageRoute, PilotLanguageRoutes, RUST_EXCLUDED_GUIDANCE};
+pub(crate) use language_routes::{
+    DECLINED_RUST_GUIDANCE, PilotLanguageRoute, PilotLanguageRoutes, RUST_EXCLUDED_GUIDANCE,
+};
 pub(crate) use render::{
     render_pilot_summary_json, render_pilot_summary_md, render_pilot_terminal,
     render_pilot_timeout_summary_json, render_pilot_timeout_summary_md,
