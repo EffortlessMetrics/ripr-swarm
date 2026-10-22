@@ -11,19 +11,19 @@ use std::path::Path;
 const OWNER_FILE: &str = "src/shop.py";
 const TEST_FILE: &str = "tests/test_shop.py";
 
-/// Classify the last line of `owner` against `test_body`, with the owner's
+/// Classify line `line` of `owner` against `test_body`, with the owner's
 /// new-side source threaded in as the production diff path does.
-fn classify(
+fn classify_at(
     owner: &str,
+    line: usize,
     old_line: &str,
     imports: &str,
     test_body: &str,
 ) -> Result<ExposureClass, String> {
-    let line = owner.lines().count();
     let new_line = owner
         .lines()
-        .last()
-        .ok_or_else(|| "owner is empty".to_string())?;
+        .nth(line - 1)
+        .ok_or_else(|| format!("owner has no line {line}"))?;
     let owners = extract_owners(Path::new(OWNER_FILE), owner);
     let tests = extract_tests(Path::new(TEST_FILE), &format!("{imports}\n\n\n{test_body}"));
     classify_change_with_context(
@@ -38,6 +38,16 @@ fn classify(
     )
     .map(|finding| finding.class)
     .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// Classify the last line of `owner`.
+fn classify(
+    owner: &str,
+    old_line: &str,
+    imports: &str,
+    test_body: &str,
+) -> Result<ExposureClass, String> {
+    classify_at(owner, owner.lines().count(), old_line, imports, test_body)
 }
 
 const KIND_IMPORT: &str = "from src.shop import kind";
@@ -177,6 +187,99 @@ fn a_get_default_stays_credited_when_the_table_can_change() -> Result<(), String
     let computed = RATES.replace("{\"gold\": 10, \"silver\": 5}", "build_table()");
     assert_eq!(
         classify(&computed, RATES_OLD, RATES_IMPORT, present)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_table_the_owner_shadows_is_not_read() -> Result<(), String> {
+    // `RATE_TABLE` is a parameter inside `lookup`: the module dict's keys say
+    // nothing about the lookup, and `lookup("gold")` runs the default.
+    let owner = "RATE_TABLE = {\"gold\": 10}\n\n\ndef lookup(tier, RATE_TABLE={}):\n    return RATE_TABLE.get(tier, 1)\n";
+    assert_eq!(
+        classify(
+            owner,
+            RATES_OLD,
+            RATES_IMPORT,
+            "def test_lookup():\n    assert lookup(\"gold\") == 1\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A local rebinding before the lookup shadows it the same way.
+    let local = "RATE_TABLE = {\"gold\": 10}\n\n\ndef lookup(tier):\n    RATE_TABLE = {}\n    return RATE_TABLE.get(tier, 1)\n";
+    assert_eq!(
+        classify(
+            local,
+            RATES_OLD,
+            RATES_IMPORT,
+            "def test_lookup():\n    assert lookup(\"gold\") == 1\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn only_an_unconditional_dict_literal_is_read_as_the_table() -> Result<(), String> {
+    let present = "def test_lookup():\n    assert lookup(\"gold\") == 1\n";
+    for definition in [
+        "RATE_TABLE = {\"gold\": 10} if False else {}",
+        "RATE_TABLE = {\"gold\": 10} | {}",
+        "RATE_TABLE = {\"gold\": 10}; RATE_TABLE.pop(\"gold\")",
+    ] {
+        let owner =
+            format!("{definition}\n\n\ndef lookup(tier):\n    return RATE_TABLE.get(tier, 1)\n");
+        assert_eq!(
+            classify(&owner, RATES_OLD, RATES_IMPORT, present)?,
+            ExposureClass::Exposed,
+            "{definition}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rebound_builtin_class_is_not_read_as_the_builtin() -> Result<(), String> {
+    // `int = str` makes `case int()` match strings, so `kind("x")` reaches
+    // the changed arm.
+    let owner = "int = str\n\n\ndef kind(value):\n    match value:\n        case int():\n            return \"string\"\n        case _:\n            return \"other\"\n";
+    assert_eq!(
+        classify_at(
+            owner,
+            7,
+            "            return \"text\"",
+            KIND_IMPORT,
+            "def test_kind():\n    assert kind(\"x\") == \"string\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // The unrebound builtin excludes the same call: `"x"` is not an int.
+    let intact = owner.replace("int = str\n\n\n", "");
+    assert_eq!(
+        classify_at(
+            &intact,
+            4,
+            "            return \"text\"",
+            KIND_IMPORT,
+            "def test_kind():\n    assert kind(\"x\") == \"other\"\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn string_escape_spellings_are_not_compared_as_text() -> Result<(), String> {
+    // `"\n"` and `"\x0a"` are one string, so the call reaches `case "\n"`.
+    let owner = "def kind(value):\n    match value:\n        case \"\\n\":\n            return \"newline\"\n";
+    assert_eq!(
+        classify(
+            owner,
+            "            return \"nl\"",
+            KIND_IMPORT,
+            "def test_kind():\n    assert kind(\"\\x0a\") == \"newline\"\n"
+        )?,
         ExposureClass::Exposed
     );
     Ok(())

@@ -543,7 +543,7 @@ fn line_is_assignment(line: &str) -> bool {
 /// never awards credit. Requires identifier-bounded occurrences so `totals`
 /// or `subtotal` never match, and skips attribute access (`self.total`)
 /// which names a different binding.
-fn line_rebinds_parameter(line: &str, name: &str) -> bool {
+pub(super) fn line_rebinds_parameter(line: &str, name: &str) -> bool {
     let bytes = line.as_bytes();
     let mut search = 0;
     while let Some(offset) = line[search..].find(name) {

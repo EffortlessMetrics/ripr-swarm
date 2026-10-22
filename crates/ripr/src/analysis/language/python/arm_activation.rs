@@ -24,7 +24,8 @@ use super::boundary::{
     CallRow, literal_value, resolve_operand, strong_owner_call_rows_with_gaps, unrebound_constants,
 };
 use super::guard_activation::{
-    GuardedArmGap, compare_literal_values, leading_whitespace, parameter_rebound_before,
+    GuardedArmGap, compare_literal_values, leading_whitespace, line_rebinds_parameter,
+    parameter_rebound_before,
 };
 use super::module_constants::mentions_identifier;
 use super::related_tests::PythonRelatedCandidate;
@@ -71,6 +72,7 @@ pub(super) fn python_unreached_arm_gap(
             old,
             new_line,
             changed_line.checked_sub(1)?,
+            owner,
             owner_source,
             related_candidates,
         )
@@ -264,24 +266,25 @@ fn arm_excludes(
         return None;
     }
     let value = &row.bindings.get(&arm.subject)?.value;
+    let builtins = builtin_classes_intact(owner, owner_source);
     for earlier in &arm.earlier {
-        if pattern_matches(earlier, value) == Some(true) {
+        if pattern_matches(earlier, value, builtins) == Some(true) {
             return Some(true);
         }
     }
-    (pattern_matches(&arm.pattern, value) == Some(false)).then_some(true)
+    (pattern_matches(&arm.pattern, value, builtins) == Some(false)).then_some(true)
 }
 
 /// Whether the literal `value` matches the `case` pattern: `Some(true)` only
 /// when the arm is certainly taken (no guard), `Some(false)` only when it is
 /// certainly not. Anything outside the literal, builtin-class, wildcard and
 /// capture vocabulary is `None`.
-fn pattern_matches(pattern: &str, value: &str) -> Option<bool> {
+fn pattern_matches(pattern: &str, value: &str, builtins: bool) -> Option<bool> {
     let (pattern, guarded) = split_guard(pattern)?;
     let mut any_unknown = false;
     let mut matched = false;
     for alternative in pattern.split('|') {
-        match alternative_matches(alternative.trim(), value) {
+        match alternative_matches(alternative.trim(), value, builtins) {
             Some(true) => matched = true,
             Some(false) => {}
             None => any_unknown = true,
@@ -309,7 +312,41 @@ fn split_guard(pattern: &str) -> Option<(&str, bool)> {
     }
 }
 
-fn alternative_matches(pattern: &str, value: &str) -> Option<bool> {
+/// Whether `int`, `float`, `str` and `bool` still name the builtins: no
+/// parameter, assignment, `def`/`class`, import or star import of the file
+/// rebinds one, so a `case int()` class pattern means what it spells.
+fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
+    const BUILTINS: [&str; 4] = ["int", "float", "str", "bool"];
+    if owner
+        .parameters
+        .iter()
+        .any(|parameter| BUILTINS.contains(&parameter.name.as_str()))
+    {
+        return false;
+    }
+    let lines: Vec<&str> = owner_source.lines().collect();
+    BUILTINS.iter().all(|name| {
+        !lines.iter().any(|line| binds_name(line.trim(), name))
+            && !lines.iter().any(|line| {
+                let trimmed = line.trim();
+                let names_it = mentions_identifier(trimmed, name);
+                (names_it
+                    && [
+                        "def ",
+                        "async def ",
+                        "class ",
+                        "import ",
+                        "from ",
+                        "global ",
+                    ]
+                    .iter()
+                    .any(|prefix| trimmed.starts_with(prefix)))
+                    || (trimmed.starts_with("from ") && trimmed.ends_with("import *"))
+            })
+    })
+}
+
+fn alternative_matches(pattern: &str, value: &str, builtins: bool) -> Option<bool> {
     if pattern.is_empty() || pattern.contains(['[', '{', ',', ' ']) && !is_quoted(pattern) {
         return None;
     }
@@ -322,6 +359,9 @@ fn alternative_matches(pattern: &str, value: &str) -> Option<bool> {
         return Some(value == pattern);
     }
     if let Some(class) = pattern.strip_suffix("()") {
+        if !builtins {
+            return None;
+        }
         let kind = scalar_kind(value)?;
         return match class {
             "int" => Some(matches!(kind, ScalarKind::Int | ScalarKind::Bool)),
@@ -377,7 +417,9 @@ fn scalar_kind(value: &str) -> Option<ScalarKind> {
         _ => {}
     }
     if is_quoted(value) {
-        return Some(ScalarKind::Str);
+        // Different escape spellings denote one string (`'\n'` and `'\x0a'`),
+        // so text equality proves nothing once a backslash is present.
+        return (!value.contains('\\')).then_some(ScalarKind::Str);
     }
     let digits = value.strip_prefix('-').unwrap_or(value);
     if !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()) {
@@ -398,6 +440,7 @@ fn default_site(
     old: &str,
     new: &str,
     line_index: usize,
+    owner: &PythonOwner,
     owner_source: &str,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<DefaultSite> {
@@ -421,7 +464,14 @@ fn default_site(
             || test.constant_rebinding.assigns_attribute(&table)
             || test.constant_rebinding.rebinds(&table)
     });
-    if mutated_by_test || table_mutated(owner_source, &table) {
+    // An owner parameter or local of the same name replaces the module table
+    // inside the owner, so its keys say nothing about the lookup.
+    let shadowed_in_owner = owner
+        .parameters
+        .iter()
+        .any(|parameter| parameter.name == table)
+        || parameter_rebound_before(owner_source, owner.start_line, line_index, &table);
+    if mutated_by_test || shadowed_in_owner || table_mutated(owner_source, &table) {
         return None;
     }
     Some(DefaultSite {
@@ -542,6 +592,11 @@ fn table_mutated(source: &str, table: &str) -> bool {
             .is_some_and(|rest| rest.trim_start().starts_with('=') || rest.starts_with(':'))
             && leading_whitespace(line) == 0;
         if defines {
+            // `TABLE = {..}; TABLE.pop(k)` mutates on the definition line;
+            // a `;` there cannot be read safely, so fail open.
+            if line.contains(';') {
+                return true;
+            }
             definitions += 1;
             continue;
         }
@@ -591,6 +646,17 @@ fn literal_table_keys(source: &str, table: &str) -> Option<Vec<String>> {
     }
     let open = text.find('{')?;
     let close = matching_paren(&text, open + 1)?;
+    // The dict must be the whole assigned expression: nothing but a comment
+    // may follow it (`{..} if cond else {}`, `{..} | other`, `{..}; T.pop(k)`).
+    let after = text[close + 1..].lines().next().unwrap_or("").trim();
+    if !(after.is_empty() || after.starts_with('#')) {
+        return None;
+    }
+    let before = text[..open].trim_end();
+    let target = before.strip_suffix('=')?.trim_end();
+    if !(target == table || target.starts_with(&format!("{table}:"))) || before.ends_with("==") {
+        return None;
+    }
     let body: String = text[open + 1..close]
         .lines()
         .map(|line| line.split('#').next().unwrap_or(""))
@@ -641,4 +707,21 @@ fn default_excludes(
         }
     }
     if unknown { None } else { Some(false) }
+}
+
+/// True when `line` assigns `name` or uses it as a `for` target.
+fn binds_name(line: &str, name: &str) -> bool {
+    line_rebinds_parameter(line, name)
+        || line
+            .strip_prefix("for ")
+            .and_then(|rest| rest.split(" in ").next())
+            .is_some_and(|targets| {
+                targets.split(',').any(|target| {
+                    target
+                        .trim()
+                        .trim_start_matches(['(', '[', '*'])
+                        .trim_end_matches([')', ']'])
+                        == name
+                })
+            })
 }

@@ -17264,6 +17264,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::an_unreadable_match_subject_or_pattern_fails_open",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_every_observed_key_misses_does_not_credit",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_stays_credited_when_the_table_can_change",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_table_the_owner_shadows_is_not_read",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::only_an_unconditional_dict_literal_is_read_as_the_table",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_rebound_builtin_class_is_not_read_as_the_builtin",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
