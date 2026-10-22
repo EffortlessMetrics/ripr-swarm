@@ -413,8 +413,17 @@ fn spawn_join_owner_tail_line(
     changed: &str,
     identity: &str,
 ) -> Option<usize> {
-    use ra_ap_syntax::{AstNode, ast};
     super::owner_pin::spawn_join_body(changed)?;
+    whole_body_tail_line(owner, identity)
+}
+
+/// The line of the owner's tail when the body is that tail alone and its
+/// normalized text is `identity`.
+fn whole_body_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, ast};
     let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
     let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
     let list = function.body()?.stmt_list()?;
@@ -439,21 +448,8 @@ fn short_circuit_owner_tail_line(
     changed: &str,
     identity: &str,
 ) -> Option<usize> {
-    use ra_ap_syntax::{AstNode, ast};
     super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
-    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
-    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
-    let list = function.body()?.stmt_list()?;
-    if list.statements().next().is_some() {
-        return None;
-    }
-    let tail = list.tail_expr()?;
-    if normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
-        return None;
-    }
-    let offset = usize::from(tail.syntax().text_range().start());
-    let before = owner.body.get(..offset)?;
-    Some(owner.start_line + before.matches('\n').count())
+    whole_body_tail_line(owner, identity)
 }
 
 /// The line of the owner's body when that body is exactly one constant
