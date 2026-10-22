@@ -3508,6 +3508,16 @@ mod tests {
     }
 
     #[test]
+    fn latency_report_schema_readability_accepts_only_zero_dot_n() {
+        for ok in ["0.1", "0.5", "0.12"] {
+            assert!(latency_report_schema_is_readable(Some(ok)), "{ok}");
+        }
+        for rejected in [Some("1.0"), Some("0.x"), Some("0.1.2"), Some(""), None] {
+            assert!(!latency_report_schema_is_readable(rejected), "{rejected:?}");
+        }
+    }
+
+    #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
         // 0.2 is what `repo-exposure-latency-report` wrote since #3864, 0.3
         // since #5213, 0.4 since #9503 and 0.5 since #9633; 0.1 predates all. This consumer reads only status

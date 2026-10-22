@@ -2461,14 +2461,18 @@ fn repo_exposure_latency_output_parity(artifact: &Path) -> Option<String> {
 fn latency_readiness_from(
     status: &str,
     parity: Option<&str>,
+    contradiction: Option<String>,
     reasons: Vec<String>,
 ) -> (&'static str, bool, &'static str, Vec<String>) {
     let mut details = vec![format!("report status: {status}")];
     if let Some(parity) = parity {
         details.push(format!("output parity: {parity}"));
     }
+    if let Some(contradiction) = &contradiction {
+        details.push(format!("parity contradiction: {contradiction}"));
+    }
     details.extend(reasons);
-    if matches!(parity, Some("mismatch" | "fail")) {
+    if matches!(parity, Some("mismatch" | "fail")) || contradiction.is_some() {
         (
             "fail",
             true,
@@ -2485,23 +2489,65 @@ fn latency_readiness_from(
     }
 }
 
+/// A report whose per-format `output_parity_checks[]` disagree with its
+/// summary, or that carries a failing check under any summary, is edited or
+/// broken: it is never trusted as `pass`. Returns what disagrees.
+fn latency_parity_contradiction(report: &Value) -> Option<String> {
+    let checks = report
+        .get("output_parity_checks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for check in checks {
+        let format = check.get("format").and_then(Value::as_str).unwrap_or("?");
+        if let Some(status @ ("mismatch" | "fail")) = check.get("status").and_then(Value::as_str) {
+            return Some(format!("{format} check is {status}"));
+        }
+    }
+    if report.get("output_parity").and_then(Value::as_str) != Some("pass") {
+        return None;
+    }
+    for format in ["repo-exposure-json", "repo-exposure-md"] {
+        let matching: Vec<&Value> = checks
+            .iter()
+            .filter(|check| check.get("format").and_then(Value::as_str) == Some(format))
+            .collect();
+        if matching.len() != 1 || matching[0].get("status").and_then(Value::as_str) != Some("pass")
+        {
+            return Some(format!(
+                "summary is pass but {format} is not exactly one passing check"
+            ));
+        }
+    }
+    None
+}
+
+fn repo_exposure_latency_contradiction(artifact: &Path) -> Option<String> {
+    latency_parity_contradiction(&read_json_value(artifact).ok()?)
+}
+
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
     let command = "cargo xtask repo-exposure-latency-report";
     let artifact = "target/ripr/reports/repo-exposure-latency.json";
     match crate::repo_exposure_latency_report_impl() {
         Ok(()) => match read_json_status(Path::new(artifact)) {
-            Ok(status) if status == "pass" => readiness_check(
-                "repo-exposure-latency",
-                "pass",
-                true,
-                command,
-                "repo-exposure latency report exists and passes",
-                vec![
-                    artifact.to_string(),
-                    "target/ripr/reports/repo-exposure-latency.md".to_string(),
-                ],
-                Vec::new(),
-            ),
+            Ok(status)
+                if status == "pass"
+                    && repo_exposure_latency_contradiction(Path::new(artifact)).is_none() =>
+            {
+                readiness_check(
+                    "repo-exposure-latency",
+                    "pass",
+                    true,
+                    command,
+                    "repo-exposure latency report exists and passes",
+                    vec![
+                        artifact.to_string(),
+                        "target/ripr/reports/repo-exposure-latency.md".to_string(),
+                    ],
+                    Vec::new(),
+                )
+            }
             Ok(status) => {
                 // `pass` is reachable now that output parity is a real
                 // comparison (#9633). A cache-served output that differs from
@@ -2511,8 +2557,12 @@ fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
                 // non-required `warn` naming the report's own reasons.
                 let parity = repo_exposure_latency_output_parity(Path::new(artifact));
                 let reasons = repo_exposure_latency_status_reasons(Path::new(artifact));
-                let (check_status, required, summary, details) =
-                    latency_readiness_from(&status, parity.as_deref(), reasons);
+                let (check_status, required, summary, details) = latency_readiness_from(
+                    &status,
+                    parity.as_deref(),
+                    repo_exposure_latency_contradiction(Path::new(artifact)),
+                    reasons,
+                );
                 readiness_check(
                     "repo-exposure-latency",
                     check_status,
@@ -3551,15 +3601,16 @@ mod tests {
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
-        init_pin_version_check_from, latency_readiness_from, latest_released_version_in,
-        missing_required_needles, package_version, packaged_archive_commit,
-        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
-        release_readiness_markdown, release_readiness_status, repo_exposure_latency_output_parity,
-        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
-        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
+        latest_released_version_in, missing_required_needles, package_version,
+        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
+        validate_binary_identity, validate_doctor_result, validate_installed_version,
+        validate_installed_version_result, validate_package_entry,
         vsix_start_current_repair_command_present,
     };
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3587,15 +3638,83 @@ mod tests {
         let reasons = vec!["status reason: x".to_string()];
         for parity in ["mismatch", "fail"] {
             let (status, required, _, details) =
-                latency_readiness_from("fail", Some(parity), reasons.clone());
+                latency_readiness_from("fail", Some(parity), None, reasons.clone());
             assert_eq!((status, required), ("fail", true), "{parity}");
             assert!(details.contains(&format!("output parity: {parity}")));
             assert!(details.contains(&"status reason: x".to_string()));
         }
         for parity in [Some("not_checked"), Some("pass"), None] {
-            let (status, required, _, _) = latency_readiness_from("warn", parity, reasons.clone());
+            let (status, required, _, _) =
+                latency_readiness_from("warn", parity, None, reasons.clone());
             assert_eq!((status, required), ("warn", false), "{parity:?}");
         }
+        let (status, required, _, details) = latency_readiness_from(
+            "pass",
+            Some("pass"),
+            Some("repo-exposure-md check is mismatch".to_string()),
+            Vec::new(),
+        );
+        assert_eq!((status, required), ("fail", true));
+        assert!(details.iter().any(|d| d.contains("parity contradiction")));
+    }
+
+    /// A report whose summary says pass while a per-format check disagrees (an
+    /// edited or broken report) is a contradiction, never a pass.
+    #[test]
+    fn latency_parity_contradiction_catches_edited_reports() {
+        let check = |format: &str, status: &str| json!({"format": format, "status": status});
+        let report = |summary: &str, checks: Vec<Value>| json!({"status": "pass", "output_parity": summary, "output_parity_checks": checks});
+        let clean = report(
+            "pass",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "pass"),
+            ],
+        );
+        assert_eq!(latency_parity_contradiction(&clean), None);
+        // Summary pass, one check mismatch.
+        let edited = report(
+            "pass",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "mismatch"),
+            ],
+        );
+        assert!(latency_parity_contradiction(&edited).is_some());
+        // Summary pass, a check not_checked / missing / duplicated / absent.
+        for checks in [
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+            vec![check("repo-exposure-json", "pass")],
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "pass"),
+            ],
+            Vec::new(),
+        ] {
+            assert!(latency_parity_contradiction(&report("pass", checks)).is_some());
+        }
+        // A failing check under a not_checked summary still contradicts.
+        let hidden = report(
+            "not_checked",
+            vec![
+                check("repo-exposure-json", "fail"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+        );
+        assert!(latency_parity_contradiction(&hidden).is_some());
+        // An honest not_checked report is not a contradiction.
+        let honest = report(
+            "not_checked",
+            vec![
+                check("repo-exposure-json", "pass"),
+                check("repo-exposure-md", "not_checked"),
+            ],
+        );
+        assert_eq!(latency_parity_contradiction(&honest), None);
     }
 
     #[test]

@@ -10523,13 +10523,36 @@ struct RepoExposureParityCheck {
     reason: Option<String>,
 }
 
+/// The formats a complete latency report covers; an aggregate parity `pass`
+/// needs each exactly once.
+const REPO_EXPOSURE_EXPECTED_FORMATS: [&str; 2] = ["repo-exposure-json", "repo-exposure-md"];
+
 impl RepoExposureOutputParity {
+    /// Why the checks do not cover the expected formats exactly once.
+    fn coverage_gap(&self) -> Option<String> {
+        for format in REPO_EXPOSURE_EXPECTED_FORMATS {
+            match self
+                .checks
+                .iter()
+                .filter(|check| check.format == format)
+                .count()
+            {
+                1 => {}
+                0 => return Some(format!("missing_format:{format}")),
+                _ => return Some(format!("duplicate_format:{format}")),
+            }
+        }
+        (self.checks.len() != REPO_EXPOSURE_EXPECTED_FORMATS.len())
+            .then(|| "unexpected_format".to_string())
+    }
+
     fn label(&self) -> &'static str {
         if self.checks.iter().any(|check| check.status == "mismatch") {
             "mismatch"
         } else if self.checks.iter().any(|check| check.status == "fail") {
             "fail"
-        } else if !self.checks.is_empty() && self.checks.iter().all(|check| check.status == "pass")
+        } else if self.coverage_gap().is_none()
+            && self.checks.iter().all(|check| check.status == "pass")
         {
             "pass"
         } else {
@@ -10932,12 +10955,16 @@ fn repo_exposure_parity_run(
         let _ = fs::remove_dir_all(&cache_dir);
     }
     let output = output?;
+    // `fail` is a real nonzero exit code; a signal kill (no code) is `killed`
+    // and stays unverified.
     let status = if output.timed_out {
         "timeout"
     } else if output.status.is_some_and(|status| status.success()) {
         "pass"
-    } else {
+    } else if output.status.and_then(|status| status.code()).is_some() {
         "fail"
+    } else {
+        "killed"
     };
     let cache_load = repo_exposure_authenticated_cache_load(&output.stderr);
     Ok(RepoExposureParityRun {
@@ -11007,9 +11034,9 @@ where
         return not_checked("cold_run_served_from_cache".to_string());
     }
     // The cold run just succeeded against the same binary and inputs, so a
-    // served run that errors or exits nonzero is the cache path failing, not
-    // infrastructure noise: it is a `fail`, not a quiet `not_checked`. A
-    // timeout stays unverified.
+    // served run that exits with a nonzero code is the cache path failing: it
+    // is a `fail`, not a quiet `not_checked`. A spawn/reader error, a signal
+    // kill or a timeout is not evidence about the cache and stays unverified.
     let failed = |reason: String| RepoExposureParityCheck {
         format: format.to_string(),
         status: "fail",
@@ -11017,7 +11044,7 @@ where
     };
     let served = match run_parity(binary, format, RepoExposureParityPhase::Served, timeout) {
         Ok(served) => served,
-        Err(err) => return failed(format!("served_run_error: {err}")),
+        Err(err) => return not_checked(format!("served_run_error: {err}")),
     };
     if served.status == "fail" {
         return failed("served_run_fail".to_string());
@@ -11318,6 +11345,8 @@ fn repo_exposure_latency_status_reasons(
     }
     if parity.checks.is_empty() {
         reasons.push("output_parity_not_checked".to_string());
+    } else if let Some(gap) = parity.coverage_gap() {
+        reasons.push(format!("output_parity_not_checked_{gap}"));
     }
     for check in &parity.checks {
         match check.status {

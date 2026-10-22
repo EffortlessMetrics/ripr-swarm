@@ -7771,21 +7771,26 @@ Field contract:
   that did not actually exercise the cache. For JSON, the artifact envelope's
   `generated_at` and `content_sha256` (stamped per run, the digest covering the
   timestamp) are the only fields ignored; Markdown is compared byte for byte.
-  `pass` needs every format `pass`. Empty output, or JSON that is not a
+  `pass` needs both expected formats (`repo-exposure-json` and
+  `repo-exposure-md`) present exactly once and every one `pass`; an omitted,
+  skipped or duplicated expected format blocks the aggregate `pass`
+  (`output_parity_not_checked_missing_format:<fmt>` or
+  `..._duplicate_format:<fmt>` in `status_reasons`). Empty output, or JSON that is not a
   document with an `artifact` object, is `not_checked` (`output_unparseable`),
   never a vacuous `pass`. Any `mismatch` makes the overall value `mismatch`,
   and a served run that errors or exits nonzero after a passing cold run is
-  `fail` (`served_run_fail`, `served_run_error: <text>`); both make `status`
+  `fail` (`served_run_fail`, a real nonzero exit code); both make `status`
   `fail`. A served-run timeout, a primary run that did not complete, or any
   other unverified comparison is `not_checked`. The check compares one repository state
   across cold and cache-served runs; it does not claim runtime mutation
   outcomes or that the output is correct, only that the cache did not change it.
 - `output_parity_checks[]` - per format: `format`, `status` (`pass`,
   `mismatch`, `fail`, `not_checked`) and `reason` (`null` for `pass`;
-  `served_output_differs_from_cold` for `mismatch`; `served_run_fail` or
-  `served_run_error: <text>` for `fail`; for `not_checked` one of
+  `served_output_differs_from_cold` for `mismatch`; `served_run_fail` for
+  `fail`; for `not_checked` one of
   `primary_run_<status>`, `cold_run_error: <text>`, `cold_run_<status>`,
-  `cold_run_served_from_cache`, `served_run_timeout`,
+  `cold_run_served_from_cache`, `served_run_error: <text>`,
+  `served_run_killed`, `served_run_timeout`,
   `served_run_not_cache_hit`, `output_unparseable`).
 - `status_reasons` - the named, per-run reasons `status` is not `pass`
   (`<format>: file_fact_cache_store_errors=N`,
@@ -7846,9 +7851,10 @@ Field contract:
   that starts with a receipt prefix but lacks the token (for example text
   injected through a hostile file name echoed by a diagnostic) is ignored, and
   when no authenticated receipt remains the limitation is `untrusted_*`. The
-  phase-trace lines carry the token too, and the parity check accepts a
+  phase lines emitted through `trace_latency_phase` (which includes
+  `cache_load`) carry the token too, and the parity check accepts a
   `cache_load` status only from a tokened line, in addition to comparing the
-  real outputs.
+  real outputs. The separate `index_phase` lines are not tokened.
 - `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
   otherwise a named unavailable state, including skipped, missing, malformed,
   duplicate, or invalid cache receipts. Completed rows survive a later timeout.
@@ -14861,7 +14867,10 @@ Field contract:
   The `repo-exposure-latency` check is `pass` only when the latency report's
   `status` is `pass` (its `output_parity` compared cache-served output with a
   cold recomputation and found them equal). A report `output_parity` of
-  `mismatch` or `fail` is a required `fail`; any other non-pass report (unchecked parity,
+  `mismatch` or `fail` is a required `fail`; so is a report whose per-format
+  `output_parity_checks[]` contradict its summary (a failing check under any
+  summary, or a summary `pass` without exactly one passing check per expected
+  format); any other non-pass report (unchecked parity,
   cache store errors, timeouts) is a non-required `warn` whose details carry the
   report's `output parity` and `status reason:` lines (#9633).
 - `checks[].summary` - short human-readable status.

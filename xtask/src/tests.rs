@@ -56373,6 +56373,50 @@ fn repo_exposure_normalized_output_ignores_only_the_per_run_envelope_stamps() {
     );
 }
 
+/// #9633: an aggregate parity `pass` needs both expected formats exactly once.
+/// A missing or duplicated format is `not_checked` with a named reason, even
+/// when every present check passes.
+#[test]
+fn repo_exposure_output_parity_requires_both_formats_exactly_once() {
+    let check = |format: &str| RepoExposureParityCheck {
+        format: format.to_string(),
+        status: "pass",
+        reason: None,
+    };
+    let parity = |formats: &[&str]| RepoExposureOutputParity {
+        checks: formats.iter().map(|format| check(format)).collect(),
+    };
+    assert_eq!(
+        parity(&["repo-exposure-json", "repo-exposure-md"]).label(),
+        "pass"
+    );
+    let missing = parity(&["repo-exposure-json"]);
+    assert_eq!(missing.label(), "not_checked");
+    assert_eq!(
+        missing.coverage_gap().as_deref(),
+        Some("missing_format:repo-exposure-md")
+    );
+    let duplicate = parity(&["repo-exposure-json", "repo-exposure-md", "repo-exposure-md"]);
+    assert_eq!(duplicate.label(), "not_checked");
+    assert_eq!(
+        duplicate.coverage_gap().as_deref(),
+        Some("duplicate_format:repo-exposure-md")
+    );
+    assert_eq!(
+        parity(&["repo-exposure-json", "repo-exposure-md", "other"]).label(),
+        "not_checked"
+    );
+    let run = observed_run(Some(clean_cache(0, 0)));
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&run), &missing),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(std::slice::from_ref(&run), &missing);
+    assert!(
+        reasons.contains(&"output_parity_not_checked_missing_format:repo-exposure-md".to_string())
+    );
+}
+
 /// #9633: parity never passes vacuously. Equal-but-empty or equal-but-not-JSON
 /// output is `not_checked` with `output_unparseable`.
 #[test]
@@ -56427,10 +56471,16 @@ fn repo_exposure_output_parity_served_failure_is_a_fail() -> Result<(), String> 
         }),
         RepoExposureParityPhase::Served => Err("spawn boom".to_string()),
     })?;
-    assert_eq!(errored.output_parity.label(), "fail");
+    // A spawn/reader error is infrastructure, not a cache failure.
+    assert_eq!(errored.output_parity.label(), "not_checked");
     assert_eq!(
         errored.output_parity.checks[0].reason.as_deref(),
         Some("served_run_error: spawn boom")
+    );
+    // So is a signal kill (no exit code).
+    assert_eq!(
+        served_status("killed")?.output_parity.label(),
+        "not_checked"
     );
     assert_eq!(
         served_status("timeout")?.output_parity.label(),
@@ -56494,12 +56544,20 @@ fn producer_shaped_receipt_lines_parse() {
 /// #9633: a real, non-injected report run. `pass` is reachable end to end:
 /// the real runners drive a built `ripr` over a small fixture root, with the
 /// private caches making every primary receipt observable. Skipped (visibly)
-/// when no built debug `ripr` exists.
+/// when no built debug `ripr` exists locally; under `CI` a missing binary
+/// fails instead. It assumes the binary at `target/debug/ripr` is current for
+/// this checkout: the test does not rebuild it.
 #[test]
 fn real_latency_report_run_on_a_small_fixture_can_pass() -> Result<(), String> {
     let binary = repo_root()?.join(ripr_debug_binary());
     if !binary.exists() {
-        eprintln!("skipping: no built ripr at {}", binary.display());
+        if std::env::var_os("CI").is_some() {
+            return Err(format!("no built ripr at {} under CI", binary.display()));
+        }
+        eprintln!(
+            "skipping: no built ripr at {} (a present binary is assumed current for this checkout)",
+            binary.display()
+        );
         return Ok(());
     }
     with_temp_cwd("repo-exposure-latency-real", |root| {
