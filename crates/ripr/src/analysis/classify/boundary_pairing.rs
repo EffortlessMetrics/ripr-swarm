@@ -135,7 +135,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     // #9329: a method-hop chain whose top hop is the check helper asserting
     // the method's result, with every hop below forwarding the owner's.
     let asserting_entry = wrapper_entry.and_then(|entry| {
-        asserting_method_entry(&owner.name, &entry.chain.hops)
+        asserting_method_entry(&owner.name, &entry.chain.hops, index)
             .map(|top| (top.caller.name.as_str(), entry))
     });
     related_tests.iter().any(|test| {

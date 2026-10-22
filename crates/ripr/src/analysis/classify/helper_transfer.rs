@@ -1811,10 +1811,11 @@ pub(crate) fn chain_forwards_to_observed_hops(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
     )],
+    index: &RustIndex,
 ) -> bool {
     let hops = observed_hops(chain, related_tests);
     hops_forward_owner_result(owner_name, hops)
-        || asserting_method_entry(owner_name, hops).is_some()
+        || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
 /// The returned-ledger proof covers only the first caller. It may replace that
@@ -1961,6 +1962,7 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
 pub(crate) fn asserting_method_entry<'a>(
     owner_name: &str,
     hops: &'a [HelperHop],
+    index: &RustIndex,
 ) -> Option<&'a HelperHop> {
     use crate::analysis::facts::FunctionSourceRole;
     let (top, below) = hops.split_last()?;
@@ -1969,6 +1971,7 @@ pub(crate) fn asserting_method_entry<'a>(
     if top.through_macro
         || top.caller.source_role != FunctionSourceRole::CfgTestModule
         || !hops_forward_owner_result(owner_name, below)
+        || !hops_call_the_indexed_callees(owner_name, below, index)
         || !top
             .arguments
             .iter()
@@ -2020,6 +2023,47 @@ pub(crate) fn asserting_method_entry<'a>(
         return None;
     }
     Some(top)
+}
+
+/// #9329: every hop below the asserting entry calls the workspace function the
+/// chain names, not another item that only shares its bare name. A hop's caller
+/// file that imports (or macro-defines) the callee name, or a caller body that
+/// rebinds it, makes the call unresolved, so the observed result may belong to
+/// `std::cmp::min` rather than the changed `min`. The callee must also be the
+/// one workspace function of that name. Anything unresolved refuses the hop.
+fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &RustIndex) -> bool {
+    let files = index.files();
+    hops.iter().enumerate().all(|(step, hop)| {
+        let callee = match step.checked_sub(1) {
+            None => owner_name,
+            Some(below) => match hops.get(below) {
+                Some(lower) => lower.caller.name.as_str(),
+                None => return false,
+            },
+        };
+        let Some(file) = files.get(&hop.caller.file) else {
+            return false;
+        };
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&hop.caller.body);
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let rebinds = ["fn ", "let ", "let mut "].iter().any(|prefix| {
+            let pattern = format!("{prefix}{callee}");
+            masked.match_indices(&pattern).any(|(at, _)| {
+                !masked[..at].chars().next_back().is_some_and(is_word)
+                    && !masked[at + pattern.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        });
+        callee_is_unique(callee, index)
+            && !rebinds
+            && !super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                callee,
+                &index.package_names,
+            )
+    })
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
@@ -3427,20 +3471,24 @@ mod tests {
         };
         let middle_test = calling("middle", "assert!(middle(10));");
         let entry_test = calling("entry", "assert_eq!(entry(10), 5);");
+        let empty = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
         assert!(chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test])
+            &related(&[&middle_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&entry_test])
+            &related(&[&entry_test]),
+            &empty
         ));
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &entry_test])
+            &related(&[&middle_test, &entry_test]),
+            &empty
         ));
         // A helper-owner-call test whose hop cannot be found checks the
         // whole chain.
@@ -3448,7 +3496,8 @@ mod tests {
         assert!(!chain_forwards_to_observed_hops(
             "is_bulk",
             &chain,
-            &related(&[&middle_test, &unknown])
+            &related(&[&middle_test, &unknown]),
+            &empty
         ));
     }
 

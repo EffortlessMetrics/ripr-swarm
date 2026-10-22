@@ -5,18 +5,29 @@ use crate::analysis::facts::OwnedRustIndex;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-fn chain_of(source: &str) -> Result<HelperChain, String> {
-    let facts =
-        crate::analysis::syntax::ra::summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+fn index_of(files: &[(&str, &str)]) -> Result<RustIndex, String> {
     let mut by_file = BTreeMap::new();
-    by_file.insert(PathBuf::from("src/lib.rs"), facts.clone());
-    let index = RustIndex::from_owned(OwnedRustIndex {
-        functions: facts.functions.clone(),
-        tests: facts.tests.clone(),
+    let mut functions = Vec::new();
+    let mut tests = Vec::new();
+    for (path, source) in files {
+        let facts =
+            crate::analysis::syntax::ra::summarize_file_with_parser(Path::new(path), source)?;
+        functions.extend(facts.functions.clone());
+        tests.extend(facts.tests.clone());
+        by_file.insert(PathBuf::from(path), facts);
+    }
+    Ok(RustIndex::from_owned(OwnedRustIndex {
+        functions,
+        tests,
         files: by_file,
         ..Default::default()
-    });
-    Ok(resolve_chain("fmt_size", &index, true, &[]))
+    }))
+}
+
+fn chain_of(source: &str) -> Result<(HelperChain, RustIndex), String> {
+    let index = index_of(&[("src/lib.rs", source)])?;
+    let chain = resolve_chain("fmt_size", &index, true, &[]);
+    Ok((chain, index))
 }
 
 const BODY: &str = "assert_eq!(expected.to_string(), b.to_string_as(si));";
@@ -32,9 +43,9 @@ impl ByteSize {{\n    pub fn to_string_as(&self, si_unit: bool) -> String {{\n  
 }
 
 fn admitted(helper_body: &str, method_body: &str) -> Result<bool, String> {
-    let chain = chain_of(&source(helper_body, method_body))?;
+    let (chain, index) = chain_of(&source(helper_body, method_body))?;
     assert_eq!(chain.hops.len(), 2, "{chain:?}");
-    Ok(asserting_method_entry("fmt_size", &chain.hops).is_some())
+    Ok(asserting_method_entry("fmt_size", &chain.hops, &index).is_some())
 }
 
 #[test]
@@ -86,9 +97,9 @@ fn a_helper_that_does_not_compare_the_call_result_alone_is_not_admitted() -> Res
         // The expected side calls the owner directly.
         "assert_eq!(fmt_size(1, true), b.to_string_as(si));",
     ] {
-        let chain = chain_of(&source(helper, METHOD_BODY))?;
+        let (chain, index) = chain_of(&source(helper, METHOD_BODY))?;
         assert!(
-            asserting_method_entry("fmt_size", &chain.hops).is_none(),
+            asserting_method_entry("fmt_size", &chain.hops, &index).is_none(),
             "{helper}: {chain:?}"
         );
     }
@@ -101,8 +112,48 @@ fn a_production_entry_is_never_an_asserting_entry() -> Result<(), String> {
 pub fn fmt_size(bytes: u64, si: bool) -> String {\n    if si { bytes.to_string() } else { String::new() }\n}\n\
 impl ByteSize {\n    pub fn to_string_as(&self, si_unit: bool) -> String {\n        fmt_size(self.0, si_unit)\n    }\n}\n\
 pub fn describe(b: &ByteSize, si: bool) -> String {\n    assert_eq!(\"x\", b.to_string_as(si))\n}\n";
-    let chain = chain_of(source)?;
+    let (chain, index) = chain_of(source)?;
     assert_eq!(chain.entry_name(), Some("describe"), "{chain:?}");
-    assert!(asserting_method_entry("fmt_size", &chain.hops).is_none());
+    assert!(asserting_method_entry("fmt_size", &chain.hops, &index).is_none());
+    Ok(())
+}
+
+const MIN_OWNER: &str = "pub struct Size(pub u64);\n\
+pub fn min(bytes: u64, si: u64) -> u64 {\n    if bytes <= si { 1 } else { 2 }\n}\n\
+mod display;\n\
+#[cfg(test)]\nmod tests {\n    use super::*;\n    fn check(want: u64, size: Size, si: u64) {\n        assert_eq!(want, size.shown(si));\n    }\n    #[test]\n    fn t() {\n        check(1, Size(1), 1);\n    }\n}\n";
+
+fn min_chain(display: &str) -> Result<(HelperChain, RustIndex), String> {
+    let index = index_of(&[("src/lib.rs", MIN_OWNER), ("src/display.rs", display)])?;
+    let chain = resolve_chain("min", &index, true, &[]);
+    Ok((chain, index))
+}
+
+#[test]
+fn a_hop_calling_the_owner_name_resolves_to_the_workspace_function_is_admitted()
+-> Result<(), String> {
+    let (chain, index) = min_chain(
+        "use super::Size;\nimpl Size {\n    pub fn shown(&self, si: u64) -> u64 {\n        min(self.0, si)\n    }\n}\n",
+    )?;
+    assert_eq!(chain.hops.len(), 2, "{chain:?}");
+    assert!(asserting_method_entry("min", &chain.hops, &index).is_some());
+    Ok(())
+}
+
+#[test]
+fn a_hop_whose_file_imports_a_foreign_item_of_the_owner_name_is_not_admitted() -> Result<(), String>
+{
+    // The method calls `std::cmp::min`, so the result it returns is not the
+    // changed `min`'s (Steven's review of #9642).
+    let (chain, index) = min_chain(
+        "use super::Size;\nuse std::cmp::min;\nimpl Size {\n    pub fn shown(&self, si: u64) -> u64 {\n        min(self.0, si)\n    }\n}\n",
+    )?;
+    assert_eq!(chain.hops.len(), 2, "{chain:?}");
+    assert!(asserting_method_entry("min", &chain.hops, &index).is_none());
+    // A body that rebinds the name is just as unresolved.
+    let (chain, index) = min_chain(
+        "use super::Size;\nimpl Size {\n    pub fn shown(&self, si: u64) -> u64 {\n        let min = |a: u64, b: u64| a + b;\n        min(self.0, si)\n    }\n}\n",
+    )?;
+    assert!(asserting_method_entry("min", &chain.hops, &index).is_none());
     Ok(())
 }

@@ -96,6 +96,11 @@ exercised boundary from a missing one.
   receiver call (`b.to_string_as(si)`, the hop's own arguments) and an
   other operand that names neither the receiver, the method nor a direct
   call of the owner, over hops below it that each tail-forward the call
+  and each call the indexed workspace function they name: the callee is
+  the one workspace function of that name, and the hop's file neither
+  imports nor macro-defines another item of the name and its body does not
+  rebind it (a method calling an imported `std::cmp::min` is not a caller
+  of a changed local `min`)
   (`helper_transfer::asserting_method_entry`). Propagation then counts the
   chain as forwarding, and the same-test pairing
   (`boundary_pairing::entry_loan_pairs_boundary_call`) pairs the helper's
@@ -245,6 +250,8 @@ exercised boundary from a missing one.
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
 `local-boundary-flag-alias`;
 `analysis/classify/helper_transfer/method_hop_tests.rs`,
+`analysis/classify/helper_transfer/asserting_entry_tests.rs` (including the
+wrong-owner import and rebinding negatives),
 `analysis/classify/helper_transfer/multi_caller_tests.rs` (the multi-caller
 rule: a chain whose callee has several direct callers binds through the one
 caller a test reaches, and declines when no caller is reached, when two are

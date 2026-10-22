@@ -409,7 +409,12 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                        !chain_forwards_to_observed_hops(
+                            &owner.name,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                        )
                             && field_projection.is_none()
                     } =>
             {
