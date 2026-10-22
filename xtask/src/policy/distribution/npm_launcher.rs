@@ -292,7 +292,9 @@ fn logical_lines(physical: &[(usize, String)]) -> Vec<(usize, String)> {
             start = *number;
         }
         let code = raw.trim_end_matches('\r');
-        if let Some(stripped) = code.strip_suffix('\\') {
+        if let Some(stripped) = code.strip_suffix('\\')
+            && !shell_scan(&format!("{current}{stripped}")).1
+        {
             current.push_str(stripped);
             current.push(' ');
             continue;
@@ -406,6 +408,13 @@ enum ShellToken {
 /// word that itself begins with `npm ` is re-tokenized so `run: 'npm publish'`
 /// is still seen.
 fn shell_tokens(line: &str) -> Vec<ShellToken> {
+    shell_scan(line).0
+}
+
+/// Tokenizes `line` and reports whether an unquoted comment began on it, using
+/// the one quote/comment rule shared with continuation joining.
+fn shell_scan(line: &str) -> (Vec<ShellToken>, bool) {
+    let mut commented = false;
     let mut tokens = Vec::new();
     let mut word = String::new();
     let mut in_word = false;
@@ -441,7 +450,10 @@ fn shell_tokens(line: &str) -> Vec<ShellToken> {
                 in_word = true;
                 quoted_word = true;
             }
-            '#' if !in_word => break,
+            '#' if !in_word => {
+                commented = true;
+                break;
+            }
             ';' | '&' | '|' | '(' | ')' => {
                 flush(&mut tokens, &mut word, &mut in_word, &mut quoted_word);
                 if tokens.last() != Some(&ShellToken::Separator) {
@@ -458,7 +470,7 @@ fn shell_tokens(line: &str) -> Vec<ShellToken> {
         }
     }
     flush(&mut tokens, &mut word, &mut in_word, &mut quoted_word);
-    tokens
+    (tokens, commented)
 }
 
 const VALUE_FLAGS: &[&str] = &[

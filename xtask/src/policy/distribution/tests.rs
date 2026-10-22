@@ -873,3 +873,22 @@ fn workflow_block_scalar_ends_at_key_column_for_list_items() {
     let tagged = "steps:\n  - if: >-\n      x\n    run: npm publish --tag next\n";
     assert!(workflow_violations(tagged).is_empty());
 }
+
+#[test]
+fn workflow_comment_trailing_backslash_does_not_hide_next_line() {
+    let hidden = "      - run: |\n          # note \\\n          npm publish\n";
+    assert!(has_violation(
+        &workflow_violations(hidden),
+        "explicit non-`latest`"
+    ));
+    let continued = "      - run: |\n          npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(continued).is_empty());
+    let quoted_hash =
+        "      - run: |\n          echo '#' && npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(quoted_hash).is_empty());
+    let quoted_hash_bad = "      - run: |\n          echo '#' && npm \\\n            publish\n";
+    assert!(has_violation(
+        &workflow_violations(quoted_hash_bad),
+        "explicit non-`latest`"
+    ));
+}
