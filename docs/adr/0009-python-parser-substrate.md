@@ -36,7 +36,8 @@ from `*.py` files, with explicit static-limit reporting for things the
 syntax-first adapter cannot classify.
 
 The adapter must not depend on `mypy`, `pyright`, a runtime test
-runner, or an import graph. Syntax facts are the contract; semantic
+runner, or an import graph (the bounded workspace import-edge index in the
+Amendment below is the one exception). Syntax facts are the contract; semantic
 enrichment is explicitly out of scope. Within that constraint, the
 adapter still needs a real parser — regex-driven token recognition
 cannot robustly handle decorators, `async def`, `match`/`case`, f-strings,
@@ -214,123 +215,197 @@ decay) and the fact-contract lock that keeps a backend swap reviewable.
 ## Amendment (2026-10-22): bounded workspace import-edge index
 
 Governs: [#9098](https://github.com/EffortlessMetrics/ripr-swarm/issues/9098)
-(`mocked_module` narrowing) and the cross-file limits in
-[#9226](https://github.com/EffortlessMetrics/ripr-swarm/issues/9226). Decided by
-the agent lane under the owner's delegation ("make reasonable decisions").
+(`mocked_module` narrowing) and, later and separately, the cross-file limits in
+[#9226](https://github.com/EffortlessMetrics/ripr-swarm/issues/9226).
+Authority: the owner delegated this decision on 2026-10-22 ("I mean, I don't
+read the adrs. Make reasonable decisions"), so the agent lane decided it. The
+owner has not reviewed the text; the slice plan below keeps every step
+reversible.
 
 ### Why amend
 
 The Context above says the adapter must not depend on "an import graph", and
-RIPR-SPEC-0028 maps that to `missing_import_graph` and `mocked_module`. Two
-attempts to shrink `mocked_module` without any cross-file knowledge failed:
-the name-disjointness check in #9053 was unsound, because a patched name can
-reach the owner through an argument or injected collaborator, through stdlib
-internals, or through a fixture or `conftest.py` patch that the test body never
-mentions (#9098 comments). Without module-level reachability the limit can only
-stay as broad as it is. The package re-export index (`reexports.rs`) already
-reads `__init__.py` imports, so the line "no import graph" is already looser in
-practice than the text. This amendment makes the boundary explicit and bounded
-instead of leaving it implicit.
+RIPR-SPEC-0028 maps that to `missing_import_graph` and `mocked_module`. A
+shrink of `mocked_module` that uses no cross-file knowledge failed: the
+name-disjointness check in #9053 was unsound, because a patched name can reach
+the owner through an argument or injected collaborator, through stdlib
+internals, or through a fixture or `conftest.py` patch the test body never
+mentions (#9098 comments). The package re-export index (`reexports.rs`)
+already reads `__init__.py` imports, so the text is already looser than the
+practice. This amendment makes the boundary explicit and bounded.
+
+An independent review of the first draft of this amendment found that a sealed
+import closure alone is not sound: a pytest run is one process, and code
+outside the closure can hand the patched module into it through process-global
+state, and `patch()` itself imports the target. The rules below close those
+holes by making the target **isolated**, and they add a measured go/no-go gate
+because the sound rule is narrow.
 
 ### Decision
 
-The Python adapter may compute a **workspace import-edge index** and a **sealed
-reach set** from it, under these rules. Nothing else about the adapter's
-no-runtime, no-type-checker, no-subprocess stance changes.
+The Python adapter may compute a **workspace import-edge index** and, from it,
+a **sealed reach set** and an **isolated target** check, under these rules.
+Nothing else about the adapter's no-runtime, no-type-checker, no-subprocess
+stance changes. Every result is a static reachability statement under the
+residual list below, not a runtime claim.
 
-**Index.** An edge is any `import` or `from ... import` statement the parser
-sees anywhere in a file: module level, inside functions and classes,
-conditional, `try`/`except ImportError`, and `if TYPE_CHECKING` (all
-over-approximated as edges). Relative imports resolve against the file path.
-Importing `a.b.c` also adds the parent package `__init__` chain, because Python
-executes it. Each edge resolves to exactly one of:
+**Index.** An edge is any `import` or `from ... import` statement anywhere in a
+file: module level, inside functions and classes, conditional, `try`/`except
+ImportError`, and `if TYPE_CHECKING` (all over-approximated as edges).
+Relative imports resolve against the file path. Further edges:
 
-- a workspace module (a single candidate file under the configured Python
-  roots that is not in an excluded or generated directory);
-- the standard library, by a module-name table compiled into the binary (no
-  interpreter);
-- external or unresolved (everything else, including ambiguous candidates,
-  namespace packages with several roots, and any path that needs `sys.path`
-  knowledge).
+- importing `a.b.c` adds the parent `__init__` chain, which Python executes;
+- `from pkg import name` and `from . import name` add the submodule `pkg.name`
+  when one exists, and `from pkg import *` adds every submodule `__all__`
+  names;
+- an attribute access `pkg.X` where `pkg` is a workspace package and `X` is
+  one of its submodules adds that submodule, because a `patch()` elsewhere can
+  make the attribute appear.
+
+Each edge resolves to exactly one of: a workspace module (one candidate file
+under the roots the adapter already infers, not in an excluded or generated
+directory); a standard-library module from a table compiled into the binary; or
+external/unresolved. A workspace file that shares a name with a stdlib module
+wins over the stdlib (pytest's default import mode puts the test directories
+first), and any such collision is open. Compiled and stub modules (`.so`,
+`.pyd`, `.pyc`, `.pyi`) and any resolution that needs `sys.path`,
+`pythonpath`, `--import-mode`, editable-install or namespace-package knowledge
+are unresolved, which is open. Slice 2 defines the roots concretely.
 
 **Reach set.** For one test and one owner, `S` is the closure over workspace
 edges from: the owner module, the test module, every `conftest.py` on the
 test's directory chain, and every module defining a fixture the test requests
-or that is autouse. `S` is **sealed** only when all of these hold; otherwise it
-is **open** and every consumer falls back to today's behavior:
+directly, transitively (fixtures requesting fixtures), through `usefixtures`,
+`getfixturevalue` with a literal name or `parametrize(indirect=...)`, or that is
+autouse. `S` is **sealed** only when all of these hold; otherwise it is
+**open** and every consumer keeps today's behavior:
 
-1. no external or unresolved edge in `S`;
-2. every stdlib edge in `S` names a module on a reviewed *inert* allowlist
-   (modules that cannot load a workspace module by name from data); anything
-   not on the list is open, so new stdlib modules fail closed;
-3. no reflective loading site in `S`: `importlib`, `__import__`, `pkgutil`,
-   `runpy`, `pickle`/`marshal` loads, `eval`/`exec`, module `__getattr__`,
-   `sys.modules` or `sys.path` writes, `entry_points`, and dotted-name
-   factories such as `logging.config`;
-4. no test-harness surface that can load code outside `S`: `pytest_plugins`,
-   `-p` or `addopts` plugin flags, `pytest11` entry points, and `sitecustomize`
-   or `.pth` files in the workspace, unless the plugin module is itself in `S`;
-5. every module in `S` was parsed inside the existing parse and read budgets,
-   and `S` stays under a fixed module cap. Exceeding any budget is open, never
-   truncated-and-trusted.
+1. no external or unresolved edge in `S`, with one named exception: the
+   harness set `pytest` and `unittest.mock`, which are not an edge but are
+   covered by condition 4;
+2. every stdlib edge in `S` names a module on the **inert allowlist**: modules
+   that cannot load a workspace module by name from data *and* keep no
+   process-global registry or callback list another module can write into.
+   Therefore `logging`, `atexit`, `warnings`, `codecs`, `signal`, `threading`,
+   `sys`, `builtins`, `gc`, `copyreg`, `abc` registration, `os.environ` and
+   similar are not inert. The list is a reviewed, versioned artifact with a
+   negative test per entry; an unlisted module is open;
+3. no reflective loading or loader-surface site in `S`: `importlib`,
+   `__import__`, `pkgutil`, `runpy`, `pickle`/`marshal` loads, `eval`/`exec`,
+   module `__getattr__`, `sys.modules` reads or writes, `sys.path` writes,
+   `entry_points`, `inspect.getmodule`, `pydoc.locate`, dotted-name factories
+   such as `logging.config`, and `monkeypatch.syspath_prepend`;
+4. no test-harness surface that can load code outside `S`: `pytest_plugins`;
+   `-p`, `addopts`, `-c`, `--confcutdir`, `--rootdir`, `pythonpath`,
+   `--doctest-modules` and `filterwarnings = error` in `pytest.ini`,
+   `pyproject.toml`, `setup.cfg` or `tox.ini`; `PYTEST_PLUGINS` and
+   `PYTEST_ADDOPTS`; ini options that name a module (`DJANGO_SETTINGS_MODULE`,
+   `--cov=`); `pytest11` entry points; `conftest.py` files outside the
+   directory chain; and `sitecustomize`, `usercustomize` or `.pth` files in the
+   workspace. These are **unconditionally open** (a plugin or startup file runs
+   whether or not `S` contains it). `pytest-mock`'s `mocker` fixture comes from
+   a plugin the test never imports, so it is accepted only as the named
+   harness exception when no other plugin surface is present;
+5. every module in `S` was parsed inside the existing parse and read budgets
+   and `S` stays under a fixed module cap; exceeding a budget is open.
 
-**First consumer: `mocked_module`.** `mocked_module` may be dropped for a test
-only when every mock site in the test's effective scope is a single-line string
-literal target `pkg.mod.name` (via `patch`, `mock.patch`, `mocker.patch`,
-`monkeypatch.setattr("pkg.mod.name", ...)`), the target's module resolves
-uniquely to a workspace module `T`, `S` is sealed, and `T` is not in `S`. The
-effective scope is the test body, its decorators and class decorators,
-`pytestmark`, `setUp`/`setUpClass`, requested and autouse fixtures, the
-`conftest.py` chain, and any patch-family call shape anywhere in `S`. Every
-other shape stays limited: `patch.object`, `patch.multiple`, `patch.dict`,
-`.start()` patchers, non-literal, concatenated, prefixed or multi-line
-targets, stdlib and third-party targets, unresolved fixtures, and any site the
-scanner cannot classify. Dropping the limit only restores the verdict the test
-would have earned without the patch; it never raises oracle strength and never
-grants `exposed` by itself.
+**Isolated target.** A patch target is **isolated** only when all of these
+hold:
+
+6. its module `T` resolves uniquely to a workspace module by the longest module
+   prefix, and the remainder is not a submodule, and no `__init__.py` on the
+   target's chain binds the target's name by alias (`from . import impl as
+   mod`), because then the patch lands on a different object than the file;
+7. `T` is not in `S` and the closure of `T` (with its parent `__init__` chain)
+   is disjoint from `S`;
+8. no workspace module imports `T` or any module in its closure except from
+   inside that closure itself: a test file outside `S` that imports `T` in the
+   same pytest process can register `T`'s objects in a process-global registry
+   (a logging handler, a codec, an `atexit` hook) that code in `S` then uses;
+9. the closure of `T` and its parent `__init__` chain pass conditions 1 to 3
+   (no reflective site, no `sys.modules` write, no process-global registry
+   write), because `patch()` imports `T` during the test and runs its top
+   level, and import side effects (`decimal.getcontext().prec = ...`,
+   `os.environ[...] = ...`, `logging.disable`, `os.chdir`) can change what `S`
+   observes.
+
+**First consumer: `mocked_module`.** The limit may be dropped for a test only
+when `S` is sealed and *every* mock site in the test's effective scope is a
+single-line string literal target `pkg.mod.name` in a form the scanner
+recognizes through the file's own imports (`patch`, `mock.patch`,
+`unittest.mock.patch`, `mocker.patch`, `monkeypatch.setattr("pkg.mod.name",
+...)`, including aliased names such as `from unittest.mock import patch as p`)
+whose target is isolated. The effective scope is the test body, its decorators
+and class decorators, `pytestmark`, `setUp`/`setUpClass`, every fixture in the
+transitive set above, the `conftest.py` chain, and any patch-family call shape
+anywhere in `S`. Every other shape stays limited: `patch.object`,
+`patch.multiple`, `patch.dict`, `.start()` patchers, `setitem`, `delattr`,
+`delitem`, `setenv`, `chdir`, non-literal, concatenated, prefixed or multi-line
+targets, stdlib and third-party targets, unresolved fixtures, an aliased name
+the scanner cannot tie to an import, and any site it cannot classify. Dropping
+the limit only restores the verdict the test would have earned without the
+patch, and only because conditions 6 to 9 make the patch's own import
+inconsequential; it never raises oracle strength and never grants `exposed` by
+itself.
 
 ### Safety argument
 
-Claim: if `S` is sealed and `T` is not in `S`, nothing that runs during the
-test can observe the patched attribute on `T`. Observing a module attribute
-needs a reference to the module object or a binding in it. A reference arrives
-only through (a) a static import edge, all of which the index records, parent
-`__init__` side effects included, so `T` would be in `S`; (b) a dynamic load,
-excluded by conditions 3 and 4; or (c) an object passed in from outside `S`,
-which conditions 1 and 2 exclude because the test, its fixtures and the owner
-are all inside `S` and nothing external or unmodeled is. The injected
-collaborator, fixture-side patch, re-export and `__init__` re-binding cases
-that broke #9053 each put `T` in `S` or make `S` open.
+Claim (static): if `S` is sealed and the target is isolated, no static path
+exists from the test, its fixtures or the owner to the patched attribute, so
+the patch cannot change what they observe except through the residual list.
+
+A module attribute is observed through a reference to the module object or a
+binding in it. A reference arrives through (a) a static import edge, all of
+which the index records, including `__init__` side effects, submodule binding
+and attribute access, so `T` would be in `S` (condition 7); (b) a dynamic load
+or loader surface, excluded by conditions 3 and 4 inside `S` and, for `T`
+itself, by condition 9; (c) an object handed in from outside `S` through
+process-global state, which conditions 2 and 8 exclude by keeping registries
+out of `S` and by forbidding any other importer of `T`; or (d) `T` mutating
+`S` at import time, excluded by condition 9 together with the disjoint
+closure in condition 7. The cases that broke #9053 (injected collaborator,
+fixture-side patch, re-export, `__init__` re-binding) each put `T` in `S` or
+make `S` open.
 
 Residual by design, stated as non-claims: environment-level injection that is
-not in the workspace (an installed `sitecustomize`, C extensions that import by
-name, `PYTHONSTARTUP`), and extractor bugs. The second is the reason the
-slices below are corpus-first with adversarial negatives and a fresh-reviewer
-soundness pass on each one.
+not in the workspace (an installed `sitecustomize`, installed third-party
+pytest plugins, C extensions that import by name, `PYTHONSTARTUP`);
+`multiprocessing` start methods; forward-reference evaluation through
+`typing.get_type_hints` or `singledispatch`; and extractor bugs. Extractor bugs
+are why every slice is corpus-first with runtime-labeled adversarial negatives
+and a fresh-reviewer pass aimed at a counterexample.
+
+### Honest payoff
+
+Condition 8 is strict: most realistically patched modules are imported by
+production code, so they fail it. The sound rule may therefore qualify only a
+small share of `mocked_module` rows (6 of the 68 caught mutants in the #9226
+audit were limited by `mocked_module` at all). The plan below measures this
+before any analyzer code is written and stops if it is not worth the surface.
 
 ### Alternatives considered
 
 - **Keep `mocked_module` broad (status quo).** Safe, and it stays the fallback
-  for every open case. Rejected as the end state: it limited 6 of 68 caught
-  mutants in the #9226 audit, and its stop reason gives an agent nothing to act
-  on.
+  for every open case. It remains the end state if the payoff gate fails.
 - **Name-disjointness between patch target and owner (#9053).** Rejected:
   unsound for injected collaborators, stdlib internals and fixture patches.
+- **Sealed closure of the owner and test only (this amendment's first draft).**
+  Rejected after review: process-global registries and `patch()`'s own import
+  of the target defeat it, hence conditions 2, 8 and 9.
 - **Execute or trace Python (`-X importtime`, `settrace`, coverage).**
   Rejected: breaks the no-runtime rule and makes facts depend on the
   interpreter on PATH.
 - **Use `pyright`, `jedi`, `import-linter` or another resolver.** Rejected:
   a new runtime or dependency, and a type checker is excluded above.
 - **Assume third-party packages never call back into the workspace.**
-  Rejected: plugin systems (pytest plugins, Django settings strings, Celery
-  and entry points) do exactly that. Third-party edges make `S` open.
+  Rejected: plugin systems (pytest plugins, Django settings strings, Celery,
+  entry points) do exactly that.
 - **Whole-program call graph.** Rejected: that is a second type checker. Only
-  module-level reachability is needed to prove a module is absent from `S`.
+  module-level reachability is needed.
 - **Stdlib and third-party patch targets via a curated dependency table.**
   Deferred: patching `os.getcwd` is the motivating example, but proving the
   owner cannot reach it needs a pinned per-version stdlib call-dependency
-  table. It can follow as its own slice and ADR note if the workspace-target
-  slice earns trust.
+  table. It can follow as its own slice and ADR note.
 - **A new ADR instead of an amendment.** Rejected: the rule being relaxed
   lives here, and ADR 0020 sets the precedent of dated in-place amendments.
 
@@ -340,32 +415,50 @@ Each slice is its own reviewed PR, fixture-first
 ([ADR 0003](0003-fixtures-before-analyzer-rewrites.md),
 [ADR 0010](0010-fixture-first-evidence-confidence.md)). A slice does not start
 until the one before it has merged, and each gets a fresh-reviewer pass aimed
-at building a counterexample to the seal.
+at building a counterexample.
 
-1. **Spec and corpus stubs.** RIPR-SPEC-0028 text for the index, seal and
-   `mocked_module` rule, traceability entries, and verdict-corpus cases with
-   truth labels: a positive (unrelated workspace patch) and the negatives
+1. **Spec, docs and corpus stubs.** RIPR-SPEC-0028 text for the index, seal,
+   isolation and `mocked_module` rule, plus the docs and fixtures that say the
+   adapter has no import graph (`docs/STATIC_LIMITS.md`,
+   `docs/CAPABILITY_MATRIX.md`, `docs/LANGUAGE_ADAPTER_PREVIEW.md`,
+   RIPR-SPEC-0238, RIPR-PROP-0001, and the `fixtures/python_*/SPEC.md` files),
+   traceability entries, and runtime-labeled verdict-corpus cases: a positive
+   (isolated workspace patch) and negatives for each hole found so far
    (injected collaborator, autouse `conftest` patch, re-export chain,
    function-local import, `importlib`, third-party edge, `pickle`, ambiguous
    module name, `patch.object`, `patch.dict`, non-literal and multi-line
-   targets).
-2. **Edge extraction and resolution.** Pure function from parsed files to
-   edges with budgets and deterministic order; unit tests including relative
-   imports, parent `__init__` chain and ambiguity. No consumer.
-3. **Seal predicate.** `S` and sealed/open with a typed open reason, the
-   reflective-loader table and the inert stdlib allowlist, and harness-surface
-   scanning. No consumer.
-4. **Mock-site enumerator.** Covers the full effective scope. Differential
-   test: it finds every site the current body-text detector finds. No
+   targets, a cross-module `logging`/`codecs`/`atexit` registry, a target whose
+   top level sets `decimal`/`os.environ` state, a `sys.modules` alias in the
+   target, `from pkg import sub` with an empty `__init__`, `pkg.sub` attribute
+   access without an import, an `__init__` alias, a stdlib-shadowing workspace
+   file, and an aliased `patch` name next to a literal one).
+2. **Payoff gate.** A read-only measurement (script output attached to the
+   PR, no analyzer change) of how many `mocked_module` rows in the verdict
+   corpus and the four sdists from #9226 satisfy conditions 1 to 9 on paper.
+   If fewer than a handful qualify, record the number here, keep the status
+   quo, and stop; slices 3 to 7 are not built.
+3. **Edge extraction and resolution.** Pure function from parsed files to
+   edges with budgets and deterministic order, including the submodule,
+   attribute and `__init__` alias rules and the stdlib-shadowing rule. No
+   consumer.
+4. **Seal and isolation predicates.** `S`, sealed/open and isolated/not with
+   typed open reasons, the loader-surface table, the versioned inert
+   allowlist, and harness-surface scanning. No consumer.
+5. **Mock-site enumerator.** Covers the full effective scope and resolves
+   aliased patch names through imports. Differential test against the current
+   body-text detector in both directions: it finds every site the old one
+   finds, and its extra sites (fixture, `conftest`, alias) are listed. No
    behavior change.
-5. **Narrow `mocked_module`.** The only slice that moves verdicts. All
-   negatives from slice 1 must stay `static_unknown` with `mocked_module`, and
-   no corpus row may move from limited to `exposed` where runtime labels show
-   the patch matters. Revert is one PR: the old detector remains the open-case
-   path.
-6. **Explain output.** Open reasons and the sealed witness (target, resolved
-   module, `S` size) in the stop reason, so an agent sees why a test is still
-   limited.
+6. **Narrow `mocked_module`.** The only slice that moves verdicts. It is one
+   branch in front of the existing `test_has_mocked_module` call, so revert is
+   one PR. It can also newly add `mocked_module` where a fixture-side patch is
+   found that today's body-only scan misses; that is the conservative
+   direction, and the corpus carries rows for it. All negatives from slice 1
+   must stay `static_unknown` with `mocked_module`, and no corpus row may move
+   from limited to `exposed` where runtime labels show the patch matters.
+7. **Explain output.** Open reasons and the sealed/isolated witness (target,
+   resolved module, `S` size) in the stop reason, so an agent sees why a test
+   is still limited. It reverts together with slice 6.
 
 Further consumers (the public-API reach in #9226 part 2, `missing_import_graph`
 for workspace-resolved callees) are not authorized by this amendment. Each
