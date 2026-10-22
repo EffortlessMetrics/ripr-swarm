@@ -1268,4 +1268,24 @@ mod tests {
         }
         Ok(())
     }
+
+    /// The sweep is only a control if the required gate runs it. Pin the
+    /// wiring: the step exists and feeds every runtime row the gate can
+    /// produce, so deleting the step or an `--artifact` fails here (#9505).
+    #[test]
+    fn the_required_rust_gate_runs_the_sweep_with_live_producer_artifacts() {
+        let gates = include_str!("../../.github/workflows/rust-gates.yml");
+        let step = gates
+            .split("- name: Schema producer sweep")
+            .nth(1)
+            .and_then(|rest| rest.split("\n      - name:").next())
+            .expect("rust-gates.yml has a `Schema producer sweep` step");
+        assert!(step.contains("cargo xtask schema-producer-sweep"));
+        for schema in ["doctor", "pr-evidence", "review-comments"] {
+            assert!(
+                step.contains(&format!("--artifact schemas/ripr/{schema}.schema.json=")),
+                "sweep step does not feed the {schema} runtime row"
+            );
+        }
+    }
 }
