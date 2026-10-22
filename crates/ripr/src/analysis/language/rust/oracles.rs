@@ -346,16 +346,41 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
     let Some(witness) = witness else {
         return;
     };
+    apply_macro_assertion_witness(finding, witness);
+}
 
+/// The classifier has checked complete admitted reveal rows before capping.
+/// Keep witness selection inside the retained direct rows, and never use this
+/// route to infer an oracle from the macro's spelling or hidden rows.
+pub(in crate::analysis) fn apply_complete_proximity_macro_limit(
+    finding: &mut Finding,
+    index: &RustIndex,
+    owner_name: &str,
+) {
+    if finding.static_limit_kind.is_some()
+        || finding.class != ExposureClass::WeaklyExposed
+        || !finding
+            .related_tests_matched_total
+            .is_some_and(|total| total > finding.related_tests.len())
+    {
+        return;
+    }
+    if let Some(witness) = find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
+    {
+        apply_macro_assertion_witness(finding, witness);
+    }
+}
+
+fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssertionWitness) {
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
-    if matches!(
+    finding.recommended_next_step = Some(if matches!(
         witness.macro_name.rsplit("::").next(),
         Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
     ) {
-        finding.recommended_next_step = Some(
-            "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string(),
-        );
-    }
+        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
+    } else {
+        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
+    }.to_string());
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -437,23 +462,7 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     {
         return false;
     }
-    let mut direct_seen = false;
-    let mut proximity_oracle_seen = false;
-    for related in finding.oracle_related_tests() {
-        let direct = is_direct_relation(related.relation_reason);
-        if related.relation_reason.is_none() || direct {
-            // A refused assertion is still an assertion ripr judged.
-            if related.oracle.is_some()
-                || related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-            {
-                return false;
-            }
-            direct_seen |= direct;
-        } else if related.oracle.is_some() {
-            proximity_oracle_seen = true;
-        }
-    }
-    direct_seen && proximity_oracle_seen
+    crate::analysis::classify::only_proximity_oracles(&finding.related_tests)
 }
 
 /// A `weakly_exposed` finding whose every recognized oracle is a same-file

@@ -55,7 +55,7 @@ Limitation detail
   non-claim: named limitation only; ripr cannot confirm or deny that the macro assertion discriminates the change
 
 Next step
-  Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322

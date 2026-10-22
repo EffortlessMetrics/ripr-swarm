@@ -981,6 +981,7 @@ mod tests {
             propagation_witness: None,
             activation: ActivationEvidence::default(),
             related_tests_matched_total: related_tests.len(),
+            complete_proximity_oracles_only: false,
             related_tests,
             reach: yes.clone(),
             infect: yes.clone(),

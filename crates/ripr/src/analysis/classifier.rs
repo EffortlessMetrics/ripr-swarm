@@ -105,9 +105,21 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         .map(|test| test.miss)
         .collect();
 
+    let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let mut finding = build_finding(&context, class, evidence);
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
+    }
+    if complete_proximity_oracles_only
+        && let Some(owner) = context
+            .owner_fn
+            .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
+    {
+        super::language::rust::oracles::apply_complete_proximity_macro_limit(
+            &mut finding,
+            index,
+            &owner.name,
+        );
     }
     finding
 }
