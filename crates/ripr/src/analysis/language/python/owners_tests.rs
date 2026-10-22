@@ -76,6 +76,7 @@ pub(super) fn collect_owners_from_statements(
                     || class.name.to_string(),
                     |outer| format!("{outer}.{}", class.name),
                 );
+                let first = out.len();
                 collect_owners_from_statements(
                     file,
                     source,
@@ -85,6 +86,25 @@ pub(super) fn collect_owners_from_statements(
                     module_constants,
                     out,
                 );
+                // Class-level facts a dunder binding relies on (#9421): a class
+                // with decorators, a metaclass, odd body statements or a second
+                // definition of the same path may run another method than the
+                // one the owner names.
+                let duplicate = out[..first]
+                    .iter()
+                    .any(|owner| owner.class_path == class_path && owner.file == file);
+                let plain = !duplicate
+                    && class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && class_body_is_plain(&class.body);
+                let no_bases = class.bases.is_empty();
+                for owner in out
+                    .iter_mut()
+                    .filter(|owner| owner.class_path == class_path && owner.file == file)
+                {
+                    owner.class_facts.plain = plain;
+                    owner.class_facts.no_bases = no_bases;
+                }
                 out.push(owner_from_class(
                     PythonOwnerContext {
                         file,
@@ -219,7 +239,47 @@ fn owner_from_function(
         module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
+        class_facts: super::related_tests::PythonClassFacts {
+            direct_statements: direct_expression_statements(context.source, body),
+            ..Default::default()
+        },
     }
+}
+
+/// The trimmed text of each single-line expression statement written directly
+/// in a function body (not under an `if`, `try`, loop or `with`), so a changed
+/// line can be told apart from a guarded one (#9421).
+fn direct_expression_statements(source: &SourceText<'_>, body: &[Stmt]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(expr) => Some(text_for_range(source, expr.range)),
+            Stmt::Assign(assign) => Some(text_for_range(source, assign.range)),
+            Stmt::AugAssign(assign) => Some(text_for_range(source, assign.range)),
+            _ => None,
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.contains('\n'))
+        .collect()
+}
+
+/// Whether the class body holds only method definitions, a docstring, `pass`
+/// and plain non-dunder attributes, so no dunder is assigned, regenerated or
+/// defined conditionally in it.
+fn class_body_is_plain(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::Pass(_) | Stmt::ClassDef(_) => {
+            true
+        }
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .all(|target| matches!(target, Expr::Name(name) if !name.id.as_str().starts_with("__"))),
+        Stmt::AnnAssign(assign) => {
+            matches!(assign.target.as_ref(), Expr::Name(name) if !name.id.as_str().starts_with("__"))
+        }
+        _ => false,
+    })
 }
 
 /// Declared parameters in binding order: positional-only, then regular, then
@@ -281,6 +341,7 @@ fn owner_from_class(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -314,6 +375,7 @@ pub(super) fn module_owner(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -441,10 +503,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -518,10 +585,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -915,7 +987,7 @@ impl<'a> LocalTestClasses<'a> {
                 })
                 .flat_map(|((_, class), imports)| {
                     super::test_activation::activation_controls(
-                        &decorator_names(&class.decorator_list),
+                        &class.decorator_list,
                         imports,
                         super::test_activation::DeclarationSite::Class,
                     )

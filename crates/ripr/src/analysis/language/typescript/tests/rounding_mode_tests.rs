@@ -235,3 +235,81 @@ fn a_module_function_with_a_non_literal_input_keeps_the_credit() -> Result<(), S
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+fn loop_scale_test(table: &str, extra: &str) -> String {
+    format!(
+        "import {{ expect, it }} from \"vitest\";\nimport {{ scale }} from \"../src/subject\";\n\nconst rows: Array<[number, number]> = [{table}];\n{extra}\nfor (const [input, expected] of rows) {{\n  it(`scales ${{input}}`, () => {{\n    expect(scale(input)).toBe(expected);\n  }});\n}}\n"
+    )
+}
+
+fn loop_scale(label: &str, test: &str) -> Result<Finding, String> {
+    rounding_finding(
+        label,
+        SCALE,
+        SCALE_OLD,
+        &SCALE_OLD.replace("Math.round", "Math.floor"),
+        2,
+        test,
+    )
+}
+
+#[test]
+fn loop_registered_whole_rows_leave_the_rounding_mode_unreached() -> Result<(), String> {
+    let finding = loop_scale("loop-whole", &loop_scale_test("[4, 2], [-8, -4]", ""))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // 3 / 2 = 1.5: round gives 2, floor 1.
+    let finding = loop_scale("loop-fraction", &loop_scale_test("[4, 2], [3, 2]", ""))?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_loop_table_that_is_touched_or_computed_keeps_the_credit() -> Result<(), String> {
+    let touched = loop_scale_test("[4, 2]", "rows.push([3, 2]);");
+    assert_eq!(
+        loop_scale("loop-pushed", &touched)?.class,
+        ExposureClass::Exposed
+    );
+    let computed = loop_scale_test("[4, 2], [half, 2]", "");
+    assert_eq!(
+        loop_scale("loop-computed", &computed)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_rows_resolve_only_a_single_untouched_literal_table() {
+    use super::super::loop_rows::ts_enclosing_loop_rows;
+    let body = "it(\"x\", () => {\n  expect(f(a)).toBe(b);\n});";
+    let file = |header: &str, table: &str| format!("{table}\n{header} {{\n  {body}\n}}\n");
+    let table = "const rows = [[1, 100], [2.5, 250],];";
+    let rows = ts_enclosing_loop_rows(&file("for (const [a, b] of rows)", table), body);
+    assert_eq!(
+        rows.as_ref().map(|r| r.expand(&["a".to_string()])),
+        Some(vec![vec!["1".to_string()], vec!["2.5".to_string()]])
+    );
+    for (header, table) in [
+        ("for (const [a, b] of rows)", "let rows = [[1, 100]];"),
+        ("for (const [a, b] of other)", table),
+        ("for (const {a, b} of rows)", table),
+        ("for (let [a, b] of rows)", table),
+        ("for (const [a, b] of rows.slice())", table),
+        ("for (const [a = 1, b] of rows)", table),
+        (
+            "for (const [a, b] of rows)",
+            "const rows = [[1, 100], row];",
+        ),
+        ("for (const [a, b] of rows)", "const rows = [[1]];"),
+    ] {
+        assert_eq!(
+            ts_enclosing_loop_rows(&file(header, table), body),
+            None,
+            "{header} / {table}"
+        );
+    }
+    assert_eq!(
+        ts_enclosing_loop_rows(&format!("{table}\n{body}\n"), body),
+        None
+    );
+}

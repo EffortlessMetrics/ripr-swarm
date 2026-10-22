@@ -127,6 +127,9 @@ pub(crate) struct TypeScriptTest {
     /// file. Used only to map relative named or namespace imports back to a
     /// source owner before considering alias calls related.
     pub(crate) imports_in_file: Vec<TypeScriptImport>,
+    /// Imported roots whose whole-file uses can rebind, mutate or escape
+    /// their member value. Rule 15 cannot infer enum identity through them.
+    pub(crate) unstable_member_roots_in_file: Vec<String>,
     /// Names the enclosing scopes bind for this test (declarations,
     /// `beforeEach`/`beforeAll` assignments, callback parameters), each
     /// resolved to its innermost scope. Used only to find receivers built

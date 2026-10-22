@@ -107,3 +107,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_test_under_false_cfg_not_grip (10)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless rust_test_under_false_cfg_not_grip --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

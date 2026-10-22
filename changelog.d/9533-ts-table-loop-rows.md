@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript: a `for (const [a, b] of rows)` loop over a test-local literal table now reads one concrete case per row, so a table whose rows sit on both sides of a changed predicate boundary credits the boundary instead of reading as a weak `weakly_exposed` gap. Rows on one side, a mutated table, a non-literal cell or a loop body that can `break` keep the old reading (RIPR-SPEC-0243 rule 11, #9533).

@@ -162,7 +162,7 @@ fn clear_worktree(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|error| format!("create {}: {error}", to.display()))?;
     for entry in
         std::fs::read_dir(from).map_err(|error| format!("read {}: {error}", from.display()))?
@@ -217,17 +217,16 @@ impl Drop for ScratchRepository {
     }
 }
 
-/// Rebuild the snapshot repository from the manifest recipe and report every
-/// recorded commit or tree id the recipe does not reproduce. Only fixtures
-/// whose recipe is the structured base/head(/variant) form are rebuilt; the
-/// contract opts in so a prose-only recipe is never silently skipped.
-pub(crate) fn installed_journey_recipe_rebuild_violations(
+/// Rebuild the snapshot repository from the manifest recipe and return the
+/// `(snapshot, commit, tree)` ids it reproduces. The error is a complete
+/// violation message. Only fixtures whose recipe is the structured
+/// base/head(/variant) form are rebuilt.
+pub(crate) fn installed_journey_rebuilt_ids(
     contract: &InstalledJourneyFixtureContract,
     root: &Path,
     manifest: &Value,
-) -> Vec<String> {
+) -> Result<Vec<(String, String, String)>, String> {
     let label = contract.label;
-    let mut violations = Vec::new();
     let repository = manifest.get("repository");
     let recipe: Vec<&str> = repository
         .and_then(|repository| repository.get("construction_recipe"))
@@ -236,40 +235,37 @@ pub(crate) fn installed_journey_recipe_rebuild_violations(
         .unwrap_or_default();
     let commits = recipe_commits(&recipe);
     let [base_commit, head_commit] = commits.as_slice() else {
-        violations.push(format!(
+        return Err(format!(
             "blind journey installed {label} construction_recipe must name exactly the base and \
              head commit steps (date and message), found {}",
             commits.len()
         ));
-        return violations;
     };
-    let Some(snapshots) = repository
+    if repository
         .and_then(|repository| repository.get("snapshots"))
         .and_then(Value::as_object)
-    else {
-        violations.push(format!(
+        .is_none()
+    {
+        return Err(format!(
             "blind journey installed {label} manifest is missing repository.snapshots, so no \
              recorded id can be rebuilt from the recipe"
         ));
-        return violations;
-    };
+    }
     let manifest_text = match std::fs::read_to_string(root.join("manifest.json")) {
         Ok(text) => text,
         Err(error) => {
-            violations.push(format!(
+            return Err(format!(
                 "blind journey installed {label} manifest cannot be re-read for the recipe \
                  rebuild: {error}"
             ));
-            return violations;
         }
     };
     let ordered: OrderedManifest = match serde_json::from_str(&manifest_text) {
         Ok(ordered) => ordered,
         Err(error) => {
-            violations.push(format!(
+            return Err(format!(
                 "blind journey installed {label} manifest snapshot order cannot be read: {error}"
             ));
-            return violations;
         }
     };
     let variants: Vec<&str> = ordered
@@ -292,13 +288,12 @@ pub(crate) fn installed_journey_recipe_rebuild_violations(
                 && step.contains("listed under `repository.snapshots`")
         });
         if !states_derivation {
-            violations.push(format!(
+            return Err(format!(
                 "blind journey installed {label} construction_recipe must state the variant \
                  branch, message, date and snapshot-order derivation the rebuild applies to its \
                  {} variant snapshots",
                 variants.len()
             ));
-            return violations;
         }
     }
 
@@ -355,15 +350,35 @@ pub(crate) fn installed_journey_recipe_rebuild_violations(
     let rebuilt = match rebuilt {
         Ok(rebuilt) => rebuilt,
         Err(error) => {
-            violations.push(format!(
+            return Err(format!(
                 "blind journey installed {label} snapshot repository cannot be rebuilt from its \
                  construction_recipe: {error}"
             ));
-            return violations;
         }
     };
+    Ok(rebuilt)
+}
+
+/// Report every recorded commit or tree id the recipe does not reproduce. The
+/// contract opts in with `rebuild_from_recipe`, so a prose-only recipe is never
+/// silently skipped.
+pub(crate) fn installed_journey_recipe_rebuild_violations(
+    contract: &InstalledJourneyFixtureContract,
+    root: &Path,
+    manifest: &Value,
+) -> Vec<String> {
+    let label = contract.label;
+    let rebuilt = match installed_journey_rebuilt_ids(contract, root, manifest) {
+        Ok(rebuilt) => rebuilt,
+        Err(violation) => return vec![violation],
+    };
+    let snapshots = manifest
+        .get("repository")
+        .and_then(|repository| repository.get("snapshots"))
+        .and_then(Value::as_object);
+    let mut violations = Vec::new();
     for (name, commit, tree) in rebuilt {
-        let Some(snapshot) = snapshots.get(&name) else {
+        let Some(snapshot) = snapshots.and_then(|snapshots| snapshots.get(&name)) else {
             continue;
         };
         for (kind, rebuilt_id) in [("commit", commit), ("tree", tree)] {
