@@ -28,6 +28,7 @@ use super::{
     visit_workspace_with_handwritten,
 };
 use crate::analysis::diff::ChangedLine;
+use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -300,7 +301,16 @@ fn select_and_analyze(
     }
 
     Ok(RepoSelection {
-        findings: representative_findings(diff.findings),
+        findings: representative_findings(diff.findings)
+            .into_iter()
+            .map(|mut finding| {
+                // Scope stamp (#5531): consumers holding only a `Finding` look
+                // the capability cell up from this, so repo-mode evidence can
+                // never borrow the diff-mode repair-routing cell.
+                finding.evidence.push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+                finding
+            })
+            .collect(),
         production_files: changed.len(),
         skipped_files: input.capped + diff.skipped_files,
         partial_reason: join_reasons(&reasons),
