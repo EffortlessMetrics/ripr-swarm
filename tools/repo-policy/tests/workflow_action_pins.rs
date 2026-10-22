@@ -102,7 +102,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95"),
+        Some("toolchain: \"1.95\""),
         1,
     ),
     (
@@ -134,7 +134,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95"),
+        Some("toolchain: \"1.95\""),
         1,
     ),
     (
@@ -246,7 +246,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95"),
+        Some("toolchain: \"1.95\""),
         2,
     ),
     (
