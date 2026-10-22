@@ -567,7 +567,7 @@ fn resolve_boundary_operand(
 /// decimal value. A constant declared twice, imported, or with a value
 /// ripr cannot read as one decimal literal is left out, so the evaluator
 /// fails closed on that name instead of guessing.
-fn initializer_constants(
+pub(super) fn initializer_constants(
     owner: &FunctionSummary,
     initializer: &str,
     parameters: &[String],
@@ -1111,7 +1111,7 @@ fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> b
 
 /// Whether the file brings `name` in with a `use` line, so a constant of
 /// that name declared elsewhere in the file is not the one the owner reads.
-fn name_imported_in_file(source: &str, name: &str) -> bool {
+pub(super) fn name_imported_in_file(source: &str, name: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     masked
@@ -1247,6 +1247,7 @@ fn observed_input_separates_threshold_move(
                     .is_some_and(|ch| ch == ':' || ch == '.')
             })
         },
+        &ReceiverParameters::none(),
     )
     .iter()
     .filter_map(|row| parameter_value(row, &new_left))
@@ -3220,9 +3221,44 @@ fn owner_call_parameter_values(
     free_owner: bool,
     parameters: &[String],
 ) -> Vec<Vec<ParameterValue>> {
-    owner_call_parameter_values_where(related_tests, owner_name, free_owner, parameters, |_, _| {
-        true
-    })
+    owner_call_parameter_values_where(
+        related_tests,
+        owner_name,
+        free_owner,
+        parameters,
+        |_, _| true,
+        &ReceiverParameters::none(),
+    )
+}
+
+/// The entry parameters a method hop calls a method on (#9329), with the one
+/// reader of their argument text. A receiver parameter's cell is the
+/// canonical constructed string of its argument, or absent; it never takes
+/// the scalar a compound argument would otherwise lend it.
+struct ReceiverParameters<'a> {
+    names: Vec<String>,
+    value: Option<&'a dyn Fn(&str) -> Option<String>>,
+}
+
+impl<'a> ReceiverParameters<'a> {
+    fn none() -> Self {
+        Self {
+            names: Vec::new(),
+            value: None,
+        }
+    }
+
+    fn cell(&self, parameter: &str, argument: &str) -> Option<Vec<String>> {
+        if !self.names.iter().any(|name| name == parameter) {
+            return None;
+        }
+        Some(
+            self.value
+                .and_then(|read| read(argument))
+                .into_iter()
+                .collect(),
+        )
+    }
 }
 
 /// `owner_call_parameter_values` over only the calls `keep` admits.
@@ -3232,6 +3268,7 @@ fn owner_call_parameter_values_where(
     free_owner: bool,
     parameters: &[String],
     keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
+    receivers: &ReceiverParameters<'_>,
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
@@ -3258,6 +3295,10 @@ fn owner_call_parameter_values_where(
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
+                    let parameter = parameters.get(idx)?;
+                    if let Some(values) = receivers.cell(parameter, argument) {
+                        return Some((parameter, values, argument.trim(), false));
+                    }
                     let values = owner_argument_values(test, argument);
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
@@ -3265,7 +3306,7 @@ fn owner_call_parameter_values_where(
                             argument.trim(),
                         )
                         .is_some();
-                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
+                    Some((parameter, values, argument.trim(), table_column))
                 })
                 .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
@@ -3359,7 +3400,7 @@ fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bo
             .all(|name| is_constant_like(name) || is_exact(name))
 }
 
-fn is_constant_like(name: &str) -> bool {
+pub(super) fn is_constant_like(name: &str) -> bool {
     matches!(name, "true" | "false")
         || (name.chars().any(|ch| ch.is_ascii_uppercase())
             && name
@@ -3371,7 +3412,7 @@ fn is_constant_like(name: &str) -> bool {
 /// macro name, a method or field after `.`, a path segment beside `::`, a
 /// type after `as`, a numeric literal or its suffix, or a char/byte
 /// literal's contents. Strings and comments are masked first.
-fn free_identifiers(text: &str) -> Vec<String> {
+pub(super) fn free_identifiers(text: &str) -> Vec<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
     let mut names = Vec::new();
@@ -3547,6 +3588,14 @@ fn helper_transferred_rows(
     // #6780 Devin review: an entry call shadowed by a test-local closure or
     // nested fn never reaches the helper, so it binds no row (the same
     // shadow authority that denies its `helper_owner_call` relation).
+    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
+    // is the one parameter whose cell is a constructed receiver string.
+    let receiver_reader =
+        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receivers = ReceiverParameters {
+        names: entry.receiver.iter().cloned().collect(),
+        value: Some(&receiver_reader),
+    };
     let mut rows = owner_call_parameter_values_where(
         related_tests,
         &entry.caller.name,
@@ -3560,6 +3609,7 @@ fn helper_transferred_rows(
                 call.line,
             )
         },
+        &receivers,
     );
     if rows.is_empty() {
         return Vec::new();
@@ -3610,6 +3660,22 @@ fn helper_transferred_rows(
                         .unwrap_or_default(),
                 });
             }
+            // #9329: a method hop hands its callee the receiver's value as
+            // the pseudo-parameter `self`, readable only as `self.<index>`.
+            // The owner (step 0) has no lower hop to read it, so no `self`
+            // cell ever lands in an owner row.
+            if step > 0
+                && let Some(receiver) = &hop.receiver
+                && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
+                && super::helper_transfer::is_receiver_cell(&cell.value)
+            {
+                bound.push(ParameterValue {
+                    parameter: RECEIVER_PSEUDO_PARAMETER.to_string(),
+                    value: cell.value.clone(),
+                    line: cell.line,
+                    text: cell.text.clone(),
+                });
+            }
             bound_rows.push(bound);
         }
         rows = bound_rows;
@@ -3632,15 +3698,29 @@ fn bind_helper_argument(
         return Some(literal);
     }
     let trimmed = argument.trim();
+    // #9329: exactly `self.<tuple index>`, read from the pseudo-parameter
+    // cell a method hop above handed down. Nothing else names `self`.
+    if let Some(field) = trimmed.strip_prefix("self.") {
+        return row
+            .iter()
+            .find(|cell| cell.parameter == RECEIVER_PSEUDO_PARAMETER)
+            .and_then(|cell| super::helper_transfer::project_receiver_field(&cell.value, field));
+    }
     caller_parameters
         .iter()
         .find(|parameter| parameter.as_str() == trimmed)
         .and_then(|parameter| {
             row.iter()
                 .find(|cell| cell.parameter == *parameter)
+                // A constructed receiver string is read only through
+                // `self.<index>`; it never binds as a parameter value.
+                .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
                 .map(|cell| cell.value.clone())
         })
 }
+
+/// The pseudo-parameter a method hop hands its callee for the receiver.
+const RECEIVER_PSEUDO_PARAMETER: &str = "self";
 
 fn parameter_value(row: &[ParameterValue], parameter: &str) -> Option<ParameterValue> {
     row.iter()
@@ -3731,6 +3811,14 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
 /// The contents of `function`'s parameter list with comments and strings
 /// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
 /// signature cannot add, split or shift parameter names (#7840).
+/// The top-level parameter texts of `function`'s whole signature, including a
+/// `self` receiver (`&self`, `b: ByteSize`), in order.
+pub(super) fn signature_parameter_texts(function: &FunctionSummary) -> Vec<String> {
+    signature_arguments(function)
+        .map(|arguments| split_top_level_args(&arguments))
+        .unwrap_or_default()
+}
+
 fn signature_arguments(function: &FunctionSummary) -> Option<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
     parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
@@ -5074,6 +5162,9 @@ fn looks_like_builder_method(line: &str) -> bool {
             || line.contains(".token(")
             || line.contains(".threshold("))
 }
+
+#[cfg(test)]
+mod method_hop_rows;
 
 #[cfg(test)]
 mod tests {
@@ -7766,12 +7857,14 @@ assert_eq!(input.amount, 100);"#
                     caller: inner.clone(),
                     call_text: format!("score({owner_argument})"),
                     arguments: vec![owner_argument.to_string()],
+                    receiver: None,
                     through_macro: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
                     call_text: "inner(x)".to_string(),
                     arguments: vec!["x".to_string()],
+                    receiver: None,
                     through_macro: false,
                 },
             ],
