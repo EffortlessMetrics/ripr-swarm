@@ -9796,6 +9796,7 @@ fn initialize_stores_lsp_analysis_config() -> Result<(), String> {
 fn initialize_with_invalid_languages_config_falls_back_to_rust_defaults() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -9855,6 +9856,7 @@ enabled = ["ruby"]
 fn session_configuration_change_preserves_invalid_repository_config_health() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -10250,6 +10252,7 @@ fn malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsuppor
 fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
