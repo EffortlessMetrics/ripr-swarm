@@ -1002,21 +1002,6 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
 // hand-written recording double, are oracles ripr reads only at the surface
 // (#9609, #9610).
 
-/// Some finding on the line is a gap and none carries the framework limit.
-fn not_withheld(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
-    let findings = findings_on(lib, diff, line)?;
-    if findings.iter().any(limited) {
-        return Err(format!(
-            "{label}: expected the finding left alone, got {:?}",
-            findings
-                .iter()
-                .map(|f| (f.probe.family.as_str(), f.class.as_str()))
-                .collect::<Vec<_>>()
-        ));
-    }
-    Ok(())
-}
-
 fn cart_source(test_body: &str) -> String {
     format!(
         "pub struct Cart {{
@@ -1093,7 +1078,7 @@ fn a_fixture_receiver_shape_that_differs_keeps_the_finding() -> Result<(), Strin
             "        let _ = fixture();\n        assert_eq!(Cart { items: vec![] }.total(), 0);",
         ),
     ] {
-        not_withheld(&cart_source(body), &cart_edit(), 6, label)?;
+        keeps_gap(&cart_source(body), &cart_edit(), 6, label)?;
     }
     Ok(())
 }
@@ -1143,8 +1128,8 @@ fn a_hand_written_recorder_compared_by_field_is_withheld() -> Result<(), String>
             "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
         ),
         (
-            "field length",
-            "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines.len(), 1);",
+            "field cloned",
+            "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
         ),
     ] {
         withheld(&sink_source("&mut dyn Sink", body), &sink_edit(), 13, label)?;
@@ -1162,30 +1147,39 @@ fn a_recorder_shape_that_differs_keeps_the_finding() -> Result<(), String> {
             format!("{recorder}        assert_eq!(recorder.recorded(), 1);"),
         ),
         (
+            "the field is read only through its length",
+            "&mut dyn Sink",
+            format!("{recorder}        assert_eq!(recorder.lines.len(), 1);"),
+        ),
+        (
             "the sink parameter is a concrete type",
             "&mut Recorder",
-            format!("{recorder}        assert_eq!(recorder.lines.len(), 1);"),
+            format!("{recorder}        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
         ),
         (
             "the comparison happens before the call",
             "&mut dyn Sink",
-            "        let mut recorder = Recorder { lines: vec![] };\n        assert_eq!(recorder.lines.len(), 0);\n        report(&mut recorder, 3);".to_string(),
+            "        let mut recorder = Recorder { lines: vec![] };\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);\n        report(&mut recorder, 3);".to_string(),
         ),
         (
             "the double is built by a constructor, not a struct literal",
             "&mut dyn Sink",
-            "        let mut recorder = Recorder::default();\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines.len(), 1);".to_string(),
+            "        let mut recorder = Recorder::default();\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);".to_string(),
         ),
     ] {
-        not_withheld(&sink_source(param, &body), &sink_edit(), 13, label)?;
+        keeps_gap(&sink_source(param, &body), &sink_edit(), 13, label)?;
     }
     Ok(())
 }
 
 #[test]
-fn a_std_collection_pushed_into_by_the_changed_call_is_not_a_double() -> Result<(), String> {
-    let lib = "pub fn send(events_sent: &mut dyn Extend<u32>, id: u32) {
-    events_sent.extend([id]);
+fn a_vec_pushed_into_by_the_changed_call_keeps_the_gap() -> Result<(), String> {
+    // The corpus row `spec0231-oracle-events-sent-len-eq`: a length check
+    // cannot notice a changed pushed value, so the weak gap stays.
+    let lib = "pub fn send(events_sent: &mut Vec<u32>, id: u32) {
+    if id > 0 {
+        events_sent.push(id);
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1193,20 +1187,20 @@ mod tests {
 
     #[test]
     fn one_event() {
-        let mut events_sent: Vec<u32> = Vec::new();
+        let mut events_sent = Vec::new();
         send(&mut events_sent, 1);
         assert_eq!(events_sent.len(), 1);
     }
 }
 ";
-    not_withheld(
+    keeps_gap(
         lib,
         &diff(
-            2,
-            "    events_sent.extend([id]);",
-            "    events_sent.extend([0 + id]);",
+            3,
+            "        events_sent.push(id);",
+            "        events_sent.push(0 + id);",
         ),
-        2,
-        "std collection",
+        3,
+        "vec push",
     )
 }

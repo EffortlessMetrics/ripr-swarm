@@ -357,14 +357,33 @@ fn assert_eq_operands(code: &str) -> Vec<(usize, Vec<(usize, usize)>)> {
     found
 }
 
-/// Whether `text` is a bare literal: a number, a string, `true` or `false`.
+/// Whether `text` is a bare literal: one number token, one string, `true`
+/// or `false`. An expression that merely starts with one (`1 + n`) is not.
 fn is_literal(text: &str) -> bool {
     let text = text.trim();
-    let digits = text.strip_prefix('-').unwrap_or(text);
+    let number = text.strip_prefix('-').unwrap_or(text);
     text == "true"
         || text == "false"
-        || text.starts_with('"')
-        || digits.starts_with(|ch: char| ch.is_ascii_digit())
+        || (text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains('"'))
+        || (number.starts_with(|ch: char| ch.is_ascii_digit())
+            && !number.contains("..")
+            && number
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+}
+
+/// Whether masked `text` holds a closure: a `|` or `||` that opens an
+/// argument (after `(`, `,`, `=` or `move`), not a boolean or bitwise operator.
+fn has_closure(text: &str) -> bool {
+    text.match_indices('|').any(|(at, _)| {
+        let before = text[..at].trim_end();
+        let opens = |ch: char| matches!(ch, '(' | ',' | '=');
+        text[..at].chars().next_back() != Some('|')
+            && (before.chars().next_back().is_some_and(opens) || before.ends_with("move"))
+    })
 }
 
 /// The owner is a `&self` method whose changed line holds a closure, and a
@@ -379,7 +398,7 @@ fn fixture_receiver_pin(
 ) -> bool {
     let header = masked(&owner.body);
     let header = header.split('{').next().unwrap_or("");
-    if !header.contains("&self") || !masked(changed_text).contains('|') {
+    if !header.contains("&self") || !has_closure(&masked(changed_text)) {
         return false;
     }
     let raw: &str = &test.body;
@@ -514,14 +533,22 @@ fn declared_struct_double(before: &str, local: &str) -> bool {
 }
 
 /// `rest` follows `local.` and names a field: an identifier that is not a
-/// method call.
+/// method call and not read only through its length (`lines.len()` counts
+/// what was recorded, so it cannot notice a changed argument).
 fn is_field_access(rest: &str) -> bool {
     let end = rest
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(rest.len());
+    let after = &rest[end..];
     end > 0
-        && !rest[..1].starts_with(|ch: char| ch.is_ascii_digit())
-        && !rest[end..].starts_with('(')
+        && !rest.starts_with(|ch: char| ch.is_ascii_digit())
+        && !after.starts_with('(')
+        && !["len", "is_empty", "count"].iter().any(|method| {
+            after
+                .strip_prefix('.')
+                .and_then(|call| call.strip_prefix(method))
+                .is_some_and(|tail| tail.starts_with('('))
+        })
 }
 
 /// A mockall expectation whose `returning` closure uses one of its named
@@ -759,9 +786,27 @@ mod tests {
         for literal in ["42", "-1", "\"a\"", "true", " false "] {
             assert!(is_literal(literal), "{literal}");
         }
-        for other in ["expected", "f(1)", "x + 1", "Some(1)"] {
+        for other in [
+            "expected",
+            "f(1)",
+            "x + 1",
+            "Some(1)",
+            "1 + n",
+            "0..n",
+            "1.max(f())",
+        ] {
             assert!(!is_literal(other), "{other}");
         }
+    }
+
+    #[test]
+    fn a_closure_opens_an_argument_and_an_operator_does_not() {
+        assert!(has_closure("v.iter().map(|(_, p)| p).sum()"));
+        assert!(has_closure("v.iter().map(move |x| x)"));
+        assert!(has_closure("run(|| 1)"));
+        assert!(has_closure("let f = |x| x;"));
+        assert!(!has_closure("self.a || self.b"));
+        assert!(!has_closure("self.a | self.b"));
     }
 
     #[test]
@@ -784,7 +829,10 @@ mod tests {
     #[test]
     fn a_field_access_is_an_identifier_that_is_not_called() {
         assert!(is_field_access("lines"));
-        assert!(is_field_access("lines.len()"));
+        assert!(is_field_access("lines.clone()"));
+        assert!(is_field_access("é"));
+        assert!(!is_field_access("lines.len()"));
+        assert!(!is_field_access("lines.is_empty()"));
         assert!(!is_field_access("recorded()"));
         assert!(!is_field_access("0"));
         assert!(!is_field_access(""));
