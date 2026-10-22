@@ -2464,8 +2464,7 @@ mod tests {
         let rendered_json = render_baseline_delta_json(&report)?;
         let rendered_md = render_baseline_delta_markdown(&report);
         if crate::testing::rebless::fixture_rebless_enabled() {
-            std::fs::write(&expected_json_path, &rendered_json)
-                .map_err(|err| err.to_string())?;
+            std::fs::write(&expected_json_path, &rendered_json).map_err(|err| err.to_string())?;
             std::fs::write(&expected_md_path, &rendered_md).map_err(|err| err.to_string())?;
             return Ok(());
         }
