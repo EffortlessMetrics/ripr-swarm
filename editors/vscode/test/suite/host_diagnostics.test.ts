@@ -16,7 +16,8 @@ import {
   resolveHostDiagnosticsDir,
   resolveLogDir,
   resolveUserDataDir,
-  retainHostDiagnostics
+  retainHostDiagnostics,
+  boundedRequestEvidence
 } from '../hostDiagnostics';
 
 suite('VS Code test host diagnostics', () => {
@@ -356,6 +357,176 @@ suite('VS Code test host diagnostics', () => {
     } finally {
       restoreError();
     }
+  });
+
+  for (const matrixFailure of [false, true]) {
+    test(`retains only the ${matrixFailure ? 'matrix' : 'first'} failing host and its intended artifacts`, () => {
+      const firstProfile = resolveUserDataDir(root);
+      const matrixProfile = path.join(firstProfile, 'multiroot');
+      writeLog(root, 'host.log', 'FIRST_HOST_SENTINEL');
+      fs.mkdirSync(path.join(matrixProfile, 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(matrixProfile, 'logs', 'host.log'), 'MATRIX_HOST_SENTINEL');
+      fs.mkdirSync(path.join(matrixProfile, 'User'), { recursive: true });
+      fs.writeFileSync(path.join(matrixProfile, 'User', 'settings.json'), 'DO_NOT_COLLECT_SETTINGS');
+      const receipt = path.join(root, 'multiroot-fixture', 'acceptance.json');
+      fs.mkdirSync(path.dirname(receipt));
+      fs.writeFileSync(receipt, '{"phase":"select root A","outcome":"failed"}');
+      fs.writeFileSync(path.join(path.dirname(receipt), 'unrelated.json'), 'DO_NOT_COLLECT_SIBLINGS');
+      const originalError = new Error('original host cancellation');
+      const logged: unknown[][] = [];
+      const restore = replaceConsoleError((...args) => logged.push(args));
+      try {
+        const result = finalizeHostRun({ artifactRoot: root, userDataDir: firstProfile,
+          matrix: matrixFailure ? { userDataDir: matrixProfile, receiptPath: receipt } : undefined,
+          error: originalError });
+        assert.strictEqual(result.exitCode, 1);
+        assert.ok(logged.some(args => args[1] === originalError), 'retain the original error object');
+        const kept = fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'host.log'), 'utf8');
+        assert.strictEqual(kept, matrixFailure ? 'MATRIX_HOST_SENTINEL' : 'FIRST_HOST_SENTINEL');
+        assert.strictEqual(fs.existsSync(path.join(result.retention.diagnosticsDir, 'acceptance.json')), matrixFailure);
+        if (matrixFailure) {
+          assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
+            '{"phase":"select root A","outcome":"failed"}');
+        }
+        assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
+          [...(matrixFailure ? ['acceptance.json'] : []), 'logs', 'retention.json'].sort());
+        assert.deepStrictEqual(fs.readdirSync(path.join(result.retention.diagnosticsDir, 'logs')), ['host.log']);
+      } finally { restore(); }
+    });
+  }
+
+  test('retains a sanitized partial matrix receipt without parsing or collecting siblings', () => {
+    const receipt = path.join(root, 'acceptance.json');
+    fs.writeFileSync(receipt, '{"partial":"ghp_abcdefghijklmnopqrstuvwxyz0123",\n-----BEGIN PRIVATE KEY-----\nPRIVATE_SENTINEL');
+    const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+      matrixReceiptPath: receipt, failed: true });
+    const kept = fs.readFileSync(path.join(result.diagnosticsDir, 'acceptance.json'), 'utf8');
+    assert.ok(kept.includes('[redacted-token]'), kept);
+    assert.ok(kept.includes('[redacted-pem]'), kept);
+    assert.ok(!kept.includes('PRIVATE_SENTINEL'), kept);
+  });
+
+  test('missing matrix receipt does not prevent retaining the selected logs', () => {
+    writeLog(root, 'host.log', 'SELECTED_LOG');
+    const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+      matrixReceiptPath: path.join(root, 'absent', 'acceptance.json'), failed: true });
+    assert.strictEqual(fs.readFileSync(path.join(result.diagnosticsDir, 'logs', 'host.log'), 'utf8'), 'SELECTED_LOG');
+    assert.strictEqual(fs.existsSync(path.join(result.diagnosticsDir, 'acceptance.json')), false);
+    const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
+    assert.strictEqual(identity.matrix_receipt.status, 'absent');
+  });
+
+  test('matrix receipt shares the total cap and obeys the existing per-file byte bound', () => {
+    const receipt = path.join(root, 'acceptance.json');
+    fs.writeFileSync(receipt, 'RECEIPT_HEAD' + '€'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    for (let i = 0; i < 24; i++) writeLog(root, `${i}.log`, '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+      matrixReceiptPath: receipt, failed: true });
+    const retainedReceipt = fs.readFileSync(path.join(result.diagnosticsDir, 'acceptance.json'));
+    assert.ok(retainedReceipt.length <= MAX_HOST_DIAGNOSTICS_FILE_BYTES);
+    assert.ok(retainedReceipt.toString('utf8').startsWith('RECEIPT_HEAD'));
+    assert.ok(!retainedReceipt.toString('utf8').includes('\uFFFD'));
+    assert.ok(result.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
+    const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
+    assert.strictEqual(identity.matrix_receipt.truncated, true);
+  });
+
+  test('receipt truncation keeps the PEM opening marker for sanitization of JSON-escaped newlines', () => {
+    const receipt = path.join(root, 'acceptance.json');
+    fs.writeFileSync(receipt, JSON.stringify({ error: 'before\n-----BEGIN PRIVATE KEY-----\n'
+      + 'QUJDREVG'.repeat(50_000) + '\n-----END PRIVATE KEY-----\nafter' }));
+    const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+      matrixReceiptPath: receipt, failed: true });
+    const kept = fs.readFileSync(path.join(result.diagnosticsDir, 'acceptance.json'), 'utf8');
+    assert.ok(kept.includes('[redacted-pem]'));
+    assert.ok(!kept.includes('QUJDREVG'), 'do not expose a clipped JSON-string PEM body');
+    assert.ok(Buffer.byteLength(kept) <= MAX_HOST_DIAGNOSTICS_FILE_BYTES);
+  });
+
+  test('matrix receipt refuses other filenames, outside paths, directories and symlink traversal', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-outside-receipt-'));
+    try {
+      const externalReceipt = path.join(outside, 'acceptance.json');
+      fs.writeFileSync(externalReceipt, 'DO_NOT_COLLECT_EXTERNAL');
+      const otherFile = path.join(root, 'settings.json');
+      fs.writeFileSync(otherFile, 'DO_NOT_COLLECT_SETTINGS');
+      const directoryReceipt = path.join(root, 'directory', 'acceptance.json');
+      fs.mkdirSync(directoryReceipt, { recursive: true });
+      const link = path.join(root, 'linked');
+      fs.symlinkSync(outside, link, 'junction');
+      for (const receipt of [externalReceipt, otherFile, directoryReceipt, path.join(link, 'acceptance.json')]) {
+        const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+          matrixReceiptPath: receipt, failed: true });
+        assert.strictEqual(fs.existsSync(path.join(result.diagnosticsDir, 'acceptance.json')), false, receipt);
+        const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
+        assert.strictEqual(identity.matrix_receipt.status, 'refused', receipt);
+      }
+    } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  test('request evidence preserves observed identity and original cancellation without extra payloads', () => {
+    const error = Object.assign(new Error('Canceled'), { name: 'Canceled', code: -32800 });
+    error.stack = 'ORIGINAL_REQUEST_STACK';
+    const observed = { method: 'vscode.executeCodeActionProvider', document_uri: 'file:///root-a/src/alpha.rs',
+      document_version: 7, client_id: 1, current_client_id: 2, client_pid: 123, current_client_pid: 456,
+      same_client: false, sampled_effective_root: '/root-a', sampled_root_state: 'selected_single_root',
+      sampled_attempt_id: 'attempt:4', sampled_run_status: 'completed', document_contents: 'DO_NOT_COLLECT_CONTENTS' };
+    const result = boundedRequestEvidence(observed, error);
+    assert.deepStrictEqual(result.error, { message: 'Canceled', stack: 'ORIGINAL_REQUEST_STACK', name: 'Canceled', code: -32800 });
+    assert.strictEqual(result.client_id, 1);
+    assert.strictEqual(result.current_client_id, 2);
+    assert.strictEqual(result.client_pid, 123);
+    assert.strictEqual(result.document_version, 7);
+    assert.strictEqual(result.sampled_effective_root, '/root-a');
+    assert.strictEqual(result.same_client, false);
+    assert.ok(!JSON.stringify(result).includes('DO_NOT_COLLECT_CONTENTS'));
+    assert.ok(!('workspace_root' in result), 'do not invent unavailable observations');
+    assert.strictEqual(error.stack, 'ORIGINAL_REQUEST_STACK', 'do not mutate the original error');
+  });
+
+  test('request evidence redacts before clipping and omits unavailable numeric observations', () => {
+    const error = new Error('-----BEGIN PRIVATE KEY-----\n' + 'PRIVATE_SENTINEL'.repeat(300));
+    error.stack = 's'.repeat(100_000);
+    const result = boundedRequestEvidence({ method: 'vscode.executeCodeActionProvider',
+      document_uri: 'ghp_abcdefghijklmnopqrstuvwxyz0123' + 'x'.repeat(10_000),
+      document_version: NaN, client_pid: undefined }, error);
+    const serialized = JSON.stringify(result);
+    assert.ok(serialized.includes('[redacted-token]'));
+    assert.ok(serialized.includes('[redacted-pem]'));
+    assert.ok(!serialized.includes('PRIVATE_SENTINEL'));
+    assert.ok(!serialized.includes('ghp_'));
+    assert.ok(serialized.length < 5000, String(serialized.length));
+    assert.ok(!('document_version' in result));
+    assert.ok(!('client_pid' in result));
+  });
+
+  test('empty and binary receipts do not enter the retained artifacts', () => {
+    const receipt = path.join(root, 'acceptance.json');
+    for (const contents of ['', 'binary\0private']) {
+      fs.writeFileSync(receipt, contents);
+      const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
+        matrixReceiptPath: receipt, failed: true });
+      assert.strictEqual(fs.existsSync(path.join(result.diagnosticsDir, 'acceptance.json')), false);
+      const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
+      assert.strictEqual(identity.matrix_receipt.status, 'empty_or_binary');
+    }
+  });
+
+  test('matrix retention failure preserves the original error and failure exit', () => {
+    const blocker = path.join(root, 'not-a-directory');
+    fs.writeFileSync(blocker, 'block diagnostics output');
+    const original = new Error('ORIGINAL_MATRIX_FAILURE');
+    const logged: unknown[][] = [];
+    const restore = replaceConsoleError((...args) => logged.push(args));
+    try {
+      const result = finalizeHostRun({ artifactRoot: blocker, userDataDir: resolveUserDataDir(root),
+        matrix: { userDataDir: path.join(root, 'matrix'), receiptPath: path.join(root, 'acceptance.json') },
+        error: original });
+      assert.strictEqual(result.exitCode, 1);
+      assert.strictEqual(result.retention.reason, 'retention_failed');
+      assert.ok(logged.some(args => args[1] === original));
+      assert.ok(logged.some(args => String(args[0]).includes('Failed to retain')));
+    } finally { restore(); }
   });
 });
 

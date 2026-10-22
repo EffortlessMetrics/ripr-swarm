@@ -201,6 +201,7 @@ async function main() {
       path.resolve(__dirname, '../../../../target/ripr')
   );
   const userDataPath = resolveUserDataDir(artifactRoot);
+  let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
   try {
     resetHostLogDir(userDataPath);
@@ -301,8 +302,11 @@ async function main() {
       process.env.RIPR_TEST_MULTIROOT = '1';
       process.env.RIPR_TEST_GREP = '^Real multi-root server acceptance';
       process.env.RIPR_TEST_MULTIROOT_PATH = matrixRoot;
-      process.env.RIPR_TEST_MULTIROOT_RECEIPT = path.join(matrixRoot, 'acceptance.json');
+      const matrixReceiptPath = path.join(matrixRoot, 'acceptance.json');
+      process.env.RIPR_TEST_MULTIROOT_RECEIPT = matrixReceiptPath;
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
+      matrixDiagnostics = { userDataDir: matrixUserData,
+        receiptPath: matrixReceiptPath };
       await runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
@@ -320,6 +324,7 @@ async function main() {
   const { exitCode } = finalizeHostRun({
     artifactRoot,
     userDataDir: userDataPath,
+    matrix: matrixDiagnostics,
     error,
   });
   if (exitCode !== 0) {
