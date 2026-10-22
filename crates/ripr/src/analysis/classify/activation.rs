@@ -3316,8 +3316,10 @@ fn owner_call_parameter_values(
 /// the scalar a compound argument would otherwise lend it.
 struct ReceiverParameters<'a> {
     names: Vec<String>,
-    value: Option<&'a dyn Fn(&str) -> Option<String>>,
+    value: Option<&'a ReceiverReader<'a>>,
 }
+
+type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
 impl<'a> ReceiverParameters<'a> {
     fn none() -> Self {

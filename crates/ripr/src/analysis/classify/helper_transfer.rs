@@ -878,7 +878,7 @@ pub(crate) fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
             continue;
         }
         mentions += 1;
-        if masked[..at].trim_end().chars().next_back() != Some('.') {
+        if !masked[..at].trim_end().ends_with('.') {
             return false;
         }
     }
