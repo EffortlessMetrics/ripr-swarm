@@ -235,8 +235,8 @@ fn write_executable(path: &Path, script: &str) -> Result<(), String> {
 }
 
 /// True when the pid recorded by the stub no longer names a live process.
-/// Linux `/proc` is the only host that can answer; elsewhere this reports
-/// gone only when no pid was recorded, which fails the control.
+/// Linux answers from `/proc`; other Unix hosts (macOS) ask `ps`. Anything the
+/// host cannot answer reads as not gone, which fails the control.
 #[cfg(unix)]
 fn child_gone(pid_file: &Path) -> bool {
     let Ok(text) = fs::read_to_string(pid_file) else {
@@ -245,19 +245,33 @@ fn child_gone(pid_file: &Path) -> bool {
     let Ok(pid) = text.trim().parse::<u32>() else {
         return false;
     };
-    let stat = PathBuf::from(format!("/proc/{pid}/stat"));
-    match fs::read_to_string(&stat) {
-        Ok(text) => text
-            .rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
-            .is_some_and(|state| state == "Z" || state == "X"),
-        // Gone only when the host has /proc and the pid's entry is absent;
-        // any other read failure (permissions, no /proc) is unknown, not gone.
-        Err(error) => {
-            error.kind() == std::io::ErrorKind::NotFound
-                && PathBuf::from("/proc/self").exists()
-                && !PathBuf::from(format!("/proc/{pid}")).exists()
-        }
+    if PathBuf::from("/proc/self").exists() {
+        return match fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(text) => text
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
+                .is_some_and(|state| state == "Z" || state == "X"),
+            // Gone only when the pid's entry is absent; a permission error is
+            // unknown, not gone.
+            Err(error) => {
+                error.kind() == std::io::ErrorKind::NotFound
+                    && !PathBuf::from(format!("/proc/{pid}")).exists()
+            }
+        };
+    }
+    let Ok(output) = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .env("PATH", exec::CHILD_PATH)
+        .output()
+    else {
+        return false;
+    };
+    let state = String::from_utf8_lossy(&output.stdout);
+    // `ps -p` exits 1 with no output when the pid does not exist.
+    if output.status.success() {
+        state.trim().starts_with('Z')
+    } else {
+        state.trim().is_empty() && output.status.code() == Some(1)
     }
 }
 

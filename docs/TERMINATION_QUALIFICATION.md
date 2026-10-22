@@ -2,28 +2,26 @@
 
 `cargo xtask termination-qualification --binary <path>` runs one deterministic
 adversarial corpus against one exact `ripr` binary and writes a JSON and a
-Markdown packet from a single DTO. It is the harness behind #4505 and its
-corpus children #4511 and #4512 (the path-glob family, #4513, lands in a stacked follow-up). It changes no product behavior, builds
-or installs nothing, and does not decide qualification: #2769 consumes the
-packet.
+Markdown packet from a single DTO (#4505, #4511, #4512; the path-glob family,
+#4513, follows in a stacked PR). It changes no product behavior, builds or
+installs nothing, and does not decide qualification: #2769 consumes the packet.
 
 ```bash
 cargo xtask termination-qualification --binary <path-to-ripr> \
   --removal-control rust_nesting=<repairs-disabled-ripr> \
-  --removal-control python_nesting=<repairs-disabled-ripr> \
+  --removal-control python_nesting=<repairs-disabled-ripr>
 ```
 
-Outputs: `target/ripr/reports/termination-qualification.{json,md}`.
-Other flags: `--expected-sha256`, `--expected-version`, `--family`,
-`--no-repeat`, `--deadline-seconds`, `--allow-incomplete`, `--work-dir`,
-`--out`. The default row deadline is 60 seconds.
+Outputs: `target/ripr/reports/termination-qualification.{json,md}`. Other
+flags: `--expected-sha256`, `--expected-version`, `--family`, `--no-repeat`,
+`--deadline-seconds` (default 60), `--allow-incomplete`, `--work-dir`, `--out`.
 
 ## What runs
 
 Every row writes generated files into an owned, disposable workspace, launches
 the binary by absolute path with a scrubbed `PATH`, and removes the workspace
-afterwards. The shared process owner (`xtask/src/run.rs`) supplies process
-group custody, deadline kill and bounded drains.
+afterwards. `xtask/src/run.rs` supplies process-group custody, deadline kill
+and bounded drains.
 
 | Family | Route | Shapes |
 |---|---|---|
@@ -38,19 +36,14 @@ list.
 
 ## Result taxonomy
 
-Each row ends in exactly one #4505 state. Only the first two pass.
-
-| State | Meaning |
-|---|---|
-| `passed_supported_analysis` | Full analysis, no limitation, expected evidence present |
-| `passed_typed_limitation` | Declined with the named limitation; unaffected evidence kept |
-| `semantic_failure` | Wrong limitation class, false limit on a supported input, unsuppressed or silently excluded path, non-JSON output |
-| `process_abort` | Signal or abort exit code |
-| `nonterminal_deadline` | The outer deadline fired |
-| `missing_or_false_clean_limitation` | A required limitation or exclusion disclosure is absent, or the outcome is complete despite it |
-| `wrong_subject` | The changed file's evidence was lost |
-| `instrument_failure` | Launch, workspace or cleanup failure |
-| `not_run` | The row did not execute |
+Each row ends in exactly one #4505 state. Only `passed_supported_analysis`
+(full analysis, expected evidence present) and `passed_typed_limitation`
+(declined with the named limitation, unaffected evidence kept) pass. The
+failing states are `semantic_failure` (wrong limitation class, false limit on a
+supported input, non-JSON output), `process_abort`, `nonterminal_deadline`,
+`missing_or_false_clean_limitation`, `wrong_subject` (the changed file's
+evidence was lost), `instrument_failure` (launch, workspace or cleanup) and
+`not_run`.
 
 ## Controls
 
@@ -69,38 +62,34 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
   Without `--removal-control` for a selected family the aggregate is
   `incomplete`, and the command exits nonzero unless `--allow-incomplete`.
 
-A repairs-disabled binary is a normal build of the candidate source with the
-guards neutralised (`rust_nesting_refusal` returns `None`, the Python
-tree-depth budget is `usize::MAX`). It must report the candidate's `--version`.
+A repairs-disabled binary is a build of the candidate source with the guards
+neutralised (`rust_nesting_refusal` returns `None`, the Python tree-depth
+budget is `usize::MAX`) and must report the candidate's `--version`.
 
 ## Packet identity
 
-The packet carries the binary's path, size, SHA-256 and reported version, host
-identity (OS, architecture, family), the environment boundary, per-case argv, deadline,
-termination, input digests, subject counts, stdout and stderr digests, cleanup
-state, controls, non-claims and the aggregate. The `digest` covers everything
-except elapsed time, the host-local binary path and itself. Owned workspace
-paths are replaced by `<case-root>` before hashing.
+The packet carries the binary's path, size, SHA-256 and version, host identity,
+environment boundary, per-case argv, deadline, termination, input digests,
+subject counts, stdout and stderr digests, cleanup state, controls, non-claims
+and the aggregate. The `digest` covers everything except elapsed time, the
+host-local binary path and itself; owned workspace paths become `<case-root>`.
 
 ## Claim boundary
 
 A green packet says one exact binary terminated honestly on this retained
 corpus. It does not bind the binary to a source SHA or candidate ref, exercise
-LSP, prove absence of every crash or hang class, or establish latency. Python
-f-string replacement-field shapes the tree-depth estimate does not model are
-outside the corpus.
+LSP, prove absence of every crash or hang class, or establish latency.
 
 Known gaps against the child issues, each deliberate for this first harness:
 
 - No toolchain identity, per-finding identities, parser or fallback state, or
-  separate exit-status field in a row (#4505, #4511, #4512 evidence rows).
+  exit-status field in a row.
 - `check` does not project the Rust `rust_nesting_budget` decline, so those
   rows assert termination and changed-file evidence only, and human/JSON
   parity is not checked (#9308).
 - Python rows use `check --diff` only: no `pilot` route, gate or agent
   consumer, and no multi-line or continuation forms.
-- #4510 execution controls are not built: planted ambient `ripr`, moved
-  candidate after setup, foreign CWD with a decoy repository, preseeded stale
-  artifact and simulated cleanup failure. `--expected-sha256` is optional; a
-  run without it admits any runnable binary.
+- #4510 execution controls not built: planted ambient `ripr`, foreign CWD with
+  a decoy repository, preseeded stale artifact, simulated cleanup failure.
+  `--expected-sha256` is optional; without it any runnable binary is admitted.
 - A non-Unix host is refused rather than skipped.

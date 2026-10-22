@@ -134,7 +134,7 @@ Current how-to docs:
 - [Python wheelhouse qualification](PYTHON_WHEELHOUSE_QUALIFICATION.md) - exact
   candidate local-wheelhouse pip/uv rehearsal with a fail-closed aggregate
 - [Termination qualification](TERMINATION_QUALIFICATION.md) - exact-binary
-  adversarial corpus for Rust and Python nesting and path-glob hangs
+  adversarial corpus for Rust and Python nesting
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [First successful PR demo](demo/first-successful-pr.md)
 - [Start-here convergence receipts](handoffs/2026-05-22-start-here-surface-convergence-receipts.md)
