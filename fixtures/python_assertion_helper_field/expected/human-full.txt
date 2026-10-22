@@ -37,7 +37,7 @@ Evidence
   - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated
   - local flow reaches unknown sink: self.writes += 1 (line 7) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_stats.py:6 test_writes uses strong exact value oracle: assert stats.writes == 2
+  - related test tests/test_stats.py:6 test_writes uses strong exact value oracle: check_writes(stats, 2)
 
 Weakness
   - Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator

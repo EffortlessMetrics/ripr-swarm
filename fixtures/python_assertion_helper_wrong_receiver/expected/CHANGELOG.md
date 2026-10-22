@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_wrong_receiver (4)
+
+Reason:
+RIPR-SPEC-0238: retain main helper-call rendering after independent deferred-body class pins and runtime controls (#9419)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_wrong_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
