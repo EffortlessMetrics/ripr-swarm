@@ -95,8 +95,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # The repository cargo config points compiler/linker temporaries at the checkout's
           # relative target directory, so build into it rather than an external target-dir.
-          $profileArgs = if ($env:PROFILE_NAME -eq 'release') { @('--release') } else { @() }
-          cargo build --locked -p ripr @profileArgs
+          if ($env:PROFILE_NAME -eq 'release') { cargo build --locked -p ripr --release } else { cargo build --locked -p ripr }
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit $LASTEXITCODE" }
           $server = Join-Path (Get-Location) "target\$($env:PROFILE_NAME)\ripr.exe"
           if (-not (Test-Path $server)) { throw "server binary missing: $server" }
