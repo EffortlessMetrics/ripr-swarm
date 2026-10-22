@@ -304,6 +304,23 @@ shadowed in the body, a nested `function`, a template substitution, a
 regular-expression literal, a non-ASCII parameter or callback body, or a
 substituted body that does not re-parse.
 
+Amended for #9533: a `for (const [a, b] of rows) { ... }` loop over a
+test-local table reads the same way. `rows` must be a top-level `const`
+in the test body holding an inline array of literal rows, declared before
+the loop and named nowhere else in the body (a `rows.push(...)` or a second
+read could change what the loop sees), and the destructuring must be plain
+`const` identifiers matching every row's length. The loop body must be a
+block with no `break`, `continue`, `return` or `throw`, which could end
+the loop before a row runs, and no branch or inner loop (`if`, `else`,
+`switch`, `while`, `for`, `try`, `?:`, `&&`, `||`), which decides per row
+whether an assertion runs, so a substituted literal would credit rows it
+never reaches. Anything else keeps the loop's own assertions (a
+non-literal cell, a table that is a call result or a parameter, a `let`,
+a table declared after the loop, a row longer or shorter than the
+pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
+loop variable re-declared in the body, and every condition that already
+refuses an `.each` row).
+
 ### Recogniser order
 
 Each assertion expression is tried in this order; the first match wins:
@@ -911,7 +928,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 14. **Literal tables (#6798).** Adopted: rule 11, because a literal row
     is the same evidence as a hand-written test with those literals.
     Rejected: resolve tables held in a `const`, which needs scope
-    resolution the adapter does not have.
+    resolution the adapter does not have. Amended by #9533: a top-level
+    test-local `const` table that the test names only in its declaration
+    and in one `for...of` loop is resolvable without scope analysis, so
+    that one loop shape reads per row (rule 11).
 15. **Default-exported object members (2026-10-19).** Adopted: rule 5's
     default-object arm, for the axios `utils.merge` shape that read
     `no_static_path` (`jest-mined-default-export-object`). A plain
@@ -1203,7 +1223,6 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `exact_error_variant` / strong, `exposed` (today `broad_error` / weak,
     `weakly_exposed`; rule 10). With `{ name: "Error" }`: `broad_error` /
     weak (unchanged; no `message`).
-
 36. `src/steps.ts` returns `weightKg > 25 ? 900 : 400` where it returned
     `weightKg > 5 ? 900 : 400`, and the Playwright spec runs `await
     test.step("heavy", async () => { expect(shipping(20)).toBe(900); })`:
@@ -1214,7 +1233,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
     reads as `expect(area(3, 4)).toBe(24)`, and `toThrow(/^not a count$/)`
     pins a literal `throw new Error("not a count")` message that became
     `"not a number"` (`/not a/` and `/^not a count$/i` stay broad).
-37. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
+37. `const rows = [[0, false], [4999, false], [5000, true], [12000,
+    true]]; for (const [cents, want] of rows) { assert.equal(
+    freeShipping(cents), want); }` against a changed `cents >= 5000`
+    boundary: `exact_value` / strong, `exposed` through the rows 4999 and
+    5000 (today `weakly_exposed`: the loop variable names no literal).
+    Rows that sit on one side of the boundary, or a loop whose body can
+    `break`, stay `weakly_exposed` (rule 11).
+38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
     threw `` `not a count: ${text}` ``, and the Playwright spec runs
     `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
     `exact_error_variant` / strong, `exposed` (the pinned text fits only the
@@ -1223,6 +1249,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
     unchanged.
 
 ## Test Mapping
+
+- #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
+  pins the per-row assertions and the fail-closed fallbacks (a non-literal
+  cell, a table read elsewhere, a `let` or late table, a row of the wrong
+  length, an early exit, a branch in the body, a non-block body). Corpus row
+  `ts-grid-boundary-table` moves from gap to credited.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak

@@ -1617,14 +1617,15 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
     // Every RIPR-SPEC-0243 example has a case: 33 (#7099) through
     // `jest-spec0243-ex33-two-files-one-mocked`, 30 through a non-literal
     // `db`, 34 and 35 through edits that change the pinned message, 36
-    // through a Playwright `test.step` threshold move, and 37 through an
-    // interpolated message pinned by an anchored regex.
+    // through a Playwright `test.step` threshold move, 37 through
+    // `ts-grid-boundary-table`, and 38 through an interpolated message
+    // pinned by an anchored regex.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert_eq!(spec.in_scope_examples, 37);
+    assert_eq!(spec.in_scope_examples, 38);
     assert_eq!(spec.uncovered, Vec::<usize>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;

@@ -1,3 +1,0 @@
-case = "idiom-hand-mock-exact-line"
-issue = 9610
-reason = "An effect recorded by a hand-written test double and pinned exactly reads as a weak gap (#9610)."
