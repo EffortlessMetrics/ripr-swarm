@@ -892,6 +892,18 @@ mod direct {
                 "import src.subject as s\n\ns = None\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
             ),
             (
+                "assert-named helper method on the test class",
+                "import unittest\n\nclass T(unittest.TestCase):\n    def assert_reserved(self, a, b):\n        self.assertEqual(can_reserve(a, b), True)\n\n    def test_a(self):\n        self.assertEqual(can_reserve(5, 3), True)\n        self.assert_reserved(4, 4)\n",
+            ),
+            (
+                "camelCase helper method on the test class",
+                "import unittest\n\nclass T(unittest.TestCase):\n    def assertReserves(self, a, b):\n        self.assertEqual(can_reserve(a, b), True)\n\n    def test_a(self):\n        self.assertEqual(can_reserve(5, 3), True)\n        self.assertReserves(4, 4)\n",
+            ),
+            (
+                "star import into the test module",
+                "from tests.fixtures import *\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+            (
                 "test-local shadow of the owner name",
                 "def test_a():\n    def can_reserve(qty, on_hand):\n        return True\n    assert can_reserve(5, 3) == True\n",
             ),
@@ -902,6 +914,12 @@ mod direct {
         // omission, and a module of only imports, definitions and constants
         // stays one.
         assert!(omission(&reserve(direct)?, 0));
+        assert!(omission(
+            &reserve(
+                "import unittest\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(can_reserve(5, 3), True)\n"
+            )?,
+            0
+        ));
         assert!(omission(&reserve(&format!("LIMIT = 3\n\n{direct}"))?, 0));
         Ok(())
     }
@@ -953,6 +971,36 @@ mod direct {
             &reserve(
                 "class TestReserve:\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n"
             )?,
+            0
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn reversed_relational_direction_is_not_an_omission() -> Result<(), String> {
+        let tests = "from src.subject import can_reserve\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n";
+        let build = |before: &str, after: &str| {
+            case(
+                &format!(
+                    "def can_reserve(qty, on_hand):\n{after}\n        return True\n    return False\n"
+                ),
+                tests,
+                2,
+                before,
+                after,
+            )
+        };
+        for (before, after) in [
+            ("    if qty < on_hand:", "    if qty > on_hand:"),
+            ("    if qty > on_hand:", "    if qty < on_hand:"),
+            ("    if qty >= on_hand:", "    if qty <= on_hand:"),
+            ("    if qty <= on_hand:", "    if qty >= on_hand:"),
+        ] {
+            assert_no_missing_input(&build(before, after)?, &format!("{before} -> {after}"));
+        }
+        // Control: an inclusivity-only change in the same direction is one.
+        assert!(omission(
+            &build("    if qty > on_hand:", "    if qty >= on_hand:")?,
             0
         ));
         Ok(())

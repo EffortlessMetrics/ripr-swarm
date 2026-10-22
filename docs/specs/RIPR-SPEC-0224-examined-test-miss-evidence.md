@@ -167,7 +167,7 @@ static limit, one row at a time, in `python/row_miss.rs`:
   The row guard is a closed-world allowlist: a callee read from a subscript
   or call result (a subscripted or called value that is then called), a test decorator other than an inert
   `pytest.mark.*` or skip mark, a `pytest_*` function in the test module, or a
-  rebound import alias keeps no miss. An instance method is never claimed,
+  rebound import alias keeps no miss, as does a star import into the test module, an `assert*`/`check*`/`verify*` helper or any non-test method defined in the module, or a relational change that reverses direction (`>` to `<`) instead of moving only inclusivity. A test may call only the real `unittest.TestCase` assertion API and `pytest.raises`/`warns`/`approx` besides the owner. An instance method is never claimed,
   because its constructor (`__init__`, `__new__`, `__post_init__`) is unread;
   a classmethod or staticmethod called on its class can be. Decorators of an
   unnamed shape (`@registry['x']`) are another invisible limit. Compared parameters must be

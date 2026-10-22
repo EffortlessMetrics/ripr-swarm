@@ -50,6 +50,47 @@ const DYNAMIC_WORDS: &[&str] = &[
     "usefixtures",
 ];
 
+/// The `unittest.TestCase` methods a test may call without reaching project
+/// code through them.
+const UNITTEST_API: &[&str] = &[
+    "assertEqual",
+    "assertNotEqual",
+    "assertTrue",
+    "assertFalse",
+    "assertIs",
+    "assertIsNot",
+    "assertIsNone",
+    "assertIsNotNone",
+    "assertIn",
+    "assertNotIn",
+    "assertIsInstance",
+    "assertNotIsInstance",
+    "assertRaises",
+    "assertRaisesRegex",
+    "assertWarns",
+    "assertWarnsRegex",
+    "assertLogs",
+    "assertNoLogs",
+    "assertAlmostEqual",
+    "assertNotAlmostEqual",
+    "assertGreater",
+    "assertGreaterEqual",
+    "assertLess",
+    "assertLessEqual",
+    "assertRegex",
+    "assertNotRegex",
+    "assertCountEqual",
+    "assertMultiLineEqual",
+    "assertSequenceEqual",
+    "assertListEqual",
+    "assertTupleEqual",
+    "assertSetEqual",
+    "assertDictEqual",
+    "subTest",
+    "fail",
+    "skipTest",
+];
+
 const KEYWORDS: &[&str] = &[
     "assert", "and", "or", "not", "in", "is", "if", "else", "elif", "for", "while", "with", "as",
     "return", "def", "class", "raise", "yield", "del", "from", "import", "try", "except",
@@ -180,11 +221,9 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
             continue;
         }
         let safe = if after_dot {
-            ident.starts_with("assert")
-                || matches!(
-                    ident,
-                    "raises" | "warns" | "approx" | "mark" | "parametrize"
-                )
+            // The real unittest.TestCase / pytest API only; a helper defined in
+            // the test module or class is withheld by `module_implicit_reach`.
+            UNITTEST_API.contains(&ident) || matches!(ident, "raises" | "warns" | "approx")
         } else {
             SAFE_BARE_CALLS.contains(&ident)
         };

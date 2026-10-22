@@ -1727,6 +1727,12 @@ pub(super) fn module_implicit_reach(
         || context.has_runtest_hook
         || !context.opaque_classes.is_empty()
         || !lifecycle.is_empty()
+        // A star import can bring an autouse fixture or hook into the module.
+        || imports
+            .iter()
+            .any(|import| import.alias == "*" || import.imported == "*")
+        || defines_assertion_like_helper(statements)
+        || has_non_test_class_method(statements)
         || statements.iter().any(|statement| match statement {
             // A `pytest_*` function in a test module is a live hook, like conftest's.
             Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
@@ -1734,6 +1740,40 @@ pub(super) fn module_implicit_reach(
             _ => false,
         })
         || module_level_effects(source, statements)
+}
+
+/// A function defined in the module whose name suggests an assertion helper
+/// (`assert_*`, `check_*`, `verify_*`): a test calling it through `self` hides
+/// the owner call inside it.
+fn defines_assertion_like_helper(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::AsyncFunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::ClassDef(class) => defines_assertion_like_helper(&class.body),
+        _ => false,
+    })
+}
+
+fn is_assertion_like_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["assert", "check", "verify"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// A method of a class in the module whose name does not start with `test`: a
+/// helper the tests may call through `self` (hooks and fixtures are handled
+/// separately).
+fn has_non_test_class_method(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::ClassDef(class) => class.body.iter().any(|member| match member {
+            Stmt::FunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::AsyncFunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::ClassDef(_) => has_non_test_class_method(std::slice::from_ref(member)),
+            _ => false,
+        }),
+        _ => false,
+    })
 }
 
 /// A module-level statement that can run code or rewrite another module at

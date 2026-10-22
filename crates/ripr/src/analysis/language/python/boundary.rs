@@ -404,7 +404,10 @@ pub(super) fn python_row_boundary_omission(
     let Some((left, right)) = simple_comparison_operands(&condition, start, len) else {
         return false;
     };
-    if old_pair.is_none() && !relational_operands_unchanged(old_line_text, &left, &right) {
+    let new_operator = condition[start..start + len].to_string();
+    if old_pair.is_none()
+        && !relational_change_keeps_boundary(old_line_text, &left, &right, &new_operator)
+    {
         return false;
     }
     // A compared parameter the body rebinds (`qty = qty + 1`) is not the
@@ -455,9 +458,16 @@ pub(super) fn python_row_boundary_omission(
     })
 }
 
-/// A relational change whose old line compares the same two operands with one
-/// relational operator.
-fn relational_operands_unchanged(old_line_text: Option<&str>, left: &str, right: &str) -> bool {
+/// A relational change whose old line compares the same two operands in the
+/// same direction (`>` <-> `>=`, `<` <-> `<=`): only inclusivity moves, so
+/// the old and new predicates agree everywhere but at equality. A reversed
+/// direction (`>` -> `<`) or a moved operand differs away from the boundary.
+fn relational_change_keeps_boundary(
+    old_line_text: Option<&str>,
+    left: &str,
+    right: &str,
+    new_operator: &str,
+) -> bool {
     let Some(old) = old_line_text else {
         return false;
     };
@@ -465,8 +475,20 @@ fn relational_operands_unchanged(old_line_text: Option<&str>, left: &str, right:
     let &[(start, len)] = relational_operators(&old_condition).as_slice() else {
         return false;
     };
-    simple_comparison_operands(&old_condition, start, len)
-        .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
+    let direction = |operator: &str| {
+        if operator.starts_with('>') {
+            Some(true)
+        } else if operator.starts_with('<') {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let old_operator = &old_condition[start..start + len];
+    direction(old_operator).is_some()
+        && direction(old_operator) == direction(new_operator)
+        && simple_comparison_operands(&old_condition, start, len)
+            .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
 }
 
 /// Both literals are of one comparable kind and differ. Mixed kinds
