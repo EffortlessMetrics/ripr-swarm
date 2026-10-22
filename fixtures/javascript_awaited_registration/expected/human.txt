@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/javascript_awaited_registration/input --diff <cwd>/fixtures/javascript_awaited_registration/diff.patch --mode fast probe:non-secure_index.js:typescript_preview:99ba14e2
   ripr context --root <cwd>/fixtures/javascript_awaited_registration/input --diff <cwd>/fixtures/javascript_awaited_registration/diff.patch --mode fast --at probe:non-secure_index.js:typescript_preview:99ba14e2
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:non-secure_index.js:typescript_preview:99ba14e2 --root <cwd>/fixtures/javascript_awaited_registration/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

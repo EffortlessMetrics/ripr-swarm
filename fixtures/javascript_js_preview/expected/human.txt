@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast probe:src_discount.js:typescript_preview:8152c8c0
   ripr context --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast --at probe:src_discount.js:typescript_preview:8152c8c0
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_discount.js:typescript_preview:8152c8c0 --root <cwd>/fixtures/javascript_js_preview/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

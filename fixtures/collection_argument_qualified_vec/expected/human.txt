@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_qualified_vec/input --diff <cwd>/fixtures/collection_argument_qualified_vec/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_qualified_vec/input --diff <cwd>/fixtures/collection_argument_qualified_vec/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:call_deletion:1f64eda5 --root <cwd>/fixtures/collection_argument_qualified_vec/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

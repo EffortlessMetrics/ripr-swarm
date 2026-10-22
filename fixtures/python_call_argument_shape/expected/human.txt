@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_call_argument_shape/input --diff <cwd>/fixtures/python_call_argument_shape/diff.patch --mode fast probe:src_notify.py:python_preview:6b1824c6
   ripr context --root <cwd>/fixtures/python_call_argument_shape/input --diff <cwd>/fixtures/python_call_argument_shape/diff.patch --mode fast --at probe:src_notify.py:python_preview:6b1824c6
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_notify.py:python_preview:6b1824c6 --root <cwd>/fixtures/python_call_argument_shape/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -38,6 +38,17 @@ use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
+use rayon::prelude::*;
+
+/// Stack of a classify worker; matches the `--budget` analysis thread.
+const CLASSIFY_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    /// Worker count a test pins for the classify pool on this thread.
+    static CLASSIFY_THREADS_FOR_TEST: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -651,7 +662,7 @@ fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Resul
     ))
 }
 
-fn diff_changed_rust_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_rust_line_limit() -> Result<usize, String> {
     diff_changed_rust_line_limit_from_env(std::env::var(DIFF_CHANGED_RUST_LINE_LIMIT_ENV))
 }
 
@@ -1326,6 +1337,16 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
+    // #8051: a `debug_assert_eq!` the owner pin admits discriminates only in
+    // a profile with debug assertions, which ripr does not resolve.
+    classify::withhold_debug_assertion_gap(finding);
+    // #8600: a related test line at the call-fact budget may hide a call, so
+    // a negative claim over that test's calls is a named limit.
+    classify::withhold_call_budget_gap(finding, index);
+    // RIPR-SPEC-0240: a test-framework oracle ripr does not evaluate (an
+    // environment-activated branch, a mock closure, an expect-test debug
+    // literal, an unredacted insta field) is not a missing assertion.
+    classify::withhold_framework_oracle_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -1999,6 +2020,9 @@ impl RustAdapter {
         let mut rust_consumed_sources =
             crate::analysis::consumed_source::ConsumedRustSources::default();
         let mut dependent_scope = None;
+        // #8547: the admission probe's core index, reused as the main
+        // index below instead of building the same files a second time.
+        let mut admission_core: Option<crate::analysis::facts::CachedRustIndex> = None;
         let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
         let scope_limit = diff_index_file_limit()?;
         let narrow_limit = diff_narrow_index_files(scope_limit)?;
@@ -2047,13 +2071,14 @@ impl RustAdapter {
                     return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
                 }
                 if core_files.len() < index_files.len() {
-                    let query = dependent_scope::admission_query(
+                    let (query, core_index) = dependent_scope::admission_query(
                         &options.root,
                         &core_files,
                         &seeded_changed_files,
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    admission_core = Some(core_index);
                     let admission = dependent_scope::admit_dependents(
                         &options.root,
                         &analyzable_rust_files,
@@ -2118,11 +2143,25 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
-        let cached = rust_index::build_analysis_index_from_loaded_files(
-            &options.root,
-            &loaded_files,
-            &options.test_harnesses,
-        )?;
+        // #8547: when the dependent-scope admission probe already built
+        // the changed packages' index, reuse it as the main index: only
+        // the admitted extras (and any file whose bytes moved since the
+        // probe read them) are parsed, through the same fact cache, and
+        // post-processing re-runs once over the merged index. Without an
+        // admission probe the main build is the only build, as before.
+        let cached = match admission_core {
+            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+                core,
+                &options.root,
+                &loaded_files,
+                &options.test_harnesses,
+            )?,
+            None => rust_index::build_analysis_index_from_loaded_files(
+                &options.root,
+                &loaded_files,
+                &options.test_harnesses,
+            )?,
+        };
         #[cfg(test)]
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
@@ -2135,7 +2174,6 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
-        let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
@@ -2250,11 +2288,22 @@ impl RustAdapter {
                 })
                 .map(|file| file.path.as_path()),
         )?;
+        // #9308: a file outside the diff that a parse budget declined also
+        // loses its probe shapes and its tests, so the related-test search for
+        // the changed code can miss evidence there. One aggregate limitation
+        // keeps the run from reading complete by omission.
+        limitations.extend(declined_unchanged_file_limitation(
+            &index,
+            analyzable_changed_files
+                .iter()
+                .map(|file| file.path.as_path()),
+        )?);
 
         // Files whose probes became findings: only their evidence can be
         // missing a related test, so only they earn an unresolved-route
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
+        let mut seeded_probes = Vec::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -2298,29 +2347,100 @@ impl RustAdapter {
             }
             for seeded in probes {
                 seeded.record_span(&mut parser_spans);
+                candidate_lines.insert((
+                    seeded.probe.location.file.clone(),
+                    seeded.probe.location.line,
+                ));
+                cancellation::checkpoint()?;
+                seeded_probes.push((changed, seeded));
+            }
+        }
+
+        // Classifying a probe reads the immutable index and the run-shared
+        // candidate index, whose memos are thread-safe and pure in their keys
+        // (#8756), so the probes of every changed file are classified on the
+        // rayon pool. The order-dependent steps below (reach widening,
+        // limits, retention) then run serially in the original probe order.
+        // Workers inherit this thread's cancellation token and
+        // committed-source overlay; a cancelled worker drops its probe and the
+        // checkpoint after the pass discards the partial result.
+        let classified: Vec<Option<Finding>> = if seeded_probes.is_empty() {
+            Vec::new()
+        } else {
+            let related_test_candidate_index = classify::RelatedTestCandidateIndex::new(&index)
+                .with_analysis_root(&options.root)
+                .with_withheld_macro_bindings(std::mem::take(&mut withheld_macro_bindings))
+                .with_diff_touched(diff_touched.clone());
+            let token = cancellation::current_token();
+            let overlay = committed_source::current_overlay();
+            let graph_counter = classify::InheritedGraphCounter::capture();
+            let classify_one =
+                |(_, seeded): &(&ChangedFile, crate::analysis::probes::SeededProbe)| {
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        committed_source::with_overlay(overlay.clone(), || {
+                            graph_counter.run(|| {
+                                cancellation::checkpoint().ok()?;
+                                Some(classifier::classify_probe_with_candidate_index(
+                                    &seeded.probe,
+                                    &index,
+                                    workspace_index_complete,
+                                    dependency_edges.as_ref(),
+                                    &related_test_candidate_index,
+                                    &transitive_reach,
+                                    seeded.propagation_origin.as_ref(),
+                                ))
+                            })
+                        })
+                    })
+                };
+            // Classification recurses over source nesting, so it runs on a
+            // pool with the stack the `--budget` analysis thread gets, not
+            // the 2 MiB default of the global pool's workers. If the pool
+            // cannot be built, the probes run in line on this thread.
+            let builder = rayon::ThreadPoolBuilder::new()
+                .stack_size(CLASSIFY_WORKER_STACK_BYTES)
+                .thread_name(|worker| format!("ripr-classify-{worker}"));
+            #[cfg(test)]
+            let builder = match CLASSIFY_THREADS_FOR_TEST.with(std::cell::Cell::get) {
+                Some(threads) => builder.num_threads(threads),
+                None => builder,
+            };
+            match builder.build() {
+                Ok(pool) => pool.install(|| {
+                    // #9211: the first probe to need the workspace macro-site
+                    // scan would run it in line on one worker while the rest
+                    // sleep on the memo lock. Pay it here, before any probe
+                    // is queued, so it fans out over this pool.
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        committed_source::with_overlay(overlay.clone(), || {
+                            related_test_candidate_index.prime_workspace_macro_scan(&index);
+                        });
+                    });
+                    seeded_probes
+                        .par_iter()
+                        .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
+                            classify_one(probe)
+                        })
+                        .collect()
+                }),
+                Err(_) => {
+                    let _run_memo = crate::analysis::syntax::run_memo::enter();
+                    seeded_probes.iter().map(classify_one).collect()
+                }
+            }
+        };
+        cancellation::checkpoint()?;
+
+        {
+            for ((changed, seeded), classified) in seeded_probes.into_iter().zip(classified) {
+                let Some(mut finding) = classified else {
+                    // A worker only drops its probe when the run was
+                    // cancelled, which the checkpoint above has reported.
+                    cancellation::checkpoint()?;
+                    continue;
+                };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
-                let propagation_origin = seeded.propagation_origin;
-                candidate_lines.insert((probe.location.file.clone(), probe.location.line));
-                cancellation::checkpoint()?;
-                let related_test_candidate_index =
-                    related_test_candidate_index.get_or_insert_with(|| {
-                        classify::RelatedTestCandidateIndex::new(&index)
-                            .with_analysis_root(&options.root)
-                            .with_withheld_macro_bindings(std::mem::take(
-                                &mut withheld_macro_bindings,
-                            ))
-                            .with_diff_touched(diff_touched.clone())
-                    });
-                let mut finding = classifier::classify_probe_with_candidate_index(
-                    &probe,
-                    &index,
-                    workspace_index_complete,
-                    dependency_edges.as_ref(),
-                    related_test_candidate_index,
-                    &transitive_reach,
-                    propagation_origin.as_ref(),
-                );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -2401,6 +2521,9 @@ impl RustAdapter {
                         }
                     }
                 }
+                // #8999: after the witness searches, so a concrete pointer
+                // they found stays; proc-macro `no_static_path` is unknown.
+                classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
@@ -2671,6 +2794,71 @@ fn lexical_fallback_limitations<'a>(
     Ok(limitations)
 }
 
+/// One aggregate limitation for Rust files outside the diff that a typed
+/// static limit declined (#9308). Changed files already carry their own
+/// per-file limitation from [`lexical_fallback_limitations`].
+fn declined_unchanged_file_limitation<'a>(
+    index: &RustIndex,
+    changed_paths: impl Iterator<Item = &'a Path>,
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let portable = |path: &Path| path.to_string_lossy().replace('\\', "/");
+    let changed = changed_paths
+        .map(portable)
+        .collect::<std::collections::BTreeSet<_>>();
+    let declined = rust_index::declined_rust_files(index)
+        .into_iter()
+        .filter(|file| !changed.contains(&portable(&file.path)))
+        .collect::<Vec<_>>();
+    if declined.is_empty() {
+        return Ok(None);
+    }
+    const MAX_NAMED: usize = 3;
+    let mut listed = declined
+        .iter()
+        .take(MAX_NAMED)
+        .map(|file| {
+            let token = file
+                .reason
+                .strip_prefix("static limit ")
+                .and_then(|reason| reason.split(':').next())
+                .unwrap_or("parse_declined");
+            format!(
+                "{} ({token})",
+                file.path.to_string_lossy().replace('\\', "/")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if declined.len() > MAX_NAMED {
+        listed.push_str(&format!(" and {} more", declined.len() - MAX_NAMED));
+    }
+    let detail = format!(
+        "{} Rust file(s) outside the diff were declined by a parse limit and read lexically: \
+         {listed}; lexical fallback emits no probe shapes and can lose these files' tests, so \
+         related-test evidence for the changed code may be incomplete.",
+        declined.len()
+    )
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Split the listed file(s) below the parse budget, or save them as UTF-8, then re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(declined.len() as u64)?
+        .with_detail(detail)?,
+    ))
+}
+
 impl LanguageAdapter for RustAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::Rust))
@@ -2859,6 +3047,7 @@ impl RustAdapter {
                     &property_macro_mentions,
                     &transitive_reach,
                 );
+                classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.
@@ -7685,6 +7874,89 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_discloses_an_unchanged_file_a_parse_limit_declined() -> Result<(), String> {
+        // #9308: `src/deep.rs` is over the nesting budget and outside the
+        // diff. The changed file analyzes normally, but the run must not read
+        // complete: lexical fallback gave the declined file no probe shapes.
+        let root = temp_root("declined-unchanged-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\npub mod deep;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("src/deep.rs"),
+            &format!(
+                "pub fn deep() -> i32 {{ {}1{} }}\n",
+                "(".repeat(5_000),
+                ")".repeat(5_000)
+            ),
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let declined = result
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("declined by a parse limit"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(declined.len(), 1, "{:?}", result.limitations);
+        let detail = declined[0].bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("src/deep.rs (rust_nesting_budget)"),
+            "{detail}"
+        );
+        assert!(!detail.contains("src/used.rs"), "{detail}");
+        assert_eq!(
+            declined[0].kind,
+            crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_gives_a_declined_changed_file_only_its_own_limitation() -> Result<(), String> {
+        // The changed declined file already carries the per-file #4722
+        // limitation, so the unchanged-file aggregate must not name it again.
+        let root = temp_root("declined-changed-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod deep;\n")?;
+        let deep = format!(
+            "pub fn deep(total: u32) -> u32 {{\n    if total > 100 {{ {}1{} }} else {{ 0 }}\n}}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        write(&root.join("src/deep.rs"), &deep)?;
+        let diff = "diff --git a/src/deep.rs b/src/deep.rs\n\
+                    --- a/src/deep.rs\n\
+                    +++ b/src/deep.rs\n\
+                    @@ -2,1 +2,1 @@\n\
+                    -    if total >= 100 { 1 } else { 0 }\n\
+                    +    if total > 100 { 1 } else { 0 }\n";
+
+        let result = module_graph_diff(&root, diff)?;
+
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("outside the diff"))),
+            "{:?}",
+            result.limitations
+        );
         Ok(())
     }
 

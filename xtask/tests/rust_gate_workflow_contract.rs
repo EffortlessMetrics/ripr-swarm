@@ -217,3 +217,86 @@ fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
         );
     }
 }
+
+const FIXTURE_PREPARATION_NAME: &str = "name: Prepare locked owner-return fixture dependencies";
+const FALLIBLE_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
+const JSON_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml";
+
+fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
+    let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
+    let preparations: Vec<_> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| block.lines().next() == Some(FIXTURE_PREPARATION_NAME))
+        .collect();
+    let [(index, block)] = preparations.as_slice() else {
+        return false;
+    };
+    // Exact bare commands retain lock enforcement and failure propagation;
+    // no condition, alternate Cargo home, or suppressed failure is accepted.
+    let lines: Vec<_> = block
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines
+        == [
+            FIXTURE_PREPARATION_NAME,
+            "run: |",
+            FALLIBLE_FETCH,
+            JSON_FETCH,
+        ]
+        && blocks[..*index]
+            .iter()
+            .any(|block| block.starts_with("uses: dtolnay/rust-toolchain@"))
+        && ["precommit", "rust-tests"].iter().all(|id| {
+            blocks[*index + 1..]
+                .iter()
+                .any(|block| step_id(block) == Some(id))
+        })
+        && [FALLIBLE_FETCH, JSON_FETCH].iter().all(|command| {
+            workflow
+                .lines()
+                .filter(|line| line.trim() == *command)
+                .count()
+                == 1
+        })
+}
+
+#[test]
+fn rust_gate_workflow_prepares_both_locked_owner_return_fixtures_before_policy() {
+    assert!(prepares_locked_owner_return_fixtures(WORKFLOW));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_preparation() {
+    let preparation = format!(
+        "      - {FIXTURE_PREPARATION_NAME}\n        run: |\n          {FALLIBLE_FETCH}\n          {JSON_FETCH}\n"
+    );
+    for changed in [
+        WORKFLOW.replace(&preparation, ""),
+        WORKFLOW.replace(
+            JSON_FETCH,
+            "cargo fetch --locked --manifest-path Cargo.toml",
+        ),
+        WORKFLOW.replace(JSON_FETCH, &JSON_FETCH.replace(" --locked", "")),
+        WORKFLOW.replace(FALLIBLE_FETCH, ""),
+        WORKFLOW.replace(JSON_FETCH, &format!("{JSON_FETCH} || true")),
+        WORKFLOW.replace(
+            FIXTURE_PREPARATION_NAME,
+            &format!("{FIXTURE_PREPARATION_NAME}\n        if: false"),
+        ),
+        WORKFLOW.replace(
+            FIXTURE_PREPARATION_NAME,
+            &format!("{FIXTURE_PREPARATION_NAME}\n        continue-on-error: true"),
+        ),
+        WORKFLOW.replace(
+            FIXTURE_PREPARATION_NAME,
+            &format!("{FIXTURE_PREPARATION_NAME}\n        env:\n          CARGO_HOME: other"),
+        ),
+        format!("{}\n{preparation}", WORKFLOW.replace(&preparation, "")),
+        format!("{WORKFLOW}\n{preparation}"),
+    ] {
+        assert!(!prepares_locked_owner_return_fixtures(&changed));
+    }
+}

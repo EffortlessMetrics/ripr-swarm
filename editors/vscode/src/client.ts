@@ -1657,6 +1657,17 @@ export class RiprClientController {
       this.runtime.showInformationMessage('ripr diagnostics refresh requires a running server.');
       return;
     }
+    // #8733: the server answers `ripr.refresh` only after the accepted
+    // refresh finishes, which can sit pending for the rest of a long
+    // analysis; tie immediate feedback to the gesture so the recovery
+    // command never appears dead while work is already in flight. Gate
+    // on the typed analysis-status signal (written only by real ripr
+    // notifications and reset on start) so the startup placeholder
+    // 'analysisQueued' status from startOnce cannot toast while idle.
+    if (this.receivedTypedAnalysisStatus
+      && (this.typedAnalysisStatusState === 'running' || this.typedAnalysisStatusState === 'queued')) {
+      this.runtime.showInformationMessage('ripr refresh queued: analysis is in progress.');
+    }
     try {
       await client.sendRequest('workspace/executeCommand', {
         command: 'ripr.refresh',
@@ -1810,20 +1821,23 @@ export class RiprClientController {
       // state — so store the clean completion form even while documents are
       // dirty; the dirty-buffer overlay applies to the visible status only
       // and must not survive into the restored close-path status.
-      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      // Once the typed `ripr/analysisStatus` is flowing it owns the stored
+      // clean status (#8585): the log-derived form carries no typed rows.
+      if (!this.receivedTypedAnalysisStatus) {
+        this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      }
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }
     if (message.startsWith('ripr analysis refresh failed')) {
-      const baseRefFailure = isUnresolvableBaseRefFailure(message);
+      // The log line is free text; the typed `ripr/analysisStatus` failure
+      // kind that follows it owns the ripr.baseRef next step (#6740).
       this.updateStatus({
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: baseRefFailure
-          ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
-          : 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
       });
     }
   }
@@ -1891,7 +1905,7 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: isUnresolvableBaseRefFailure(failureMessage)
+          nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
             ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
@@ -1905,8 +1919,10 @@ export class RiprClientController {
           nextStep: `Run ${retry} to obtain a current saved-workspace snapshot.`
         });
         return;
-      case 'succeeded':
-        this.updateStatus(statusForRunStatus(status.run_status, {
+      case 'succeeded': {
+        // The clean saved-workspace form (no dirty overlay) is what closing
+        // an unsaved buffer restores (#7340, #8585).
+        const cleanInput = {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
           // #5999: the server's budget-bound recovery replaces the canned
@@ -1916,11 +1932,17 @@ export class RiprClientController {
             && status.retry_recovery.detail.trim()
             ? status.retry_recovery.detail
             : undefined,
-          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
-          components: status.components
+          components: status.components,
+          unavailableLanguages: status.unavailable_languages
+        };
+        this.lastCompletedStatus = statusForRunStatus(status.run_status, cleanInput);
+        this.updateStatus(statusForRunStatus(status.run_status, {
+          ...cleanInput,
+          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments)
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
+      }
       default:
         return;
     }
@@ -3192,6 +3214,7 @@ function serverStartedSummary(kind: RiprStatusKind): string {
     case 'analysisRunning':
     case 'analysisReady':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'gapActionable':
     case 'gapNoAction':
     case 'gapArtifactWarning':
@@ -3240,6 +3263,8 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
       return 'current saved-workspace status reported by server refresh';
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
+    case 'languageNotEnabled':
+      return 'partial; changed files of a language without an enabled adapter were not analyzed';
     case 'serverUnavailable':
     case 'serverFailed':
     case 'noWorkspace':
@@ -3929,11 +3954,26 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
-// Both the explicit-ref failure and the default-branch failure (an empty
-// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
-// by setting ripr.baseRef; the server's own wording names CLI flags instead.
-function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
+// The server names an unresolvable base (explicit ref, empty or option-like
+// ref, or no default branch) with this stable `failure.kind` on the
+// `ripr/analysisStatus` payload (#6740). The extension branches on it rather
+// than on message wording; all of those cases are fixed by ripr.baseRef.
+const BASE_UNRESOLVABLE_FAILURE_KIND = 'base_unresolvable';
+
+// LEGACY: servers that predate the typed kind (still admitted by the server
+// resolver, which only probes LSP compatibility) report these failures as
+// `analysis_error`. For that kind alone, keep recognising the two old
+// wordings so those users still get the ripr.baseRef step. A server that
+// sends any other kind, including `base_unresolvable`, is never reclassified
+// by message text. Remove once the minimum supported server sends the kind.
+function isBaseUnresolvableFailure(kind: unknown, message: string): boolean {
+  if (kind === BASE_UNRESOLVABLE_FAILURE_KIND) {
+    return true;
+  }
+  return (
+    kind === 'analysis_error' &&
+    /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message)
+  );
 }
 
 /**
@@ -3972,6 +4012,16 @@ interface RiprAnalysisStatusPayload {
   root_detail?: string | null;
   root_recovery_route?: string;
   components?: AnalysisStatusComponent[];
+  /** #8585: changed-file languages skipped because their adapter is not
+   * enabled; the server's typed row, not the limitation's detail text. */
+  unavailable_languages?: AnalysisStatusUnavailableLanguage[];
+}
+
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+export interface AnalysisStatusUnavailableLanguage {
+  language: string;
+  file_count?: number;
+  recovery?: string | null;
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4123,6 +4173,7 @@ export function statusForRunStatus(
     retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
@@ -4156,6 +4207,22 @@ export function statusForRunStatus(
       ].filter((line): line is string => Boolean(line)).join('\n'),
       nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
     };
+  }
+  // #8585: changed files of a language whose adapter is not enabled were not
+  // analyzed. The typed rows name the language; this outranks the generic
+  // incomplete-input and healthy presentations they would otherwise fall
+  // into, but not the stale, deferred, cache, limited or partition states,
+  // which carry their own recovery.
+  const unavailable = validUnavailableLanguages(input.unavailableLanguages);
+  if (
+    unavailable.length > 0
+    && (runStatus === 'limited_incomplete_input'
+      || !((runStatus ?? '') in LIMITED_RUN_STATUS_PRESENTATIONS))
+  ) {
+    // Compose with the presentation the run would otherwise get, so degraded
+    // component recoveries and the untrustworthy-findings warning survive.
+    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
@@ -4202,6 +4269,51 @@ export function statusForRunStatus(
     summary: 'ripr saved-workspace analysis completed.',
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
+  };
+}
+
+/** Drop malformed rows: the payload crosses a process boundary. */
+function validUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[] | undefined
+): AnalysisStatusUnavailableLanguage[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(
+    (row) => typeof row?.language === 'string' && row.language.trim().length > 0
+  );
+}
+
+function statusForUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[],
+  base: RiprStatusState
+): RiprStatusState {
+  const described = rows.map((row) =>
+    typeof row.file_count === 'number' && row.file_count > 0
+      ? `${row.language} (${row.file_count} ${plural(row.file_count, 'file')})`
+      : row.language
+  );
+  const recoveries = uniqueStrings(
+    rows
+      .map((row) => row.recovery)
+      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+  );
+  const languageStep = recoveries.length > 0
+    ? recoveries.map(capitalizeFirst).join('; ')
+    : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  // A degraded base (incomplete input with component recoveries) keeps its
+  // own detail and next step after the language disclosure.
+  const degradedBase = base.kind === 'analysisLimited';
+  return {
+    kind: 'languageNotEnabled',
+    summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    detail: [
+      base.detail,
+      'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
+    ].filter((line): line is string => Boolean(line)).join('\n'),
+    nextStep: degradedBase && base.nextStep
+      ? `${languageStep}. Also: ${base.nextStep}`
+      : languageStep
   };
 }
 

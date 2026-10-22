@@ -1,0 +1,61 @@
+{
+  "case_id": "perl-0235-ex17-aligned-sinks-complete-packet",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex17-aligned-sinks-complete-packet.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash",
+  "hard_case": "RIPR-SPEC-0235 example 17: changed_observable carries the `return` the oracle's observed_sink does not, on a complete packet.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: two amounts count as three"
+      },
+      {
+        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: total doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 17: changed_observable carries the `return` the oracle's observed_sink does not, on a complete packet. The rewrite and run truth are those of perl-test2-summary-deep-is-count (discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex17-aligned-sinks-complete-packet.json",
+    "sha256": "206804f66f184037fa7fa1ed5906ebb114b2a627a244ce19c8840fd2de94258c",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in changes where {\"change_id\": \"$CHANGE_ID\"} set {\"changed_observable\": \"return { count => scalar @amounts, total => $total }\"}; set top-level {\"packet_status\": \"complete\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#17"
+  ]
+}

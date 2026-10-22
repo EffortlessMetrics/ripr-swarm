@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-shipping-smoke-ok.json",
-    "sha256": "cf6155c6842096c6c05508851d6bb720f2c7e0909c3ee7a20af1b85f11e5baae",
+    "sha256": "662b96692b3fd6e3594aa178c4ce72bf2346df09051c0d5b91f75bcc30f37024",
     "provenance": "producer"
   }
 }

@@ -90,3 +90,28 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (8)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (9)
+
+Reason:
+RIPR-SPEC-0152: base-side findings render at note severity in human output (#9004)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+- `expected/library-human-lines.json` (hand-edited: not covered by goldens bless)

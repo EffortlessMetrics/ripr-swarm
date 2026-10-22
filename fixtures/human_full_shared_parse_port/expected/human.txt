@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:6b71a4f5
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:6b71a4f5
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:6b71a4f5 --root <cwd>/fixtures/human_full_shared_parse_port/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/human_full_shared_parse_port/input --at src/lib.rs:3 --kind match_arm
 

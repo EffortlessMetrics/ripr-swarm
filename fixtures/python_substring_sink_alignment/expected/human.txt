@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_substring_sink_alignment/input --diff <cwd>/fixtures/python_substring_sink_alignment/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771
   ripr context --root <cwd>/fixtures/python_substring_sink_alignment/input --diff <cwd>/fixtures/python_substring_sink_alignment/diff.patch --mode fast --at probe:src_pack.py:python_preview:cfc61771
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_pack.py:python_preview:cfc61771 --root <cwd>/fixtures/python_substring_sink_alignment/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

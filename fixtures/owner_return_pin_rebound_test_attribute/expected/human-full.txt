@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_return_pin_rebound_test_attribute/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+NOTE ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:6ea804bb
+
+Changed
+  before: input * 2
+  after:  input * 3
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::weight
+
+Static exposure
+  static_unknown (note, confidence 0.64)
+
+Evidence
+  - reach yes: Related tests appear to reach weight: checks_weight
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: input * 3
+  - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - local flow reaches returned value: input * 3 (line 2)
+  - related test tests/weight_tests.rs:4 checks_weight uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - source assertion argument value 12 at line 4
+  - source function argument value input = 4 at line 4
+
+Weakness
+  - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
+
+Stop reasons:
+  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+
+Static limitation
+  rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+
+Limitation detail
+  last established edge: related tests `checks_weight` (tests/weight_tests.rs:4)
+  first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+
+Next step
+  ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:4) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
+Drill in:
+  ripr explain --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

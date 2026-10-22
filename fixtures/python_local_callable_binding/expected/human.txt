@@ -34,6 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_local_callable_binding/input --diff <cwd>/fixtures/python_local_callable_binding/diff.patch --mode fast probe:src_stop.py:python_preview:87705a2c
   ripr context --root <cwd>/fixtures/python_local_callable_binding/input --diff <cwd>/fixtures/python_local_callable_binding/diff.patch --mode fast --at probe:src_stop.py:python_preview:87705a2c
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_stop.py:python_preview:87705a2c --root <cwd>/fixtures/python_local_callable_binding/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

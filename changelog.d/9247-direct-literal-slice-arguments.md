@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed `xs.len() == 0` style boundary is no longer left unresolved when tests call the owner directly with literal `&[..]` arguments inside assertions: an empty literal paired with an exact pin on that call is credited, literals that never reach the boundary keep the missing-discriminator gap, and bound, computed, conditional, early-returned or additionally-called inputs stay unresolved (#9247).

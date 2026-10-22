@@ -21,6 +21,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut selector: Option<String> = None;
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
+    let mut quiet = false;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
@@ -31,6 +32,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut base_explicitly_provided = false;
     // `--worktree` matches `ripr check --worktree` (see `explain`).
     let mut worktree = false;
+    let mut committed = false;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -75,6 +77,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 )?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -95,9 +98,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 explicit_max_tests = true;
             }
             "--json" => input.format = OutputFormat::Json,
+            // #8739: same meaning as `ripr check --quiet`: stderr progress only.
+            "--quiet" => quiet = true,
             "--help" | "-h" => {
                 help::print_context_help();
                 return Ok(());
+            }
+            // #8745: a non-dash token is the explain-habit paste, not an
+            // unknown flag. Keep the grammar flag-only (`--at`/`--finding`);
+            // name the retry instead of accepting a positional selector.
+            other if !other.starts_with('-') => {
+                return Err(positional_selector_hint(other));
             }
             other => return Err(crate::cli::suggest::unknown_argument("context", other)),
         }
@@ -110,13 +121,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("context"));
     }
-    super::worktree_scope_conflict(
+    super::drill_in_scope_conflict(
         "context",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",
             "ripr check --json",
@@ -135,18 +147,47 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // parsing and can fail on the Git probe; `context` is JSON-only, so the
     // failure writes the shared refusal envelope (with a root-unusable
     // identity) instead of leaving stdout empty.
-    let root_resolution =
-        super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided);
-    if let Err(err) = root_resolution {
-        return Err(crate::cli::commands_context::refuse_json_envelope(
-            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
-            "diff",
-            Some(input.mode.as_str()),
-            &input.root,
-            input.base.as_deref(),
-            crate::core_error::CoreError::repository_root_unusable(err),
-        ));
-    }
+    //
+    // #8902: the implicit root is the one `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory like `explain`.
+    // `--diff` and `--from` are read as typed from the invocation directory,
+    // which is already the file the operator named.
+    let prefix = match super::check::resolve_implicit_command_root(
+        &mut input.root,
+        root_explicitly_provided,
+    ) {
+        Ok(prefix) => prefix,
+        Err(err) => {
+            return Err(crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                crate::core_error::CoreError::repository_root_unusable(err),
+            ));
+        }
+    };
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    // A binding failure (for example a shadowed member selector) is a
+    // post-argv-parse failure like the root and config refusals, so it writes
+    // the shared refusal envelope before the prose error reaches stderr.
+    let selector = selector
+        .map(|item| {
+            super::bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay)
+        })
+        .transpose()
+        .map_err(|err| {
+            crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                err,
+            )
+        })?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
     // below writes the shared refusal envelope (keyed with the context
     // packet's own version) to stdout before the prose error reaches
@@ -165,6 +206,9 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
+    let worktree_from_default = !worktree
+        && super::dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     // Capture the effective mode after config merging: a configured
     // `[analysis] mode` replaces the default, and later refusals must name
     // the mode analysis actually ran with, not the pre-merge default
@@ -211,11 +255,15 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // stderr-only stage lines `ripr check` projects (throttled heartbeats
     // included) disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = crate::cli::progress::CliProgressSink::for_stderr(
-        std::io::IsTerminal::is_terminal(&std::io::stderr()),
-        crate::cli::progress::ProgressPolicy::STANDARD,
-    );
-    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,
@@ -235,6 +283,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 max_tests,
                 &config,
                 worktree,
+                worktree_from_default,
                 explicit.mode,
                 progress_sink,
             )
@@ -244,9 +293,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // #7352 review: commit the held `completed` terminal before the sink
     // drops, or the drop projects `ripr progress: failed` on success; the
     // artifact path wired no sink and has nothing to commit.
-    progress.commit_success();
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     println!("{rendered}");
     Ok(())
+}
+
+fn positional_selector_hint(arg: &str) -> String {
+    format!(
+        "unknown context argument {arg:?}: `ripr context` takes the finding selector via `--at` (or `--finding`); try `ripr context --at {arg}`. Run `ripr context --help`."
+    )
 }
 
 #[cfg(test)]
@@ -327,6 +384,72 @@ mod tests {
                  Run `ripr context --help`."
                     .to_string()
             )
+        );
+    }
+
+    /// #8745: a pasted finding id is the explain-habit follow-up, not an
+    /// unknown flag. `closest_flag` returns nothing for non-dash args, so the
+    /// generic unknown-argument arm never names `--at`. Grammar stays
+    /// flag-only; this arm only names the retry.
+    #[test]
+    fn context_hints_at_for_a_pasted_finding_id() {
+        assert_eq!(
+            context(&args(&["probe:src_lib.rs:return_value:abc123"])),
+            Err(
+                "unknown context argument \"probe:src_lib.rs:return_value:abc123\": \
+                 `ripr context` takes the finding selector via `--at` (or `--finding`); \
+                 try `ripr context --at probe:src_lib.rs:return_value:abc123`. \
+                 Run `ripr context --help`."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn context_hints_at_for_a_file_line_positional() {
+        assert_eq!(
+            context(&args(&["src_lib.rs:12"])),
+            Err("unknown context argument \"src_lib.rs:12\": \
+                 `ripr context` takes the finding selector via `--at` (or `--finding`); \
+                 try `ripr context --at src_lib.rs:12`. \
+                 Run `ripr context --help`."
+                .to_string())
+        );
+    }
+
+    /// `--at <id>` remains the accepted grammar. The positional hint must not
+    /// fire when the selector is already behind the flag.
+    #[test]
+    fn context_still_parses_at_selector() {
+        let result = context(&args(&[
+            "--root",
+            "missing-ripr-root-for-context",
+            "--at",
+            "probe:src_lib.rs:return_value:abc123",
+        ]));
+        assert!(
+            matches!(
+                &result,
+                Err(message)
+                    if !message.contains("takes the finding selector via")
+                        && message.contains("missing-ripr-root-for-context")
+            ),
+            "`--at` must still parse the selector and reach the root-dependent failure: {result:?}"
+        );
+        let finding = context(&args(&[
+            "--root",
+            "missing-ripr-root-for-context",
+            "--finding",
+            "probe:src_lib.rs:return_value:abc123",
+        ]));
+        assert!(
+            matches!(
+                &finding,
+                Err(message)
+                    if !message.contains("takes the finding selector via")
+                        && message.contains("missing-ripr-root-for-context")
+            ),
+            "`--finding` must still parse the selector: {finding:?}"
         );
     }
 

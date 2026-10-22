@@ -527,3 +527,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_dynamic_route_registration_limit (19)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_dynamic_route_registration_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

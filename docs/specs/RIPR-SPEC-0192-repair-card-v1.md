@@ -100,7 +100,16 @@ Authority:
    when both producers name one) must match the readiness authority's own
    identities, and a producer `selected_basis` without a selected target is
    refused; either inconsistency returns `Err` instead of building a card
-   that attributes one seam's route to another repair.
+   that attributes one seam's route to another repair. The consistency
+   check compares the seam-side content hash (`subject.seam_content_gap_id`)
+   with the readiness authority's gap id.
+   `subject.canonical_gap_id` is the readable producer id (`gap:rust:...`)
+   that `ripr check`, `ripr_list_gaps` and `ripr_get_gap` use, because that
+   is the id agents receive and pass back (#8638); it is the bound
+   finding's own canonical gap id (the shared seam-finding join), never
+   re-minted from the seam and never the hash; it is null when no finding
+   binds the seam. The
+   pre-#8638 hash rides additively as `seam_content_gap_id`.
 4. Semantic identity is a sha256 hex digest over the scoped card surface
    (every load-bearing field except the digest itself). Command `display`
    strings are presentation-only and never enter the digest; the card id
