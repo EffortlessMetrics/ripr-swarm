@@ -787,6 +787,10 @@ pub(crate) struct Report {
     /// omitted for a corpus with no labels.
     #[serde(skip_serializing_if = "OracleAccuracy::is_unlabeled")]
     pub(crate) oracle_accuracy: OracleAccuracy,
+    /// The operator grid and false-credit trap tables, for a corpus whose
+    /// ledger carries a `[grid]` table (`verdict_corpus_grid.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) grid: Option<grid::GridReport>,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -1019,6 +1023,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         by_origin,
         by_packet_provenance,
         spec_example_coverage: None,
+        grid: None,
         oracle_accuracy: oracle::oracle_accuracy(
             rows.iter()
                 .filter_map(|r| r.oracle.as_ref().map(|o| o.outcome)),
@@ -1184,6 +1189,9 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
     }
     if let Some(coverage) = &report.spec_example_coverage {
         out.push_str(&coverage::render_coverage_markdown(coverage));
+    }
+    if let Some(grid) = &report.grid {
+        out.push_str(&grid::render_grid_markdown(grid));
     }
     let labeled: Vec<(&str, &OracleRow)> = report
         .rows
@@ -3046,17 +3054,25 @@ fn score_loaded_corpus(
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
     // Only a ledgered corpus can carry the `[oracle]` gate.
-    let gate = if dir.join(coverage::LEDGER_FILE).is_file() {
-        coverage::load_ledger(dir)?.oracle
+    let ledger = if dir.join(coverage::LEDGER_FILE).is_file() {
+        Some(coverage::load_ledger(dir)?)
     } else {
         None
     };
     oracle::arm_gate(
         &mut report.oracle_accuracy,
         coverage::ledger_label(dir),
-        gate.as_ref(),
+        ledger.as_ref().and_then(|l| l.oracle.as_ref()),
         cases.is_some(),
     );
+    report.grid = ledger.as_ref().and_then(|l| l.grid.as_ref()).map(|gate| {
+        grid::grid_report(
+            &report.rows,
+            gate,
+            coverage::ledger_label(dir),
+            cases.is_some(),
+        )
+    });
     write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -3083,6 +3099,19 @@ fn score_loaded_corpus(
     }
     if let Some(note) = &floor_note {
         println!("{note}");
+    }
+    if let Some(grid) = &report.grid {
+        println!(
+            "verdict-corpus: operator grid covers {}/{} cells (floor {}); traps credited {}/{} (ceiling {})",
+            grid.covered_cells,
+            grid.denominator,
+            grid.cell_floor
+                .map_or_else(|| "off".to_string(), |f| f.to_string()),
+            grid.traps.credited,
+            grid.traps.traps,
+            grid.false_credit_ceiling
+                .map_or_else(|| "off".to_string(), |f| f.to_string()),
+        );
     }
     let accuracy = &report.oracle_accuracy;
     if accuracy.labeled > 0 {
@@ -3112,6 +3141,17 @@ fn score_loaded_corpus(
         }
         Ok(None) => None,
         Err(failure) => Some(failure),
+    };
+    let gate_failure = match report.grid.as_ref().map(grid::grid_gate) {
+        Some(Ok(Some(note))) => {
+            println!("{note}");
+            gate_failure
+        }
+        Some(Err(failure)) => Some(match gate_failure {
+            Some(earlier) => format!("{earlier}\n{failure}"),
+            None => failure,
+        }),
+        _ => gate_failure,
     };
     let gate_failure =
         known_false::apply_known_false_gate(dir, cases.is_some(), &report.rows, gate_failure)?;
@@ -3340,6 +3380,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
 
 #[path = "verdict_corpus_coverage.rs"]
 pub(crate) mod coverage;
+
+#[path = "verdict_corpus_grid.rs"]
+pub(crate) mod grid;
 
 #[path = "verdict_corpus_oracle.rs"]
 pub(crate) mod oracle;
