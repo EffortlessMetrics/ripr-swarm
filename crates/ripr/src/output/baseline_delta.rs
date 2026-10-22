@@ -5,6 +5,7 @@ use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_
 use crate::output::gate::{GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR};
 
 const SCHEMA_VERSION: &str = "0.1";
+pub(crate) const BASELINE_SCHEMA_VERSION: &str = SCHEMA_VERSION;
 const REPORT_KIND: &str = "baseline_debt_delta";
 const STATUS: &str = "advisory";
 /// Identity authority recorded on a delta item whose current candidate matched
