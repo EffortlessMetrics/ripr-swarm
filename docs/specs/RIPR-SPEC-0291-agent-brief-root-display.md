@@ -120,7 +120,7 @@ Rendered on a Unix host with root `/tmp/team\repo` (excerpt):
 ```
 
 The same rendering before this spec rewrote the root to
-`/tmp/team/repo`, naming a directory that does not exist.
+`/tmp/team/repo`, naming a different directory that may exist.
 
 ## Non-Goals
 
