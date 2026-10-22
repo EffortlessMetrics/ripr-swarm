@@ -1575,6 +1575,9 @@ fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
 struct PilotDeclinedOnly {
     file_count: u64,
     files: Vec<String>,
+    /// A seam limit also cut the run, so seams past the cut were never
+    /// classified and splitting the files alone leaves the scan incomplete.
+    seam_limit_applied: bool,
 }
 
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
@@ -1606,10 +1609,17 @@ fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
                 .collect()
         })
         .unwrap_or_default();
-    Some(PilotDeclinedOnly { file_count, files })
+    let seam_limit_applied = summary
+        .pointer("/seam_limit")
+        .is_some_and(|limit| !limit.is_null());
+    Some(PilotDeclinedOnly {
+        file_count,
+        files,
+        seam_limit_applied,
+    })
 }
 
-fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
+fn pilot_declined_only_message(declined: &PilotDeclinedOnly, root_display: &str) -> String {
     let named = declined
         .files
         .iter()
@@ -1626,9 +1636,15 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
         (1, true) => "1 Rust file".to_string(),
         (count, true) => format!("{count} Rust files"),
     };
-    // No trailing pilot command: rerunning unchanged declines them again.
+    // The rerun follows the repair: rerunning unchanged declines them again.
+    let seam_limit = if declined.seam_limit_applied {
+        " A seam limit also cut the seams it analyzed, so raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT before the rerun."
+    } else {
+        ""
+    };
     format!(
-        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`"
+        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
+        pilot_select_command(root_display)
     )
 }
 
@@ -1938,7 +1954,7 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_declined_rust_files_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_declined_only_message(&declined),
+                message: pilot_declined_only_message(&declined, root_display),
             });
             return None;
         }
@@ -5841,6 +5857,40 @@ mod tests {
             "3 Rust files (`src/deep.rs`, `src/b.rs` and 1 more)",
             "Split the file(s) below the Rust parse budget",
             "declines them again",
+            "then rerun `ripr pilot --root ",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        assert!(
+            !warning.message.contains("RIPR_PILOT_SEAM_BUDGET"),
+            "{}",
+            warning.message
+        );
+
+        // A seam limit that also cut the run keeps its remedy.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(
+                "complete",
+                "[]",
+                "null",
+                &declined.replacen(
+                    "\"declined_rust_files\"",
+                    "\"seam_limit\": {\"analyzed\": 1, \"total\": 2, \"source\": \"s\"}, \"declined_rust_files\"",
+                    1,
+                ),
+            ),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        for expected in [
+            "Split the file(s) below the Rust parse budget",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
@@ -5874,6 +5924,10 @@ mod tests {
         // Withheld seams keep the withheld warning, which already names the
         // declined files.
         write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "limited_declined_files"}"#,
+        )?;
+        write_file(
             &root.join(PILOT_SUMMARY_ARTIFACT),
             &summary("complete", "[]", "null", declined).replace(
                 "\"withheld_static_limitations_total\": 0",
@@ -5882,10 +5936,11 @@ mod tests {
         )?;
         let report = build_agent_status_report(&root, Path::new("."));
         assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            report.warnings.iter().any(|warning| warning.kind
+                == "pilot_withheld_static_limitations_no_repair_target"
+                && warning
+                    .message
+                    .contains("declined Rust files with a parse limit"))
                 && !report
                     .warnings
                     .iter()
