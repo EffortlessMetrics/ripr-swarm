@@ -3,7 +3,7 @@
 ## Pending — boundary_gap (9478)
 
 Reason:
-RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.92
+RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.93
 for bounded typed function-pointer owner pins. Regenerated the portable
 unchanged-attempt snapshots from the native producer using the existing CLI
 test's normalization, then regenerated verify and refreshed the existing portable
@@ -1058,3 +1058,13 @@ dependent verify commitments and receipt byte hashes bind those exact updated
 bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
 all tamper controls remain unchanged. This is a portable negative-control
 input update, not a new execution receipt.
+
+### caller-loop selector limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.91 to 1.92 for the caller-loop selector limit (RIPR-SPEC-0240, #5503). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.

@@ -29,6 +29,11 @@ description = "Language shapes: operator, conversion, iterator, Drop and Default
 floor = 33
 
 [[axis]]
+id = "std_test_form"
+description = "Standard-library test forms without a test crate: should_panic(expected), Result-returning tests, catch_unwind, hand-rolled mocks and recorders, seeded property loops, table-driven loops, assertion helpers and macros, Display string pins, doctests, tests/ integration tests, out-of-line test modules and fixture builders."
+floor = 21
+
+[[axis]]
 id = "hostile_input"
 description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
 floor = 12
@@ -42,6 +47,22 @@ floor = 12
 [oracle]
 match_floor = 44
 overclaim_ceiling = 0
+
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 32
+false_credit_ceiling = 0
+
+# A case whose `behavior_family` names a different operator than its edit.
+[grid.operators]
+config-duplicate-key-case = "equality"
+grid-bits-or-loose = "none"
 
 # LSP Repair Packet Command
 [[spec]]
@@ -837,6 +858,11 @@ id = "RIPR-SPEC-0309"
 scope = "out"
 reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
@@ -851,11 +877,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 
-
-[[known_false]]
-case = "regex-syntax-max-scalar-two-byte"
-issue = 5503
-reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
 
 
 [[known_false]]
@@ -916,3 +937,23 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-async-fn-block-on"
 issue = 9443
 reason = "Async fn driven by block_on is not followed (#9443)."
+
+[[known_false]]
+case = "idiom-assert-macro-wrapper"
+issue = 7089
+reason = "A user macro_rules! wrapping assert_eq! reads as a weak gap; it should be credited, or at worst limited under the macro-wrapped limit (#7089)."
+
+[[known_false]]
+case = "idiom-display-string-pin"
+issue = 9608
+reason = "A Display impl pinned through to_string() reads as a weak gap (#9608)."
+
+[[known_false]]
+case = "idiom-fixture-builder-total"
+issue = 9609
+reason = "A method pinned on a fixture-built receiver reads as a weak gap (#9609)."
+
+[[known_false]]
+case = "idiom-hand-mock-exact-line"
+issue = 9610
+reason = "An effect recorded by a hand-written test double and pinned exactly reads as a weak gap (#9610)."
