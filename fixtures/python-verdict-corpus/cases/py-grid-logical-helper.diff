@@ -6,7 +6,7 @@ diff --git a/grid_logical/core.py b/grid_logical/core.py
  
  def is_visible(hidden):
 -    return not hidden
-+    return hidden is False
++    return False if hidden else True
  
  
  def should_retry(timed_out, attempts_left):
