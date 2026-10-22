@@ -180,16 +180,9 @@ mod tests {
         second.test_name, "price_boundary_discriminator_2",
         "the already-written report names the test on disk"
     );
-    // The second run proposes no edit: applying its text leaves the file
-    // byte-identical, which is what the CLI's already-present skip
-    // guarantees.
-    let close = rewritten.rfind('}').ok_or("module close brace")?;
-    let (head, tail) = rewritten.split_at(close);
-    let re_rewritten = format!("{head}{}{tail}", second.text.trim_start_matches('\n'));
-    assert_eq!(
-        re_rewritten, rewritten,
-        "an already-present second run must leave the file unchanged"
-    );
+    // The library still renders the stub text; the no-edit guarantee is the
+    // CLI's skip on `already_present` (second_write_for_the_same_seam_reports_
+    // already_written and the end-to-end byte pins cover the file staying put).
     Ok(())
 }
 
