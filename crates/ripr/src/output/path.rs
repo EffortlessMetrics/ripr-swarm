@@ -36,6 +36,58 @@ pub(crate) const fn host_paths_case_insensitive() -> bool {
     cfg!(any(windows, target_os = "macos"))
 }
 
+/// Shared owner of path-identity keys: two paths name the same file for a
+/// path-string comparator exactly when their keys are equal.
+/// `backslash_is_separator` rewrites `\` to `/` and is `true` only where `\` is
+/// a separator (Windows, or a drive/UNC spelling); on Unix `\` is an ordinary
+/// filename byte, so `a\b.rs` and `a/b.rs` stay distinct. `case_insensitive`
+/// folds ASCII case only, the same rule at every call site; it never claims
+/// that non-ASCII case variants or NFC/NFD forms are one file, which fails
+/// closed. A path that is not valid UTF-8 keys on its exact encoded bytes
+/// behind a NUL marker (a path cannot contain NUL, so it cannot collide with a
+/// UTF-8 path's key) and is never folded or rewritten, so two distinct
+/// non-UTF-8 paths never collapse.
+pub(crate) fn path_identity_key_on(
+    path: &Path,
+    backslash_is_separator: bool,
+    case_insensitive: bool,
+) -> String {
+    let Some(text) = path.to_str() else {
+        let mut key = String::from("\0");
+        for byte in path.as_os_str().as_encoded_bytes() {
+            key.push_str(&format!("{byte:02x}"));
+        }
+        return key;
+    };
+    let mut key = if backslash_is_separator {
+        text.replace('\\', "/")
+    } else {
+        text.to_string()
+    };
+    if case_insensitive {
+        key.make_ascii_lowercase();
+    }
+    key
+}
+
+/// Display-only spelling of a path for LSP messages and editor globs: lossy
+/// for non-UTF-8 and `\` shown as `/` only on Windows. This is NOT an
+/// identity key; use [`path_identity_key`] to compare or fingerprint paths.
+pub(crate) fn path_display_lossy(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
+/// [`path_identity_key_on`] with the host rules: `\` separates only on Windows
+/// and case folds per [`host_paths_case_insensitive`].
+pub(crate) fn path_identity_key(path: &Path) -> String {
+    path_identity_key_on(path, cfg!(windows), host_paths_case_insensitive())
+}
+
 /// Render a finding's file root-relative for machine consumers, tolerating
 /// producer spelling drift: a canonicalized `\\?\X:` file still matches a
 /// plain `--root`, and drive-letter case drift matches on Windows, so
@@ -103,9 +155,12 @@ pub(crate) fn repository_relative_path_text_with(
 
 /// Component-wise, ASCII-case-insensitive root strip for an absolute
 /// non-Windows root. The remainder keeps the file's own spelling and must be
-/// non-empty and free of parent components.
+/// non-empty and free of parent components. Rootedness is the POSIX rule, not
+/// the native `Path::is_absolute`, which calls `/repo` relative on Windows.
 fn strip_case_insensitive_root(root: &Path, file: &Path) -> Option<PathBuf> {
-    if !root.is_absolute() || !file.is_absolute() {
+    if !is_absolute_on(&root.to_string_lossy(), false)
+        || !is_absolute_on(&file.to_string_lossy(), false)
+    {
         return None;
     }
     let mut file_components = file.components();
@@ -320,9 +375,51 @@ fn require_lossless_command_path(path: &Path) -> Result<(), String> {
 mod tests {
     use std::path::Path;
 
+    #[test]
+    fn path_identity_key_is_one_rule_for_separator_case_and_bytes() {
+        let upper = Path::new("Src/A\\B.rs");
+        let lower = Path::new("src/a/b.rs");
+        // Windows-flagged seam: separator rewrite plus ASCII fold.
+        assert_eq!(
+            path_identity_key_on(upper, true, true),
+            path_identity_key_on(lower, true, true)
+        );
+        // Unix seam: `\` is a filename byte, case is significant.
+        assert_ne!(
+            path_identity_key_on(upper, false, false),
+            path_identity_key_on(lower, false, false)
+        );
+        assert_ne!(
+            path_identity_key_on(Path::new("a\\b.rs"), false, true),
+            path_identity_key_on(Path::new("a/b.rs"), false, true)
+        );
+        // Non-ASCII case variants are not folded on any host (fail closed).
+        assert_ne!(
+            path_identity_key_on(Path::new("\u{c9}.rs"), true, true),
+            path_identity_key_on(Path::new("\u{e9}.rs"), true, true)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_identity_key_keeps_distinct_non_utf8_paths_distinct() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let first = Path::new(OsStr::from_bytes(b"/w/a\xFF"));
+        let second = Path::new(OsStr::from_bytes(b"/w/a\xFE"));
+        assert_ne!(
+            path_identity_key_on(first, false, false),
+            path_identity_key_on(second, false, false)
+        );
+        assert_ne!(
+            path_identity_key_on(first, true, true),
+            path_identity_key_on(Path::new("/w/a\u{fffd}"), true, true)
+        );
+    }
+
     use super::{
-        display_path, display_path_text, human_path_text, repository_display_path,
-        repository_relative_path_text_on, same_output_leaf,
+        display_path, display_path_text, human_path_text, path_identity_key_on,
+        repository_display_path, repository_relative_path_text_on, same_output_leaf,
     };
 
     #[test]

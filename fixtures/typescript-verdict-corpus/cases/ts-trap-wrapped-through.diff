@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -71,7 +71,7 @@
+ }
+ 
+ export function wrappedThrough(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export async function floatingPromise(a: number, b: number): Promise<number> {
