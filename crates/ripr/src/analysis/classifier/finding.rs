@@ -116,8 +116,10 @@ pub(in crate::analysis) fn build_finding(
         Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
-    } else if class == ExposureClass::WeaklyExposed
-        && evidence.reach.state == StageState::Weak
+    } else if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && evidence.reach.state == StageState::Weak
         && !context.owner_assertion_shaped
         && !context.related_tests.is_empty()
         && context

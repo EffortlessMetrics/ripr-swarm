@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_single_file_raw_rename_shadow (10)
+
+Reason:
+RIPR-SPEC-0108: a name-token-only owner gets inspection-first guidance, not assertion advice (#9169 review)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_single_file_raw_rename_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

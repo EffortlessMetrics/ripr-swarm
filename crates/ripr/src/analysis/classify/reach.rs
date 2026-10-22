@@ -4,7 +4,8 @@ use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
 use ra_ap_syntax::{AstNode, ast};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -155,6 +156,8 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
 pub(in crate::analysis) struct UnseenReachNames {
     /// Name of every trait some workspace source declares.
     workspace_traits: HashSet<String>,
+    /// Per file, the workspace-trait names it imports from another crate.
+    foreign_imports: HashMap<PathBuf, HashSet<String>>,
     /// Every identifier some source names other than directly after `fn`.
     named: HashSet<String>,
     /// Some file pulls external docs in as doctests.
@@ -200,15 +203,33 @@ impl UnseenReachNames {
                 .iter()
                 .fold(HashSet::new(), |names, source| collect_names(names, source))
         };
+        let workspace_traits = workspace_trait_names(index);
+        let foreign_imports = index
+            .files()
+            .iter()
+            .filter_map(|(path, file)| {
+                let imported: HashSet<String> = foreign_imported_names(&file.source)
+                    .filter(|name| workspace_traits.contains(*name))
+                    .map(str::to_string)
+                    .collect();
+                (!imported.is_empty()).then(|| (path.clone(), imported))
+            })
+            .collect();
         Self {
-            workspace_traits: workspace_trait_names(index),
+            workspace_traits,
+            foreign_imports,
             named: named.into_iter().map(str::to_string).collect(),
             external_docs,
         }
     }
 
     pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
-        (is_trait_impl_method(owner) && !implements_trait_in(owner, &self.workspace_traits))
+        (is_trait_impl_method(owner)
+            && !implements_trait_in(owner, &self.workspace_traits, &|name| {
+                self.foreign_imports
+                    .get(&owner.file)
+                    .is_some_and(|imported| imported.contains(name))
+            }))
             || self.external_docs
             || (!owner.name.is_empty() && self.named.contains(&owner.name))
     }
@@ -316,28 +337,70 @@ fn workspace_trait_names(index: &RustIndex) -> HashSet<String> {
 
 fn implements_workspace_trait(owner: &FunctionSummary, index: &RustIndex) -> bool {
     matches!(owner.item.container, FunctionContainer::TraitImpl { .. })
-        && implements_trait_in(owner, &workspace_trait_names(index))
+        && implements_trait_in(owner, &workspace_trait_names(index), &|name| {
+            index
+                .files()
+                .get(&owner.file)
+                .is_some_and(|file| foreign_imported_names(&file.source).any(|n| n == name))
+        })
 }
 
-/// Whether `owner` is a method of `impl <Trait> for ..` where `Trait` is a
-/// bare, `crate::`, `self::` or `super::` path naming one of `traits`. A
-/// path through any other crate (`fmt::Display`, `std::ops::Add`) names a
-/// foreign trait even when the workspace declares one of the same name; an
-/// unestablished container keeps the foreign-trait reading.
-fn implements_trait_in(owner: &FunctionSummary, traits: &HashSet<String>) -> bool {
+/// Whether `owner` is a method of `impl <Trait> for ..` where `Trait` names
+/// one of `traits`: a `crate::`, `self::` or `super::` path (through any
+/// modules), or a bare name its file does not import from another crate
+/// (`foreign_import`). A bare `Add` after `use std::ops::Add;` and a path
+/// through any other root (`fmt::Display`) name a foreign trait even when the
+/// workspace declares one of the same name; an unestablished container keeps
+/// the foreign-trait reading.
+fn implements_trait_in(
+    owner: &FunctionSummary,
+    traits: &HashSet<String>,
+    foreign_import: &dyn Fn(&str) -> bool,
+) -> bool {
     let FunctionContainer::TraitImpl { trait_path, .. } = &owner.item.container else {
         return false;
     };
     let path = trait_path.split('<').next().unwrap_or(trait_path).trim();
-    let mut segments = path.split("::").map(str::trim);
-    let mut last = segments.next();
-    for segment in segments {
-        if !matches!(last, Some("crate" | "self" | "super")) {
-            return false;
-        }
-        last = Some(segment);
+    let segments: Vec<&str> = path.split("::").map(str::trim).collect();
+    let Some(name) = segments
+        .last()
+        .copied()
+        .filter(|name| traits.contains(*name))
+    else {
+        return false;
+    };
+    match segments.as_slice() {
+        [_] => !foreign_import(name),
+        [root, ..] => matches!(*root, "crate" | "self" | "super"),
+        [] => false,
     }
-    last.is_some_and(|name| traits.contains(name))
+}
+
+/// Each identifier of every `use` item whose path starts outside the
+/// workspace (not `crate`, `self` or `super`), so a name imported from
+/// `std::ops` or a dependency shows up here.
+fn foreign_imported_names(source: &str) -> impl Iterator<Item = &str> {
+    let mut statements = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("use ") {
+        let boundary = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let after = &rest[at + 4..];
+        let end = after.find(';').unwrap_or(after.len());
+        if boundary {
+            let body = after[..end].trim_start();
+            if !(body.starts_with("crate") || body.starts_with("self") || body.starts_with("super"))
+            {
+                statements.push(&after[..end]);
+            }
+        }
+        rest = &after[end..];
+    }
+    statements
+        .into_iter()
+        .flat_map(identifiers_outside_fn_definition)
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -798,6 +861,72 @@ mod tests {
         });
         assert!(owner_may_be_reached_unseen(&foreign_impl, &foreign_only));
         assert!(UnseenReachNames::build(&foreign_only).may_reach_unseen(&foreign_impl));
+    }
+
+    /// #9169 review: a module-qualified workspace path is the workspace's, and
+    /// a bare name the file imports from another crate is not, even when the
+    /// workspace declares a trait of the same name (`std::ops::Add`).
+    #[test]
+    fn trait_identity_follows_the_path_and_the_files_foreign_imports() {
+        let impl_method = |name: &str, trait_path: &str, file: &str| {
+            let mut owner = function(name);
+            owner.id = SymbolId(format!("{file}::impl {trait_path} for Num::{name}"));
+            owner.file = PathBuf::from(file);
+            owner.item.container = FunctionContainer::TraitImpl {
+                trait_path: trait_path.to_string(),
+                self_ty: "Num".to_string(),
+            };
+            owner
+        };
+        let declared = |trait_name: &str| {
+            let mut declaration = function("m");
+            declaration.item.container = FunctionContainer::Trait {
+                trait_name: trait_name.to_string(),
+            };
+            declaration
+        };
+        let file = |path: &str, source: &str| {
+            (
+                PathBuf::from(path),
+                FileFacts {
+                    path: PathBuf::from(path),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            )
+        };
+        let nested = impl_method("process", "crate::traits::Step", "src/a.rs");
+        let parent = impl_method("process", "super::traits::Step", "src/a.rs");
+        let imported_std = impl_method("add", "Add", "src/ops.rs");
+        let local_bare = impl_method("add", "Add", "src/local.rs");
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([
+                file("src/a.rs", "pub fn lonely() {}\n"),
+                file("src/ops.rs", "use std::ops::Add;\npub fn lonely() {}\n"),
+                file("src/local.rs", "use crate::Add;\npub fn lonely() {}\n"),
+            ]),
+            functions: vec![
+                declared("Step"),
+                declared("Add"),
+                nested.clone(),
+                parent.clone(),
+                imported_std.clone(),
+                local_bare.clone(),
+            ],
+            ..Default::default()
+        });
+        let names = UnseenReachNames::build(&index);
+        for owner in [&nested, &parent, &local_bare] {
+            assert!(
+                !owner_may_be_reached_unseen(owner, &index),
+                "{}",
+                owner.id.0
+            );
+            assert!(!names.may_reach_unseen(owner), "{}", owner.id.0);
+        }
+        // The operator `+` runs `add` without spelling it.
+        assert!(owner_may_be_reached_unseen(&imported_std, &index));
+        assert!(names.may_reach_unseen(&imported_std));
     }
 
     #[test]

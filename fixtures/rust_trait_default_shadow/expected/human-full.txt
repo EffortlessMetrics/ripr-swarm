@@ -39,7 +39,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:f04fc840
   ripr context --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04fc840

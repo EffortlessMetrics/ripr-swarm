@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (10)
+
+Reason:
+RIPR-SPEC-0108: a name-token-only owner gets inspection-first guidance, not assertion advice (#9169 review)
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

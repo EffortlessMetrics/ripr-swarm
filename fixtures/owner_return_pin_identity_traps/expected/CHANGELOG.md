@@ -287,3 +287,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (25)
+
+Reason:
+RIPR-SPEC-0108: a name-token-only owner gets inspection-first guidance, not assertion advice (#9169 review)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

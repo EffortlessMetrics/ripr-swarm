@@ -1266,7 +1266,10 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
                 ))
-            } else if reveal.observe.state == StageState::No && !callee_only {
+            } else if reveal.observe.state == StageState::No
+                && !callee_only
+                && ripr.reach.state != StageState::Weak
+            {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
