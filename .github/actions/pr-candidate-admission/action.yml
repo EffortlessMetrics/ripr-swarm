@@ -199,17 +199,11 @@ runs:
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
-          # The file list is only valid for the snapshot head. If the PR head
-          # moved between the two reads, hand the candidate decision an empty
-          # list so no lockfile discount from one revision is applied to
-          # another revision's totals (the hard-cut check keeps the full list).
-          candidate_files="$tmp/candidate-files.json"
+          # The file list is valid only for the snapshot head; if the head moved,
+          # the candidate decision gets no list (hard-cut keeps the full one).
           files_head="$(gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" | jq -r '.head.sha // empty')"
-          if [ "$files_head" = "$(jq -r '.head.sha // empty' "$current")" ]; then
-            cp "$pr_files" "$candidate_files"
-          else
-            echo '[]' > "$candidate_files"
-          fi
+          candidate_files="$tmp/candidate-files.json"; echo '[]' > "$candidate_files"
+          [ "$files_head" != "$(jq -r '.head.sha // empty' "$current")" ] || cp "$pr_files" "$candidate_files"
 
           base_ref="$(jq -r '.base.ref // empty' "$current")"
           [ -n "$base_ref" ] || refuse_early "base_ref_missing" "candidate admission received no base ref from the PR snapshot; refresh the exact PR evidence and retry"
