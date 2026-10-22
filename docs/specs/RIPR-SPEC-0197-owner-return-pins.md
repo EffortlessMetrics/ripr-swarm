@@ -147,8 +147,20 @@ rule only for an assertion whose context was admitted.
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
    does not compile and refuses.
-   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
-   the async-context refusal below. An `#[rstest]` case table is admitted
+   An assertion inside an `async` block keeps the async-context refusal below,
+   except the one `async` block that is the only argument of
+   `tokio::spawn(..)` chained directly into `.await.unwrap()` or
+   `.await.expect(..)` (cluster 12a, #6578): the awaited `JoinHandle` yields
+   the task's panic as a `JoinError`, which `unwrap` re-raises on the test
+   task, as a joined thread does below. The test must be a `#[tokio::test]`
+   admitted above, and the file must hold no item, binding or alias named
+   `tokio` or `spawn`, no `use` in the file may bring in a glob or a
+   `tokio` or `spawn` path other than the crate's own `tokio::..` (a `use super::*;` inside an inline `mod` is fine), an
+   `expect` message must be a literal (it runs before `expect` does), and
+   the block itself holds no `return` or `?` (they would skip the assertion,
+   and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
+   `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
+   any other spawn function stay refused. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner

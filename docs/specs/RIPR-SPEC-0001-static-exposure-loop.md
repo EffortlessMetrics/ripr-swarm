@@ -404,6 +404,17 @@ literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
 
+A second bounded source for the same family is direct literal slice arguments:
+every related test calls the owner only inside its standard assertion macros,
+straight-line, with a literal `&[..]` at the measured parameter (array-repeat
+forms excluded). The call result must reach the assertion unchanged, as the
+whole compared operand or one side of a top-level comparison; arithmetic,
+branches, short-circuit operands, message arguments, bound or computed inputs,
+early returns and any extra owner reference leave the input set unresolved. The
+literal's length is its element count, the call's source and line are the
+witness, and the table gates above (unique free owner, eager path, admitted
+assertion context) still apply.
+
 One bounded cardinality family reads a direct immutable slice parameter's
 `.len()` compared with a plain decimal integer. Every reach-bearing related
 test must make one binding-resolved ordinary owner call through an eager,

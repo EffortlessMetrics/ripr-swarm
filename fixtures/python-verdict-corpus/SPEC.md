@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Seven small authored Python projects under `subjects/`, our own code under
+Ten small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -47,6 +47,12 @@ this repository's license, one per test library or library feature:
   of the same name in another module and a test that calls the helper
   directly. Every module and class name is unique across the subject, because
   a shared name makes the analyzer relate the wrong module's tests.
+- `authored-py-pytest-shapes`: language shapes. Dataclass defaults, `@property`,
+  `@classmethod` and `@staticmethod`; decorator factories and wrappers;
+  `asyncio.run` coroutines; list, dict and generator comprehensions and a
+  generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
+  `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
+  statements; and relative imports through a package `__init__` re-export.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -54,6 +60,8 @@ own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under
 Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
+The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
+and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
 
 ## When
 

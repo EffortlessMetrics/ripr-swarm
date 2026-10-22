@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- An unresolved boundary now says why and what would settle it: when a compared operand is a local or computed value the message ends with the input that would let ripr decide (literal test inputs on each side of the boundary), the opaque-input fallback says a test input exactly on the boundary would settle it if an input drives the value, and when neither side of a plain comparison is a literal or readable constant the message names both operands (`val > surrogate_start`) instead of reporting that no literal boundary was visible (#9276).

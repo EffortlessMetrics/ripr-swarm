@@ -452,7 +452,7 @@ fn observed_discriminator_values(
             })
             .or_else(|| visible_operand(&right, right_constant.as_ref()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
-            && left_value.value == right_value.value
+            && exact_values_equal(&left_value.value, &right_value.value)
         {
             facts.push(ValueFact {
                 file: None,
@@ -528,7 +528,11 @@ fn observed_discriminator_values(
 /// parameter.
 pub(crate) enum ResolvedOperand {
     Parameter(String),
-    Local(String, String),
+    /// A local binding's initializer plus the same-file constants it names
+    /// (`let unit = if si { KIB } else { KB };`), each declared once with
+    /// a plain decimal value. They join the row's exact inputs so the
+    /// bounded evaluator reads them like any other named value.
+    Local(String, String, Vec<(String, String)>),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
     /// whose return value is evaluated over the row's bound inputs
     /// (#3296 boolean-predicate helper family).
@@ -600,7 +604,26 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
-        return Some(ResolvedOperand::Local(operand.to_string(), initializer));
+        // A flag-selected initializer reads its flag from the caller's row
+        // and its arms from the file's constants, so neither may be rebound
+        // in the owner (`let si = !si;`, a local `KB`).
+        if initializer.trim_start().starts_with("if ")
+            && free_identifiers(&initializer)
+                .iter()
+                .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .any(|name| {
+                    name_rebound_in_owner(owner, name)
+                        || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
+                })
+        {
+            return None;
+        }
+        let constants = initializer_constants(owner, &initializer, parameters, index);
+        return Some(ResolvedOperand::Local(
+            operand.to_string(),
+            initializer,
+            constants,
+        ));
     }
     if let Some(parameter) = parameters
         .iter()
@@ -609,6 +632,39 @@ fn resolve_boundary_operand(
         return Some(ResolvedOperand::Parameter(parameter.clone()));
     }
     resolve_direct_call(operand, index, workspace_complete)
+}
+
+/// The same-file constants a local's initializer names, as name and plain
+/// decimal value. A constant declared twice, imported, or with a value
+/// ripr cannot read as one decimal literal is left out, so the evaluator
+/// fails closed on that name instead of guessing.
+fn initializer_constants(
+    owner: &FunctionSummary,
+    initializer: &str,
+    parameters: &[String],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<(String, String)> {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return Vec::new();
+    };
+    free_identifiers(initializer)
+        .into_iter()
+        .filter(|name| {
+            is_constant_like(name)
+                && !matches!(name.as_str(), "true" | "false")
+                && !parameters.contains(name)
+                && !name_rebound_in_owner(owner, name)
+                && !name_imported_in_file(&facts.source, name)
+        })
+        .filter_map(|name| {
+            let constant = crate::analysis::value_resolution::named_constant(&facts.source, &name);
+            if !constant.is_declared_once() {
+                return None;
+            }
+            let value = constant.value()?.to_string();
+            Some((name, value))
+        })
+        .collect()
 }
 
 /// Decompose a direct-call text (`is_word_start(input, 0)`) into the
@@ -657,10 +713,16 @@ fn exact_operand_for_row(
     workspace_complete: bool,
 ) -> Option<ExactOperand> {
     match resolved {
-        ResolvedOperand::Local(name, initializer) => {
-            match super::value_transfer::evaluate_initializer(initializer, inputs) {
+        ResolvedOperand::Local(name, initializer, constants) => {
+            let mut with_constants = inputs.clone();
+            for (constant, value) in constants {
+                with_constants
+                    .entry(constant.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            match super::value_transfer::evaluate_initializer(initializer, &with_constants) {
                 super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
-                    exact_operand_from_evaluation(name, &value, &provenance, inputs),
+                    exact_operand_from_evaluation(name, &value, &provenance, &with_constants),
                 ),
                 _ => None,
             }
@@ -714,6 +776,43 @@ fn exact_operand_for_row(
             })
         }
     }
+}
+
+/// Whether the parameter a local is compared against holds a value the
+/// local can meet in this row. A local that folds to a plain integer meets
+/// only a plain integer cell: a string cell is the literal inside a call
+/// argument (`to_string(parse("128.000 GiB"), true)`), not the compared
+/// number, so such a row says nothing about the boundary. No counterpart
+/// parameter, or no cell for it, leaves the row as it was.
+fn counterpart_is_comparable(
+    row: &[ParameterValue],
+    counterpart: Option<&str>,
+    local_value: &str,
+) -> bool {
+    fn plain_decimal(text: &str) -> bool {
+        let digits = text.trim().replace('_', "");
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    }
+    let Some(cell) = counterpart.and_then(|parameter| parameter_value(row, parameter)) else {
+        return true;
+    };
+    !plain_decimal(local_value) || plain_decimal(&cell.value)
+}
+
+/// Whether two exact operand renderings are the same value. Equal text is
+/// equal; two plain decimal integers are equal when their digits are, so a
+/// test's `1_024` meets the evaluator's `1024`. A suffixed, signed, or
+/// non-decimal literal is compared as text only, never parsed from a guess.
+fn exact_values_equal(left: &str, right: &str) -> bool {
+    fn plain_decimal(text: &str) -> Option<String> {
+        let digits = text.trim().replace('_', "");
+        (!digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
+            .then(|| digits.trim_start_matches('0').to_string())
+    }
+    left == right
+        || plain_decimal(left)
+            .zip(plain_decimal(right))
+            .is_some_and(|(left, right)| left == right)
 }
 
 /// The parameter names implied by a row's cells, in binding order.
@@ -1135,14 +1234,108 @@ fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line:
     {
         return true;
     }
-    tokens(&masked).into_iter().any(|start| {
-        let after = masked[start + name.len()..].trim_start();
-        let assigned =
-            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
-                || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
-                    .iter()
-                    .any(|operator| after.starts_with(operator));
-        assigned || masked[..start].trim_end().ends_with("mut")
+    tokens(&masked)
+        .into_iter()
+        .any(|start| name_assigned_or_mut(&masked, name, start))
+}
+
+/// Whether the `name` token at `start` in the masked body is assigned or
+/// bound `mut`.
+fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
+    let after = masked[start + name.len()..].trim_start();
+    let assigned = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+    assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether the owner's body mentions `name` anywhere before the line that
+/// holds `initializer`. A flag the initializer reads must still be the
+/// caller's parameter there; any earlier mention (a `for si in ..`, an
+/// `if let Some(si)`, a closure or match-arm binding, or a use that feeds
+/// a rebinding) declines the read, as the scope is not tracked.
+fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    // The last occurrence, so a duplicate of the initializer text earlier in
+    // the body (which itself mentions the flag) can never hide a rebinding.
+    let Some(at) = owner.body.rfind(initializer.trim()) else {
+        return true;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let before = &masked[open + 1..at.max(open + 1)];
+    before.match_indices(name).any(|(start, _)| {
+        !before[..start].chars().next_back().is_some_and(is_word)
+            && !before[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// Whether the file brings `name` in with a `use` line, so a constant of
+/// that name declared elsewhere in the file is not the one the owner reads.
+fn name_imported_in_file(source: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .any(|line| {
+            line.match_indices(name).any(|(start, _)| {
+                !line[..start].chars().next_back().is_some_and(is_word)
+                    && !line[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        })
+}
+
+/// Whether the owner rebinds `name` anywhere in its body: a `let`, or an
+/// assignment or `mut` binding of it. A flag or constant a local's
+/// initializer names must be the caller's value or the file's constant, so
+/// any rebinding declines the read (the verdict stays unresolved).
+fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
+    if owner_declares_local(owner, name, usize::MAX) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    // A destructuring `let (si, _) = ...;`, `let Some(si) = ... else`, or a
+    // local `const`/`static` binds the name in the pattern left of `=`.
+    let binds_in_pattern = masked.split([';', '\n']).any(|statement| {
+        let statement = statement.trim_start();
+        ["let ", "const ", "static "]
+            .iter()
+            .any(|keyword| statement.starts_with(keyword))
+            && statement.split('=').next().is_some_and(|pattern| {
+                pattern
+                    .match_indices(name)
+                    .any(|(at, _)| is_token(pattern, at))
+            })
+    });
+    if binds_in_pattern {
+        return true;
+    }
+    masked.match_indices(name).any(|(start, _)| {
+        !masked[..start].chars().next_back().is_some_and(is_word)
+            && !masked[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+            && name_assigned_or_mut(&masked, name, start)
     })
 }
 
@@ -1404,7 +1597,7 @@ fn missing_boundary_discriminator(
         lefts.iter().any(|left_value| {
             rights
                 .iter()
-                .any(|right_value| right_value.value == left_value.value)
+                .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
         })
     });
 
@@ -1458,21 +1651,28 @@ fn missing_boundary_discriminator(
     // argument (#6672), no row says which side of the boundary a test
     // sits on, so naming a missing equality value would ask for a test
     // that may already exist. The boundary stays unresolved instead.
-    let operand_evaluates = |resolved: Option<&ResolvedOperand>| {
+    let operand_evaluates = |resolved: Option<&ResolvedOperand>, counterpart: Option<&str>| {
         resolved.is_some_and(|resolved| {
             call_values.iter().any(|row| {
                 let inputs: super::value_transfer::ExactInputs = row
                     .iter()
                     .map(|cell| (cell.parameter.clone(), cell.value.clone()))
                     .collect();
-                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete).is_some()
+                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                    .is_some_and(|exact| {
+                        !matches!(resolved, ResolvedOperand::Local(..))
+                            || counterpart_is_comparable(row, counterpart, &exact.value)
+                    })
             })
         })
     };
     // A constant-shaped operand keeps its own named-constant route.
-    let unknown = |operand: &str, parameter: Option<&str>, resolved: Option<&ResolvedOperand>| {
+    let unknown = |operand: &str,
+                   parameter: Option<&str>,
+                   resolved: Option<&ResolvedOperand>,
+                   counterpart: Option<&str>| {
         parameter.is_none()
-            && !operand_evaluates(resolved)
+            && !operand_evaluates(resolved, counterpart)
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
@@ -1481,12 +1681,24 @@ fn missing_boundary_discriminator(
     // row says which side of the boundary a test reaches either, so both
     // operands are named and the boundary stays unresolved.
     let unknown_operands = [
-        (&left, left_parameter.as_deref(), left_resolved.as_ref()),
-        (&right, right_parameter.as_deref(), right_resolved.as_ref()),
+        (
+            &left,
+            left_parameter.as_deref(),
+            left_resolved.as_ref(),
+            right_parameter.as_deref(),
+        ),
+        (
+            &right,
+            right_parameter.as_deref(),
+            right_resolved.as_ref(),
+            left_parameter.as_deref(),
+        ),
     ]
     .into_iter()
-    .filter(|(operand, parameter, resolved)| unknown(operand, *parameter, *resolved))
-    .map(|(operand, _, _)| operand.as_str())
+    .filter(|(operand, parameter, resolved, counterpart)| {
+        unknown(operand, *parameter, *resolved, *counterpart)
+    })
+    .map(|(operand, _, _, _)| operand.as_str())
     .collect::<Vec<_>>();
     if let Some(reason) = unresolved_boundary_input(
         owner,
@@ -5058,6 +5270,78 @@ fn looks_like_builder_method(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_constant_the_file_imports_is_not_read_from_a_same_named_declaration() {
+        let source = "mod a { pub const KB: u64 = 1000; }\nmod b {\n    use external::KB;\n}\n";
+        assert!(name_imported_in_file(source, "KB"));
+        assert!(name_imported_in_file("pub use other::{KB, KIB};", "KIB"));
+        assert!(!name_imported_in_file(source, "KIB"));
+        // A longer name that merely contains it, and a comment, are not imports.
+        assert!(!name_imported_in_file("use external::KBPS;\n", "KB"));
+        assert!(!name_imported_in_file("// use external::KB;\n", "KB"));
+    }
+
+    #[test]
+    fn a_duplicate_of_the_initializer_text_cannot_hide_a_flag_rebinding() {
+        let init = "if si { KIB } else { KB }";
+        let body =
+            format!("{{\n let _u0 = {init};\n for si in [false] {{\n let unit = {init};\n }}\n}}");
+        let owner = function(&body);
+        assert!(name_seen_before(&owner, "si", init));
+        let single = function(&format!("{{\n let unit = {init};\n}}"));
+        assert!(!name_seen_before(&single, "si", init));
+    }
+
+    #[test]
+    fn exact_values_compare_plain_decimals_by_digits_only() {
+        assert!(exact_values_equal("1024", "1_024"));
+        assert!(exact_values_equal("1_000", "1000"));
+        assert!(exact_values_equal("\"a\"", "\"a\""));
+        // A suffixed, hex, signed or different value is never parsed into
+        // equality.
+        assert!(!exact_values_equal("1024", "1024u64"));
+        assert!(!exact_values_equal("1024", "0x400"));
+        assert!(!exact_values_equal("1024", "-1024"));
+        assert!(!exact_values_equal("1024", "1_025"));
+        assert!(!exact_values_equal("\"1024\"", "1024"));
+    }
+
+    #[test]
+    fn an_integer_local_meets_only_an_integer_counterpart_cell() {
+        let row = |value: &str| {
+            vec![ParameterValue {
+                parameter: "bytes".to_string(),
+                value: value.to_string(),
+                line: 1,
+                text: String::new(),
+            }]
+        };
+        assert!(counterpart_is_comparable(
+            &row("1_024"),
+            Some("bytes"),
+            "1024"
+        ));
+        // The literal inside `to_string(parse("128.000 GiB"), true)` is not
+        // the compared number.
+        assert!(!counterpart_is_comparable(
+            &row("\"128.000 GiB\""),
+            Some("bytes"),
+            "1024"
+        ));
+        // Nothing to compare against leaves the row as it was.
+        assert!(counterpart_is_comparable(&row("\"x\""), None, "1024"));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("other"),
+            "1024"
+        ));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("bytes"),
+            "\"y\""
+        ));
+    }
+
     #[test]
     fn constructed_field_name_reads_plain_and_shorthand_initializers() {
         assert_eq!(constructed_field_name("retries: 1,"), Some("retries"));

@@ -1140,6 +1140,39 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and `nested_methods_and_comments_inside_conditions`) pin the reader, and
   `bracket_calls_and_loaders_keep_exposed` is the production-path negative
   for bracket-indexed calls and `jest.requireActual(..)` chains.
+- #8569: the same rule reads a guard on a property destructured from an
+  options-object parameter (`{ preserveOrder = true } = {}`) against the
+  object-literal argument of every related test call: an omitted key or an
+  explicit `undefined` applies the literal default, and a spread, computed
+  key, accessor, method, duplicate key, shorthand or non-literal value, a
+  non-object argument, an omitted argument without a `= {}` default, or a
+  default that is not a literal keeps the ladder verdict.
+  `reads_destructured_options_parameters`,
+  `option_defaults_and_literal_objects_decide_the_guard` and
+  `a_reassigned_or_shadowed_option_local_is_not_read` pin the reader, and
+  `an_options_object_guard_no_test_input_enters_withdraws_exposed` and
+  `an_options_object_guard_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
+- #8569: a braceless `if (c)` / `else if (c)` head that directly precedes the
+  changed line makes that line the arm's one statement, read with the same
+  rule. Any other text before the line (a loop head, a nested braceless `if`,
+  a continued condition, an `else` after a braceless arm, or a second
+  statement on the changed line, which the head does not guard) reads no
+  extra condition and only withdraws exclusions.
+  `braceless_arms_read_their_head_and_nothing_else` pins the reader, and
+  `a_braceless_arm_no_test_input_enters_withdraws_exposed` and
+  `a_braceless_arm_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
+- #8569: a line inside a lone `case <literal>:` clause of `switch (identifier)`
+  reads `identifier === literal` when the clause above ends in `break`,
+  `return`, `throw` or `continue`, so only dispatch can enter it. Stacked
+  labels, `default`, a clause reachable by fall-through (including after a
+  braced clause), a computed discriminant, a non-literal label, and a label on
+  the changed line itself read no condition.
+  `switch_clauses_read_a_lone_case_label_and_nothing_else` pins the reader,
+  and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
+  `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
+  production-path positive and negative.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
