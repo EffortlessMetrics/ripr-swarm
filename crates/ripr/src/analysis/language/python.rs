@@ -1116,6 +1116,9 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod unreachable_assertion_tests;
+
+#[cfg(test)]
 mod arm_activation_tests;
 
 #[cfg(test)]

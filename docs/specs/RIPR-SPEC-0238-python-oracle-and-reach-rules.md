@@ -702,6 +702,26 @@ mutant calibrates the rule; ripr reports only the static shape.
     both abstain instead of reading a weak gap. An assertion about unrelated
     text keeps its verdict. `caplog.messages` and `caplog.records` are not
     read by this rule.
+23. **An assertion that cannot run or cannot fail is not read.** The
+    assertion collector skips the dead arm of an `if` or `while` whose
+    condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
+    the arm that can run is still read) and the body of a `try` whose
+    handler catches `AssertionError` (a bare `except`, `Exception`,
+    `BaseException`, `AssertionError`, or a tuple naming one) and does not
+    raise, assert or call a `fail` helper. The `else` and `finally` blocks
+    are still read. A swallowed or dead assertion cannot notice a change, so
+    it must not credit one (`py-trap-dead-branch`,
+    `py-trap-swallowed-assert`, #9691).
+24. **A test the collector skips is activation-controlled.** A parametrize
+    decorator over an empty literal table (`[]` or `()`) and an
+    unconditional module-level `pytest.importorskip(...)`,
+    `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
+    a recognized skip, skipif or xfail mark control every affected test the
+    same way a `@pytest.mark.skip` decorator does: the finding is
+    `static_unknown` with `decorator_indirection`. The adapter does not
+    evaluate whether the module is installed, so `importorskip` of a present
+    module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-module-loaded`, #9691).
 
 ### Verdict ladder
 
@@ -1230,6 +1250,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
+- `crates/ripr/src/analysis/language/python/oracles.rs` (dead arms and
+  swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
+  module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
+  the `py-trap-*` corpus cases.
 
 ## Metrics
 
