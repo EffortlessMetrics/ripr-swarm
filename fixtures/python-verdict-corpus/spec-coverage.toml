@@ -648,27 +648,7 @@ issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
-case = "py-shapes-context-exit-record"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-shapes-dataclass-classmethod-free"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-decorator-retry-count"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-dunder-add"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-dunder-eq-type-guard"
 issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
@@ -731,16 +711,6 @@ reason = "False actionable: boundary check fires on a reversing comparison flip 
 case = "py-hostile-crlf-test-helper-assert"
 issue = 9419
 reason = "False actionable: an assertion inside a helper function in another file reads as reach-only (#9419)."
-
-[[known_false]]
-case = "py-hostile-live-version-branch"
-issue = 9423
-reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
-
-[[known_false]]
-case = "py-hostile-module-constant-pinned"
-issue = 9423
-reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
 
 [[known_false]]
 case = "py-grid-arithmetic-property"
