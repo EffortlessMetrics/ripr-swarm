@@ -424,3 +424,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — plain_diff_multifile_boundary (21)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless plain_diff_multifile_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -23,7 +23,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 19 more detail line(s) in --format human-full

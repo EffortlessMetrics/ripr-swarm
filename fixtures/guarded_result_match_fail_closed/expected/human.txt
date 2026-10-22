@@ -26,7 +26,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 18 more detail line(s) in --format human-full

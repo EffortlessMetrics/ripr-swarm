@@ -32,7 +32,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `pack`
     - infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`
     - 6 more detail line(s) in --format human-full

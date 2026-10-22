@@ -563,3 +563,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_metaclass_limit (22)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless python_metaclass_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

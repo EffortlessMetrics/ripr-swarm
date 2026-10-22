@@ -25,7 +25,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged
     - infection no: No test reaches the changed owner, so no test can activate this change
     - 9 more detail line(s) in --format human-full

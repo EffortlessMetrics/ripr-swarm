@@ -28,7 +28,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach check_score_invariants: validate_score_accepts_in_range_values
     - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
     - 5 more detail line(s) in --format human-full

@@ -173,7 +173,7 @@ decisive stages behind a remainder count (#4324):
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
 ```
 
 The five-line legend immediately follows the compact line, once for the selected
@@ -188,10 +188,14 @@ the shared class vocabulary and per-class discoverability in items 2 and 3 are
 unchanged.
 
 Every stage always carries an evidence line, so the compact line names all
-five stages for every finding and never silently drops one. The discriminator
-token keeps the full evidence line's semantic: the `discriminate` stage grades
-the strongest related oracle, so on a non-`exposed` finding a `yes` grade
-renders as `missing` (a named missing discriminating input exists) or
+five stages for every finding and never silently drops one. The `missing` state
+covers absent inputs and absent assertions, such as an exact error
+variant assertion when the test already supplies the relevant input.
+
+The discriminator token keeps the full evidence line's semantic: the
+`discriminate` stage grades the strongest related oracle, so on a non-`exposed`
+finding a `yes` grade
+renders as `missing` (a named missing discriminator exists) or
 `not established` rather than claiming a discriminator the digest
 simultaneously reports missing. The per-stage prose detail stays in the
 bounded window beneath it: the first two detail lines render verbatim, and

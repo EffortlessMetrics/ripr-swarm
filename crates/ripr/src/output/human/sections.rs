@@ -273,7 +273,7 @@ pub(crate) fn render_finding_digest_with_config(
             "      propagation = changed effect reaches output; observation = assertion observes changed effect;\n",
             "      discriminator = assertion distinguishes intended from wrong behavior\n",
             "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-            "      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
         ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
@@ -293,7 +293,8 @@ pub(crate) fn render_finding_digest_with_config(
 /// `discriminate` stage grades the strongest related oracle, not whether that
 /// oracle distinguishes the changed behavior, so for a non-`exposed` finding
 /// a `yes` grade must not read as "a discriminator exists" — the digest may
-/// simultaneously name the missing discriminating input. Mirror the semantic
+/// simultaneously name the missing discriminator (an input or assertion).
+/// Mirror the semantic
 /// `discriminator_evidence_line` keeps for the full evidence line: only an
 /// `exposed` finding (or a non-`yes` grade) prints the bare state.
 fn compact_discriminator_token(finding: &Finding) -> &'static str {

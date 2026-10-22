@@ -574,3 +574,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_test (23)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless python_same_stem_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

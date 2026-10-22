@@ -393,3 +393,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_single_hop (19)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless typescript_reexport_single_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

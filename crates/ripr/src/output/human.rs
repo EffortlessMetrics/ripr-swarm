@@ -6509,7 +6509,7 @@ mod tests {
             "weak = partial evidence",
             "no = evidence not found",
             "unknown/opaque = analysis limited",
-            "missing = named input absent from tests",
+            "missing = named discriminator absent from tests",
             "not established = discriminator unconfirmed",
             "not applicable = stage unused",
         ] {
@@ -6602,6 +6602,25 @@ mod tests {
             !digest.contains("discriminator yes"),
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
         );
+
+        // Missing facts also come from assertion gaps, even when the test
+        // already supplies the activating input (weak_error_oracle fixture).
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "AuthError::RevokedToken".to_string(),
+            reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
+            flow_sink: None,
+        }];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("· discriminator missing\n"), "{digest}");
+        assert!(
+            digest.contains("missing = named discriminator absent from tests"),
+            "{digest}"
+        );
+        assert!(!digest.contains("missing = named input absent from tests"));
 
         let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();

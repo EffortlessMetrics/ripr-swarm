@@ -217,3 +217,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (19)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

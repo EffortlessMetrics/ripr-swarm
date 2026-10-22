@@ -23,7 +23,7 @@ Start here:
       propagation = changed effect reaches output; observation = assertion observes changed effect;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: No test is seen calling parse_summary; tests share only its file or a name token: parse_summary_callee_witness_pins_variant, parse_summary_other_receiver_pins_same_vari…
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 9 more detail line(s) in --format human-full

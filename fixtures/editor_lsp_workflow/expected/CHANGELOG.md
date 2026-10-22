@@ -495,3 +495,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — editor_lsp_workflow (21)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
