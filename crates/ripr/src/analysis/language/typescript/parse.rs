@@ -203,8 +203,7 @@ pub(crate) fn unsupported_syntax_finding(
 /// test observes the member's numeric value is not statically known, so the
 /// honest verdict is limited, never exposed and never actionable.
 pub(crate) fn enum_member_finding(file: &Path, line: usize, line_text: &str) -> Finding {
-    let id_path: String = file
-        .display()
+    let id_path: String = normalized_path(file)
         .to_string()
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
@@ -213,7 +212,8 @@ pub(crate) fn enum_member_finding(file: &Path, line: usize, line_text: &str) -> 
         "probe",
         &id_path,
         "typescript_preview_enum_member",
-        "",
+        // Line-qualified: identical member text in two enums must not share an id.
+        &format!("line_{line}"),
         &normalize_expression(line_text),
         1,
     );

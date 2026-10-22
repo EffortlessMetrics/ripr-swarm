@@ -16007,6 +16007,25 @@ fn changed_enum_member_is_a_limited_finding_not_silence() -> Result<(), String> 
         (3, "  High = 3,"),
     )?;
     assert!(ambient.is_empty(), "{ambient:?}");
+
+    // Identical member text in two enums must not collapse into one probe id.
+    let root = ts_unique_tempdir("enum-member-twin")?;
+    ts_write_file(
+        &root.join("src/level.ts"),
+        "export enum A {\n  None = 0,\n}\nexport enum B {\n  None = 0,\n}\n",
+    )?;
+    let twin = TypeScriptAdapter
+        .analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/level.ts",
+                &[(2, "  None = 0,"), (5, "  None = 0,")],
+            )],
+        )?
+        .findings;
+    assert_eq!(twin.len(), 2, "{twin:?}");
+    assert_ne!(twin[0].probe.id, twin[1].probe.id);
     Ok(())
 }
 
