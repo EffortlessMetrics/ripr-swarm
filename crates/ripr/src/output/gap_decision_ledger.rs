@@ -4885,7 +4885,12 @@ mod tests {
         // longer related, so `python_adversarial_free_function_module_collision`
         // and the `legacy.py` finding of `python_src_layout_package_import`
         // read `no_static_path` and drop their two orthogonal cards.
-        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 14, 1) {
+        // #9429: `python_unreached_match_arm` and `python_unreached_get_default`
+        // downgrade a changed arm or `.get` default no observed input reaches
+        // to `weakly_exposed` (RIPR-SPEC-0260); each card names the missing
+        // discriminator and stays direct-aligned. Their `_control` twins reach
+        // the edit, stay exposed and carry no card.
+        if (direct, no_strong, orthogonal, family_selection) != (8, 27, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

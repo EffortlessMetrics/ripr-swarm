@@ -205,6 +205,7 @@ discriminator is not established either way, and a stop reason
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.
 
+<<<<<<< HEAD
 **Rule 5. A callback that must settle a `done` test is read as the test's own.**
 (Added 2026-10-22.) When a test callback takes a first parameter `d` (mocha
 `done`), a call in the test, other than the forms rule 2 reads, passes an
@@ -227,6 +228,18 @@ expectation equal to exactly one of them tells the two apart and keeps the
 witness. This includes a test that still pins the unchanged value, which
 fails against the changed code. An expectation equal to both or to neither
 is dead, as before.
+=======
+The receiver is the call chain the `.then(` hangs from. When the `.then(`
+leads its own line (the prettier layout) the receiver runs back through the
+lines that continue the chain (they begin with `.`, even when several steps
+such as `.catch(...).then(` share one) and the one line that
+opens it, and stops at a line holding a `;` (which is not read) or a blank
+line, so an earlier statement is never read as the receiver. The owner call may be a bare call, a member call
+whose whole receiver is an identifier chain (`this.owner(x)`, `ns.owner(x)`,
+`a?.owner(x)`), or a generic call (`owner<T>(x)`); a call or index step anywhere in
+the receiver (`f().owner(x)`, `f().a.owner(x)`, `a[0].owner(x)`) is some other receiver and
+does not tie (#9354).
+>>>>>>> origin/main
 
 ### Decisions
 
