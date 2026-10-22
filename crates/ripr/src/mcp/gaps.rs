@@ -28,6 +28,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// The governed inline `#[cfg(test)]` module the repair is confined to,
+    /// when the fix site is the seam's own production file (#5516). `None`
+    /// for a test-surface fix site.
+    pub(crate) inline_test_module: Option<String>,
 }
 
 /// Producer-fact repair readiness for one canonical item, computed once when
@@ -82,6 +86,21 @@ impl RepairReadiness {
             self.fix_site = None;
             self.ineligibility = Some(*code);
             self.seam_detail = Some(detail.clone());
+        }
+        // A fix site on the seam's own production file is not a test surface,
+        // but the shared validator admitted that seam with its one governed
+        // inline test module as the edit target (#5210). Promote only when
+        // that module's file is exactly the fix site the finding named, so
+        // the confinement stated here is the one the cage enforces; any
+        // other combination stays refused.
+        if let Some(SeamVerdict::AdmittedInline { file, module }) = verdict
+            && self.ineligibility == Some("fix_site_not_test_surface")
+            && let Some(site) = self.fix_site.as_mut()
+            && site.file == *file
+        {
+            site.inline_test_module = Some(module.clone());
+            self.ready = true;
+            self.ineligibility = None;
         }
         self
     }
@@ -166,6 +185,7 @@ impl RepairReadiness {
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
+                inline_test_module: None,
             })
             .collect::<Vec<_>>();
         let Some(first) = candidates.first().cloned() else {
@@ -213,7 +233,7 @@ impl RepairReadiness {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
+                "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
             }
             Some(
                 crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
@@ -225,6 +245,13 @@ impl RepairReadiness {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.inline_test_module.is_some()) =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
+            }
             None => {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface"
             }
@@ -1205,6 +1232,63 @@ mod tests {
         Ok(())
     }
 
+    fn not_test_surface_readiness(file: &str) -> RepairReadiness {
+        let mut readiness = ready_readiness();
+        readiness.ready = false;
+        readiness.ineligibility = Some("fix_site_not_test_surface");
+        if let Some(site) = readiness.fix_site.as_mut() {
+            site.file = file.to_string();
+        }
+        readiness
+    }
+
+    /// #5516: only the exact inline module the shared validator admitted can
+    /// lift `fix_site_not_test_surface`; a different file, a plain admission
+    /// or no verdict keeps the refusal, and a refusal still wins.
+    #[test]
+    fn inline_admission_lifts_only_the_matching_non_surface_fix_site() -> Result<(), String> {
+        let inline = SeamVerdict::AdmittedInline {
+            file: "src/lib.rs".to_string(),
+            module: "tests".to_string(),
+        };
+        let lifted = not_test_surface_readiness("src/lib.rs").with_seam_verdict(Some(&inline));
+        let site = lifted
+            .fix_site
+            .as_ref()
+            .ok_or("lifted readiness lost its fix site")?;
+        if !lifted.ready
+            || lifted.ineligibility.is_some()
+            || site.inline_test_module.as_deref() != Some("tests")
+            || !lifted.reason().contains("governed inline")
+            || lifted.reason().contains("on a test surface")
+        {
+            return Err(format!(
+                "matching inline admission did not lift: {lifted:?}"
+            ));
+        }
+        let other_file = not_test_surface_readiness("src/other.rs");
+        for (name, readiness, verdict) in [
+            ("different file", other_file.clone(), Some(&inline)),
+            (
+                "plain admission",
+                other_file.clone(),
+                Some(&SeamVerdict::Admitted),
+            ),
+            ("no verdict", other_file.clone(), None),
+        ] {
+            let kept = readiness.clone().with_seam_verdict(verdict);
+            if kept != readiness {
+                return Err(format!("{name} must keep the refusal: {kept:?}"));
+            }
+        }
+        // A test-surface site is never rewritten by an inline verdict.
+        let surface = ready_readiness().with_seam_verdict(Some(&inline));
+        if surface != ready_readiness() {
+            return Err(format!("test-surface readiness changed: {surface:?}"));
+        }
+        Ok(())
+    }
+
     fn ready_readiness() -> RepairReadiness {
         RepairReadiness {
             ready: true,
@@ -1214,6 +1298,7 @@ mod tests {
                 line: 2,
                 oracle: Some("assert_eq!(f(), 1);".to_string()),
                 oracle_kind: "exact_value",
+                inline_test_module: None,
             }),
             ineligibility: None,
             seam_detail: None,
@@ -1420,10 +1505,10 @@ mod tests {
         };
         let reason = readiness.reason();
         for needle in [
-            "only test-surface paths can be the authored edit target",
+            "only test-surface paths or that admitted module can be the authored edit target",
             "inline",
             "#[cfg(test)]",
-            "don't qualify their file",
+            "did not admit",
         ] {
             if !reason.contains(needle) {
                 return Err(format!(

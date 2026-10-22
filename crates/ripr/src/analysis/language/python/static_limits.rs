@@ -99,6 +99,23 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A route decorator edit changes where the handler is registered, which
+    // only a client call to a route observes; a test that calls the function
+    // directly never sees it (#9756).
+    if is_route_decorator_edit(trimmed)
+        && !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: "static_limit decorator_indirection: route registration edit".to_string(),
+            missing: format!(
+                "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
+                owner.qualified_name
+            ),
+        });
+    }
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
@@ -434,6 +451,14 @@ fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[Pytho
         .iter()
         .any(|import| import.alias == decorator && import.source_module != "functools");
     from_functools && !competing_alias
+}
+
+/// A changed line that is itself a static route decorator (`@app.get("/a")`).
+fn is_route_decorator_edit(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix('@')
+        .and_then(|rest| rest.split('(').next())
+        .is_some_and(is_static_route_decorator)
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
