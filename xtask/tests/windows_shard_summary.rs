@@ -6,6 +6,23 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// `bash` on a Windows PATH can be the WSL launcher in System32, which fails
+/// without an installed distribution. Prefer Git for Windows' bash there.
+fn bash() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(files) = std::env::var_os("ProgramFiles") {
+            let git_bash = PathBuf::from(files)
+                .join("Git")
+                .join("bin")
+                .join("bash.exe");
+            if git_bash.exists() {
+                return git_bash;
+            }
+        }
+    }
+    PathBuf::from("bash")
+}
+
 fn summarize_step() -> Result<String, String> {
     let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../.github/workflows/windows-advisory-shards.yml");
@@ -36,7 +53,7 @@ fn colored_nextest_rows_still_reach_the_summary() -> Result<(), String> {
     let summary = dir.join("summary.md");
     let script = dir.join("step.sh");
     fs::write(&script, summarize_step()?).map_err(|e| e.to_string())?;
-    let status = Command::new("bash")
+    let status = Command::new(bash())
         .arg(&script)
         .current_dir(&dir)
         .env("GITHUB_STEP_SUMMARY", &summary)
