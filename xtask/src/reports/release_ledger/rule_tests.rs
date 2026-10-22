@@ -485,3 +485,74 @@ fn short_commit_ids_do_not_panic_the_override_reference() -> Result<(), String> 
         "short id reference",
     )
 }
+
+fn derive_args(facts: &str, packet: &str, output: &str) -> Vec<String> {
+    [
+        "derive", "--facts", facts, "--packet", packet, "--output", output,
+    ]
+    .iter()
+    .map(|arg| (*arg).to_string())
+    .collect()
+}
+
+#[test]
+fn repeated_derive_flags_are_rejected_before_any_file_is_read() -> Result<(), String> {
+    let mut args = derive_args("a.json", "b.json", "c.json");
+    args.extend(["--facts".to_string(), "other.json".to_string()]);
+    let error = super::super::release_ledger(&args)
+        .err()
+        .ok_or("accepted a repeated flag")?;
+    require(
+        error.contains("--facts") && error.contains("more than once"),
+        &format!("the repeated flag is named: {error}"),
+    )
+}
+
+#[test]
+fn failed_derivation_leaves_an_existing_output_untouched() -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-derive-keep-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    // The fixture range does not start at the pinned 0.11 base, so validation fails.
+    let input = facts(vec![commit(
+        5,
+        Some(1),
+        "present_effective",
+        &["docs/a.md"],
+    )]);
+    let facts_path = dir.join("facts.json");
+    let packet_path = dir.join("packet.json");
+    let output_path = dir.join("ledger.json");
+    std::fs::write(
+        &facts_path,
+        serde_json::to_string(&input).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        &packet_path,
+        r#"{"claims":[],"open_prs":{"captured_at_main":null,"rows":[]}}"#,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&output_path, "previous ledger").map_err(|error| error.to_string())?;
+    let path = |p: &std::path::Path| p.to_string_lossy().into_owned();
+    let error = super::super::release_ledger(&derive_args(
+        &path(&facts_path),
+        &path(&packet_path),
+        &path(&output_path),
+    ))
+    .err()
+    .ok_or("derivation of an unpinned range succeeded")?;
+    require(
+        error.contains("derived ledger is invalid"),
+        &format!("validation failure expected: {error}"),
+    )?;
+    let kept = std::fs::read_to_string(&output_path).map_err(|error| error.to_string())?;
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    require(
+        kept == "previous ledger",
+        "the existing output was replaced",
+    )
+}
