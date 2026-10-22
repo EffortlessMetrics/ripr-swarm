@@ -34,9 +34,12 @@ and bounded drains.
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
 and a changed file whose finding must stay visible. `pilot` is the only route
-that reads every Rust file and discloses `rust_nesting_budget`; the disclosure
-is on stderr, so the pilot row reads stderr plus the `repo-exposure.json` seam
-list.
+that reads every Rust file. A declined Rust file is a typed limitation on both
+routes (#9308): `check` reports `analysis_complete=false` with a
+`producer_failure` limitation naming the file and `rust_nesting_budget`; the
+pilot row requires the summary's `declined_rust_files` entry, a
+`limited_declined_files` `run_status` and a `rust_files_declined` limitation in
+`repo-exposure.json`, plus the unaffected seam.
 
 ## Result taxonomy
 
@@ -84,8 +87,6 @@ LSP, prove absence of every crash or hang class, or establish latency.
 
 Known gaps against the child issues, each deliberate for this first harness:
 
-- `check` does not project the Rust `rust_nesting_budget` decline, so those rows
-  assert termination and changed-file evidence only (#9308).
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
 - #4510 controls not built: planted ambient `ripr`, foreign CWD with a decoy
   repository, preseeded stale artifact, simulated cleanup failure.
