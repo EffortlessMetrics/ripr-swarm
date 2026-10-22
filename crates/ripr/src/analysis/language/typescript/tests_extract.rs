@@ -2843,6 +2843,22 @@ fn test_name_and_assertions_from_registration(
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
+    // `node:test` / AVA-style contexts end a running test as skipped or todo
+    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 15):
+    // the run passes however the later assertions would have gone, so the
+    // test registers no discriminator. Textual and fail-closed: any call of
+    // those methods on the callback's first parameter withdraws the test,
+    // exactly like a `.skip` registration.
+    if let Some(context) = test_callback_receiver_name(callback)
+        && body_calls_context_skip(
+            source
+                .get(call.span.start as usize..call.span.end as usize)
+                .unwrap_or_default(),
+            &context,
+        )
+    {
+        return None;
+    }
     // A first parameter named like an imported assertion binding
     // (`const assert = require('node:assert')` + `it('x', function (assert)
     // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
@@ -2928,6 +2944,22 @@ fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
         Expression::CallExpression(call) => callee_root_name(&call.callee),
         _ => None,
     }
+}
+
+/// Whether `text` calls `<context>.skip(` or `<context>.todo(` (a whole
+/// identifier before the dot, optional whitespace before the paren).
+fn body_calls_context_skip(text: &str, context: &str) -> bool {
+    ["skip", "todo"].into_iter().any(|method| {
+        let needle = format!("{context}.{method}");
+        text.match_indices(&needle).any(|(at, _)| {
+            let before_ok = text
+                .get(..at)
+                .and_then(|head| head.chars().next_back())
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+            let after = text.get(at + needle.len()..).unwrap_or_default();
+            before_ok && after.trim_start().starts_with('(')
+        })
+    })
 }
 
 /// Extract the name bound to the test callback's first parameter.

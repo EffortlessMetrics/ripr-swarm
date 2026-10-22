@@ -913,3 +913,45 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};"), vec!["wrap".to_string()]);
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
+
+/// RIPR-SPEC-0243 rule 15 (#9497): a `node:test` callback that calls
+/// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
+/// have gone, so it registers no discriminator. Negative: the same body
+/// without the call, a `skip` on another receiver, and a callback with no
+/// context parameter stay extracted.
+#[test]
+fn context_skip_and_todo_withdraw_the_test_but_other_receivers_do_not() {
+    let source = r#"
+import test from "node:test";
+test("skips", (t) => {
+    t.skip("not ready");
+    assert.equal(price(150), 130);
+});
+test("todo", (ctx) => {
+    ctx.todo();
+    assert.equal(price(150), 130);
+});
+test("plain", (t) => {
+    assert.equal(price(150), 130);
+});
+test("other receiver", (t) => {
+    other.skip("not ready");
+    assert.equal(price(150), 130);
+});
+test("longer name", (t) => {
+    wt.skip();
+    t.skipped();
+    assert.equal(price(150), 130);
+});
+test("no context", () => {
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["plain", "other receiver", "longer name", "no context"],
+        "{tests:?}"
+    );
+}

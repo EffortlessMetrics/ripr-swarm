@@ -1057,6 +1057,123 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     out
 }
 
+/// RIPR-SPEC-0243 rule 16: the changed single-line `return <expression>;`
+/// is shown unexercised when EVERY strong assertion of every oracle-eligible
+/// related test observes owner calls whose arguments are all literals and on
+/// which the old and the new expression evaluate to the same value. Such an
+/// assertion passes on both versions, so crediting it would be a false
+/// discriminator (a clamp's untouched lower arm, a ternary's other branch).
+/// Fail-closed toward the existing verdict: any assertion, call or argument
+/// the evaluator cannot decide, any parameter reassignment in the owner, or
+/// any mock / class-pin credit leaves the finding as it was, so this check
+/// can only withdraw credit, never add it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "structurally distinct finding inputs; bundling them would allocate"
+)]
+pub(crate) fn ts_returned_expression_unexercised(
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    other_credit_present: bool,
+) -> bool {
+    if other_credit_present || owner.arity.is_none() || owner.params.is_empty() {
+        return false;
+    }
+    let (Some(old_line_text), Some(root)) = (old_line_text, workspace_root) else {
+        return false;
+    };
+    let (Some(old_expression), Some(new_expression)) = (
+        returned_line_expression(old_line_text),
+        returned_line_expression(line_text),
+    ) else {
+        return false;
+    };
+    // An earlier statement may rebind a parameter, so the call arguments
+    // would not be the values the returned expression reads.
+    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
+        return false;
+    };
+    let body_text: String = source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| {
+            let number = index + 1;
+            number > owner.start_line && number <= owner.end_line && number != line
+        })
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if owner
+        .params
+        .iter()
+        .any(|param| identifier_written_in(&body_text, param))
+    {
+        return false;
+    }
+    let mut evaluated = false;
+    for candidate in candidates {
+        if !candidate.relation.uses_oracle() {
+            continue;
+        }
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            return false;
+        }
+        let receivers =
+            unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        for assertion in &candidate.test.assertions {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                continue;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
+            if argument_lists.is_empty()
+                && let Some(arguments) = ts_observed_local_owner_call_arguments(
+                    candidate.test,
+                    assertion,
+                    &owner.name,
+                    &receivers,
+                )
+            {
+                argument_lists.push(arguments);
+            }
+            if argument_lists.is_empty() {
+                return false;
+            }
+            for arguments in argument_lists {
+                match literal_eval::return_expressions_agree(
+                    &owner.file,
+                    old_expression,
+                    new_expression,
+                    &owner.params,
+                    &arguments,
+                ) {
+                    Some(true) => evaluated = true,
+                    _ => return false,
+                }
+            }
+        }
+    }
+    evaluated
+}
+
+/// The expression of a complete one-line `return <expression>;`.
+fn returned_line_expression(line_text: &str) -> Option<&str> {
+    let expression = line_text
+        .trim()
+        .strip_prefix("return ")?
+        .trim_end()
+        .strip_suffix(';')?
+        .trim();
+    (!expression.is_empty()).then_some(expression)
+}
+
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.
 ///
 /// Fires for SideEffect / CallDeletion families (effect sink swallowed by
@@ -5199,9 +5316,21 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         )
     });
+    let returned_expression_unexercised = strong_oracle_present
+        && ts_returned_expression_unexercised(
+            line,
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            alias_map,
+            workspace_root,
+            !pin_facts.is_empty() || lookup_change.is_some(),
+        );
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
+        && !returned_expression_unexercised
         && ts_changed_value_is_observed(
             &probe_shape,
             line_text,
@@ -5284,6 +5413,11 @@ pub(crate) fn classify_change_with_alias_state(
                     .map(|key| format!("`{key}`"))
                     .collect::<Vec<_>>()
                     .join(", "),
+                owner.name
+            )
+        } else if returned_expression_unexercised {
+            format!(
+                "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
                 owner.name
             )
         } else if boundary_witnessed {
