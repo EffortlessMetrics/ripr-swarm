@@ -743,7 +743,10 @@ fn an_edited_arm_refuses_wrappers_dead_expectations_and_shadowed_roots() -> Resu
         "  return level === Level.High ? 10 : 1;",
         &foreign,
     )?;
-    assert_not_credited(&finding, "a Level imported from another module is not the owner's enum");
+    assert_not_credited(
+        &finding,
+        "a Level imported from another module is not the owner's enum",
+    );
     Ok(())
 }
 
