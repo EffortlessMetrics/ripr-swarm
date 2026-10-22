@@ -552,6 +552,30 @@ id = "RIPR-SPEC-0243"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
+# TypeScript Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0027"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript Bounded Re-Export Test Discovery
+[[spec]]
+id = "RIPR-SPEC-0095"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript toThrow Exact-Payload Oracle Upgrade
+[[spec]]
+id = "RIPR-SPEC-0097"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript Exposed Observation Guard
+[[spec]]
+id = "RIPR-SPEC-0098"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # TypeScript corpus oracle amendments
 [[spec]]
 id = "RIPR-SPEC-0246"
