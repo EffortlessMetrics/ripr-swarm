@@ -329,6 +329,9 @@ fn run_git_deadline(
         .current_dir(root)
         .env("GIT_CONFIG_GLOBAL", null_config)
         .env("GIT_CONFIG_SYSTEM", null_config)
+        // Git reads its default ignore/attributes files independently of
+        // global config, including a HOME fallback when XDG is unset.
+        .env("XDG_CONFIG_HOME", root.join(".git").join("fixture-xdg"))
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -473,6 +476,29 @@ mod tests {
                 ]
             )?,
             "command\n"
+        );
+        // Isolating default global ignores must retain explicit fixture
+        // choices, including a command-line override of the local file.
+        std::fs::write(root.join("local.ignore"), "local.txt\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("command.ignore"), "command.txt\n")
+            .map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["config", "core.excludesFile", "local.ignore"])?;
+        assert_eq!(
+            fixture_git_output(&root, &["check-ignore", "local.txt"])?,
+            "local.txt\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "core.excludesFile=command.ignore",
+                    "check-ignore",
+                    "command.txt"
+                ]
+            )?,
+            "command.txt\n"
         );
         Ok(())
     }
