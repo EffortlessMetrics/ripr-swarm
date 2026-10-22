@@ -382,7 +382,7 @@ mod tests {
             );
             assert_eq!(alias_fact_text(&body, "target"), [format!("{target}(2)")]);
             assert_eq!(
-                local_fn_pointer_call(&body, "f (2)"),
+                local_fn_pointer_call(&body, "f (2)", "assert_eq!(f (2), 6)", 2),
                 Some(format!("{target}(2)"))
             );
         }
@@ -403,8 +403,45 @@ mod tests {
             "fn t() { ignored! { let f: fn(u32) -> u32 = target; f(2); } }",
             "fn t() { let _: fn(u32) -> u32 = target; _(2); }",
         ] {
-            assert!(local_fn_pointer_call(body, "f(2)").is_none(), "{body}");
             assert!(alias_fact_text(body, "target").is_empty(), "{body}");
+        }
+    }
+
+    #[test]
+    fn typed_pointer_refuses_scope_escape_attributes_and_shadowing() {
+        for body in [
+            "fn t() { if false { let f: fn(u32) -> u32 = target; f(0); } assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { fn r#f(_: u32) -> u32 { 6 } assert_eq!(f(2), 6); } }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { use decoy::*; assert_eq!(f(2), 6); } }",
+            "fn t() { #[cfg(any())] let f: fn(u32) -> u32 = crate::target; assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { struct f(u32); let _ = f(2); } }",
+        ] {
+            assert!(alias_fact_text(body, "target").is_empty(), "{body}");
+            assert!(
+                local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_pin_requires_the_adjacent_original_assertion() {
+        let body = "fn t() {\n let f: fn(u32) -> u32 = target;\n assert_eq!(f(2), 6);\n { assert_eq!(f(2), 6); }\n}";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 2).is_some());
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 3).is_none());
+        let body = "fn t() { let f: fn(u32) -> u32 = target; let _ = f(0); assert_eq!(f(2), 6); }";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none());
+    }
+
+    #[test]
+    fn refused_annotations_consume_the_typed_alias_budget() {
+        for (refused, accepted) in [(63, true), (64, false)] {
+            let mut body = String::from("fn t() {\n");
+            for at in 0..refused {
+                body.push_str(&format!("let _discard{at}: Callable = other;\n"));
+            }
+            body.push_str("let f: fn(u32) -> u32 = target;\nassert_eq!(f(2), 6);\n}");
+            assert_eq!(!alias_fact_text(&body, "target").is_empty(), accepted);
         }
     }
 

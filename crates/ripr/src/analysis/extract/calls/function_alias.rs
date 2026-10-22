@@ -4,7 +4,10 @@ use super::MAX_CALL_FACTS_PER_LINE;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::CallFact;
 use crate::analysis::syntax::{parse_clean_source_file, source_binds_value_name};
-use ra_ap_syntax::{AstNode, ast};
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasAttrs, HasName},
+};
 
 /// Most `let` aliases considered per body; each costs a body scan, so the
 /// count is bounded. Aliases past the cap are ignored (less reach evidence).
@@ -137,6 +140,7 @@ fn is_ident_byte(byte: u8) -> bool {
 fn local_fn_aliases<'a>(masked: &'a str, source: &str) -> Vec<LocalFnAlias<'a>> {
     let bytes = masked.as_bytes();
     let mut aliases = Vec::new();
+    let mut typed_candidates = 0;
     let mut search = 0;
     while aliases.len() < MAX_LOCAL_ALIASES_PER_BODY
         && let Some(found) = masked[search..].find("let")
@@ -158,10 +162,16 @@ fn local_fn_aliases<'a>(masked: &'a str, source: &str) -> Vec<LocalFnAlias<'a>> 
         let name = &trimmed[..name_len];
         let after_name = trimmed[name_len..].trim_start();
         let (rhs, pointer) = if let Some(annotated) = after_name.strip_prefix(':') {
-            let Some((annotation, rhs)) = annotated.split_once('=') else {
+            // Refused annotations also consume the parse budget. Otherwise a
+            // body full of invalid typed lets could repeatedly parse the body.
+            if typed_candidates == MAX_LOCAL_ALIASES_PER_BODY {
+                continue;
+            }
+            typed_candidates += 1;
+            let Some((_, rhs)) = annotated.split_once('=') else {
                 continue;
             };
-            if !safe_fn_pointer_type(annotation) {
+            if root_fn_pointer_binding(source, at, name).is_none() {
                 continue;
             }
             (rhs, true)
@@ -183,7 +193,11 @@ fn local_fn_aliases<'a>(masked: &'a str, source: &str) -> Vec<LocalFnAlias<'a>> 
         let Some(target) = simple_fn_path_target(path) else {
             continue;
         };
-        if !path.contains("::") && (!pointer || source_binds_value_name(source, target)) {
+        if !path.contains("::")
+            && (!pointer
+                || source_binds_value_name(source, target)
+                || source_declares_name(source, target))
+        {
             continue;
         }
         if inside_macro_group(masked, at) {
@@ -203,30 +217,81 @@ fn local_fn_aliases<'a>(masked: &'a str, source: &str) -> Vec<LocalFnAlias<'a>> 
     aliases
 }
 
-fn safe_fn_pointer_type(annotation: &str) -> bool {
-    // Only annotations pay for a type parse; ordinary aliases keep their lexical path.
-    let Some(parse) = parse_clean_source_file(&format!("type RiprAlias = {annotation};")) else {
-        return false;
-    };
-    let Some(ast::Type::FnPtrType(pointer)) = parse
-        .tree()
+/// Typed aliases use the actual root statement, never text in another block,
+/// a disabled binding, or a declaration whose name can be shadowed locally.
+fn root_fn_pointer_binding(source: &str, at: usize, name: &str) -> Option<ast::LetStmt> {
+    let parse = parse_clean_source_file(source)?;
+    let mut functions = parse.tree().syntax().children().filter_map(ast::Fn::cast);
+    let function = functions.next()?;
+    if functions.next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    if body
         .syntax()
         .descendants()
-        .find_map(ast::TypeAlias::cast)
-        .and_then(|alias| alias.ty())
-    else {
-        return false;
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| tree.star_token().is_some())
+    {
+        return None;
+    }
+    let binding = body.stmt_list()?.statements().find_map(|statement| {
+        let ast::Stmt::LetStmt(binding) = statement else {
+            return None;
+        };
+        (usize::from(binding.let_token()?.text_range().start()) == at).then_some(binding)
+    })?;
+    if binding.attrs().next().is_some() || binding.let_else().is_some() {
+        return None;
+    }
+    let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+        return None;
     };
-    pointer.unsafe_token().is_none()
+    let declared = pattern.name()?;
+    if pattern.mut_token().is_some()
+        || pattern.ref_token().is_some()
+        || pattern.pat().is_some()
+        || declared.text() != name
+        || body
+            .syntax()
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .filter(|declared| declared.text().trim_start_matches("r#") == name)
+            .count()
+            != 1
+    {
+        return None;
+    }
+    let ast::Type::FnPtrType(pointer) = binding.ty()? else {
+        return None;
+    };
+    (pointer.unsafe_token().is_none()
         && pointer.abi().is_none()
         && pointer.async_token().is_none()
-        && pointer.const_token().is_none()
+        && pointer.const_token().is_none())
+    .then_some(binding)
+}
+
+fn source_declares_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source).is_none_or(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .any(|declared| declared.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Resolve a complete directly asserted pointer call with the very same
 /// binding/use rules that produce its call fact. The owner pin still resolves
 /// the returned path to its actual definition and admits the original assertion.
-pub(crate) fn local_fn_pointer_call(body: &str, operand: &str) -> Option<String> {
+pub(crate) fn local_fn_pointer_call(
+    body: &str,
+    operand: &str,
+    assertion: &str,
+    assertion_line_offset: usize,
+) -> Option<String> {
     if !body.contains(':') {
         return None;
     }
@@ -245,6 +310,15 @@ pub(crate) fn local_fn_pointer_call(body: &str, operand: &str) -> Option<String>
     let alias = local_fn_aliases(&masked, body).into_iter().find(|alias| {
         alias.pointer && alias.alias == name && alias_is_unambiguous(&masked, alias)
     })?;
+    let binding = root_fn_pointer_binding(body, alias.line_offset, name)?;
+    let next = binding.syntax().next_sibling()?;
+    let start = usize::from(next.text_range().start());
+    if body.get(..start)?.matches('\n').count() != assertion_line_offset
+        || next.text().to_string().trim().trim_end_matches(';').trim()
+            != assertion.trim().trim_end_matches(';').trim()
+    {
+        return None;
+    }
     Some(format!("{}{}", alias.path, &operand[open..=close]))
 }
 
@@ -269,11 +343,12 @@ fn simple_fn_path_target(path: &str) -> Option<&str> {
 /// The alias is bound exactly once and every other mention is a direct call
 /// after the binding.
 ///
-/// Limitation: block scope is not modeled. The decision is body-wide, so a
+/// For legacy untyped aliases block scope is not modeled. The decision is body-wide, so a
 /// same-named mention in any other block (a shadowing parameter, pattern or
 /// loop binding, a macro, a field) disables the alias for the whole body
-/// instead of being scoped out. That only drops reach evidence; it never
-/// credits a call the alias does not make.
+/// instead of being scoped out. Typed aliases additionally require a unique
+/// root declaration and refuse local globs; owner pins require its adjacent
+/// assertion at the original source coordinate.
 fn alias_is_unambiguous(masked: &str, alias: &LocalFnAlias<'_>) -> bool {
     let bytes = masked.as_bytes();
     let name = alias.alias;

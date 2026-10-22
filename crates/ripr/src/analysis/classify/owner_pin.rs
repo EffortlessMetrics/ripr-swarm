@@ -3340,8 +3340,12 @@ impl OwnerReturnPin {
                         return None;
                     }
                     helper_arguments::expected_literal(operands[other], index)?;
-                    let call =
-                        crate::analysis::extract::local_fn_pointer_call(&test.body, operands[at])?;
+                    let call = crate::analysis::extract::local_fn_pointer_call(
+                        &test.body,
+                        operands[at],
+                        &assertion.text,
+                        assertion.line.checked_sub(test.start_line)?,
+                    )?;
                     self.awaited_call_shape(&call, &self.name)?;
                     Some((at, call))
                 })

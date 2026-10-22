@@ -69,6 +69,26 @@ const CASES: &[(&str, &str, bool)] = &[
         "let f: fn(u32) -> u32 = call_through_pointer; if false { assert_eq!(f(2), 6); }",
         false,
     ),
+    (
+        "scope_escape",
+        "if false { let f: fn(u32) -> u32 = call_through_pointer; let _ = f(0); } assert_eq!(f(2), 6);",
+        false,
+    ),
+    (
+        "raw_shadow",
+        "let f: fn(u32) -> u32 = crate::call_through_pointer; { fn r#f(_: u32) -> u32 { 6 } assert_eq!(f(2), 6); }",
+        false,
+    ),
+    (
+        "glob_shadow",
+        "let f: fn(u32) -> u32 = crate::call_through_pointer; { use crate::tests::decoy::*; assert_eq!(f(2), 6); }",
+        false,
+    ),
+    (
+        "cfg_binding",
+        "#[cfg(any())] let f: fn(u32) -> u32 = crate::call_through_pointer; assert_eq!(f(2), 6);",
+        false,
+    ),
 ];
 
 fn source(body: &str) -> String {
@@ -80,7 +100,8 @@ fn source(body: &str) -> String {
 mod tests {{
     use super::*;
     fn other(_: u32) -> u32 {{ 6 }}
-    mod decoy {{ pub fn call_through_pointer(_: u32) -> u32 {{ 6 }} }}
+    fn f(_: u32) -> u32 {{ 6 }}
+    mod decoy {{ pub fn call_through_pointer(_: u32) -> u32 {{ 6 }} pub fn f(_: u32) -> u32 {{ 6 }} }}
     #[test]
     fn owner_through_a_fn_pointer() {{
         {body}

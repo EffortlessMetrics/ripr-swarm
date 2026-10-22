@@ -335,11 +335,16 @@ rule only for an assertion whose context was admitted.
    A sync free function returning a primitive scalar may also be pinned through
    `let f: fn(..) -> Scalar = owner_path; assert_eq!(f(args), literal)`
    (#9478), with either operand order. The shared local-alias reader requires
-   one immutable ASCII identifier binding, a safe Rust `fn` type (no ABI,
+   one unattributed immutable ASCII identifier binding in the test's root
+   statement list, a safe Rust `fn` type (no ABI,
    `unsafe`, type alias or cast), a plain function path, and only direct calls
    of the binding after its definition. A bare target is admitted only when
    the parsed test body binds no value of that name; the existing import,
-   module, rival-owner and cfg gates still resolve its identity. Calls must
+   module, rival-owner and cfg gates still resolve its identity. No other
+   declaration may bind the pointer's name (raw spellings count as the same
+   name), and body-local glob imports refuse the alias. The original assertion
+   must immediately follow that binding in the same root statement list,
+   matched by both source text and line. Calls must
    close on one line and the existing 64-alias/body cap applies. The resolved
    call supplies reach and its own arguments, and the pin checks it under the
    existing owner and assertion gates. The original assertion's exact text,
@@ -2240,6 +2245,9 @@ assertions. This repair shares the existing callback without that larger migrati
   the same admitted and blind/rebound/rival/dead subjects through the public
   API and compiled neutral/wrong-value runs. Every runtime subject must
   compile, enumerate one test and execute it before its outcome is checked.
+  The scope-escape, raw-shadow, glob-shadow and cfg-disabled-binding controls
+  also live in `fixtures/owner_return_pin_pointer_*` and the evidence-promotion
+  honesty corpus, where none may promote the changed return.
 
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,

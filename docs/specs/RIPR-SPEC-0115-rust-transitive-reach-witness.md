@@ -195,7 +195,10 @@ The alias is accepted only when all of these hold, and otherwise adds nothing:
 - the call's parentheses close on the same line.
 
 Under #9478 the same reader also accepts an explicit safe Rust `fn(..)`
-pointer annotation. A bare target then additionally requires that the parsed
+pointer annotation on an unattributed immutable identifier declaration in the
+test's root statement list. No other declaration may bind that identifier,
+including a raw spelling, and body-local glob imports refuse the alias.
+A bare target then additionally requires that the parsed
 body bind no value of its name; this excludes a local closure, function or
 pointer parameter. Unsafe/ABI pointer types, casts and type aliases remain
 unresolved. Every mutation, shadow, forwarding and use-bound above still
@@ -203,8 +206,10 @@ applies. RIPR-SPEC-0197 separately admits a literal whole-value assertion of
 such a pointer's scalar free-function result; the call fact alone grants no
 oracle credit.
 
-Block scope is not modeled, so any same-named mention disables the alias for
-the whole body; at most 64 aliases are considered per body. The path is
+Legacy untyped aliases keep their body-wide mention rule. Typed aliases use the
+root declaration bounds above; pins additionally require the adjacent original
+root assertion under RIPR-SPEC-0197. At most 64 aliases are considered per body;
+typed candidates also consume that parse budget when refused. The path is
 matched by its last segment name only and is never resolved to a definition.
 
 ## Non-Goals
