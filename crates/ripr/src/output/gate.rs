@@ -1019,12 +1019,13 @@ fn fallback_identity_for(
     static_class: Option<&str>,
 ) -> Option<String> {
     match (path, line) {
-        // Normalize exactly like the baseline writers
-        // (`baseline_update.rs` / `baseline_delta.rs`): a candidate reported
-        // as `./src/x.rs` or `src\x.rs` must still match the legacy entry.
+        // Normalize through the baseline stored-string owner
+        // (`baseline::normalize_fallback_path`): a candidate reported as
+        // `./src/x.rs` or `src\x.rs` must still match the legacy entry. A
+        // missing static class renders as `unknown` (gate-only behavior).
         (Some(path), Some(line)) => Some(format!(
             "{}:{line}:{}",
-            path.replace('\\', "/").trim_start_matches("./"),
+            crate::output::baseline::normalize_fallback_path(path),
             static_class.unwrap_or("unknown")
         )),
         _ => None,

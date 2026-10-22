@@ -46,7 +46,7 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   - discriminator weak: TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown
-  - related test tests/stats.test.ts:5 overwritten count uses strong exact value oracle: assert.equal(...)
+  - related test tests/stats.test.ts:5 overwritten count uses strong exact value oracle: assert.equal(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - Related tests reach `recordHit` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it

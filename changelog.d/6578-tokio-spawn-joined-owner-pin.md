@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A Rust assertion inside `tokio::spawn(async { .. })` now pins the owner when the task is awaited and unwrapped (`.await.unwrap()` or `.await.expect(..)`) in a `#[tokio::test]`: the task's panic is re-raised on the test task. A detached task, a stored handle, a dropped or converted `.await`, and a rebound `tokio` or `spawn` keep the earlier reading (RIPR-SPEC-0197, #6578).

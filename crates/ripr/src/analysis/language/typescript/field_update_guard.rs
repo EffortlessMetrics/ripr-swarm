@@ -88,6 +88,25 @@ pub(crate) fn ts_field_update_change(
     (writes == 1).then_some(FieldUpdateChange { field, class_name })
 }
 
+/// Whether the owner's class declares `get field` or `set field`. A read of
+/// such a field runs the accessor, which need not return what the method wrote,
+/// so an exact assertion on it does not observe the update.
+pub(crate) fn ts_field_has_accessor(
+    change: &FieldUpdateChange,
+    owner: &TypeScriptOwner,
+    owners: &[TypeScriptOwner],
+) -> bool {
+    owners.iter().any(|other| {
+        other.file == owner.file
+            && other.class_name == owner.class_name
+            && other.name == change.field
+            && matches!(
+                other.method_kind,
+                TypeScriptMethodKind::Getter | TypeScriptMethodKind::Setter
+            )
+    })
+}
+
 /// `field` of `this.<field> <op>= e` or `this.<field> = this.<field> <op> e`.
 fn updated_field(statement: &str) -> Option<String> {
     let statement = statement.trim_end_matches(';').trim();
@@ -185,6 +204,28 @@ pub(crate) fn ts_field_update_precedes_read(
     body: &str,
     read_offset: usize,
 ) -> Option<String> {
+    field_update_precedes_read(change, owner_name, body, read_offset, false)
+}
+
+/// As [`ts_field_update_precedes_read`], but the call may sit in counting loops
+/// nested inside the read's scope. A loop may run zero times, so the caller
+/// must prove a positive iteration count itself (the literal-table witness).
+pub(crate) fn ts_field_update_precedes_read_through_loops(
+    change: &FieldUpdateChange,
+    owner_name: &str,
+    body: &str,
+    read_offset: usize,
+) -> Option<String> {
+    field_update_precedes_read(change, owner_name, body, read_offset, true)
+}
+
+fn field_update_precedes_read(
+    change: &FieldUpdateChange,
+    owner_name: &str,
+    body: &str,
+    read_offset: usize,
+    through_loops: bool,
+) -> Option<String> {
     let read = body.get(read_offset..)?;
     let receiver_len = read.find(|c: char| !is_identifier_part(c))?;
     let receiver = &read[..receiver_len];
@@ -275,10 +316,221 @@ pub(crate) fn ts_field_update_precedes_read(
             // The call is in the read's own scope, so it runs whenever the
             // read does. A loop around only the call may run zero times.
             && open_scopes(body, at).is_some_and(|scopes| {
-                scopes == read_scopes && scopes.iter().skip(1).all(|s| *s == Scope::Loop)
+                let nested = scopes.len() >= read_scopes.len()
+                    && scopes[..read_scopes.len()] == read_scopes[..]
+                    && scopes[read_scopes.len()..].iter().all(|s| *s == Scope::Loop);
+                (scopes == read_scopes || (through_loops && nested))
+                    && scopes.iter().skip(1).all(|s| *s == Scope::Loop)
             })
     });
     ran.then(|| receiver.to_string())
+}
+
+/// The bare identifier that follows an observed expression as the expected
+/// argument: `, want)` of `assert.equal(a, want)` or `).toBe(want)`.
+pub(crate) fn ts_expected_identifier(after_observed: &str) -> Option<&str> {
+    let rest = after_observed.trim_start();
+    let argument = if let Some(rest) = rest.strip_prefix(',') {
+        rest
+    } else {
+        rest.strip_prefix(')')?.split_once('(')?.1
+    };
+    let argument = argument.split([')', ',']).next()?.trim();
+    (!argument.is_empty()
+        && argument.chars().all(is_identifier_part)
+        && !argument.starts_with(|c: char| c.is_ascii_digit()))
+    .then_some(argument)
+}
+
+/// Loop headers (`for (...)` text) whose block encloses `offset`, outermost first.
+fn enclosing_loop_headers(body: &str, offset: usize) -> Vec<String> {
+    let mut headers = Vec::new();
+    for at in identifier_offsets(body, "for") {
+        if at >= offset {
+            break;
+        }
+        let Some(open) = body[at + 3..].trim_start().strip_prefix('(') else {
+            continue;
+        };
+        let open_at = body.len() - open.len();
+        let mut depth = 1usize;
+        let Some(close) = open.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(i)
+        }) else {
+            continue;
+        };
+        let after = open_at + close + 1;
+        let Some(block) = body[after..].trim_start().strip_prefix('{') else {
+            continue;
+        };
+        let block_at = body.len() - block.len();
+        let mut depth = 1usize;
+        let end = body[block_at..].char_indices().find_map(|(i, c)| {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(block_at + i)
+        });
+        if end.is_some_and(|end| end > offset) {
+            headers.push(open[..close].to_string());
+        }
+    }
+    headers
+}
+
+/// Rows of the literal numeric table `const name ... = [[..], [..]]`.
+fn numeric_table(body: &str, name: &str) -> Option<Vec<Vec<i64>>> {
+    let declared: Vec<usize> = ["const", "let"]
+        .iter()
+        .flat_map(|keyword| {
+            body.match_indices(&format!("{keyword} {name}"))
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let [declaration] = declared.as_slice() else {
+        return None;
+    };
+    let after = &body[*declaration..];
+    let value = after[after.find('=')? + 1..]
+        .trim_start()
+        .strip_prefix('[')?;
+    let (mut depth, mut rows, mut row, mut token) =
+        (1usize, Vec::new(), None::<Vec<i64>>, String::new());
+    let push = |token: &mut String, row: &mut Option<Vec<i64>>| -> Option<()> {
+        let text = token.trim();
+        if !text.is_empty() {
+            row.as_mut()?.push(text.parse().ok()?);
+        }
+        token.clear();
+        Some(())
+    };
+    for c in value.chars() {
+        match c {
+            '[' => {
+                depth += 1;
+                if depth != 2 || row.is_some() {
+                    return None;
+                }
+                row = Some(Vec::new());
+            }
+            ']' => {
+                depth -= 1;
+                if depth == 1 {
+                    push(&mut token, &mut row)?;
+                    rows.push(row.take()?);
+                } else if depth == 0 {
+                    return (!rows.is_empty() && rows.iter().all(|r| r.len() == rows[0].len()))
+                        .then_some(rows);
+                }
+            }
+            ',' if depth == 2 => push(&mut token, &mut row)?,
+            ',' if depth == 1 => {}
+            c if depth == 2 && (c.is_ascii_digit() || c == '-' || c.is_whitespace()) => {
+                token.push(c);
+            }
+            c if depth == 1 && c.is_whitespace() => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Whether the dynamic expected side `expected` of a read is a column of a
+/// constant numeric table iterated by `for (const [a, b] of table)`, with the
+/// owner call inside that loop (and counting loops bounded by a column or a
+/// literal): some row must call the owner at least once and expect a value
+/// other than zero, so deleting the update changes that row's assertion.
+pub(crate) fn ts_table_expected_witnessed(
+    owner_name: &str,
+    receiver: &str,
+    body: &str,
+    expected: &str,
+    read_offset: usize,
+) -> bool {
+    let Some(call) = body
+        .match_indices(&format!("{receiver}.{owner_name}("))
+        .map(|(at, _)| at)
+        .filter(|at| *at < read_offset)
+        .last()
+    else {
+        return false;
+    };
+    let headers = enclosing_loop_headers(body, call);
+    // Only loops (and the test callback) may enclose the call.
+    if open_scopes(body, call).is_none_or(|scopes| scopes.len() != headers.len() + 1) {
+        return false;
+    }
+    let mut table = None;
+    let mut bound = None::<&str>;
+    for header in &headers {
+        let header = header.trim();
+        if let Some(rest) = header
+            .strip_prefix("const [")
+            .and_then(|rest| rest.split_once(']'))
+            .and_then(|(names, after)| Some((names, after.trim().strip_prefix("of ")?.trim())))
+        {
+            if table.is_some() {
+                return false;
+            }
+            table = Some((rest.0.split(',').map(str::trim).collect::<Vec<_>>(), rest.1));
+        } else if let Some(limit) = header
+            .strip_prefix("let ")
+            .and_then(|rest| rest.split_once('='))
+            .and_then(|(index, rest)| {
+                let (init, rest) = rest.split_once(';')?;
+                let (cond, step) = rest.split_once(';')?;
+                let index = index.trim();
+                let limit = cond.trim().strip_prefix(index)?.trim().strip_prefix('<')?;
+                (init.trim() == "0" && step.trim() == format!("{index}++")).then_some(limit.trim())
+            })
+        {
+            if bound.is_some() {
+                return false;
+            }
+            bound = Some(limit);
+        } else {
+            return false;
+        }
+    }
+    let Some((names, table_name)) = table else {
+        return false;
+    };
+    let Some(want) = names.iter().position(|name| *name == expected) else {
+        return false;
+    };
+    let Some(rows) = numeric_table(&body[..call], table_name) else {
+        return false;
+    };
+    if names.len() != rows[0].len() {
+        return false;
+    }
+    // Neither the table nor its columns may be rebound inside the test.
+    if names.iter().any(|name| {
+        !name.is_empty()
+            && identifier_offsets(body, name).iter().any(|at| {
+                body[at + name.len()..].trim_start().starts_with('=')
+                    && !body[at + name.len()..].trim_start().starts_with("==")
+            })
+    }) {
+        return false;
+    }
+    let column = bound.and_then(|limit| names.iter().position(|name| *name == limit));
+    rows.iter().any(|row| {
+        let calls = match (bound, column) {
+            (None, _) => 1,
+            (Some(_), Some(column)) => row[column],
+            (Some(limit), None) => limit.parse().unwrap_or(0),
+        };
+        calls >= 1 && row[want] != 0
+    })
 }
 
 #[cfg(test)]
@@ -290,6 +542,11 @@ mod tests {
             field: "hits".to_string(),
             class_name: "Stats".to_string(),
         }
+    }
+
+    fn through_loops(body: &str) -> Option<String> {
+        let read = body.rfind("stats.hits").unwrap_or(0);
+        ts_field_update_precedes_read_through_loops(&change(), "recordHit", body, read)
     }
 
     fn precedes(body: &str) -> Option<String> {
@@ -320,6 +577,45 @@ mod tests {
 
     fn changed(source: &str, new: &str, old: &str) -> Option<FieldUpdateChange> {
         ts_field_update_change(&method(source), new, Some(old))
+    }
+
+    #[test]
+    fn accessor_for_the_field_in_the_same_class_is_detected() {
+        let change = change();
+        let owner = method("");
+        let accessor = |name: &str, kind: TypeScriptMethodKind, class: &str| TypeScriptOwner {
+            name: name.to_string(),
+            class_name: Some(class.to_string()),
+            method_kind: kind,
+            ..method("")
+        };
+        let has = |owners: &[TypeScriptOwner]| ts_field_has_accessor(&change, &owner, owners);
+        assert!(has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Getter,
+            "Stats"
+        )]));
+        assert!(has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Setter,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Ordinary,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "misses",
+            TypeScriptMethodKind::Getter,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Getter,
+            "Other"
+        )]));
+        assert!(!has(&[]));
     }
 
     #[test]
@@ -369,6 +665,9 @@ mod tests {
         assert_eq!(precedes(body).as_deref(), Some("stats"));
         let looped = "{ const stats = new Stats(); for (let i = 0; i < 3; i++) { stats.recordHit(); expect(stats.hits).toBe(i + 1); } }";
         assert_eq!(precedes(looped).as_deref(), Some("stats"));
+        let nested = "{ const stats = new Stats(); for (let i = 0; i < 3; i++) { stats.recordHit(); } expect(stats.hits).toBe(3); }";
+        assert_eq!(precedes(nested), None);
+        assert_eq!(through_loops(nested).as_deref(), Some("stats"));
         let skipped = "{ const stats = new Stats(); for (let i = 0; i < 0; i++) { stats.recordHit(); } expect(stats.hits).toBe(1); }";
         assert_eq!(precedes(skipped), None);
         let braceless = "{ const stats = new Stats(); if (ready) stats.recordHit(); expect(stats.hits).toBe(1); }";
@@ -383,6 +682,42 @@ mod tests {
         assert_eq!(precedes(direct), None);
         let reassigned = "{ let stats = new Stats(); stats.recordHit(); stats = new Stats(); expect(stats.hits).toBe(1); }";
         assert_eq!(precedes(reassigned), None);
+    }
+
+    const TABLE: &str = "{ const rows: Array<[number, number]> = [[0, 0], [1, 1], [3, 3]];\n  for (const [calls, want] of rows) {\n    const stats = new Stats();\n    for (let i = 0; i < calls; i++) {\n      stats.recordHit();\n    }\n    assert.equal(stats.hits, want);\n  }\n}";
+
+    fn table(body: &str, expected: &str) -> bool {
+        let read = body.rfind("stats.hits").unwrap_or(0);
+        ts_table_expected_witnessed("recordHit", "stats", body, expected, read)
+    }
+
+    #[test]
+    fn table_expected_side_needs_a_row_that_calls_and_expects_nonzero() {
+        assert!(table(TABLE, "want"));
+        assert!(!table(TABLE, "other"));
+        let zero_rows = TABLE.replace("[[0, 0], [1, 1], [3, 3]]", "[[0, 0], [2, 0]]");
+        assert!(!table(&zero_rows, "want"));
+        let no_calls = TABLE.replace("[[0, 0], [1, 1], [3, 3]]", "[[0, 1], [0, 2]]");
+        assert!(!table(&no_calls, "want"));
+        let mixed = TABLE.replace("[[0, 0], [1, 1], [3, 3]]", "[[0, 5], [2, 0]]");
+        assert!(!table(&mixed, "want"));
+        let ragged = TABLE.replace("[3, 3]", "[3]");
+        assert!(!table(&ragged, "want"));
+        let rebound = TABLE.replace("stats.hits, want", "stats.hits, want = 4");
+        assert!(!table(&rebound, "want"));
+        let branch = TABLE.replace("for (let i = 0; i < calls; i++)", "if (calls)");
+        assert!(!table(&branch, "want"));
+        let computed = TABLE.replace("i < calls", "i < size(calls)");
+        assert!(!table(&computed, "want"));
+    }
+
+    #[test]
+    fn expected_identifier_reads_both_matcher_spellings() {
+        assert_eq!(ts_expected_identifier(", want);"), Some("want"));
+        assert_eq!(ts_expected_identifier(").toBe(want);"), Some("want"));
+        assert_eq!(ts_expected_identifier(").toBe(2);"), None);
+        assert_eq!(ts_expected_identifier(", rows[i]);"), None);
+        assert_eq!(ts_expected_identifier(").toBe(f(want));"), None);
     }
 
     #[test]

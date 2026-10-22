@@ -322,3 +322,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (16)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

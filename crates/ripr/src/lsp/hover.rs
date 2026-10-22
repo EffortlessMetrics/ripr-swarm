@@ -20,8 +20,51 @@ use tower_lsp_server::ls_types::{
     Diagnostic, Hover, HoverContents, MarkupContent, MarkupKind, NumberOrString, Position, Range,
 };
 
-pub(super) fn hover_response() -> Hover {
-    markdown_hover(HOVER_TEXT.to_string())
+/// Join configured language labels for prose: `Rust`, `Rust and Python`,
+/// `Rust, Python, and TypeScript`.
+pub(super) fn join_language_labels(labels: &[String]) -> String {
+    match labels {
+        [] => "Rust".to_string(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [first, rest @ ..] => {
+            let mut text = first.clone();
+            for (index, label) in rest.iter().enumerate() {
+                if index + 1 == rest.len() {
+                    text.push_str(", and ");
+                } else {
+                    text.push_str(", ");
+                }
+                text.push_str(label);
+            }
+            text
+        }
+    }
+}
+
+/// The no-evidence hover, aware of whether any analysis has committed and
+/// which languages the workspace analyzes (#9604 finding 32). Before the
+/// first successful analysis the generic "run the CLI" pointer names the
+/// wrong recovery — the `ripr.refresh` editor command is the route that
+/// populates this server — and the language list comes from the session
+/// configuration instead of a hardcoded `Rust`.
+pub(super) fn hover_response_without_evidence(has_analyzed: bool, languages: &[String]) -> Hover {
+    // The analyzed, Rust-only workspace renders the exact legacy text so the
+    // long-standing generic hover stays byte-identical.
+    if has_analyzed && languages.len() == 1 && languages[0] == "Rust" {
+        return markdown_hover(HOVER_TEXT.to_string());
+    }
+    let language_text = join_language_labels(languages);
+    let value = if has_analyzed {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior. Run `ripr check --format json` for current findings."
+        )
+    } else {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior, but has not analyzed this workspace yet. Run the `ripr.refresh` editor command (or `ripr check --format json`) to obtain findings."
+        )
+    };
+    markdown_hover(value)
 }
 
 pub(super) fn markdown_hover(value: String) -> Hover {

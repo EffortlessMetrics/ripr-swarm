@@ -203,7 +203,20 @@ fn repair_refusal(
                     format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
-                (RefusalKind::RouteNotReady, label.to_string())
+                // Name the evidence the route still needs, not just the gate
+                // verdict: "repair route not ready" alone sends the reader
+                // hunting for what to strengthen (#9604). The parenthetical
+                // matches the agent card's readiness line so both surfaces
+                // read the same way.
+                let missing = eligibility.readiness.missing_evidence.join("; ");
+                if missing.is_empty() {
+                    (RefusalKind::RouteNotReady, label.to_string())
+                } else {
+                    (
+                        RefusalKind::RouteNotReady,
+                        format!("{label} (missing evidence: {missing})"),
+                    )
+                }
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -215,13 +228,18 @@ fn repair_refusal(
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
+    // Sentence-style labels: these render directly in "none repair-eligible
+    // (...)" lists and refusal notes, so an internal-enum spelling reads as a
+    // bug to the user (#9604).
     match reason {
-        RepairPacketIneligibility::ClassNotHeadlineEligible => "not a headline repair target",
+        RepairPacketIneligibility::ClassNotHeadlineEligible => {
+            "its class is not a repair target under the current policy"
+        }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
-            "cross-language oracle visibility unresolved"
+            "ripr cannot resolve which external-language observer would notice this seam"
         }
         RepairPacketIneligibility::CrossLanguageTestTargetUnresolved => {
-            "cross-language test target unresolved"
+            "ripr cannot resolve a safe external-language test target for this seam"
         }
         RepairPacketIneligibility::RouteNotReady => "repair route not ready",
     }
@@ -627,10 +645,9 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
     // The explicit-subject resolver refuses every start from a truncated
     // inventory, so no seam in one can be verified as startable.
     if truncated {
-        return Some(RepairStartRefusal::unverified(
-            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused"
-                .to_string(),
-        ));
+        return Some(RepairStartRefusal::unverified(format!(
+            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused; {WIDEN_SEAM_BUDGET}"
+        )));
     }
     let Some(entry) = classified
         .iter()
@@ -1414,7 +1431,14 @@ pub(crate) mod tests {
         );
         let refusal = repair_start_refusal_for_entry(root, &not_ready, policy)
             .ok_or("the shared gate must refuse a route that is not ready")?;
-        assert_eq!(refusal.reason, "repair route not ready");
+        // #9604: the verdict now names the evidence the route still needs.
+        assert!(
+            refusal
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refusal.reason
+        );
         assert_eq!(
             refusal.related_test.as_deref(),
             Some("`at_threshold_runs` (tests/pricing.rs:12)")
@@ -1532,7 +1556,13 @@ pub(crate) mod tests {
         // the unverified one.
         let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
         assert_eq!(refused.kind, RefusalKind::RouteNotReady);
-        assert_eq!(refused.reason, "repair route not ready");
+        assert!(
+            refused
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refused.reason
+        );
         Ok(())
     }
 
@@ -1915,18 +1945,20 @@ pub(crate) mod tests {
     /// Every ineligibility reason keeps its own distinct, human label.
     #[test]
     fn ineligibility_labels_are_distinct_and_exact() -> Result<(), String> {
+        // #9604: labels render verbatim in user-facing refusal lists, so they
+        // must read as sentences, not internal-enum spellings.
         let labels = [
             (
                 RepairPacketIneligibility::ClassNotHeadlineEligible,
-                "not a headline repair target",
+                "its class is not a repair target under the current policy",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
-                "cross-language oracle visibility unresolved",
+                "ripr cannot resolve which external-language observer would notice this seam",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
-                "cross-language test target unresolved",
+                "ripr cannot resolve a safe external-language test target for this seam",
             ),
             (
                 RepairPacketIneligibility::RouteNotReady,
