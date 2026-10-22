@@ -1,4 +1,4 @@
-//! Release-only sweep of committed producer documents against every published
+//! Sweep of committed producer documents against every published
 //! schema (#3920).
 //!
 //! `check-verification-contracts` validates one hand-picked subject per
@@ -16,7 +16,10 @@
 //! tree, so a dirty or artifact-littered release checkout cannot change the
 //! denominator or pass bytes the candidate does not carry.
 //!
-//! It is not wired into a required check. The binding table below is the
+//! The required Rust gate runs it on the candidate (#9505), feeding the
+//! `doctor`, `pr-evidence` and `review-comments` runtime rows from that run's
+//! own producer output; `repair-attempt` and `execution_result` stay unrun
+//! there. The binding table below is the
 //! reviewed rule for which committed bytes are producer output, which are
 //! consumer-input stimulus, and which schemas have no committed producer bytes
 //! at all and must be fed live artifacts with `--artifact`.
