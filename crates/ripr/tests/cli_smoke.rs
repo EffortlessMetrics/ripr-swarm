@@ -29207,6 +29207,142 @@ fn verify_execute_disposition(
     Ok((parsed, output.status.code()))
 }
 
+/// Checks one committed `--result-json` result against the published
+/// `repair-assurance.schema.json#/$defs/execution_result`.
+///
+/// This is the narrower authority named for that row in
+/// `docs/verification/schema-producer-audit.md` (#9561): the result is a
+/// per-execution runtime artifact, so no committed fixture carries producer
+/// bytes. It reads the published schema and checks bytes the real CLI wrote:
+/// closed property set, required fields, `const`/`enum` pins, scalar types and
+/// the `sha256:` digest pattern.
+fn assert_result_matches_published_schema(
+    result: &serde_json::Value,
+    schema: &serde_json::Value,
+) -> Result<(), String> {
+    let definition = schema
+        .pointer("/$defs/execution_result")
+        .ok_or("schema defines no /$defs/execution_result")?;
+    let object = result
+        .as_object()
+        .ok_or_else(|| format!("result is not an object: {result}"))?;
+    let properties = definition["properties"]
+        .as_object()
+        .ok_or("execution_result declares no properties")?;
+    for field in object.keys() {
+        if !properties.contains_key(field) {
+            return Err(format!("result emitted undeclared field `{field}`"));
+        }
+    }
+    for required in definition["required"]
+        .as_array()
+        .ok_or("execution_result declares no required list")?
+    {
+        let name = required.as_str().ok_or("required entry is not a string")?;
+        if !object.contains_key(name) {
+            return Err(format!("schema requires `{name}` but the result omits it"));
+        }
+    }
+    for (field, declared) in properties {
+        let Some(emitted) = object.get(field) else {
+            continue;
+        };
+        if let Some(pinned) = declared.get("const")
+            && emitted != pinned
+        {
+            return Err(format!("`{field}` is {emitted}, not the pinned {pinned}"));
+        }
+        if let Some(members) = declared.get("enum").and_then(|e| e.as_array())
+            && !members.contains(emitted)
+        {
+            return Err(format!(
+                "`{field}` is {emitted}, outside the published enum"
+            ));
+        }
+        if declared
+            .get("pattern")
+            .and_then(|p| p.as_str())
+            .is_some_and(|p| p == "^sha256:[0-9a-f]{64}$")
+        {
+            let digest = emitted.as_str().unwrap_or_default();
+            let hex = digest.strip_prefix("sha256:").unwrap_or_default();
+            if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Err(format!("`{field}` is not a sha256 digest: {emitted}"));
+            }
+        }
+        let kinds: Vec<&str> = match declared.get("type") {
+            Some(serde_json::Value::String(kind)) => vec![kind.as_str()],
+            Some(serde_json::Value::Array(kinds)) => {
+                kinds.iter().filter_map(|k| k.as_str()).collect()
+            }
+            _ => continue,
+        };
+        let fits = kinds.iter().any(|kind| match *kind {
+            "string" => emitted.is_string(),
+            "integer" => emitted.is_i64() || emitted.is_u64(),
+            "boolean" => emitted.is_boolean(),
+            "null" => emitted.is_null(),
+            _ => true,
+        });
+        if !fits {
+            return Err(format!("`{field}` is {emitted}, not of type {kinds:?}"));
+        }
+    }
+    Ok(())
+}
+
+fn published_repair_assurance_schema() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas/ripr/repair-assurance.schema.json");
+    Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+}
+
+/// Negative experiment for the helper: a result the schema forbids must fail,
+/// so a helper that accepted everything cannot keep the row green.
+#[test]
+fn published_schema_helper_rejects_results_the_schema_forbids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema = published_repair_assurance_schema()?;
+    let good = serde_json::json!({
+        "schema_version": "1", "root_identity": "r", "head_before": "h", "head_after": "h",
+        "command_spec_sha256": format!("sha256:{}", "a".repeat(64)),
+        "process_disposition": "completed", "exit_status": 0,
+        "stdout_sha256": format!("sha256:{}", "b".repeat(64)),
+        "stderr_sha256": format!("sha256:{}", "c".repeat(64)),
+        "currentness": "current",
+    });
+    assert_result_matches_published_schema(&good, &schema)?;
+    for (label, mutate) in [
+        ("missing required", ("exit_status", None)),
+        ("undeclared field", ("surprise", Some(serde_json::json!(1)))),
+        (
+            "enum outside",
+            ("currentness", Some(serde_json::json!("unavailable"))),
+        ),
+        (
+            "bad digest",
+            ("stdout_sha256", Some(serde_json::json!("sha256:xyz"))),
+        ),
+        (
+            "wrong version",
+            ("schema_version", Some(serde_json::json!("2"))),
+        ),
+    ] {
+        let mut bad = good.clone();
+        match mutate.1 {
+            Some(value) => bad[mutate.0] = value,
+            None => {
+                bad.as_object_mut().ok_or("object")?.remove(mutate.0);
+            }
+        }
+        assert!(
+            assert_result_matches_published_schema(&bad, &schema).is_err(),
+            "{label} must be rejected"
+        );
+    }
+    Ok(())
+}
+
 /// The end-to-end contract: a producer-generated packet executes through the
 /// public CLI, commits a schema-shaped result, and never carries an ambient
 /// secret into its output.
@@ -29261,6 +29397,11 @@ fn agent_verify_execute_runs_a_producer_owned_route_and_commits_a_result()
     let committed = std::fs::read_to_string(root.join("result.json"))?;
     let committed: serde_json::Value = serde_json::from_str(&committed)?;
     assert_eq!(committed["result"], parsed["result"]);
+    // Real producer bytes against the published schema row (#9561).
+    assert_result_matches_published_schema(
+        &committed["result"],
+        &published_repair_assurance_schema()?,
+    )?;
 
     // No ambient secret reaches stdout, stderr, or the committed artifact.
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

@@ -18,8 +18,9 @@
 //!
 //! The required Rust gate runs it on the candidate (#9505), feeding the
 //! `doctor`, `pr-evidence` and `review-comments` runtime rows from that run's
-//! own producer output; `repair-attempt` and `execution_result` stay unrun
-//! there. The binding table below is the
+//! own producer output. `repair-attempt` and `execution_result` need an agent
+//! repair transaction too heavy for that gate; they carry a reviewed narrower
+//! authority instead (#9561, pinned by a test below). The binding table below is the
 //! reviewed rule for which committed bytes are producer output, which are
 //! consumer-input stimulus, and which schemas have no committed producer bytes
 //! at all and must be fed live artifacts with `--artifact`.
@@ -151,8 +152,8 @@ const BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/ripr/repair-attempt.schema.json",
         pointer: None,
-        corpus: Corpus::RuntimeOnly(
-            "`ripr agent repair` writes target/ripr/repair-attempts/<id>/attempt.json per attempt",
+        corpus: Corpus::Exempt(
+            "narrower authority (#9561): assert_manifest_matches_published_schema in crates/ripr/tests/python_repair_attempt.rs checks the bytes the real `ripr agent repair` before/after phases write; `ripr agent repair` writes target/ripr/repair-attempts/<id>/attempt.json per attempt, so release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
         excluded: &[],
@@ -180,8 +181,8 @@ const BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/execution_result"),
-        corpus: Corpus::RuntimeOnly(
-            "`ripr agent verify-execute --result-json` commits one result per bounded execution",
+        corpus: Corpus::Exempt(
+            "narrower authority (#9561): assert_result_matches_published_schema in crates/ripr/tests/cli_smoke.rs checks the result the real `ripr agent verify-execute --result-json` commits per bounded execution; release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
         excluded: &[],
@@ -1281,6 +1282,42 @@ mod tests {
                 .any(|schema_path| schema_path.as_str() == binding.schema_path)
             {
                 return Err(format!("binding names unpublished {}", binding.schema_path));
+            }
+        }
+        Ok(())
+    }
+
+    /// Exempt rows are only as good as the authority they name. Each named
+    /// test or helper must still exist in its file and be cited by a binding's
+    /// exemption reason, so deleting an authority fails here instead of
+    /// leaving an exemption that points at nothing (#9561).
+    #[test]
+    fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
+        let pins: [(&str, &str, &str); 3] = [
+            (
+                "assert_manifest_matches_published_schema",
+                "fn assert_manifest_matches_published_schema(",
+                include_str!("../../crates/ripr/tests/python_repair_attempt.rs"),
+            ),
+            (
+                "assert_result_matches_published_schema",
+                "fn assert_result_matches_published_schema(",
+                include_str!("../../crates/ripr/tests/cli_smoke.rs"),
+            ),
+            (
+                "capability_output_matches_the_published_schema",
+                "fn capability_output_matches_the_published_schema(",
+                include_str!("../../crates/ripr/src/lsp/agent_protocol.rs"),
+            ),
+        ];
+        for (name, needle, source) in pins {
+            if !source.contains(needle) {
+                return Err(format!("named authority `{name}` no longer exists"));
+            }
+            if !BINDINGS.iter().any(|binding| {
+                matches!(&binding.corpus, Corpus::Exempt(reason) if reason.contains(name))
+            }) {
+                return Err(format!("no exempt binding cites authority `{name}`"));
             }
         }
         Ok(())
