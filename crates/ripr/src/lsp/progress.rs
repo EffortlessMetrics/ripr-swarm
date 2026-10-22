@@ -388,17 +388,26 @@ impl AnalysisProgressTracker {
         // more is reported, and cleanup sends End after acquiring the same
         // token lock.
         let pending = std::mem::take(&mut notifications.pending_stages);
-        let terminal = self
-            .tokens
-            .lock()
-            .map(|tokens| {
-                tokens
-                    .get(&request.generation)
-                    .is_none_or(|record| record.terminal.is_some())
-            })
-            .unwrap_or(true);
-        if !terminal {
+        let is_terminal = || {
+            self.tokens
+                .lock()
+                .map(|tokens| {
+                    tokens
+                        .get(&request.generation)
+                        .is_none_or(|record| record.terminal.is_some())
+                })
+                .unwrap_or(true)
+        };
+        // Held reports are advisory and go out under the token lock that End
+        // needs, so a client that stops reading cannot hold them forever: the
+        // flush shares the create's liveness bound, then gives up. Terminal
+        // intent is rechecked before every send so a cancelled token reports
+        // no later stage before its End.
+        let flush = async {
             for stage in pending {
+                if is_terminal() {
+                    break;
+                }
                 if let Some(message) = stage_report_message(stage) {
                     sink.notify(
                         token.clone(),
@@ -409,7 +418,8 @@ impl AnalysisProgressTracker {
                     .await;
                 }
             }
-        }
+        };
+        let _ = tokio::time::timeout(self.client_request_timeout, flush).await;
         notifications.started = true;
     }
 
@@ -1026,6 +1036,137 @@ mod tests {
             if recorder.events() != expected {
                 return Err(format!(
                     "stage reports raced the create out of order or were dropped: {:?}",
+                    recorder.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// Begin completes, then every held report is observed by the sink; the
+    /// first one can be made to stall, and the terminal can be marked during it.
+    struct ReportGateSink {
+        recorder: Arc<RecordingSink>,
+        stall_reports: bool,
+        first_report_entered: tokio::sync::Notify,
+        release_first_report: tokio::sync::Notify,
+    }
+
+    impl ProgressSink for ReportGateSink {
+        fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+            self.recorder.create(token)
+        }
+
+        fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                if matches!(value, ProgressNotificationValue::Report { .. }) {
+                    if self.stall_reports {
+                        std::future::pending::<()>().await;
+                    }
+                    self.first_report_entered.notify_one();
+                    self.release_first_report.notified().await;
+                }
+                self.recorder.notify(token, value).await;
+            })
+        }
+    }
+
+    fn report_gate_tracker(
+        stall_reports: bool,
+    ) -> (
+        Arc<AnalysisProgressTracker>,
+        Arc<RecordingSink>,
+        Arc<ReportGateSink>,
+    ) {
+        let tracker = Arc::new(AnalysisProgressTracker::with_client_request_timeout(
+            test_client(),
+            std::time::Duration::from_millis(200),
+        ));
+        let recorder = Arc::new(RecordingSink::default());
+        let sink = Arc::new(ReportGateSink {
+            recorder: Arc::clone(&recorder),
+            stall_reports,
+            first_report_entered: tokio::sync::Notify::new(),
+            release_first_report: tokio::sync::Notify::new(),
+        });
+        tracker.install_test_sink(sink.clone());
+        (tracker, recorder, sink)
+    }
+
+    #[test]
+    fn a_stalled_held_report_cannot_block_the_end() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder, _sink) = report_gate_tracker(true);
+            let request = test_request(12);
+            tracker.register(&request, AnalysisProgressPhase::Analyzing);
+            tracker
+                .report_stage(12, AnalysisProgressStage::LoadingInput)
+                .await;
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tracker.announce(&request).await;
+                tracker.end(12, AnalysisProgressEnd::Complete).await;
+            })
+            .await
+            .map_err(|_elapsed| "a stalled held report blocked announce or end".to_string())?;
+            let ends = recorder
+                .events()
+                .iter()
+                .filter(|event| matches!(event, ProgressEvent::End { .. }))
+                .count();
+            if ends != 1 {
+                return Err(format!(
+                    "exactly one End must follow a stalled report: {:?}",
+                    recorder.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn held_reports_stop_once_the_token_is_cancelled_mid_flush() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder, sink) = report_gate_tracker(false);
+            let request = test_request(13);
+            tracker.register(&request, AnalysisProgressPhase::Analyzing);
+            for stage in [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressStage::BuildingOutput,
+            ] {
+                tracker.report_stage(13, stage).await;
+            }
+            let announcing = Arc::clone(&tracker);
+            let announce_request = request.clone();
+            let announce = tokio::spawn(async move {
+                announcing.announce(&announce_request).await;
+            });
+            sink.first_report_entered.notified().await;
+            // Cancellation lands while the first held report is being sent.
+            let ending = Arc::clone(&tracker);
+            let end = tokio::spawn(async move {
+                ending.end(13, AnalysisProgressEnd::Cancelled).await;
+            });
+            tokio::task::yield_now().await;
+            sink.release_first_report.notify_one();
+            announce
+                .await
+                .map_err(|error| format!("announce task failed: {error}"))?;
+            end.await
+                .map_err(|error| format!("end task failed: {error}"))?;
+            let reports = recorder
+                .events()
+                .iter()
+                .filter(|event| matches!(event, ProgressEvent::Report { .. }))
+                .count();
+            let ends = recorder
+                .events()
+                .iter()
+                .filter(|event| matches!(event, ProgressEvent::End { .. }))
+                .count();
+            if reports != 1 || ends != 1 {
+                return Err(format!(
+                    "later held reports must be skipped and exactly one End sent: {:?}",
                     recorder.events()
                 ));
             }

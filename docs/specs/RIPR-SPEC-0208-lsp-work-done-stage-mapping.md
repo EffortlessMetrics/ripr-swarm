@@ -104,9 +104,13 @@ denominator honesty, and terminal state may not diverge.
 ## Required Evidence
 
 - Tracker unit: one bounded report per stage in producer order on the same
-  token; consecutive duplicates collapse; terminal, queued, unstarted, and
-  unknown generations are silent; capability-absent clients receive no
-  stage traffic.
+  token; consecutive duplicates collapse; terminal, queued, and unknown
+  generations are silent; a report that arrives while the begin is still
+  waiting on the client's create is held and sent right after the begin in
+  producer order (a token that ends or fails create first sends nothing, a
+  token cancelled mid-flush sends no later held report, and a client that
+  stops reading cannot hold the end past the create liveness bound,
+  #9362); capability-absent clients receive no stage traffic.
 - Parity unit: success, disclosed-limited, cancelled, and failed traces
   project through both real projections with identical stage identity and
   order; mixed known/unknown denominators never render a percentage; the
