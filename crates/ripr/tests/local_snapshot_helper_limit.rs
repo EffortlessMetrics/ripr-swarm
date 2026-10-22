@@ -38,6 +38,15 @@ mod tests {
 
 struct Fixture(PathBuf);
 
+fn replace_once(source: &str, before: &str, after: &str) -> String {
+    assert_eq!(
+        source.matches(before).count(),
+        1,
+        "control must change its subject"
+    );
+    source.replacen(before, after, 1)
+}
+
 impl Fixture {
     fn new(source: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -122,7 +131,8 @@ fn limited(source: &str) -> Result<(), String> {
 }
 
 fn keeps_gap(body: &str) -> Result<(), String> {
-    let source = SOURCE.replace(
+    let source = replace_once(
+        SOURCE,
         "assert_data_eq!(render_float(-0.0), snap_str![[\"-0.0\"]]);",
         body,
     );
@@ -139,19 +149,23 @@ fn nested_expected_macro_keeps_the_local_helper_limit() -> Result<(), String> {
 #[test]
 fn helper_and_expected_names_cannot_supply_exposed_credit() -> Result<(), String> {
     for source in [
-        SOURCE.replace(
+        replace_once(
+            SOURCE,
             "pub fn check(actual: &str, expected: &str) { assert_eq!(actual, expected); }",
             "pub fn check(_actual: &str, _expected: &str) {}",
         ),
-        SOURCE.replace(
-            "pub fn check(actual: &str, expected: &str) { assert_eq!(actual, expected); }",
-            "pub fn check(_actual: &str, _expected: &str) {}",
-        ).replace(
+        replace_once(
+            &replace_once(
+                SOURCE,
+                "pub fn check(actual: &str, expected: &str) { assert_eq!(actual, expected); }",
+                "pub fn check(_actual: &str, _expected: &str) {}",
+            ),
             "    use super::*;",
             "    use super::*;\n    mod snap { pub fn check(a: &str, e: &str) { assert_eq!(a, e); } }",
         ),
-        SOURCE.replace("snap_str![[\"-0.0\"]]", "snap_str![[\"0.0\"]]"),
-        SOURCE.replace(
+        replace_once(SOURCE, "snap_str![[\"-0.0\"]]", "snap_str![[\"0.0\"]]"),
+        replace_once(
+            SOURCE,
             "assert_eq!(actual, expected);",
             "macro_rules! assert_eq { ($a:expr, $e:expr) => {}; } assert_eq!(actual, expected);",
         ),
@@ -175,5 +189,5 @@ fn only_owner_calls_outside_nested_macro_inputs_supply_the_limit() -> Result<(),
 
 #[test]
 fn a_literal_expected_operand_retains_its_existing_limit() -> Result<(), String> {
-    limited(&SOURCE.replace("snap_str![[\"-0.0\"]]", "\"-0.0\""))
+    limited(&replace_once(SOURCE, "snap_str![[\"-0.0\"]]", "\"-0.0\""))
 }
