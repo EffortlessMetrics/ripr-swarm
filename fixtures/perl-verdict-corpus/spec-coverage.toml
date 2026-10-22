@@ -519,3 +519,9 @@ reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-ver
 id = "RIPR-SPEC-0305"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
