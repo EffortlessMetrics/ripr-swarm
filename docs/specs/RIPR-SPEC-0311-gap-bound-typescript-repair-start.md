@@ -1,0 +1,91 @@
+# RIPR-SPEC-0311: A complete TypeScript packet offers a gap-bound repair start
+
+Status: proposed
+
+Owner: product / analysis
+
+Created: 2026-10-22
+
+Linked proposal:
+
+- None yet
+
+Linked ADRs:
+
+- [ADR 0020](../adr/0020-repair-artifacts-carry-producer-identity.md)
+
+Linked plan:
+
+- None yet
+
+Linked issues:
+
+- #9103
+
+Linked PRs:
+
+- None yet
+
+Support-tier impact:
+
+- No tier change. TypeScript and Python stay `preview_advisory_only`.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
+
+Policy impact:
+
+- Register this spec in `.ripr/traceability.toml`.
+- Additive `agent repair --gap-id/--base` flags and one additive, optional
+  repair-attempt manifest member (`gap_binding`).
+
+## Problem
+
+A TypeScript finding with a complete repair packet had no start the repair
+transaction accepted: `ripr check` printed "repair packet is not ready" and
+`agent repair` required a Rust seam id. The verifier half (RIPR-SPEC-0310)
+existed with no way to begin the attempt.
+
+## Behavior
+
+1. Gap-Bound Repair Start: for a TypeScript finding that is not static-limited,
+   whose gap record passes the shared `validate_agent_gap_record_packet`, and
+   when a base is known, `ripr check` prints
+   `ripr agent repair --gap-id G --base B --phase before`.
+2. `agent repair --gap-id G --base B --phase before` re-runs the diff-scoped
+   check against `B`, looks the gap up, and runs the same shared validator.
+   An unknown gap or a gap whose packet is not ready is refused ("the repair
+   packet is not ready" or "names no current TypeScript gap") with no attempt
+   and no workflow artifacts.
+3. Flags are exclusive: `--gap-id` excludes `--seam-id`, requires `--base` and
+   `--phase before`, accepts only a canonical TypeScript preview gap id,
+   refuses Python gaps with their existing terminal reason, and refuses the
+   Python repair-trust flags.
+4. Acceptance writes `before.check-findings.json` and `gap-repair-packet.json`
+   (packet `seam_id` is the gap id) and a manifest with `seam_id` = gap id and
+   `gap_binding.base`. The edit cage binds the attempt to the packet's test
+   file; production and non-test paths are refused.
+5. Status and recovery text for a gap attempt name the gap start and never
+   `--seam-id`.
+6. `agent repair --phase after` for a gap-bound attempt is refused naming the
+   manual route (`agent verify --gap-id`); finishing and receipts are later
+   slices.
+7. Let-bound, imported and reach-barrier variants remain unrouted. Seam
+   attempt manifests omit `gap_binding`, so their bytes and before commitment
+   are unchanged.
+
+## Required Evidence
+
+- Parser tests: exclusivity, bad prefix, Python rejected.
+- Edit-cage tests with a TypeScript gap packet (test file accepted,
+  production and non-test files refused).
+- Manifest round-trip with and without `gap_binding`.
+- Status and recovery text for a gap attempt.
+- Installed journey: the start line is printed, the before phase is accepted,
+  the manifest and snapshot are recorded, the eight variants stay unrouted
+  with negative start assertions, and Python assertions are unchanged.
+
+## Non-goals
+
+- `--phase after`, receipts and verification run (later slices).
+- Runtime mutation outcomes or sufficiency claims; results are static exposure
+  evidence only.
