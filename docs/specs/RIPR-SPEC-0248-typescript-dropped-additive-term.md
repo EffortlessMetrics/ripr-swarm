@@ -193,7 +193,11 @@ property-style tests, both from an exact matcher that cannot tell the changed
 return value apart.
 
 **Rule 2. An operator whose right operand is its identity in every tested
-call is not pinned.** On a `return_value` probe whose changed line is
+call is not pinned.** On a `return_value` probe whose changed line only
+rewrites the operands of a commutative operator in place (`return qty *
+unit;` against `return unit * qty;`, or `+` likewise; a changed operator or
+operand, or a dropped term, keeps the credit because the identity input can
+still pin the edit) and reads
 `return <operand> <op> <param>;` (`op` one of `*`, `/`, `+`, `-`; the left
 operand a plain identifier or number, the right operand an owner parameter
 the body never rebinds), an `exposed` result reads `weakly_exposed` when
@@ -202,16 +206,18 @@ the identity for that parameter: `1` for `*` and `/`, `0` for `+` and `-`.
 `return unit * qty` tested only through `scaled(1, u)` against `u` returns
 the same number as `unit / qty`. One tested call with another value, an
 argument the reader cannot read as a number, a related test that does not call
-the owner directly, or any other value assertion naming the owner keeps the
-credit. Only the right operand counts: `1 / qty` differs from `qty`.
+the owner directly, an owner call outside a value assertion on its whole
+result (setup, a local, a weak matcher), or any other assertion naming the
+owner keeps the credit. Only the right operand counts: `1 / qty` differs from `qty`.
 
 **Rule 3. An assertion built from owner calls alone cannot notice a changed
 return value.** On a `return_value` or `field_construction` probe, an
 `exposed` result reads `weakly_exposed` when at least one strong value
 assertion observes the whole result of an owner call and compares it with
 another whole owner call (`normalize(normalize(text))` against
-`normalize(text)`), and no other strong value assertion that names the owner
-exists. A constant return value satisfies such a relation. An independent
+`normalize(text)`), and every owner call of the related tests sits in such an
+assertion: any other assertion naming the owner (a weak matcher included) or an
+owner call in setup keeps the credit. A constant return value satisfies such a relation. An independent
 expected value, a different function on the expected side, or a member read
 of the result (`normalize(x).length`) keeps the credit.
 
@@ -225,7 +231,7 @@ Known limits of rules 2 and 3:
   line equivalent; `%` and `-` still differ from `*` at `1`.
 - Rule 3 does not read the one-hop local spelling
   (`const once = normalize(t); expect(normalize(once)).toEqual(once)`); the
-  observed side is a local, not an owner call, so the credit stays.
+  expected side is a local, not an owner call, so the credit stays.
 
 ## Required Evidence
 

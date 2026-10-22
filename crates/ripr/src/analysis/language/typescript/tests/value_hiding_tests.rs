@@ -121,7 +121,8 @@ fn identity_operand_in_every_tested_call_withdraws_credit() -> Result<(), String
 
 #[test]
 fn zero_operand_hides_the_opposite_additive_operator() -> Result<(), String> {
-    let owner = "export function total(base: number, tip: number): number {\n  return base;\n}\n";
+    let owner =
+        "export function total(base: number, tip: number): number {\n  return tip + base;\n}\n";
     let run = |label: &str, body: &str| {
         let test = format!(
             "import {{ total }} from \"../src/lib\";\ntest(\"total\", () => {{\n{body}\n}});\n"
@@ -129,7 +130,7 @@ fn zero_operand_hides_the_opposite_additive_operator() -> Result<(), String> {
         finding_for(
             label,
             owner,
-            "  return base;",
+            "  return tip + base;",
             "  return base + tip;",
             &test,
         )
@@ -185,6 +186,60 @@ fn owner_only_relation_holds_for_a_constant_and_withdraws_credit() -> Result<(),
     // A member of the result is read outside the relation.
     let member = format!("{idempotent}\n  expect(normalize(\" ab \").length).toBe(2);");
     let finding = normalize_finding("relation-member", &member)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn identity_operand_rule_needs_an_in_place_operand_rewrite() {
+    for (old, new, want) in [
+        ("return qty * unit;", "return unit * qty;", true),
+        ("return qty * unit;", "return qty * unit;", true),
+        ("return qty + unit;", "return unit + qty;", true),
+        ("return a - b;", "return b - a;", false),
+        ("return a - b;", "return a / b;", false),
+        ("return a + b;", "return a * b;", false),
+        ("return a * b + 5;", "return a * b;", false),
+        ("return x * q;", "return y * q;", false),
+    ] {
+        assert_eq!(
+            ts_operands_rewritten_in_place(old, new),
+            want,
+            "{old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn identity_operand_rule_keeps_credit_for_calls_outside_the_assertions() -> Result<(), String> {
+    // The dropped `+ 5` is pinned by the identity input.
+    let owner = "export function f(a: number, b: number): number {\n  return a * b + 5;\n}\n";
+    let test = "import { f } from \"../src/lib\";\ntest(\"f\", () => {\n  expect(f(10, 1)).toBe(10);\n});\n";
+    let finding = finding_for(
+        "neutral-dropped-term",
+        owner,
+        "  return a * b + 5;",
+        "  return a * b;",
+        test,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // An owner call in setup, asserted through a local, also pins `*`.
+    let setup = "  expect(scaled(1, 2)).toBe(2);\n  const out = [3, 4].map((n) => scaled(n, 5));\n  expect(out).toEqual([15, 20]);";
+    let finding = scaled_finding("neutral-setup-call", setup)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // A weak assertion that names the owner is not accounted for either.
+    let weak = "  expect(scaled(1, 2)).toBe(2);\n  expect(scaled(3, 7)).toBeGreaterThan(20);";
+    let finding = scaled_finding("neutral-weak-assertion", weak)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // The same holds for the owner-only relation (rule 3).
+    let relation = "  expect(normalize(normalize(\" a\"))).toEqual(normalize(\" a\"));\n  expect(normalize(\" a \")).toMatch(/^a$/);";
+    let finding = normalize_finding("relation-weak-pin", relation)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let setup = "  const out = normalize(\" a \");\n  expect(out).toBe(\"a\");\n  expect(normalize(normalize(\"b\"))).toEqual(normalize(\"b\"));";
+    let finding = normalize_finding("relation-setup-call", setup)?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

@@ -5862,6 +5862,9 @@ fn ts_apply_post_ladder_rules(
     }
     if matches!(context.probe_shape.family, ProbeFamily::ReturnValue)
         && let Some(change) = ts_neutral_operand_change(context.line_text)
+        && context
+            .old_line_text
+            .is_some_and(|old| ts_operands_rewritten_in_place(old, context.line_text))
         && ts_neutral_operand_hides(&change, context)
     {
         verdict.class = ExposureClass::WeaklyExposed;
@@ -6322,11 +6325,22 @@ fn ts_assertion_mentions_owner(
         })
 }
 
-/// RIPR-SPEC-0248 rule 2: every owner call whose whole result a value
-/// assertion observes passes `change.neutral` for the parameter the changed
-/// operator's right operand reads, and the owner never rebinds it. A call
-/// the reader cannot resolve, a related test that does not call the owner
-/// directly, or any other value assertion on the owner keeps the credit.
+/// How many owner calls `text` holds, counting nested ones, under every name
+/// the related test uses for the owner.
+fn ts_owner_calls_in(text: &str, names: &[&str], receivers: &[String]) -> usize {
+    names
+        .iter()
+        .map(|name| owner_call_arguments(text, name, receivers).len())
+        .sum()
+}
+
+/// RIPR-SPEC-0248 rule 2: the changed line only rewrites one operator's
+/// operands in place (`a * b` against `b * a`), every owner call of every
+/// related test sits in a value assertion on its whole result, and each such
+/// call passes `change.neutral` for the parameter the right operand reads,
+/// which the owner never rebinds. An owner call outside those assertions
+/// (setup, a local, a weak matcher), a call the reader cannot resolve or a
+/// related test that does not call the owner directly keeps the credit.
 fn ts_neutral_operand_hides(
     change: &NeutralOperandChange,
     context: &TsPostLadderContext<'_>,
@@ -6365,12 +6379,14 @@ fn ts_neutral_operand_hides(
             context.alias_map,
             context.workspace_root,
         );
-        for assertion in candidate
-            .test
-            .assertions
-            .iter()
-            .filter(|a| ts_is_value_assertion(a))
-        {
+        let mut accounted = 0;
+        for assertion in &candidate.test.assertions {
+            if !ts_assertion_mentions_owner(assertion, &names, &receivers) {
+                continue;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
             let arguments = ts_observed_owner_call_arguments(
                 candidate.test,
                 assertion,
@@ -6378,20 +6394,21 @@ fn ts_neutral_operand_hides(
                 owner,
                 &receivers,
             );
-            match arguments {
-                Some(arguments) => {
-                    let neutral = arguments
-                        .get(index)
-                        .and_then(|argument| numeric_literal_value(argument))
-                        .is_some_and(|value| value == change.neutral);
-                    if !neutral {
-                        return false;
-                    }
-                    seen = true;
-                }
-                None if ts_assertion_mentions_owner(assertion, &names, &receivers) => return false,
-                None => {}
+            let (true, Some(arguments)) = (ts_is_value_assertion(assertion), arguments) else {
+                return false;
+            };
+            let neutral = arguments
+                .get(index)
+                .and_then(|argument| numeric_literal_value(argument))
+                .is_some_and(|value| value == change.neutral);
+            if !neutral {
+                return false;
             }
+            accounted += ts_owner_calls_in(observed, &names, &receivers);
+            seen = true;
+        }
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+            return false;
         }
     }
     seen
@@ -6399,9 +6416,11 @@ fn ts_neutral_operand_hides(
 
 /// RIPR-SPEC-0248 rule 3: at least one value assertion observes the whole
 /// result of an owner call and compares it with another whole owner call
-/// (`normalize(normalize(text))` against `normalize(text)`), and no other
-/// value assertion names the owner. Such a relation holds for any constant,
-/// so it cannot notice a changed return value.
+/// (`normalize(normalize(text))` against `normalize(text)`), and every owner
+/// call of the related tests sits in such an assertion. Any other assertion
+/// naming the owner (a weak matcher included), or an owner call outside the
+/// assertions, keeps the credit. A constant return value satisfies the
+/// relation, so it cannot notice a changed return value.
 fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> bool {
     let owner = context.owner;
     let mut relational = false;
@@ -6423,12 +6442,17 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
             context.alias_map,
             context.workspace_root,
         );
-        for assertion in candidate
-            .test
-            .assertions
-            .iter()
-            .filter(|a| ts_is_value_assertion(a))
-        {
+        let mut accounted = 0;
+        for assertion in &candidate.test.assertions {
+            if !ts_assertion_mentions_owner(assertion, &names, &receivers) {
+                continue;
+            }
+            let (Some(observed), Some(expected)) = (
+                assertion.observed_expression.as_deref(),
+                assertion.dynamic_expected_text.as_deref(),
+            ) else {
+                return false;
+            };
             let observes_call = ts_observed_owner_call_arguments(
                 candidate.test,
                 assertion,
@@ -6437,20 +6461,17 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
                 &receivers,
             )
             .is_some();
-            if !observes_call && !ts_assertion_mentions_owner(assertion, &names, &receivers) {
-                continue;
-            }
-            let expected_is_owner_call = assertion
-                .dynamic_expected_text
-                .as_deref()
-                .and_then(|expected| {
-                    ts_whole_owner_call_arguments(expected, &names, owner, &receivers)
-                })
-                .is_some();
-            if !(observes_call && expected_is_owner_call) {
+            let expected_is_owner_call =
+                ts_whole_owner_call_arguments(expected, &names, owner, &receivers).is_some();
+            if !(ts_is_value_assertion(assertion) && observes_call && expected_is_owner_call) {
                 return false;
             }
+            accounted += ts_owner_calls_in(observed, &names, &receivers)
+                + ts_owner_calls_in(expected, &names, &receivers);
             relational = true;
+        }
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+            return false;
         }
     }
     relational

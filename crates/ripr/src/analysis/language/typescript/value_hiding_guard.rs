@@ -57,6 +57,41 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
     })
 }
 
+/// `true` when `old` and `new` are both `return <operand> <op> <operand>;`
+/// with the same commutative operator (`*` or `+`) over the same two
+/// operands, in either order. Any other edit (a changed operator, a dropped
+/// or replaced term) changes the value, so a test that passes the identity
+/// can still pin it.
+pub(crate) fn ts_operands_rewritten_in_place(old: &str, new: &str) -> bool {
+    let (Some((old_ops, old_op)), Some((new_ops, new_op))) = (operands(old), operands(new)) else {
+        return false;
+    };
+    let mut swapped = old_ops.clone();
+    swapped.reverse();
+    old_op == new_op && matches!(new_op, '*' | '+') && (new_ops == old_ops || new_ops == swapped)
+}
+
+fn operands(line: &str) -> Option<(Vec<String>, char)> {
+    let masked = ts_mask_literals_and_comments(line.trim());
+    let expression = masked
+        .trim()
+        .strip_prefix("return")
+        .filter(|rest| rest.starts_with(char::is_whitespace))?
+        .trim()
+        .strip_suffix(';')?
+        .trim();
+    let at = expression.find(['*', '/', '+', '-'])?;
+    let operator = expression[at..].chars().next()?;
+    let (left, right) = (expression[..at].trim(), expression[at + 1..].trim());
+    if [left, right].iter().any(|side| {
+        side.contains(['*', '/', '+', '-', '='])
+            || !(is_plain_identifier(side) || numeric_literal_value(side).is_some())
+    }) {
+        return None;
+    }
+    Some((vec![left.to_string(), right.to_string()], operator))
+}
+
 fn is_plain_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars

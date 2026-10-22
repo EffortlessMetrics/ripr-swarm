@@ -2001,7 +2001,6 @@ fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
     }
 }
 
-/// `(expected literal text, is dynamic)` for an optional expected argument.
 /// The source text of a dynamic matcher argument (`None` for a literal or
 /// no argument), kept so the classifier can read what the expected side is
 /// built from.
@@ -2009,6 +2008,7 @@ fn dynamic_argument_text(argument: Option<&Argument<'_>>, source: &str) -> Optio
     argument.and_then(|arg| source_text_for_argument(arg, source))
 }
 
+/// `(expected literal text, is dynamic)` for an optional expected argument.
 fn expected_argument_metadata(
     expected_arg: Option<&Argument<'_>>,
     source: &str,
