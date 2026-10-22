@@ -796,7 +796,7 @@ fn validate_artifact_identity(
     if identity.producer.version != env!("CARGO_PKG_VERSION") {
         return Err(foreign_producer_refusal(
             root,
-            &subject,
+            &format!("agent verify {label} artifact"),
             &identity.producer.version,
         ));
     }
@@ -1805,6 +1805,22 @@ mod tests {
         assert_eq!(closed.after_classification, "exposed");
         assert_eq!((closed.file.as_str(), closed.line), ("src/pricing.ts", 7));
         Ok(())
+    }
+
+    #[test]
+    fn gap_binding_over_a_non_findings_snapshot_is_operational_not_a_typed_refusal() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+                .to_string())
+        );
+        assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
     }
 
     #[test]
