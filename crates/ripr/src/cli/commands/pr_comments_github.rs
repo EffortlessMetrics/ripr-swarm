@@ -76,7 +76,7 @@ fn store_raw_copy(root: &Path, bytes: &[u8]) -> Result<(), String> {
 
 pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_existing_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let pages = if options.raw.as_os_str() == "-" {
         // The workflow pipes `gh api` straight in; keep the raw pages beside
         // the normalized file so the uploaded artifact still shows them.
@@ -212,7 +212,7 @@ fn validate_out_file(out: &Path) -> Result<(), String> {
 
 pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_requests_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let plan = read_json(&options.root.join(&options.plan), REQUESTS)?;
     let planned = publish_requests(&plan, &options.pull_request, &options.head_sha);
 
@@ -333,7 +333,7 @@ pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<Summa
 
 pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_summary_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let guidance = read_json(&options.root.join(&options.pr_guidance), SUMMARY)?;
     let pages = match options.raw.as_deref() {
         None => Value::Array(Vec::new()),
@@ -1032,12 +1032,6 @@ mod tests {
         fs::write(root.join("pages.json"), "[]").map_err(|err| err.to_string())?;
         std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
             .map_err(|err| err.to_string())?;
-        // The guard is skipped under an explicit RIPR_CACHE_DIR (the documented
-        // opt-in); the env cannot be cleared here without unsafe code.
-        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
-            let _ = fs::remove_dir_all(&base);
-            return Ok(());
-        }
         let result = pr_comments_existing(&strings(&[
             "--root",
             &root.display().to_string(),
@@ -1053,11 +1047,12 @@ mod tests {
         Ok(())
     }
 
-    /// The summary and requests manifests are written through the advisory
-    /// writer; a planted manifest link is replaced/refused, never followed.
+    /// Unit proof of the manifest writer only: it refuses a planted leaf link.
+    /// (The commands also remove their own owned manifest links before
+    /// writing, so this is defense in depth, not a command-level claim.)
     #[cfg(unix)]
     #[test]
-    fn manifest_writes_never_follow_a_planted_link() -> Result<(), String> {
+    fn manifest_writer_refuses_a_planted_link() -> Result<(), String> {
         use std::fs;
         let base = scratch("manifest-link");
         let root = base.join("root");
@@ -1076,6 +1071,60 @@ mod tests {
         assert_eq!(control?, "row\n");
         assert!(refused.is_err(), "planted manifest link was followed");
         assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn review_link_workspace(label: &str) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+        let base = scratch(label);
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|err| err.to_string())?;
+        Ok((base, root, external))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn requests_refuse_a_target_ripr_review_link() -> Result<(), String> {
+        let (base, root, external) = review_link_workspace("requests-review-link")?;
+        let result = pr_comments_requests(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--pull-request",
+            "1",
+            "--head-sha",
+            "abc123",
+        ]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(result.is_err_and(|err| err.contains("refusing to write ripr output")));
+        assert_eq!(leaked, 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn summary_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let (base, root, external) = review_link_workspace("summary-review-link")?;
+        let result = super::pr_comments_summary(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--pull-request",
+            "1",
+            "--head-sha",
+            "abc123",
+        ]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(result.is_err_and(|err| err.contains("refusing to write ripr output")));
+        assert_eq!(leaked, 0);
         Ok(())
     }
 }

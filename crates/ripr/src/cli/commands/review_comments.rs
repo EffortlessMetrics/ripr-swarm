@@ -449,7 +449,7 @@ fn review_comments_with_admission(
         ));
     }
 
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
         root: options.root.clone(),
@@ -3190,10 +3190,6 @@ mod tests {
         std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
             .map_err(|e| e.to_string())?;
-        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
-            let _ = std::fs::remove_dir_all(&base);
-            return Ok(());
-        }
         let result = review_comments(&args(&[
             "--root",
             &root.display().to_string(),

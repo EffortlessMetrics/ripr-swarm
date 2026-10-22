@@ -12,12 +12,20 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// choose where cache and workflow artifacts are written. Links that stay
 /// inside the workspace, and an explicit `RIPR_CACHE_DIR`, are unaffected.
 ///
-/// Known scope limit: a non-empty `RIPR_CACHE_DIR` skips the whole check, not
-/// only the cache sub-tree, so commands that never write to the cache
-/// directory (`pr-comments`, `review-comments`, `gate evaluate`) also lose the
-/// `target`/`target/ripr/*` link check under that variable.
+/// A non-empty `RIPR_CACHE_DIR` skips the whole check, so this entry point is
+/// only for commands whose output is entirely redirected by that variable;
+/// report-only writers use [`ensure_report_output_contained`].
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
     ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+}
+
+/// [`ensure_default_output_contained`] for commands that never write to the
+/// cache directory (`pr-comments`, `review-comments`, `gate evaluate`): an
+/// explicit `RIPR_CACHE_DIR` redirects only the cache, so it must not waive the
+/// `target` / `target/ripr/*` link check for the reports and review artifacts
+/// these commands still write under the workspace.
+pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> {
+    ensure_default_output_contained_with(root, None)
 }
 
 fn ensure_default_output_contained_with(

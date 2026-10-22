@@ -53,7 +53,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     }
 
     let options = parse_gate_options(rest)?;
-    crate::atomic_file::ensure_default_output_contained(&options.input.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.input.root)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     // Only `--pr-guidance` and `--gap-ledger` feed gate candidates.
@@ -1027,10 +1027,6 @@ mod tests {
         std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
             .map_err(|e| e.to_string())?;
-        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
-            let _ = std::fs::remove_dir_all(&base);
-            return Ok(());
-        }
         let result = gate(&args(&["evaluate", "--root", &root.display().to_string()]));
         let leaked = std::fs::read_dir(&external)
             .map_err(|e| e.to_string())?
