@@ -254,14 +254,17 @@ fn evaluate(
 ) -> Option<bool> {
     use ArmComparison::{Equal, Greater, GreaterOrEqual, Less, LessOrEqual, NotEqual};
     match (argument, operand) {
-        (ArmConstant::Number(a), ArmConstant::Number(b)) => Some(match comparison {
-            Equal => a == b,
-            NotEqual => a != b,
-            Less => a < b,
-            LessOrEqual => a <= b,
-            Greater => a > b,
-            GreaterOrEqual => a >= b,
-        }),
+        (ArmConstant::Number(a), ArmConstant::Number(b)) => {
+            let order = a.total_cmp(b);
+            Some(match comparison {
+                Equal => order.is_eq(),
+                NotEqual => order.is_ne(),
+                Less => order.is_lt(),
+                LessOrEqual => order.is_le(),
+                Greater => order.is_gt(),
+                GreaterOrEqual => order.is_ge(),
+            })
+        }
         (ArmConstant::Text(a), ArmConstant::Text(b)) => match comparison {
             Equal => Some(a == b),
             NotEqual => Some(a != b),

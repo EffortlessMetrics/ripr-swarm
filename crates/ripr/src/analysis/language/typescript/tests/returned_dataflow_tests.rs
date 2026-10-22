@@ -495,9 +495,9 @@ fn declared_arrow_body_reads_as_a_return_value_unless_it_compares() {
         "export const scale = (a: number) => (b: number) => a * b;",
         "export const run = (n: number) => { return n * 3; };",
     ] {
-        assert_eq!(
-            classify_probe_shape(line).0 == ProbeFamily::ReturnValue,
-            false,
+        assert_ne!(
+            classify_probe_shape(line).0,
+            ProbeFamily::ReturnValue,
             "{line}"
         );
     }
