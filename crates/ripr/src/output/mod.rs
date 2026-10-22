@@ -51,6 +51,7 @@ pub(crate) mod next_step;
 pub(crate) mod observed_values;
 pub(crate) mod outcome;
 pub(crate) mod path;
+mod path_unicode;
 #[cfg(all(test, feature = "lang-perl"))]
 mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;
