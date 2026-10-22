@@ -572,6 +572,54 @@ mod direct {
         Ok(())
     }
 
+    fn two_oracle_case() -> Result<Case, String> {
+        case(
+            "def score(value):\n    return 8\n",
+            "from src.subject import score\n\ndef test_a():\n    assert score(0)\n\ndef test_b():\n    assert score(1)\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )
+    }
+
+    #[test]
+    fn reordered_rows_that_both_have_oracles_annotate_nothing() -> Result<(), String> {
+        let case = two_oracle_case()?;
+        let mut aligned = base_rows(&case);
+        assert_eq!(aligned.len(), 2);
+        assert!(aligned.iter().all(|row| row.oracle.is_some()));
+        annotate(&case, &mut aligned);
+        // Control: aligned rows each gain their own reason.
+        assert!(aligned.iter().all(|row| row.miss.is_some()), "control");
+
+        let mut reordered = base_rows(&case);
+        reordered.reverse();
+        annotate(&case, &mut reordered);
+        assert!(reordered.iter().all(|row| row.miss.is_none()));
+        Ok(())
+    }
+
+    #[test]
+    fn weak_strength_row_gets_weak_assertion_like_smoke() -> Result<(), String> {
+        let case = two_oracle_case()?;
+        for strength in [
+            crate::domain::OracleStrength::Weak,
+            crate::domain::OracleStrength::Smoke,
+        ] {
+            let mut rows = base_rows(&case);
+            for row in &mut rows {
+                row.oracle_strength = strength.clone();
+            }
+            annotate(&case, &mut rows);
+            assert!(
+                rows.iter()
+                    .all(|row| row.miss == Some(RelatedTestMiss::WeakAssertion)),
+                "{strength:?}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn recognized_oracle_with_unknown_strength_gets_no_miss() -> Result<(), String> {
         let case = two_row_case()?;

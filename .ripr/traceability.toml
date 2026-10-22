@@ -14428,6 +14428,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::a_static_limit_keeps_every_row_none_even_when_the_class_says_weak",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::dunder_protocol_and_fixture_name_rows_get_no_no_call_path",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::mismatched_length_or_reordered_rows_annotate_nothing",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::reordered_rows_that_both_have_oracles_annotate_nothing",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::weak_strength_row_gets_weak_assertion_like_smoke",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::recognized_oracle_with_unknown_strength_gets_no_miss",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::module_constant_owner_row_gets_no_no_call_path",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::miss_annotation_changes_nothing_but_the_miss_field",
