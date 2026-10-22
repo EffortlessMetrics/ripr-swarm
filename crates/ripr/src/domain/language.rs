@@ -1034,6 +1034,8 @@ mod tests {
         assert_eq!(
             StaticLimitKind::RustPinnedShapeUnresolved.as_str(),
             "rust_pinned_shape_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustImplicitCallUnresolved.as_str(),
             "rust_implicit_call_unresolved"
         );
