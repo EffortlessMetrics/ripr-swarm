@@ -268,7 +268,15 @@ bucket:
   visible in the report.
 - `stale_baseline_entry` - a baseline record can be parsed but no longer joins
   cleanly because its identity is ambiguous, obsolete, or incompatible,
-  including analyzer-version identity discontinuity across an upgrade.
+  including analyzer-version identity discontinuity across an upgrade. A
+  baseline entry absent from current evidence whose path is not covered by the
+  current decision's disclosed `analysis_scope` (`changed_files` and
+  `changed_production_files`), or whose current decision discloses no or an
+  unrecognized scope, or skipped seams, is also `stale_baseline_entry` and
+  carries `"evaluation": "not_evaluated"` plus `not_evaluated_reason`
+  (issue #9301). It is never `resolved`, and `baseline update
+  --remove-resolved` keeps it through the shared
+  `absence_not_evaluated_reason` predicate.
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because

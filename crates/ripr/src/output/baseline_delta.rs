@@ -2438,7 +2438,9 @@ mod tests {
         assert!(markdown.contains("- src/line.rs:3"));
         assert!(markdown.contains("- src/class.rs weakly_gripped"));
         assert!(markdown.contains("- src/path.rs"));
-        assert!(markdown.contains("- identity-only"));
+        // A pathless entry cannot be proven inside the analyzed scope, so it
+        // is never listed as a resolved headline (issue #9301 F2).
+        assert!(!markdown.contains("Resolved baseline entries:\n- identity-only"));
     }
 
     #[test]
@@ -2461,6 +2463,12 @@ mod tests {
         });
         let rendered_json = render_baseline_delta_json(&report)?;
         let rendered_md = render_baseline_delta_markdown(&report);
+        if crate::testing::rebless::fixture_rebless_enabled() {
+            std::fs::write(&expected_json_path, &rendered_json)
+                .map_err(|err| err.to_string())?;
+            std::fs::write(&expected_md_path, &rendered_md).map_err(|err| err.to_string())?;
+            return Ok(());
+        }
         assert_eq!(rendered_json, read_file(&expected_json_path)?.trim_end());
         assert_eq!(rendered_md, read_file(&expected_md_path)?);
         Ok(())
