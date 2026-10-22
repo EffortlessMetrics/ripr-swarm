@@ -92,8 +92,13 @@ none. The same limit applies to that finding when all of these hold:
   with comments and strings masked. A path- or method-qualified call
   (`Bar::new(`, `x.len(`) may name another item with the same last segment
   and does not count, nor does an argument list that runs past a `;` or holds
-  a `'` (char literals are not masked and can unbalance the delimiters) or a
-  nested macro invocation (`stringify!(owner(1))` never evaluates its tokens);
+  a `'` (char literals are not masked and can unbalance the delimiters).
+  A call inside a nested macro input does not count
+  (`stringify!(owner(1))` never evaluates its tokens). A bare owner call
+  outside nested macro inputs still counts beside an opaque expected-value
+  macro, as in `assert_data_eq!(render_float(-0.0), snap_str![["-0.0"]])`
+  (#9644). Neither that expected text nor the helper's name supplies oracle
+  credit: resolving its actual comparison semantics remains separate;
 - the parser established the owner as a free function. For a method owner
   (`impl Cart::total`) or a trait default method a bare `total(` can only be
   another item, so the path does not run; the lexical fallback leaves the
@@ -146,6 +151,10 @@ arguments (`!x`, `a != b`) do not change this grade.
   discriminates the changed behavior.
 - Known assertion macros such as `assert_eq!` remain handled by the existing
   oracle extractor, not by this limitation.
+- No-op or shadowed helpers and mismatched expected values gain no exposure
+  credit from the nested-expected-macro rule. A different owner in the
+  assertion, a bound owner value, and an owner mentioned only inside an
+  opaque nested macro retain the existing gap.
 
 ## Wire Format
 

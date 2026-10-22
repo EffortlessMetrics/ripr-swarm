@@ -586,9 +586,10 @@ fn unresolved_assertion_macro_invocations(
 /// past a `;` or holds a `'`: char literals are not masked, so `'('` can
 /// unbalance the delimiters. The `'` refusal deliberately covers lifetimes
 /// and labels too (`bulk::<'static>(1)`); the delimiter walk cannot tell
-/// them apart, so narrowing it to char literals would need a real lexer. Arguments holding a nested macro invocation
-/// (`stringify!(owner(1))`) do not count either, since that macro may never
-/// evaluate the call.
+/// them apart, so narrowing it to char literals would need a real lexer.
+/// Calls inside a nested macro's input (`stringify!(owner(1))`) do not count,
+/// since it may never evaluate those tokens. A separate owner call outside
+/// that input still supplies this limitation witness.
 fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
     let Some(rest) = masked.get(after_bang..) else {
         return false;
@@ -619,10 +620,16 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
         return false;
     };
-    if arguments.contains('\'') || contains_macro_invocation(arguments) {
+    if arguments.contains('\'') {
         return false;
     }
+    let Some(macro_inputs) = macro_input_ranges(arguments) else {
+        return false;
+    };
     arguments.match_indices(owner_name).any(|(start, _)| {
+        if macro_inputs.iter().any(|range| range.contains(&start)) {
+            return false;
+        }
         let qualified_or_ident = arguments[..start]
             .trim_end()
             .chars()
@@ -633,16 +640,47 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     })
 }
 
-fn contains_macro_invocation(text: &str) -> bool {
-    text.match_indices('!').any(|(bang, _)| {
+/// Opaque nested token trees, over already-masked arguments. Only their inputs
+/// are excluded; this does not expand a macro or establish assertion semantics.
+fn macro_input_ranges(text: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (bang, _) in text.match_indices('!') {
+        if ranges.iter().any(|range| range.contains(&bang)) {
+            continue;
+        }
         let before = text[..bang].trim_end();
         let after = text[bang + 1..].trim_start();
-        before
+        let invoked = before
             .chars()
             .next_back()
             .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-            && after.starts_with(['(', '[', '{'])
-    })
+            && after.starts_with(['(', '[', '{']);
+        if !invoked {
+            continue;
+        }
+        let open = text.len() - after.len();
+        let mut stack = Vec::new();
+        let mut end = None;
+        for (offset, byte) in text.as_bytes()[open..].iter().copied().enumerate() {
+            match byte {
+                b'(' => stack.push(b')'),
+                b'[' => stack.push(b']'),
+                b'{' => stack.push(b'}'),
+                b')' | b']' | b'}' => {
+                    if stack.pop() != Some(byte) {
+                        return None;
+                    }
+                    if stack.is_empty() {
+                        end = Some(open + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.push(open..end?);
+    }
+    Some(ranges)
 }
 
 fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
@@ -1073,6 +1111,32 @@ mod tests {
             12,
             "bulk"
         ));
+        for arguments in [
+            "bulk(1), snapshot![[text]]",
+            "snapshot![[text]], bulk(1)",
+            "bulk(1), outer!(inner!({[text]}))",
+            "bulk(1), quoté![[text]]",
+        ] {
+            assert!(super::macro_arguments_call(
+                &format!("assert_flag!({arguments});"),
+                12,
+                "bulk"
+            ));
+        }
+        for arguments in [
+            "discard!(bulk(1)), snapshot![[text]]",
+            "outer!(inner!(bulk(1))), text",
+            "bulk!(1)(2), snapshot![[text]]",
+            "other::bulk(1), snapshot![[text]]",
+            "other.bulk(1), snapshot![[text]]",
+            "bulk(1), snapshot!([text})",
+        ] {
+            assert!(!super::macro_arguments_call(
+                &format!("assert_flag!({arguments});"),
+                12,
+                "bulk"
+            ));
+        }
     }
 
     #[test]

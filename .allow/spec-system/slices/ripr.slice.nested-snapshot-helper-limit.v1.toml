@@ -1,0 +1,38 @@
+schema_version = "2.0"
+id = "ripr.slice.nested-snapshot-helper-limit.v1"
+generation = 1
+source_issue = "issue:9644"
+design_reference = "RIPR-SPEC-0120"
+change_class = "behavior_change"
+
+claim_boundary = """
+Preserve the existing unresolved assertion-macro limitation when a bare
+owner call outside nested macro inputs shares an argument list with an
+opaque expected-value macro. A sibling test's proximity oracle cannot turn
+that ungraded local snapshot helper into an actionable gap. This is a
+limitation witness, never assertion authority or an exact snapshot pin.
+"""
+non_goals = [
+  "Exact exposure credit for local snapshot helpers",
+  "Whole-document snapshot recall or insta/expect-test expansion",
+  "Feature-gated test collection",
+  "General macro expansion or helper evaluation",
+]
+return_conditions = [
+  "Reconcile any exposed promotion or changed assertion/oracle grade.",
+  "Reconcile owner calls admitted from inside opaque nested macro inputs.",
+]
+owned_seams = ["seam:ripr:rust:macro-assertion-limitation"]
+shared_seams = ["seam:ripr:cache:classified-generation"]
+forbidden_seams = ["seam:ripr:rust:exact-owner-pin", "seam:ripr:rust:test-collection"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0120"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"
