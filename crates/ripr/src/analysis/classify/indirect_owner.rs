@@ -121,6 +121,27 @@ fn judged_for_owner(
     index: &RustIndex,
 ) -> Vec<(String, Form)> {
     let mut judged = Vec::new();
+    let is_related = |test: &TestFact, direct_only: bool| {
+        finding.related_tests.iter().any(|related| {
+            related.name == test.name
+                && related.file == test.file
+                && related.line == test.start_line
+                && (!direct_only
+                    || related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        })
+    };
+    // When some related test already calls the owner, reach is not in doubt:
+    // a value mention only counts in a test the finding itself lists, so an
+    // unrelated test that binds a same-named local cannot hide the gap of the
+    // test that does call it. With proximity-only reach (the usual shape of
+    // `.map(owner)`), every test that can see the owner is a candidate, since
+    // the related list is capped.
+    let called = finding.related_tests.iter().any(|related| {
+        matches!(
+            related.relation_reason,
+            Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+        )
+    });
     for test in index.tests() {
         if is_ignored(test) || test.assertions.is_empty() {
             continue;
@@ -129,16 +150,14 @@ fn judged_for_owner(
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
-        if sees_owner && names_owner_as_value(&code, &owner.name) {
+        if sees_owner
+            && (!called || is_related(test, false))
+            && names_owner_as_value(&code, &owner.name)
+        {
             judged.push((label(test), Form::FunctionValue));
             continue;
         }
-        let related_direct = finding.related_tests.iter().any(|related| {
-            related.name == test.name
-                && related.file == test.file
-                && related.line == test.start_line
-                && related.relation_reason == Some(RelationReason::DirectOwnerCall)
-        });
+        let related_direct = is_related(test, true);
         if related_direct && executor_wraps_owner_call(&code, &owner.name, test, index) {
             judged.push((label(test), Form::ExecutorWrapped));
         }
@@ -239,19 +258,62 @@ fn line_starts_with_use(code: &str, at: usize) -> bool {
     line.starts_with("use ") || line.starts_with("pub use ")
 }
 
-/// `let name`, `let mut name`, or a closure/fn parameter list holding `name`
-/// make a later mention the local, not the owner.
+/// Whether `name` is bound as a local anywhere in the test: a typed or
+/// untyped pattern after `let` (`let name`, `let (name, n)`, `if let
+/// Some(name) =`), after `for` (`for (name, _) in`), a closure parameter
+/// list (`|name|`), a `match` arm pattern (`Some(name) =>`) or a typed
+/// parameter. A later mention is then the local, not the owner.
 fn is_bound_locally(code: &str, name: &str) -> bool {
-    identifier_offsets(code, name).any(|at| {
-        let before = code[..at].trim_end();
-        let before = before.strip_suffix("mut").map_or(before, str::trim_end);
-        let after = code[at + name.len()..].trim_start();
-        let declared = before.ends_with("let") && ends_at_boundary(&before[..before.len() - 3]);
-        let parameter = after.starts_with(':')
-            && !after.starts_with("::")
-            && code[..at].trim_end().ends_with(['(', ',', '|']);
-        declared || parameter
-    })
+    pattern_spans(code)
+        .into_iter()
+        .any(|(start, end)| identifier_offsets(&code[start..end], name).next().is_some())
+        || identifier_offsets(code, name).any(|at| {
+            let after = code[at + name.len()..].trim_start();
+            after.starts_with(':')
+                && !after.starts_with("::")
+                && code[..at].trim_end().ends_with(['(', ',', '|'])
+        })
+}
+
+/// Byte ranges of `code` that are binding patterns: from `let`/`for` to the
+/// next `=` or `in`, closure parameter lists between `|` bars, and match-arm
+/// patterns from the previous `{`, `,` or `;` to `=>`.
+fn pattern_spans(code: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for keyword in ["let", "for"] {
+        for at in identifier_offsets(code, keyword) {
+            let from = at + keyword.len();
+            let rest = &code[from..];
+            let stop = if keyword == "let" {
+                rest.find(['=', ';'])
+            } else {
+                rest.find(" in ").or_else(|| rest.find('{'))
+            };
+            if let Some(stop) = stop {
+                spans.push((from, from + stop));
+            }
+        }
+    }
+    let bytes = code.as_bytes();
+    let mut open = None;
+    for (at, byte) in bytes.iter().enumerate() {
+        if *byte == b'|'
+            && bytes.get(at + 1) != Some(&b'|')
+            && at.checked_sub(1).map(|p| bytes[p]) != Some(b'|')
+        {
+            match open.take() {
+                Some(start) => spans.push((start, at)),
+                None => open = Some(at + 1),
+            }
+        }
+    }
+    for (at, _) in code.match_indices("=>") {
+        let start = code[..at]
+            .rfind(['{', ',', ';'])
+            .map_or(0, |found| found + 1);
+        spans.push((start, at));
+    }
+    spans
 }
 
 /// The owner is called as the only argument of an executor: a local helper
@@ -360,6 +422,20 @@ mod tests {
             "let go = |inc: u32| inc + 1; go(1);",
             "inc"
         ));
+    }
+
+    #[test]
+    fn pattern_bindings_of_the_owner_name_are_locals() {
+        for code in [
+            "if let Some(total) = r { keep(total); }",
+            "for (total, _) in rows { keep(total); }",
+            "let (total, n) = pair; keep(total);",
+            "let go = |total| total + 1; go(1);",
+            "match r { Ok(total) => keep(total), Err(_) => {} }",
+        ] {
+            assert!(!names_owner_as_value(code, "total"), "{code}");
+        }
+        assert!(names_owner_as_value("rows.map(total).count();", "total"));
     }
 
     #[test]

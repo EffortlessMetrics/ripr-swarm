@@ -89,6 +89,7 @@ const KNOWN_STATIC_LIMIT_KINDS: [&str; 26] = [
     "rust_framework_oracle_unresolved",
     "rust_implicit_call_unresolved",
     "rust_debug_assertion_profile_unresolved",
+    "rust_indirect_owner_call_unresolved",
 ];
 /// Historical sweep renditions are hand-trimmed; a retained anchor line within
 /// this distance of the rendition's changed position is disclosed as a warning.

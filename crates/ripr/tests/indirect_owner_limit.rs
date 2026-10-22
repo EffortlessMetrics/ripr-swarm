@@ -255,6 +255,46 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
 }
 
+#[test]
+fn an_ignored_test_naming_the_owner_as_a_value_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+    }
+
+    #[test]
+    #[ignore]
+    fn mapped() {
+        assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "ignored value use")
+}
+
+#[test]
+fn an_unrelated_pattern_binding_of_the_owner_name_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+    }
+
+    #[test]
+    fn unrelated() {
+        for (inc, _) in [(1, 2)] {
+            assert!(inc > 0);
+        }
+        if let Some(inc) = Some(3) {
+            assert!(inc > 0);
+        }
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "pattern bindings named like the owner")
+}
+
 const ASYNC_OWNER: &str = "pub async fn add_tax(p: u32) -> u32 {
     p + p / 10
 }
