@@ -634,3 +634,9 @@ reason = "check --path/--exclude diff-scope filter for oversized diffs; not an e
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
+
