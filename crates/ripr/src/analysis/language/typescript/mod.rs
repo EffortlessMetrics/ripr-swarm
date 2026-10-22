@@ -60,6 +60,7 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod call_removal_guard;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod classifier;
@@ -104,6 +105,8 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+#[cfg(test)]
+mod assertion_form_tests;
 mod repo;
 #[cfg(test)]
 mod repo_tests;

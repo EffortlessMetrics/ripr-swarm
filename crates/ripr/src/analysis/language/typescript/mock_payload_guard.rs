@@ -978,7 +978,7 @@ pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
 /// line is a whole top-level statement of the body with no function on it,
 /// so a nested function elsewhere (`lines.reduce((sum, l) => ...)`) cannot
 /// run it.
-fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str) -> bool {
+pub(super) fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str) -> bool {
     let Some(body) = masked_owner_body(owner_source) else {
         return false;
     };

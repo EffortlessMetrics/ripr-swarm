@@ -4926,6 +4926,26 @@ pub(crate) fn classify_change_with_alias_state(
     } else {
         probe_shape
     };
+    // RIPR-SPEC-0243 rule 15: `receiver.method(...)` replaced by `void local;`
+    // is a call deletion when a related test counts that method's calls with a
+    // `node:test` mock; without such a test the line stays unrecognised.
+    let call_removal = (!probe_shape.specific)
+        .then(|| super::call_removal_guard::removed_method_call(line_text, old_line_text))
+        .flatten()
+        .filter(|(receiver, method)| {
+            super::call_removal_guard::call_count_pins_removed_call(
+                receiver,
+                method,
+                &related_candidates,
+            ) && owner.source_text.as_deref().is_some_and(|source| {
+                super::mock_payload_guard::runs_changed_line_once(source, &owner.name, line_text)
+            })
+        });
+    let probe_shape = if call_removal.is_some() {
+        TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
+    } else {
+        probe_shape
+    };
     let mut related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
@@ -5031,7 +5051,8 @@ pub(crate) fn classify_change_with_alias_state(
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
-    let error_facts = ErrorChangeFacts::read(old_line_text, line_text);
+    let error_facts = ErrorChangeFacts::read(old_line_text, line_text)
+        .with_owner_source(owner.source_text.as_deref());
     // RIPR-SPEC-0247 rule 1 reads the owner body only when an effect seam
     // has a related mock payload to credit.
     let reads_mock_payload = matches!(

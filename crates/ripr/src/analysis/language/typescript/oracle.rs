@@ -1778,6 +1778,20 @@ fn assert_call_assertion(
         oracle_kind = OracleKind::ExactErrorVariant;
         oracle_strength = OracleStrength::Strong;
     }
+    // RIPR-SPEC-0243 rule 10: `assert.match(value, /^literal$/)` with a
+    // regex that matches only one string (anchored, no flags but `u`, no
+    // metacharacters) is a string equality check, so it pins the value as
+    // `strictEqual` does. A wider regex stays a weak relational check.
+    let anchored_match_literal = (method == "match" && !matches!(flavor, AssertFlavor::Chai))
+        .then(|| call.arguments.get(1))
+        .flatten()
+        .filter(|arg| matches!(arg, Argument::RegExpLiteral(_)))
+        .and_then(|arg| source_text_for_argument(arg, source))
+        .and_then(|text| super::error_payload_guard::plain_anchored_regex_text(&text));
+    if anchored_match_literal.is_some() {
+        oracle_kind = OracleKind::ExactValue;
+        oracle_strength = OracleStrength::Strong;
+    }
     // RIPR-SPEC-0247 rule 2: loose `==` equality against a literal that
     // coercion cannot reach pins the value as strict equality does.
     // A test-local `const` bound to such a literal reads as the literal.
@@ -1822,9 +1836,10 @@ fn assert_call_assertion(
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        match resolved_const.or(loose_number_literal) {
-            Some(literal) => (Some(literal.to_string()), false),
-            None => expected_argument_metadata(expected_arg, source),
+        match (anchored_match_literal, resolved_const.or(loose_number_literal)) {
+            (Some(literal), _) => (Some(format!("{literal:?}")), false),
+            (None, Some(literal)) => (Some(literal.to_string()), false),
+            (None, None) => expected_argument_metadata(expected_arg, source),
         };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
@@ -1869,6 +1884,18 @@ fn node_assert_error_payload(
                 TypeScriptErrorPayloadKind::AssertRejectsRegex
             } else {
                 TypeScriptErrorPayloadKind::AssertThrowsRegex
+            },
+        });
+    }
+    if let Argument::RegExpLiteral(_) = arg {
+        let expected = source_text_for_argument(arg, source)?;
+        super::error_payload_guard::plain_unanchored_regex_text(&expected)?;
+        return Some(TypeScriptErrorPayload {
+            expected,
+            kind: if rejects {
+                TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
+            } else {
+                TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             },
         });
     }
@@ -2084,19 +2111,13 @@ pub(crate) fn chai_expect_assertion_from_expression(
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
     }
-    // RIPR-SPEC-0243 rule 10: a non-negated chai `throw` with exactly one
-    // string-literal argument matches the message as a substring, as Jest's
-    // `toThrow("...")` does, so it pins the error the same way.
+    // RIPR-SPEC-0243 rule 10: a non-negated chai `throw` pins the error when
+    // its arguments are a string literal (substring message), a PascalCase
+    // class reference, or a class followed by a string literal. A regex, an
+    // instance, or any other argument stays broad.
     let error_payload = terminal_call
-        .filter(|call| {
-            !negated && matches!(oracle_kind, OracleKind::BroadError) && call.arguments.len() == 1
-        })
-        .and_then(|call| call.arguments.first())
-        .and_then(|arg| safe_error_literal_payload_text(arg, source))
-        .map(|expected| TypeScriptErrorPayload {
-            expected,
-            kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
-        });
+        .filter(|_| !negated && matches!(oracle_kind, OracleKind::BroadError))
+        .and_then(|call| chai_throw_payload(&call.arguments, source));
     if error_payload.is_some() {
         oracle_kind = OracleKind::ExactErrorVariant;
         oracle_strength = OracleStrength::Strong;
@@ -2148,6 +2169,38 @@ pub(crate) fn chai_expect_assertion_from_expression(
         expected_object_const: None,
         compares_reference_identity: false,
     })
+}
+
+/// The pinned error payload of a chai `.throw(...)` argument list
+/// (RIPR-SPEC-0243 rule 10). Fail closed on every other shape.
+fn chai_throw_payload(
+    arguments: &oxc_allocator::Vec<'_, Argument<'_>>,
+    source: &str,
+) -> Option<TypeScriptErrorPayload> {
+    match arguments.as_slice() {
+        [only] => {
+            if let Some(expected) = safe_error_literal_payload_text(only, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
+                })
+            } else {
+                safe_error_class_payload_text(only, source).map(|expected| TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ChaiThrowClass,
+                })
+            }
+        }
+        [class, message] => {
+            let class = safe_error_class_payload_text(class, source)?;
+            let message = safe_error_literal_payload_text(message, source)?;
+            Some(TypeScriptErrorPayload {
+                expected: format!("{class}, {message}"),
+                kind: TypeScriptErrorPayloadKind::ChaiThrowClassLiteral,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Unwrap the chain between `expect(...)` and the matcher call: the
