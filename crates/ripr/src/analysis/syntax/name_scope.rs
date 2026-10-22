@@ -13,11 +13,12 @@
 //! unsettled. An item inside a nested `fn` (or a module nested in the body)
 //! is block-bound the same way.
 
+#[cfg(test)]
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasGenericArgs, HasModuleItem, HasName},
+    ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::BTreeSet;
 
@@ -90,9 +91,26 @@ pub(crate) enum UseBinding {
     Opaque,
 }
 
+/// Declared type-parameter names share the type/module path namespace. This
+/// records names only; it does not resolve their bounds or inferred arguments.
+pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(parameters) = function.generic_param_list() {
+        for parameter in parameters.generic_params() {
+            if let ast::GenericParam::TypeParam(parameter) = parameter
+                && let Some(name) = parameter.name()
+            {
+                names.insert(name.text().trim_start_matches("r#").to_string());
+            }
+        }
+    }
+    names
+}
+
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
 /// on `fn_line`. `None` when the source does not parse cleanly or holds no
 /// such function, so a caller fails closed.
+#[cfg(test)]
 pub(crate) fn name_scopes_for_fn(
     source: &str,
     fn_line: usize,
@@ -101,12 +119,27 @@ pub(crate) fn name_scopes_for_fn(
     let parse = parse_clean_source_file(source)?;
     let line_index = LineIndex::new(source);
     let tree = parse.tree();
-    let function = tree.syntax().descendants().find_map(|node| {
+    name_scopes_in_tree(&tree, &line_index, fn_line, fn_name)
+}
+
+pub(super) fn name_scopes_in_tree(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+) -> Option<NameScopes> {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
         let function = ast::Fn::cast(node)?;
         let token = function.fn_token()?;
         let named = function.name().is_some_and(|ident| ident.text() == fn_name);
         (named && line_index.line(token.text_range().start()) == fn_line).then_some(function)
-    })?;
+    });
+    let function = functions.next()?;
+    // A function summary's name/line cannot identify one of two same-named
+    // declarations on that line. Never borrow the first declaration's scope.
+    if functions.next().is_some() {
+        return None;
+    }
     let modules_of = |node: &SyntaxNode| {
         let mut modules: Vec<String> = node
             .ancestors()
@@ -122,6 +155,7 @@ pub(crate) fn name_scopes_for_fn(
             let mut scope = NameScope {
                 modules: modules_of(&ancestor),
                 fn_body: true,
+                defines: function_type_param_names(&enclosing_fn),
                 ..NameScope::default()
             };
             if let Some(body) = enclosing_fn.body() {
@@ -524,5 +558,23 @@ mod tests {
         assert!(name_scopes_for_fn("fn broken( {", 1, "broken").is_none());
         assert!(name_scopes_for_fn("fn present() {}", 1, "absent").is_none());
         assert!(name_scopes_for_fn("fn present() {}", 2, "present").is_none());
+    }
+    #[test]
+    fn same_named_functions_on_one_line_have_no_unique_scope() {
+        let source = "mod left { fn check() {} } mod right { fn check() {} }";
+        assert!(name_scopes_for_fn(source, 1, "check").is_none());
+    }
+    #[test]
+    fn function_type_parameters_refuse_module_name_borrowing() {
+        let source = "fn check<'a, helpers, const N: usize>() {}";
+        let scopes = name_scopes_for_fn(source, 1, "check");
+        assert!(
+            scopes.as_ref().is_some_and(|scopes| scopes
+                .scopes
+                .first()
+                .is_some_and(
+                    |scope| scope.defines.contains("helpers") && !scope.defines.contains("N")
+                ))
+        );
     }
 }
