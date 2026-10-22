@@ -60,7 +60,7 @@ const PINS: &[Pin] = &[
     (
         "first-run-install.yml",
         "Swatinem/rust-cache",
-        "v2",
+        "v2.9.3", // Already pinned by the #9527 owner; retain its composition contract.
         "d1527c8f67ef9af357290475d4af4b0fab8f12e0",
         None,
         1,
@@ -313,7 +313,7 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
         assert_eq!(count, pin.5, "{} {}@{}", pin.0, pin.1, pin.2);
         total += count;
     }
-    assert_eq!(total, 39, "include both current-main first-run additions");
+    assert_eq!(total, 39, "38 burn-down pins plus the inherited #9527 cache pin");
     Ok(())
 }
 
