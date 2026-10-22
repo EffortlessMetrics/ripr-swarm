@@ -667,6 +667,23 @@ impl StaticLimitKind {
 mod tests {
     use super::*;
 
+    #[test]
+    fn all_lists_every_language_variant() {
+        // Exhaustive: a new variant fails to compile here until it is placed
+        // in `ALL`, which the capability table's every-language check walks.
+        fn ordinal(language: LanguageId) -> usize {
+            match language {
+                LanguageId::Rust => 0,
+                LanguageId::TypeScript => 1,
+                LanguageId::JavaScript => 2,
+                LanguageId::Python => 3,
+                LanguageId::Perl => 4,
+            }
+        }
+        let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
+        assert_eq!(ordinals, (0..LanguageId::ALL.len()).collect::<Vec<_>>());
+    }
+
     /// #4323: a lost string-literal continuation left ~18-space runs inside
     /// this gloss, which rendered as mid-sentence gaps in human and JSON output.
     #[test]
