@@ -81,7 +81,7 @@ jobs:
           shard=${{ matrix.shard }}
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
-          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9)
+          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
             set +e
             for _ in $(seq 1 264); do
