@@ -53,6 +53,24 @@ input.
 | `ripr/listActionableItems` params | 16 KiB (size estimate) | The live handler reads no client-supplied fields (#1603); the bound caps the params blob as one opaque value at handler entry, before any snapshot access or early-return fast path. |
 | JSON nesting depth | 128 | Enforced by serde_json's default recursion limit; the `unbounded_depth` feature is not enabled anywhere in the workspace. Over-deep bodies are bounded codec errors. |
 
+Work-done progress creation uses that same 30-second request bound, but its
+announcement runs separately from refresh completion (#9149). Tokens register
+before announcement starts; terminal intent silences an unstarted token.
+A late create success cannot begin a terminated token. Begin, report and end
+notifications serialize per token, so one token's suspended send does not
+hold another token's report or terminal removal. An already-started token
+ends once, after its Begin. Terminal intent stays in the registry until
+cleanup completes, so cancellation while waiting cannot drop the current or
+unvisited drain records; retried cleanup retains custody. Late announcements
+and reports check that intent before sending. Once a started token's End
+send begins, an owned task retains its token lock and registry custody through
+send completion even if its awaiting caller is canceled; retries wait for that
+same send rather than enqueueing another End.
+The full `end_all` drain still awaits in-flight notifications on the drained
+tokens; this isolation does not establish a total shutdown latency bound.
+Capability negotiation remains owned by
+`ClientFeatureProfile` (#1971).
+
 ## Typed-size traversal work
 
 The 64 KiB typed limits use the existing decoded-value estimate, not exact

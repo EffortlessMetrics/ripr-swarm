@@ -26,6 +26,10 @@ Linked issues:
 - [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
   the bounded default verdict uses plain language only; schema tokens stay
   in `human-full`, JSON, and `explain`.
+- [#9346](https://github.com/EffortlessMetrics/ripr-swarm/issues/9346) -
+  Start-here selection ranks changed-file role first, so an unknown probe
+  seeded by a test-file edit cannot lead over a decisive production
+  verdict.
 
 Linked PRs:
 
@@ -220,13 +224,59 @@ lines rendered beneath it:
 The bounded renderer selects at most one visible unsuppressed finding. The
 selector is deterministic:
 
-1. Non-preview findings outrank preview-language findings.
-2. Non-exposed findings with repair routes outrank findings without repair
+1. Findings are ranked by changed-file role first (#9346). The role is
+   the producer-owned source-role model
+   (`analysis::workspace::source_role`), built at this surface from
+   layout plus the configured `[analysis] production_like_targets`
+   opt-in (triage holds no Cargo target metadata, so declared targets,
+   build scripts, and declared crate roots are not recorded here).
+   Three tiers: (a) files that seed production findings — production
+   subjects and opted-in production-like targets, the opt-in winning
+   over the `tests/` layout exactly as the producer ordered it;
+   (b) diff-only seeders (`seeds_diff_probes`) — reviewed behavior that
+   seeds when changed but stays out of the production seam inventory,
+   of which repository automation under root `xtask/src/` is the shape
+   derivable at this surface; (c) evidence-role files (integration
+   tests, benches, examples, fixtures). The demoted pair is
+   (evidence-role file, unknown verdict): an unknown probe seeded by a
+   test-file edit cannot lead over the decisive or weak production
+   finding it accompanies.
+2. Within production findings, an unknown probe (`static_unknown`,
+   `infection_unknown`, `propagation_unknown`) shadowed by a decisive
+   (`exposed` or `weakly_exposed`) production verdict covering the same
+   changed behavior ranks behind that verdict (#9346). Owner identity is
+   the producer-owned `probe.owner` (`<file>::<owner>`), with the
+   canonical gap's `file`/`owner` pair as the same identity for findings
+   that carry only the gap — but owner alone never shadows. Shadowing
+   requires the same changed behavior (same changed file and line and
+   the same behavior subject: the canonical gap's
+   `file`/`owner`/`normalized_discriminator`, or the probe's changed
+   expression where no gap is carried), or an unknown carrying no
+   distinct change of its own (its recorded before/after delta is
+   absent or behavior-neutral, as in the witnessed whole-function
+   `static_unknown` seeded by re-adding the signature line unchanged
+   or comment-only). Two independent edits in one function — for
+   example a changed signature type bound and a changed predicate —
+   name different subjects on different lines with substantive deltas,
+   so the unknown keeps its lead and its limitation headline. A lone
+   production unknown, or one whose decisive sibling covers a
+   different owner, is likewise not shadowed.
+3. Non-preview findings outrank preview-language findings.
+4. Non-exposed findings with repair routes outrank findings without repair
    routes.
-3. `exposed` findings do not outrank non-exposed findings merely because they
+5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-4. Class, gap metadata, related tests, missing evidence, confidence, path, and
+6. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
+
+Apart from the same-behavior shadowing in step 2, verdict order within one
+file role is unchanged: an unshadowed production unknown still leads a
+production `exposed` finding, so `no_actionable_gap` keeps meaning
+only-exposed-selected (or only shadowed unknowns remain), a production
+unknown keeps its lead over a decisive test-file finding, and when every
+probe is unknown the selected unknown still yields the `static_limited`
+state. Classification is unchanged; only the selection order moves
+(#9346).
 
 The selected finding's `Next step` is never truncated, because the guidance
 ends with its remedy (#4323). Text within the digest line budget stays on one
@@ -238,7 +288,12 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
 #5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. Side-effect, call-deletion,
+compiling test stub, or a named refusal. When the finding line holds no seam
+of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
+seam's own line rather than the finding line, and only when asking for that
+line resolves to the same seam with no substitution note; otherwise no route
+is printed. A changed constant routed through a consuming function follows the
+same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.
 
@@ -373,6 +428,18 @@ content. Shared CLI blocks use compact section spacing; only empty separators
 are removed, never a content line. Consecutive references preserve evidence
 order and repeated entries.
 No finding or evidence fact is removed to shorten the report (#7394).
+
+One presentation exception applies to a `no_static_path` finding: its Weakness
+list omits the three generic `missing` entries ("No static test path reaches
+the changed owner", "No relevant oracle was detected", "No strong
+discriminator was detected") while the matching Evidence stage (reach,
+observation, discriminator) reads `no`, because the Evidence block already
+states the same fact. A distinct entry, such as a missing boundary input, and
+any entry whose stage is not `no` stay. The finding's JSON `missing` list is
+unchanged. The default digest skips the same restated entries when it names its one
+`Missing discriminator` entry, and labels a `Typed static limitation (...)`
+entry as an `Analyzer limit`, so it never presents an analyzer limit as a test
+gap or names an entry the exhaustive form dropped as a restatement (#9033).
 
 Sharing requires established identical full source ownership, source file,
 language/status/owner kind, currentness and raw test context/counts. An evidence
@@ -527,6 +594,7 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- On Windows, the copy actions for agent loop commands accept the server's
+  Windows console quoting (`--base "HEAD~1"`, a root path with spaces). They
+  were validated against the POSIX single-quote form only and showed "No ripr
+  agent loop command is available". A double-quoted span is accepted only on
+  Windows, only in the server's exact form, and never with `$`, a backtick,
+  `%`, a line break or a typographic quote inside it (#2769).
+
 - Show `$(warning) ripr: language off` and name the language when changed
   files of a language whose adapter is not enabled were skipped, instead of
   the generic `limited` text. The status bar reads the typed
