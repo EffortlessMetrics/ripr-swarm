@@ -157,6 +157,24 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
         ));
     }
 
+    if let Ok(entries) = fs::read_dir(".github/workflows") {
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext == "yml" || ext == "yaml")
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        for path in paths {
+            let display = path.to_string_lossy().replace('\\', "/");
+            if let Ok(text) = fs::read_to_string(&path) {
+                npm_launcher::validate_workflow_npm_tags(&display, &text, &mut violations);
+            }
+        }
+    }
+
     let python_manifest = read_required_file(PYTHON_MANIFEST_PATH, &mut violations);
     let python_readme = read_required_file(PYTHON_README_PATH, &mut violations);
     let python_license_mit = read_required_file(PYTHON_LICENSE_MIT_PATH, &mut violations);

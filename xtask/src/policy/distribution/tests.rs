@@ -597,3 +597,85 @@ fn python_source_gate_selects_complete_distribution_inventory() -> Result<(), St
     }
     Ok(())
 }
+
+fn npm_with_version_and_tag(version: &str, tag: Option<&str>) -> String {
+    let mut text = NPM_MANIFEST_TEXT.replace(
+        "\"version\": \"0.11.0\"",
+        &format!("\"version\": \"{version}\""),
+    );
+    if let Some(tag) = tag {
+        text = text.replace(
+            "\"access\": \"public\"",
+            &format!("\"access\": \"public\", \"tag\": \"{tag}\""),
+        );
+    }
+    text
+}
+
+fn publish_tag_violations(version: &str, tag: Option<&str>) -> Vec<String> {
+    let mut violations = Vec::new();
+    npm_launcher::validate_publish_tag(npm_launcher::MANIFEST_PATH, version, tag, &mut violations);
+    violations
+}
+
+#[test]
+fn npm_prerelease_publish_tag_positive_controls_pass() {
+    assert!(publish_tag_violations("0.11.0-alpha.2", Some("next")).is_empty());
+    assert!(publish_tag_violations("0.11.0", None).is_empty());
+    assert!(publish_tag_violations("0.11.0", Some("latest")).is_empty());
+}
+
+#[test]
+fn npm_prerelease_without_explicit_tag_or_with_latest_is_rejected() {
+    for tag in [None, Some("latest"), Some("")] {
+        let violations = publish_tag_violations("0.11.0-alpha.2", tag);
+        assert!(has_violation(&violations, "prerelease version"), "{tag:?}");
+    }
+    let violations = publish_tag_violations("0.11.0", Some("next"));
+    assert!(has_violation(&violations, "stable version"));
+}
+
+#[test]
+fn npm_manifest_prerelease_to_latest_fails_through_launcher_validator() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let run = |tag: Option<&str>| {
+        let mut violations = Vec::new();
+        npm_launcher::validate_launcher(
+            npm_launcher::MANIFEST_PATH,
+            &npm_with_version_and_tag("0.11.0-alpha.2", tag),
+            "0.11.0-alpha.2",
+            &contract,
+            &mut violations,
+        );
+        violations
+    };
+    assert!(has_violation(&run(None), "publishConfig.tag"));
+    assert!(has_violation(&run(Some("latest")), "publishConfig.tag"));
+    assert!(!has_violation(&run(Some("next")), "publishConfig.tag"));
+    Ok(())
+}
+
+#[test]
+fn workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag() {
+    let check = |text: &str| {
+        let mut violations = Vec::new();
+        npm_launcher::validate_workflow_npm_tags("wf.yml", text, &mut violations);
+        violations
+    };
+    assert!(check("      - run: npm publish --tag next\n").is_empty());
+    assert!(check("      - run: npm publish --tag=next --access public\n").is_empty());
+    assert!(check("      # npm publish\n      - run: npm pack --dry-run\n").is_empty());
+    assert!(has_violation(
+        &check("      - run: npm publish\n"),
+        "explicit non-`latest`"
+    ));
+    assert!(has_violation(
+        &check("      - run: npm publish --tag latest\n"),
+        "forbidden"
+    ));
+    assert!(has_violation(
+        &check("      - run: npm dist-tag add pkg@1.0.0-rc.1 latest\n"),
+        "forbidden"
+    ));
+    assert!(check("      - run: npm dist-tag add pkg@1.0.0-rc.1 next\n").is_empty());
+}

@@ -52,6 +52,8 @@ struct LauncherManifest {
 #[derive(Debug, Deserialize)]
 struct PublishConfig {
     access: String,
+    #[serde(default)]
+    tag: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +169,12 @@ pub(super) fn validate_launcher(
         "public",
         violations,
     );
+    validate_publish_tag(
+        path,
+        &manifest.version,
+        manifest.publish_config.tag.as_deref(),
+        violations,
+    );
     for script in FORBIDDEN_LIFECYCLE_SCRIPTS {
         if manifest.scripts.contains_key(*script) {
             violations.push(format!(
@@ -239,6 +247,71 @@ pub(super) fn validate_launcher(
         violations.push(format!(
             "{path}: ripr.platforms must project policy/distribution.toml exactly; expected {expected_platforms:?}, got {actual_platforms:?}"
         ));
+    }
+}
+
+/// A SemVer prerelease (version containing `-`) must publish under an explicit
+/// non-`latest` dist-tag; a stable version must not be diverted off `latest`.
+pub(super) fn validate_publish_tag(
+    path: &str,
+    version: &str,
+    tag: Option<&str>,
+    violations: &mut Vec<String>,
+) {
+    let is_prerelease = version.contains('-');
+    match (is_prerelease, tag) {
+        (true, None) => violations.push(format!(
+            "{path}: prerelease version `{version}` must set publishConfig.tag to an explicit non-`latest` dist-tag so a plain `npm publish` cannot take `latest`"
+        )),
+        (true, Some(tag)) if tag.trim().is_empty() || tag.trim() == "latest" => {
+            violations.push(format!(
+                "{path}: prerelease version `{version}` must not publish with publishConfig.tag `{tag}`; use a non-`latest` dist-tag such as `next`"
+            ));
+        }
+        (false, Some(tag)) if tag.trim() != "latest" => violations.push(format!(
+            "{path}: stable version `{version}` must not set publishConfig.tag `{tag}`; stable releases take `latest` only through the reviewed operator step"
+        )),
+        _ => {}
+    }
+}
+
+fn unquote(token: &str) -> &str {
+    token.trim_matches(|c| c == '"' || c == '\'')
+}
+
+/// Fails when a workflow publishes or tags npm without an explicit non-`latest`
+/// tag. In-tree workflows have no npm publish step; this keeps it that way
+/// unless the step names its tag, and rejects `latest` outright.
+pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mut Vec<String>) {
+    for (index, line) in text.lines().enumerate() {
+        let code = line.split('#').next().unwrap_or_default();
+        let number = index + 1;
+        let tokens = code.split_whitespace().collect::<Vec<_>>();
+        let has_pair = |a: &str, b: &str| tokens.windows(2).any(|w| w[0] == a && w[1] == b);
+        if has_pair("npm", "publish") {
+            let tag = tokens
+                .iter()
+                .position(|t| *t == "--tag")
+                .and_then(|i| tokens.get(i + 1).copied())
+                .or_else(|| tokens.iter().find_map(|t| t.strip_prefix("--tag=")));
+            match tag.map(unquote) {
+                None => violations.push(format!(
+                    "{path}:{number}: `npm publish` must pass an explicit non-`latest` --tag"
+                )),
+                Some("latest") => violations.push(format!(
+                    "{path}:{number}: `npm publish --tag latest` is forbidden in workflows; moving `latest` is a reviewed operator action"
+                )),
+                Some(_) => {}
+            }
+        }
+        if has_pair("dist-tag", "add") || has_pair("dist-tag", "set") {
+            let last = tokens.last().copied().unwrap_or_default();
+            if unquote(last) == "latest" {
+                violations.push(format!(
+                    "{path}:{number}: `npm dist-tag` onto `latest` is forbidden in workflows; moving `latest` is a reviewed operator action"
+                ));
+            }
+        }
     }
 }
 
