@@ -220,6 +220,9 @@
           "type": "must_not_promote"
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "expected_finding_count",
           "count": 1
         },
