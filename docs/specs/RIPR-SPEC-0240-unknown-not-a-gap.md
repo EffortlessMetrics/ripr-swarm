@@ -399,35 +399,47 @@ comments and strings masked, matches:
   `Neg`, `Not`), `Drop`, `Iterator`, `IntoIterator`, `DoubleEndedIterator`,
   `ExactSizeIterator`, `Deref`, `DerefMut`, `Index`, `IndexMut` or
   `PartialOrd`, the test names the impl's self type as a whole identifier,
-  and the syntax is bound to a value of that type (#9540). An operator, index
-  or ordering trait calls the method on its `Self` operand: the left operand
-  of a binary or assigning operator (`+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`,
-  `<<`, `>>`, `<`, `>` and the `=` forms), the base of `[`, the operand after
-  a unary `-` or `!`. That operand must be a constructor call or struct
-  literal of the self type, a unit value, or an identifier whose `let`
-  annotation or initializer names the type; a field (`m.0`), a method chain,
-  an integer or an unbound name does not bind. A `-` that is `->` or `-=`, a
-  doubled `&&`/`||`, a closure parameter list and a macro bang are not
-  operators. The operation must also reach a strong assertion: it sits inside
-  an assertion, or its statement binds a name (or assigns the left operand)
-  that a strong assertion mentions, so `let _ = a + b;` beside an unrelated
-  assertion does not count. `Drop` needs a value of the type built in the
-  test and `drop(` or an inner block; the iterator traits need one built and
-  an iterating `for` or adapter (`collect`, `next`, `sum`, ..); `Deref` needs
-  one built. A workspace declaration of a trait with an operator trait's name
-  is a different trait the operator cannot call, so the gap stays;
+  and its code spells that syntax. An operator, index or ordering trait calls
+  the method on its `Self` operand: the left operand of a binary or assigning
+  operator (`+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, `>>`, `<`, `>`
+  including `<=` and `>=`, and the `=` forms), the base of `[`, the operand
+  after a unary `-` or `!`. A `-` that is `->` or `-=`, a doubled `&&`/`||`,
+  a closure parameter list and a macro bang are not operators. `PartialOrd`
+  is also reached through `partial_cmp`, `max`, `min`, `sort` and `clamp`.
+  `Drop` needs `drop(` or an inner block; the iterator traits need an
+  iterating `for` or adapter (`collect`, `next`, `sum`, ..); `Deref` has no
+  syntax to inspect. A workspace declaration of a trait with an operator
+  trait's name is a different trait the operator cannot call, so the gap
+  stays;
 - **dispatch**: any other trait except those the gated std rules own
   (`Display`, `Debug`, `PartialEq`, `Eq`, `Ord`, `Hash`, `Clone`, `Default`,
   `FromStr`, `Serialize`, `Deserialize`, `Visitor`, `Arbitrary`, `Error`), the
-  test builds a value of the self type (constructor, struct literal or unit
-  value; not a declaration or a type annotation), it calls `.<method>(` on a
-  receiver, the method takes `self` (an associated function is called by
-  path, never on a receiver), the receiver is not a binding of another type
-  (`let tile = Tile(3); tile.area()` calls `Tile`'s method), the call reaches
-  a strong assertion as above, and the trait is declared once with one impl of
-  the method for that type. A test-local shadow trait or second impl makes
-  `Sample.render()` run the shadow, a real gap (`rust_trait_impl_shadow`,
+  test names the self type, it calls `.<method>(` on a receiver, the method
+  takes `self` (an associated function is called by path, never on a
+  receiver), and the trait is declared once with one impl of the method for
+  that type. A test-local shadow trait or second impl makes `Sample.render()`
+  run the shadow, a real gap (`rust_trait_impl_shadow`,
   `rust_trait_parent_shadow`).
+
+The pass asks the fail-closed question: is the test's use of the syntax
+*provably unrelated* to the impl (#9540)? Naming the type beside an unrelated
+use does not run the method, so these keep the gap:
+
+- the `Self` operand is positively not the impl's type: a numeric or boolean
+  literal (`assert_eq!(1 + 2, 3)` beside an unused `Money(0)`), or an
+  identifier whose `let` annotation or initializer names another type (an
+  uppercase head, so a helper `money(2)` is not mistaken for one);
+- the result is thrown away: `let _ = a + b;`, or a `let` whose name nothing
+  reads again, beside an unrelated assertion;
+- a dispatch call whose receiver is a binding of another type
+  (`let tile = Tile(3); tile.area()`), or whose result is thrown away.
+
+An operand ripr cannot type (a helper's return value, an associated constant,
+a field, a destructured tuple, a name with no `let`) might be the impl's, so
+the withholding stands: a wrong actionable signal is worse than a missed
+advisory. A reassignment (`acc = acc + x`), a destructuring `let` and an
+assertion statement count as using the result; statements nest braces, so a
+struct literal or closure body does not end one.
 
 A test with no strong assertion (`negation_is_only_exercised`,
 `assert!(a < b)`), a test that never names the self type, a dispatch test that never calls the
@@ -545,11 +557,13 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
   (never calls the method, never names the type) and
   `a_test_local_shadow_trait_keeps_the_gap` and
   `a_workspace_trait_named_like_an_operator_trait_is_not_the_operator`.
-  `an_operator_impl_controls_keep_the_gap` also holds the disconnected shapes
-  (an operator on integers beside an unused `Money`, a field operand, a
-  discarded result) and `a_dispatch_shape_that_differs_keeps_its_class` the
-  receiver of another type; `an_operator_bound_through_lets_is_withheld`
-  pins the bound forms (#9540). The `rust_trait_impl_shadow` and
+  `an_operator_impl_controls_keep_the_gap` also holds the provably unrelated
+  shapes (an operator on integers beside an unused `Money`, operands bound to
+  another type, a discarded result) and
+  `a_dispatch_shape_that_differs_keeps_its_class` the receiver of another
+  type; `an_operator_bound_through_lets_is_withheld` pins the forms that stay
+  withheld (a bound result, bound operands, a helper's value, a reassigned
+  accumulator) (#9540). The `rust_trait_impl_shadow` and
   `rust_trait_parent_shadow` goldens pin the same shadow rule.
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:

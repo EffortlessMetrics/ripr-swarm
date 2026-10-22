@@ -229,12 +229,11 @@ fn test_makes_implicit_call(
     }
     match kind {
         ImplicitCall::Syntax(trait_name) => {
-            uses_syntax_of(trait_name, &code)
-                && binds_impl_value(test, &code, trait_name, self_type)
+            uses_syntax_of(trait_name, &code) && binds_impl_value(&code, trait_name, self_type)
         }
         ImplicitCall::Dispatch => {
-            constructs(&code, self_type)
-                && dispatch_binds_impl_value(test, &code, &owner.name, self_type)
+            calls_method_named(&code, &owner.name)
+                && dispatch_binds_impl_value(&code, &owner.name, self_type)
         }
     }
 }
@@ -418,34 +417,52 @@ struct OperatorSite {
     at: usize,
     len: usize,
     operand: SelfOperand,
-    /// The operator writes its result back into the left operand (`+=`).
-    assigns: bool,
 }
 
-/// Whether the test spells the trait's syntax on a value of `self_type` and
-/// a strong assertion observes the result. `uses_syntax_of` only finds the
-/// syntax; a type named in one statement and an operator used on integers in
-/// another do not make the impl's method run, so a gap there stays.
-fn binds_impl_value(test: &TestFact, code: &str, trait_name: &str, self_type: &str) -> bool {
+/// What ripr can say about the `Self` operand of an operator site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Operand {
+    /// A value of the impl's type: a constructor, a unit value or a binding.
+    Bound,
+    /// Positively not the impl's type: a numeric or boolean literal, or a
+    /// binding whose `let` names another type.
+    Other,
+    /// A helper call, constant, field, tuple pattern or anything else ripr
+    /// does not type.
+    Unknown,
+}
+
+/// Whether the test's use of the trait's syntax may reach the impl's method.
+/// The pass withholds a gap, so it asks the fail-closed question: is the use
+/// provably unrelated? An operator applied to integers beside an unused value
+/// of the type, a binding of another type, or a result thrown away does not
+/// run the impl; an operand ripr cannot type (a helper's return value, an
+/// associated constant, a destructured tuple) might, and keeps the withholding.
+fn binds_impl_value(code: &str, trait_name: &str, self_type: &str) -> bool {
     let Some(sites) = operator_sites(trait_name, code) else {
-        // Drop glue, iteration and auto-deref have no operator to bind: the
-        // test must build a value of the type, and drop or iterate it.
-        return constructs(code, self_type)
-            && match trait_name {
-                "Drop" => drops_at_scope_end(code),
-                "Iterator" | "IntoIterator" | "DoubleEndedIterator" | "ExactSizeIterator" => {
-                    iterates(code)
-                }
-                _ => true,
-            };
-    };
-    sites.iter().any(|site| {
-        let self_operand = match site.operand {
-            SelfOperand::Left => expr_ending_at_has_type(code, site.at, self_type),
-            SelfOperand::Right => operand_after_has_type(code, site.at + site.len, self_type),
+        // Drop glue, iteration and auto-deref have no operator to inspect.
+        return match trait_name {
+            "Drop" => drops_at_scope_end(code),
+            "Iterator" | "IntoIterator" | "DoubleEndedIterator" | "ExactSizeIterator" => {
+                iterates(code)
+            }
+            _ => true,
         };
-        let assigned = site.assigns.then(|| ident_before(code, site.at)).flatten();
-        self_operand && observed_by_strong_assertion(test, code, site.at, assigned)
+    };
+    // Ordering is also reached through methods that spell no operator.
+    if trait_name == "PartialOrd"
+        && ["partial_cmp", "max", "min", "sort", "clamp"]
+            .iter()
+            .any(|name| calls_method_named(code, name))
+    {
+        return true;
+    }
+    sites.iter().any(|site| {
+        let operand = match site.operand {
+            SelfOperand::Left => operand_before(code, site.at, self_type),
+            SelfOperand::Right => operand_after(code, site.at + site.len, self_type),
+        };
+        operand != Operand::Other && result_is_used(code, site.at)
     })
 }
 
@@ -455,15 +472,6 @@ fn operator_sites(trait_name: &str, code: &str) -> Option<Vec<OperatorSite>> {
     let binary = |ops: &[&str]| -> Vec<OperatorSite> {
         ops.iter()
             .flat_map(|op| operator_positions(code, op, true))
-            .collect()
-    };
-    let assign = |op: &str| -> Vec<OperatorSite> {
-        operator_positions(code, op, true)
-            .into_iter()
-            .map(|site| OperatorSite {
-                assigns: true,
-                ..site
-            })
             .collect()
     };
     Some(match trait_name {
@@ -477,16 +485,16 @@ fn operator_sites(trait_name: &str, code: &str) -> Option<Vec<OperatorSite>> {
         "BitXor" => binary(&["^"]),
         "Shl" => binary(&["<<"]),
         "Shr" => binary(&[">>"]),
-        "AddAssign" => assign("+="),
-        "SubAssign" => assign("-="),
-        "MulAssign" => assign("*="),
-        "DivAssign" => assign("/="),
-        "RemAssign" => assign("%="),
-        "BitAndAssign" => assign("&="),
-        "BitOrAssign" => assign("|="),
-        "BitXorAssign" => assign("^="),
-        "ShlAssign" => assign("<<="),
-        "ShrAssign" => assign(">>="),
+        "AddAssign" => binary(&["+="]),
+        "SubAssign" => binary(&["-="]),
+        "MulAssign" => binary(&["*="]),
+        "DivAssign" => binary(&["/="]),
+        "RemAssign" => binary(&["%="]),
+        "BitAndAssign" => binary(&["&="]),
+        "BitOrAssign" => binary(&["|="]),
+        "BitXorAssign" => binary(&["^="]),
+        "ShlAssign" => binary(&["<<="]),
+        "ShrAssign" => binary(&[">>="]),
         "Neg" => operator_positions(code, "-", false),
         "Not" => operator_positions(code, "!", false),
         "Index" | "IndexMut" => code
@@ -496,7 +504,6 @@ fn operator_sites(trait_name: &str, code: &str) -> Option<Vec<OperatorSite>> {
                 at,
                 len: 1,
                 operand: SelfOperand::Left,
-                assigns: false,
             })
             .collect(),
         "PartialOrd" => binary(&["<", ">"]),
@@ -506,7 +513,7 @@ fn operator_sites(trait_name: &str, code: &str) -> Option<Vec<OperatorSite>> {
 
 /// Occurrences of `op` as a binary (`binary`) or unary operator. A binary
 /// operator has an operand before it and is not part of a longer operator
-/// (`->`, `=>`, `&&`, `||`, `<=` is still ordering) or a closure parameter
+/// (`->`, `=>`, `&&`, `||`; `<=` is still ordering) or a closure parameter
 /// list; a unary one has none.
 fn operator_positions(code: &str, op: &str, binary: bool) -> Vec<OperatorSite> {
     let stripped;
@@ -552,7 +559,6 @@ fn operator_positions(code: &str, op: &str, binary: bool) -> Vec<OperatorSite> {
             } else {
                 SelfOperand::Right
             },
-            assigns: false,
         })
         .collect()
 }
@@ -566,60 +572,134 @@ fn operand_char_before(code: &str, at: usize) -> bool {
         .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']'))
 }
 
-/// Whether the unary operand starting at `start` has type `ty`: a constructor
-/// or unit value whose path head is `ty`, or one identifier bound to `ty`. A
-/// method chain or field access after it may change the type, so it fails
-/// closed.
-fn operand_after_has_type(code: &str, start: usize, ty: &str) -> bool {
+/// The `Self` operand ending just before byte `end`.
+fn operand_before(code: &str, end: usize, ty: &str) -> Operand {
+    if expr_ending_at_has_type(code, end, ty) {
+        return Operand::Bound;
+    }
+    let head = code[..end].trim_end();
+    let token_start = head
+        .rfind(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '.')))
+        .map_or(0, |i| {
+            i + head[i..].chars().next().map_or(1, char::len_utf8)
+        });
+    if is_literal_token(&head[token_start..]) {
+        return Operand::Other;
+    }
+    let lets = code[..end].rfind(';').map_or("", |at| &code[..=at]);
+    named_binding_operand(ident_before(code, end), lets, ty)
+}
+
+/// The unary `Self` operand starting at byte `start`: a constructor or unit
+/// value whose path head is `ty`, or one identifier bound to `ty`. A method
+/// chain or field access after it may change the type, so it is unknown.
+fn operand_after(code: &str, start: usize, ty: &str) -> Operand {
     let rest = code[start..].trim_start();
     let rest = rest.strip_prefix('&').map_or(rest, str::trim_start);
     let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
     let path_len = rest
-        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | ':')))
+        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | ':' | '.')))
         .unwrap_or(rest.len());
     let path = &rest[..path_len];
-    if path.is_empty() || rest[path_len..].trim_start().starts_with('.') {
-        return false;
+    if is_literal_token(path) {
+        return Operand::Other;
+    }
+    if path.is_empty() || path.contains('.') || rest[path_len..].trim_start().starts_with('.') {
+        return Operand::Unknown;
+    }
+    if path.split("::").next() == Some(ty) {
+        return Operand::Bound;
     }
     let lets = code[..start].rfind(';').map_or("", |at| &code[..=at]);
-    path.split("::").next() == Some(ty)
-        || (!path.contains("::") && let_binding_mentions_type(lets, path, ty))
+    named_binding_operand((!path.contains("::")).then_some(path), lets, ty)
 }
 
-/// A value of `ty` is built in the test: `ty(..)`, `ty { .. }`, `ty::..` or a
-/// unit value in expression position. A declaration (`struct ty`) or a type in
-/// an annotation is not.
-fn constructs(code: &str, ty: &str) -> bool {
-    let bytes = code.as_bytes();
-    code.match_indices(ty).any(|(at, _)| {
-        let end = at + ty.len();
-        let boundary = (at == 0 || !is_ident_byte(bytes[at - 1]))
-            && bytes.get(end).is_none_or(|b| !is_ident_byte(*b));
-        if !boundary {
-            return false;
+/// An identifier operand typed by its `let`: the impl's type, another type
+/// (an uppercase head, so a helper `money(2)` is not mistaken for one), or
+/// not typed at all.
+fn named_binding_operand(name: Option<&str>, lets: &str, ty: &str) -> Operand {
+    let Some(name) = name else {
+        return Operand::Unknown;
+    };
+    if let_binding_mentions_type(lets, name, ty) {
+        return Operand::Bound;
+    }
+    match let_binding_type_head(lets, name) {
+        Some(head) if head.starts_with(|ch: char| ch.is_uppercase()) && head != ty => {
+            Operand::Other
         }
-        let before = code[..at].trim_end();
-        let declared = [
-            "struct", "enum", "impl", "for", "trait", "type", "use", "dyn", "as",
-        ]
-        .iter()
-        .any(|keyword| {
-            before.ends_with(keyword)
-                && before[..before.len() - keyword.len()]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
-        });
-        let annotation = before.ends_with([':', '<', '>']) && !before.ends_with("::");
-        let after = code[end..].trim_start();
-        let built = after.starts_with(['(', '{']) || after.starts_with("::");
-        let unit = before.ends_with(['=', '(', ',']) && !after.starts_with(['<', ':']);
-        !declared && !annotation && (built || unit)
-    })
+        _ => Operand::Unknown,
+    }
 }
 
-fn is_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
+/// A numeric literal (`1`, `2.5`, `1u8`, `0xff`) or a boolean.
+fn is_literal_token(token: &str) -> bool {
+    token.starts_with(|ch: char| ch.is_ascii_digit()) || matches!(token, "true" | "false")
+}
+
+/// Whether the statement holding byte `at` can hand its value on. `let _ = ..`
+/// throws the value away, and so does a name that nothing reads again; any
+/// other statement (an assertion, a reassignment, a destructuring `let`)
+/// might feed an assertion.
+fn result_is_used(code: &str, at: usize) -> bool {
+    let (start, end) = statement_bounds(code, at);
+    let Some(pattern) = code[start..end].trim().strip_prefix("let ") else {
+        return true;
+    };
+    let pattern = pattern.trim_start();
+    let pattern = pattern
+        .strip_prefix("mut ")
+        .map_or(pattern, str::trim_start);
+    let len = pattern
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(pattern.len());
+    match &pattern[..len] {
+        "" => true,
+        "_" => false,
+        name => contains_as_whole_word(&code[end..], name),
+    }
+}
+
+/// The byte range of the statement holding byte `at`, which must be on an
+/// ASCII character. Braces nest, so a struct literal or closure body inside
+/// the statement does not end it.
+fn statement_bounds(code: &str, at: usize) -> (usize, usize) {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for i in (0..at).rev() {
+        match bytes[i] {
+            b'}' => depth += 1,
+            b'{' if depth > 0 => depth -= 1,
+            b'{' => {
+                start = i + 1;
+                break;
+            }
+            b';' if depth == 0 => {
+                start = i + 1;
+                break;
+            }
+            _ => {}
+        }
+    }
+    depth = 0;
+    let mut end = code.len();
+    for (i, byte) in bytes.iter().enumerate().skip(at) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' if depth > 0 => depth -= 1,
+            b'}' => {
+                end = i;
+                break;
+            }
+            b';' if depth == 0 => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    (start, end)
 }
 
 /// The test iterates a value: a `for` loop or an adapter that calls `next`.
@@ -633,50 +713,16 @@ fn iterates(code: &str) -> bool {
         .any(|name| calls_method_named(code, name))
 }
 
-/// Whether the dispatched `.method(` is called on a value that could be the
-/// impl's: a call whose receiver is a binding of another type is not.
-fn dispatch_binds_impl_value(test: &TestFact, code: &str, method: &str, self_type: &str) -> bool {
+/// Whether the dispatched `.method(` may be called on a value of the impl's
+/// type: a call whose receiver is a binding of another type is not, and a
+/// call whose result is thrown away checks nothing.
+fn dispatch_binds_impl_value(code: &str, method: &str, self_type: &str) -> bool {
     method_call_dots(code, method).into_iter().any(|dot| {
         let lets = code[..dot].rfind(';').map_or("", |at| &code[..=at]);
-        let other_type = ident_before(code, dot)
-            .and_then(|receiver| let_binding_type_head(lets, receiver))
-            .is_some_and(|head| head != self_type);
-        !other_type && observed_by_strong_assertion(test, code, dot, None)
-    })
-}
-
-/// Whether the statement holding byte `at` is checked by a strong assertion:
-/// it is inside an assertion, or binds a name (or assigns `assigned`) that a
-/// strong assertion mentions. `let _ = a + b;` discards the result.
-fn observed_by_strong_assertion(
-    test: &TestFact,
-    code: &str,
-    at: usize,
-    assigned: Option<&str>,
-) -> bool {
-    let start = code[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-    let end = code[at..].find(';').map_or(code.len(), |i| at + i);
-    let statement = code[start..end].trim();
-    if statement.contains("assert") {
-        return true;
-    }
-    let bound = statement.strip_prefix("let ").and_then(|rest| {
-        let rest = rest
-            .trim_start()
-            .strip_prefix("mut ")
-            .unwrap_or(rest)
-            .trim_start();
-        let len = rest
-            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..len];
-        (!name.is_empty() && name != "_").then_some(name)
-    });
-    bound.into_iter().chain(assigned).any(|name| {
-        test.assertions.iter().any(|assertion| {
-            assertion.strength == OracleStrength::Strong
-                && contains_as_whole_word(&assertion.text, name)
-        })
+        let other_type = ident_before(code, dot).is_some_and(|receiver| {
+            named_binding_operand(Some(receiver), lets, self_type) == Operand::Other
+        });
+        !other_type && result_is_used(code, dot)
     })
 }
 
@@ -685,8 +731,10 @@ fn observed_by_strong_assertion(
 fn ident_before(code: &str, end: usize) -> Option<&str> {
     let head = code[..end].trim_end();
     let start = head
-        .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+        .map_or(0, |(i, ch)| i + ch.len_utf8());
     let name = &head[start..];
     let preceded_by_dot = head[..start].trim_end().ends_with('.');
     (!name.is_empty() && !preceded_by_dot).then_some(name)
@@ -698,7 +746,9 @@ fn method_call_dots(code: &str, name: &str) -> Vec<usize> {
         .filter_map(|(at, _)| {
             let before = code[..at].trim_end();
             let rest = code[at + name.len()..].trim_start();
-            let whole = at == 0 || !is_ident_byte(code.as_bytes()[at - 1]);
+            let whole = at == 0
+                || !code.as_bytes()[at - 1].is_ascii_alphanumeric()
+                    && code.as_bytes()[at - 1] != b'_';
             (whole && before.ends_with('.') && (rest.starts_with('(') || rest.starts_with("::<")))
                 .then(|| before.len() - 1)
         })
@@ -744,20 +794,6 @@ mod tests {
     }
 
     #[test]
-    fn constructs_reads_a_value_not_a_declaration() {
-        assert!(constructs("let g = Guard::new();", "Guard"));
-        assert!(constructs("let _g = Guard;", "Guard"));
-        assert!(constructs("assert_eq!(Money(2).0, 2);", "Money"));
-        assert!(constructs("Square { side: 3 }", "Square"));
-        assert!(!constructs("struct Money(i64);", "Money"));
-        assert!(!constructs("impl Drop for Guard {", "Guard"));
-        assert!(!constructs("let m: Money = other;", "Money"));
-        assert!(!constructs("fn f(g: Guard) {}", "Guard"));
-        assert!(!constructs("let v: Vec<Guard> = x;", "Guard"));
-        assert!(!constructs("MoneyBag(2)", "Money"));
-    }
-
-    #[test]
     fn operator_positions_find_operators_not_lookalikes() {
         let binary = |code: &str, op: &str| operator_positions(code, op, true).len();
         let unary = |code: &str, op: &str| operator_positions(code, op, false).len();
@@ -783,6 +819,41 @@ mod tests {
         assert_eq!(ident_before("tile.area()", 4), Some("tile"));
         assert_eq!(ident_before("self.tile.area()", 9), None);
         assert_eq!(ident_before("shapes[0].area()", 9), None);
+        // A multi-byte character before the name is a boundary, not a panic.
+        let code = "x→tile.area()";
+        assert_eq!(
+            ident_before(code, code.find('.').unwrap_or(0)),
+            Some("tile")
+        );
+    }
+
+    #[test]
+    fn operands_are_bound_other_or_unknown() {
+        let before = |code: &str| operand_before(code, code.find(" +").unwrap_or(0), "Money");
+        assert!(before("Money(2) + 1") == Operand::Bound);
+        assert!(before("1 + 2") == Operand::Other);
+        assert!(before("2.5 + 1.0") == Operand::Other);
+        assert!(before("let t = Tile(1); t + t") == Operand::Other);
+        assert!(before("let m = Money(1); m + m") == Operand::Bound);
+        // A helper's return value, a constant, a field and a name with no
+        // `let` are not typed, so none can rule the impl out.
+        assert!(before("let m = money(1); m + m") == Operand::Unknown);
+        assert!(before("Money::ZERO + 1") == Operand::Unknown);
+        assert!(before("m.0 + 1") == Operand::Unknown);
+        assert!(before("total + 1") == Operand::Unknown);
+    }
+
+    #[test]
+    fn a_result_is_used_unless_discarded() {
+        let used = |code: &str| result_is_used(code, code.find(" +").unwrap_or(0));
+        assert!(used("assert_eq!(a + b, c);"));
+        assert!(used("let t = a + b; assert_eq!(t, c);"));
+        assert!(used("acc = acc + b; assert_eq!(acc, c);"));
+        assert!(used("let (x, y) = (a + b, 1);"));
+        assert!(used("let t = P { v: 1 } + P { v: 2 }; assert_eq!(t, c);"));
+        assert!(!used("let _ = a + b; assert_eq!(1, 1);"));
+        assert!(!used("let _unused = a + b; assert_eq!(1, 1);"));
+        assert!(!used("let _ = P { v: 1 } + P { v: 2 };"));
     }
 
     #[test]

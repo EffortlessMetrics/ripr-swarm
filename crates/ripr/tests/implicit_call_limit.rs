@@ -194,6 +194,14 @@ fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
             "let total = Money(2) + Money(3);\n        assert_eq!(total, Money(5));",
         ),
         (
+            "operand from a helper",
+            "fn money(v: i64) -> Money {\n            Money(v)\n        }\n        assert_eq!(money(2) + Money(3), Money(5));",
+        ),
+        (
+            "reassigned accumulator",
+            "let mut acc = Money(0);\n        acc = acc + Money(1);\n        assert_eq!(acc, Money(1));",
+        ),
+        (
             "operands bound",
             "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
         ),
@@ -232,10 +240,12 @@ fn an_operator_impl_controls_keep_the_gap() -> Result<(), String> {
             "operator on integers beside an unused Money",
             add_source("let _unused = Money(0);\n        assert_eq!(1 + 2, 3);"),
         ),
-        // The operand is a field of a `Money`, not a `Money`.
+        // The operands are bindings of another type.
         (
-            "operator on a field",
-            add_source("let m = Money(2);\n        assert_eq!(m.0 + 1, 3);"),
+            "operator on a binding of another type",
+            add_source(
+                "let _unused = Money(0);\n        let other = Tile(1);\n        assert_eq!(other + other, Tile(2));",
+            ),
         ),
         // The sum is computed and thrown away; the assertion checks nothing
         // it produced.
