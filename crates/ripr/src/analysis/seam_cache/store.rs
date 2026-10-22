@@ -749,7 +749,7 @@ fn write_shards_in_parallel(
     });
     let slots = results
         .into_inner()
-        .map_err(|_| "sharded cache writer state was poisoned".to_string())?;
+        .map_err(|poisoned| format!("sharded cache writer state was poisoned: {poisoned}"))?;
     let mut refs = Vec::with_capacity(shard_count);
     for slot in slots {
         match slot {
