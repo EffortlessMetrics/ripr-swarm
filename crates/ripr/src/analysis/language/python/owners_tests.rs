@@ -1283,14 +1283,53 @@ fn collect_static_route_methods(source: &str, decorators: &[Expr]) -> Vec<Vec<St
         .collect()
 }
 
+/// The text after `methods=` where `methods` is a standalone keyword outside
+/// any string literal, so a path such as `"/methods"` cannot hide the real
+/// keyword argument behind it.
+fn route_decorator_methods_value(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let is_ident_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
+    let keyword = "methods";
+    let mut quote: Option<u8> = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                at += 2;
+                continue;
+            }
+            if byte == open {
+                quote = None;
+            }
+            at += 1;
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+            at += 1;
+            continue;
+        }
+        if bytes[at..].starts_with(keyword.as_bytes()) {
+            let end = at + keyword.len();
+            let standalone = (at == 0 || !is_ident_byte(bytes[at - 1]))
+                && bytes.get(end).is_none_or(|next| !is_ident_byte(*next));
+            if standalone
+                && let Some(value) = text[end..].trim_start().strip_prefix('=')
+                && !value.starts_with('=')
+            {
+                return Some(value);
+            }
+        }
+        at += 1;
+    }
+    None
+}
+
 /// Lowercase verbs from a literal `methods=[...]` / `methods=(...)` keyword;
 /// empty when absent or when any element is not a plain string literal.
 fn route_decorator_literal_methods(text: &str) -> Vec<String> {
-    let Some(idx) = text.find("methods") else {
-        return Vec::new();
-    };
-    let rest = text[idx + "methods".len()..].trim_start();
-    let Some(rest) = rest.strip_prefix('=') else {
+    let Some(rest) = route_decorator_methods_value(text) else {
         return Vec::new();
     };
     let rest = rest.trim_start();

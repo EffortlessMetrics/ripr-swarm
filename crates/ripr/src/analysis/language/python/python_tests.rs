@@ -4651,6 +4651,10 @@ fn api_client_route_relation_requires_the_decorator_verb() -> Result<(), String>
     let multi = "@api.route(\"/items\", methods=[\"POST\", \"PUT\"])";
     assert!(route_relation_for(multi, "put(\"/items\")")?);
     assert!(!route_relation_for(multi, "get(\"/items\")")?);
+    // A path that contains the word does not hide the real keyword argument.
+    let tricky = "@api.route(\"/api/methods/list\", methods=[\"POST\"])";
+    assert!(route_relation_for(tricky, "post(\"/api/methods/list\")")?);
+    assert!(!route_relation_for(tricky, "get(\"/api/methods/list\")")?);
     // An unknown verb keeps the path-only relation instead of dropping it.
     assert!(route_relation_for(
         "@api.route(\"/items\")",
