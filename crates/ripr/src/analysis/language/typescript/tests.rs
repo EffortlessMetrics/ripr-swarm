@@ -17408,6 +17408,7 @@ mod spec0243_owner_tests;
 mod spy_module_object_tests;
 mod suite_factory_tests;
 mod table_case_tests;
+mod table_loop_tests;
 mod typed_loose_equality_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package

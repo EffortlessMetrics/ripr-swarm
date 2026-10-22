@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 121
+floor = 122
 
 # LSP Repair Packet Command
 [[spec]]
@@ -782,11 +782,6 @@ reason = "False actionable: bare boolean assert on a predicate owner reads as sm
 case = "ts-grid-logical-exact"
 issue = 9532
 reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-boundary-table"
-issue = 9533
-reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
 
 [[known_false]]
 case = "ts-grid-delete-exact"
