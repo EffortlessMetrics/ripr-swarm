@@ -831,13 +831,3 @@ reason = "False actionable: field update read through a same-file helper is not 
 case = "ts-grid-delete-table"
 issue = 9534
 reason = "False actionable: field update read through a literal table is not credited (#9534)."
-
-[[known_false]]
-case = "ts-grid-arithmetic-property"
-issue = 9515
-reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9515)."
-
-[[known_false]]
-case = "ts-grid-returns-property"
-issue = 9515
-reason = "False exposed: property assertion credited as exact for a returns edit (#9515)."
