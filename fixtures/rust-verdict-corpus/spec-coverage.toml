@@ -892,4 +892,3 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-impl-trait-return-filter"
 issue = 9440
 reason = "Rust exact pin read as gap (#9440)."
-

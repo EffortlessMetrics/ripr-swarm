@@ -10,12 +10,12 @@
   "provenance": {
     "after_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-      "sha256": "sha256:34f609d41b0e294195e968501bbab2fac42302789acdc74d234e51a0596c1f7e"
+      "sha256": "sha256:c81e8c55f54ffa40b5d107b4df00904deb04dd0993bf44c28b69af9a1e0d8e62"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-      "sha256": "sha256:34f609d41b0e294195e968501bbab2fac42302789acdc74d234e51a0596c1f7e"
+      "sha256": "sha256:c81e8c55f54ffa40b5d107b4df00904deb04dd0993bf44c28b69af9a1e0d8e62"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
