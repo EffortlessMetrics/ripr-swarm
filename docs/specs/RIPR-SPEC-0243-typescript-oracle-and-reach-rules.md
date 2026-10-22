@@ -1274,7 +1274,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
     boundary: `exact_value` / strong, `exposed` through the rows 4999 and
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
-    `break`, stay `weakly_exposed` (rule 11).
+    `break`, stay `weakly_exposed` (rule 11). A loop over an empty `const`
+    table (`const rows: Array<[number, number, number]> = []`) runs no
+    iterations and holds no assertions, so a change is not `exposed` through
+    it (#9683); a `let` table or one read elsewhere keeps the loop's own
+    assertion.
 38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
     threw `` `not a count: ${text}` ``, and the Playwright spec runs
     `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
@@ -1288,11 +1292,6 @@ to `amount - 20`, and `tests/lib.test.ts` has
     expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
     (today `weakly_exposed`: only the unchanged `area` term reached the
     changed-value check). With only the `d.area` assertion: unchanged.
-40. `const rows: Array<[number, number, number]> = []; for (const [a, b,
-    want] of rows) { assert.equal(f(a, b), want); }`: the loop runs no
-    iterations and holds no assertions, so a change to `f` is not `exposed`
-    through it (#9683). A table declared with `let`, or read elsewhere, keeps
-    the loop's own assertion as before.
 
 ## Test Mapping
 
