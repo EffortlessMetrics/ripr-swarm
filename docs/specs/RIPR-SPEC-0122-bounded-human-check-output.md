@@ -412,8 +412,8 @@ the block.
 The bounded digest's top-finding drill-down also names the repair-route
 omission instead of leaving it silent (#8729): when the producer-owned gate
 computes a refusal — no canonical gap to bind, an unreadable authority, a
-seam-limit-truncated candidate set, zero or several binding seams, or an
-ineligible seam — the drill-down prints one advisory line of the shape
+seam-limit-truncated candidate set, zero or several binding seams, an
+ineligible seam, or a non-Rust finding whose language has no seam inventory (#9102) — the drill-down prints one advisory line of the shape
 `no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
 for the full gate's answer`. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),

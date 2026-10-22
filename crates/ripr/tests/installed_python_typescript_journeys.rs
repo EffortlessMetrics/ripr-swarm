@@ -181,7 +181,10 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_
         return Err(format!("check kept the generic refusal:\n{check}"));
     }
     // No runnable repair start is offered for the unbindable finding.
-    if check.contains("ripr repair probe:") && check.contains("ripr agent repair") {
+    if check.lines().any(|line| {
+        line.trim_start().starts_with("ripr repair ")
+            || line.trim_start().starts_with("ripr agent repair ")
+    }) {
         return Err(format!("check offered a repair start:\n{check}"));
     }
 
