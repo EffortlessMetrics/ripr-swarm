@@ -56,7 +56,7 @@ fn given_a_constant_condition_when_the_other_arm_asserts_then_only_the_live_arm_
 #[test]
 fn given_a_live_condition_when_it_guards_an_assert_then_the_assert_is_read() {
     assert_eq!(
-        assertion_count("    x = f(3)\n    if x:\n        assert x == 21\n"),
+        assertion_count("    value = f(3)\n    if value:\n        assert value == 21\n"),
         1
     );
 }
@@ -186,6 +186,7 @@ fn given_a_module_level_skip_then_every_test_in_the_file_is_activation_controlle
         "import pytest\npytest.skip('no', allow_module_level=True)\n",
         "from pytest import importorskip\nimportorskip('no_such_module')\n",
         "import pytest\npytestmark = pytest.mark.skip(reason='no')\n",
+        "from pytest import mark\npytestmark = mark.skip(reason='no')\n",
         "import pytest\npytestmark = [pytest.mark.skipif(True, reason='no')]\n",
     ] {
         let source = format!(
