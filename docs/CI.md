@@ -446,6 +446,7 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
 - **Logs are redirected, not piped.** Each cargo step writes its log with a
   file redirect and replays it with `cat`. A `| tee` pipe stays open until
   every process holding its write end exits, so one test leaking a child kept
