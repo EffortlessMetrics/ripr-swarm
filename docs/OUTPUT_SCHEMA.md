@@ -10129,8 +10129,8 @@ Field contract:
   fallback identity. The sole allowed value is `"legacy_path_line_class"`.
   The field is omitted for canonical identity matches and for baseline-new
   candidates, so their rendered decisions stay byte-identical. During the
-  compatibility window a fallback-only match still suppresses blocking but
-  also produces a report-level warning naming the candidate and the matched
+  compatibility window a fallback-only match against a baseline entry with no
+  canonical gap id still suppresses blocking but also produces a report-level warning naming the candidate and the matched
   legacy identity.
 - `decisions[].evidence` - static evidence and optional calibration confidence
   effects used for the candidate.

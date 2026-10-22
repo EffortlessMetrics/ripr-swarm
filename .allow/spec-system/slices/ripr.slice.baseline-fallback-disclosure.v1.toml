@@ -21,7 +21,7 @@ non_goals = [
   "flipping fallback-only matches to `is_baseline_new = true` (deferred deprecation question)",
   "refusing to create new baseline entries from `path:line:class` alone (baseline write path)",
   "a deterministic baseline migration/update route replacing legacy identities",
-  "changing canonical identity matching (rules 1-4) or `BaselineIndex` construction",
+  "changing canonical identity matching (rules 1-4); issue #1964 later refused fallback joins to canonical-bearing entries with a divergent canonical id (tests gate_baseline_fallback_match_with_divergent_canonical_id_blocks, gate_baseline_shared_fallback_joins_when_any_entry_canonical_agrees, gate_baseline_evidence_record_canonical_id_diverges_and_blocks)",
 ]
 
 return_conditions = [

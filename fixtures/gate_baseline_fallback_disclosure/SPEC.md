@@ -33,8 +33,11 @@ compares against the checked-in `gate-decision.json` / `gate-decision.md`.
 
 ## Then
 
-- Every fallback-only baseline match keeps `is_baseline_new = false` during
-  the legacy compatibility window, emits a report-level warning naming the
+- A fallback join to a baseline entry whose canonical gap id differs from the
+  candidate's is refused: the candidate is new and blocks (issue #1964).
+- Every fallback-only baseline match against a legacy entry without a
+  canonical id keeps `is_baseline_new = false` during the legacy
+  compatibility window, emits a report-level warning naming the
   candidate and the matched legacy identity, and records
   `baseline_match_kind: "legacy_path_line_class"` on the decision payload.
 - Canonical identity matches record no `baseline_match_kind` and emit no
@@ -45,8 +48,8 @@ compares against the checked-in `gate-decision.json` / `gate-decision.md`.
 
 - Treat a fallback-only match as a canonical identity match, or let it stay
   silent.
-- Flip a fallback-only match to `is_baseline_new = true` (the deferred
-  deprecation question).
+- Flip a fallback-only match against a legacy entry without a canonical id to
+  `is_baseline_new = true` (the deferred deprecation question).
 - Use mutation-runtime outcome vocabulary reserved for real mutation
   execution.
 - Present a legacy compatibility match as reviewed canonical debt.
