@@ -1070,6 +1070,31 @@ mod direct {
     }
 
     #[test]
+    fn keyword_that_is_not_a_declared_parameter_binds_no_operand() -> Result<(), String> {
+        let tests = "from src.subject import f\n\ndef test_a():\n    assert f(10, limit=3) == 1\n";
+        // `limit` is a body local; `limit=3` lands in `**opts`, and the real
+        // comparison is 10 >= 10.
+        let kwargs = case(
+            "def f(qty, **opts):\n    limit = 10\n    if qty >= limit:\n        return 1\n    return 0\n",
+            tests,
+            3,
+            "    if qty > limit:",
+            "    if qty >= limit:",
+        )?;
+        assert_no_missing_input(&kwargs, "keyword captured by **opts");
+        // Control: the same call against a declared `limit` parameter binds it.
+        let declared = case(
+            "def f(qty, limit):\n    if qty >= limit:\n        return 1\n    return 0\n",
+            tests,
+            2,
+            "    if qty > limit:",
+            "    if qty >= limit:",
+        )?;
+        assert!(omission(&declared, 0));
+        Ok(())
+    }
+
+    #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
             case(

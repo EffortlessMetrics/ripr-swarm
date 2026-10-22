@@ -1310,6 +1310,11 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
 /// parametrize argname of the test (`sign(x)` under `parametrize("x", ...)`)
 /// with that argname, for per-case expansion (#4559). An argname the test body
 /// rebinds is not paired.
+/// Whether the call segment is `name=value` (a keyword argument).
+fn keyword_segment(segment: &str) -> bool {
+    call_segment_keyword_name(segment).is_some()
+}
+
 fn bind_call_arguments(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
@@ -1354,6 +1359,18 @@ fn bind_call_arguments(
         let Some(name) = name else {
             continue;
         };
+        // A keyword names a declared, keyword-bindable parameter or it is
+        // captured by `**kwargs`; it never binds an owner local of that name
+        // (`limit = 10` in the body is not `limit=3` at the call).
+        if !owner
+            .parameters
+            .iter()
+            .skip(skip)
+            .any(|parameter| parameter.name == name && !parameter.positional_only)
+            && keyword_segment(segment)
+        {
+            continue;
+        }
         bound_names.push(name.clone());
         if let Some(literals) = literal_elements(value) {
             elements.insert(name, literals);
