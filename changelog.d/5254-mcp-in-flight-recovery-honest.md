@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- MCP `analysis_in_flight` recovery text and the `ripr_refresh` description no longer tell agents to poll `ripr_workspace_status` until the attempt clears: the stdio transport answers one request at a time, so a status call cannot be served mid-refresh. The recovery now says to wait for the running attempt and retry (#5254 items 1 and 8, disclosure only; the in-flight guard is unchanged).

@@ -2909,7 +2909,7 @@ fn test_target_evidence_memo<'a>(
         function.id.clone(),
         function.file.clone(),
         function.start_line,
-        if function.file == seam.file() {
+        if function.file == seam.file() || context.is_default_unit_test_file(&function.file) {
             TestKind::InlineUnit
         } else {
             TestKind::Integration

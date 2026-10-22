@@ -85,6 +85,7 @@ fn check_python(label: &str, files: &[(&str, &str)], diff: &str) -> Result<Pytho
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;

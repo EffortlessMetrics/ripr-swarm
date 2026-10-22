@@ -24,6 +24,8 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+mod native_artifacts;
 mod spec_0237;
 mod timeout_retry;
 
@@ -2017,6 +2019,32 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// #8992: the offered repair start route renders the root through
+/// `root_path_display` before `bound_root`, so a Unix checkout whose path
+/// contains a literal backslash still names the user's checkout; `display_path`
+/// would have rewritten the backslash into a separator and the pasted command
+/// would target a different directory. On Windows `\` is a separator and the
+/// rendered root keeps stable `/` separators, exactly as before.
+#[test]
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+    let entry = route_ready_entry(&["tests/pricing.rs"]);
+    let root = Path::new("/tmp/team\\repo");
+    let route = commands::repair_start_command(root, &entry)
+        .ok_or_else(|| "eligible seam must offer a repair start".to_string())?;
+    if cfg!(unix) {
+        assert!(
+            route.contains("--root '/tmp/team\\repo'"),
+            "route must keep the literal backslash: {route}"
+        );
+    } else {
+        assert!(
+            route.contains("tmp/team/repo"),
+            "route must render stable separators on Windows: {route}"
+        );
+    }
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
@@ -2413,6 +2441,69 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
         parsed["language_routes"],
         serde_json::json!({"state": "not_detected", "routes": []})
     );
+    Ok(())
+}
+
+#[test]
+fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    // #9308: a parse limit declined src/deep.rs. Pilot ranked what it could,
+    // but the summary must carry the limit in JSON, Markdown and terminal.
+    let artifacts = pilot_artifacts();
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget; parse refused to avoid a stack overflow".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        ..pilot_context(&artifacts)
+    };
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["declined_rust_files"]["file_count"], 1, "{json}");
+    assert_eq!(
+        parsed["declined_rust_files"]["files"][0]["path"],
+        "src/deep.rs"
+    );
+    assert!(
+        parsed["declined_rust_files"]["files"][0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+        "{json}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("## Rust Files Declined By A Parse Limit"),
+        "{md}"
+    );
+    assert!(md.contains("src/deep.rs"), "{md}");
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains("Rust files declined by a parse limit:"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("src/deep.rs"), "{terminal}");
+
+    // Nothing declined: the JSON shape is unchanged.
+    let plain =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            seam_limit: None,
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(parsed.get("declined_rust_files").is_none(), "{json}");
     Ok(())
 }
 

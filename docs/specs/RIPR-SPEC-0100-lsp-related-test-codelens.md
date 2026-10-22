@@ -207,7 +207,7 @@ title:    "Refresh saved-workspace analysis · ripr: 3 related tests (exposed) �
 
 ```
 finding:  class=no_static_path, related_tests.len()=0, language_status=None
-title:    "Refresh saved-workspace analysis · ripr: no related tests found (no_static_path) · static, cached"
+title:    "Refresh saved-workspace analysis · ripr: no related tests found (no path) · static, cached"
 ```
 
 ### TypeScript Preview, Exposed, 1 related test

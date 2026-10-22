@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-barrel-export-star-owner",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-barrel-export-star-owner.diff",
+  "anchor": {
+    "file": "src/barrel/pricing.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "vitest_export_star_barrel_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return net + Math.round(net * 0.25);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/barrel.test.ts > tax is added through the barrel",
+        "equivalence_review": "the edit itself: The test imports through `export *` and pins the taxed total exactly."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test imports through `export *` and pins the taxed total exactly. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
