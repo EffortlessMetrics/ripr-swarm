@@ -496,5 +496,11 @@ fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> 
     found
         .is_empty()
         .then_some(())
-        .ok_or_else(|| format!("rename-owned lines must validate: {found:?}"))
+        .ok_or_else(|| format!("rename-owned lines must validate: {found:?}"))?;
+    ledger.records[0].effect_basis.blamed_lines = 0;
+    redigest(&mut ledger);
+    require_reason(
+        &ledger,
+        "present_effective needs a last-toucher path or a blamed line",
+    )
 }

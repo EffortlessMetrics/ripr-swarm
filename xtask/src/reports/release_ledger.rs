@@ -206,6 +206,7 @@ fn run_capture(args: &[String]) -> Result<(), String> {
     let mut repo = None;
     let mut repository = "EffortlessMetrics/ripr-swarm";
     let mut output = None;
+    let mut seen = std::collections::BTreeSet::new();
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -213,6 +214,9 @@ fn run_capture(args: &[String]) -> Result<(), String> {
             .get(index + 1)
             .map(String::as_str)
             .ok_or_else(|| format!("{flag} requires a value"))?;
+        if !seen.insert(flag) {
+            return Err(format!("release-ledger capture got {flag} more than once"));
+        }
         match flag {
             "--base" => base = Some(value),
             "--cut" => cut = value,
