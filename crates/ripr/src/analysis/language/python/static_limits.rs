@@ -959,9 +959,19 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
             contains_python_call_shape(text, "sys.exit")
                 || contains_python_call_shape(text, "sys.stdout.write")
                 || contains_python_call_shape(text, "sys.stderr.write")
+                || prints_to_standard_stream(text)
         }
         _ => false,
     }
+}
+
+/// `print(..., file=sys.stderr)` names a standard stream, not an imported
+/// implementation: a test reads it back through `capsys` without resolving `sys`.
+fn prints_to_standard_stream(text: &str) -> bool {
+    contains_python_call_shape(text, "print")
+        && ["file=sys.stderr", "file=sys.stdout"]
+            .iter()
+            .any(|argument| text.replace(' ', "").contains(argument))
 }
 
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).

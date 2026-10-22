@@ -3795,6 +3795,31 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
 }
 
+/// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
+/// attribute use is still an imported symbol the adapter does not resolve.
+#[test]
+fn print_to_a_standard_stream_is_not_an_unresolved_import() {
+    let sys = vec![PythonImport {
+        imported: "sys".to_string(),
+        alias: "sys".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    print(f\"warning: {message}\", file=sys.stderr)",
+        "    print(message, file = sys.stdout)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &sys), "{line}");
+    }
+    for line in [
+        "    print(message, file=sys.argv)",
+        "    log(message, file=sys.stderr)",
+        "    return sys.platform",
+        "    print(sys.modules)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &sys), "{line}");
+    }
+}
+
 #[test]
 fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
     // `total = amount + 10` is an assignment whose LHS is a plain
