@@ -1950,6 +1950,11 @@ mod tests {
 
     #[test]
     fn parallel_shard_publication_stops_on_cancellation_without_a_manifest() -> Result<(), String> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, AnalysisClock, with_token};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
         let seams: Vec<_> = (0..24)
             .map(|i| classified_with_pad(&format!("c{i}")))
             .collect();
@@ -1960,9 +1965,33 @@ mod tests {
         ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
 
-        let token = crate::analysis::cancellation::AnalysisCancellationToken::new();
-        token.cancel(crate::analysis::cancellation::AnalysisAbortKind::Cancelled);
-        let result = crate::analysis::cancellation::with_token(&token, || {
+        // The budget expires only once three shard files exist, so the earlier
+        // checkpoints pass and only a worker's per-shard checkpoint can notice.
+        let started = Instant::now();
+        let sharded_dir = cache.sharded_entry_dir(&key);
+        let tripped = Arc::new(AtomicBool::new(false));
+        let clock_tripped = Arc::clone(&tripped);
+        let most_written = Arc::new(AtomicUsize::new(0));
+        let clock_most = Arc::clone(&most_written);
+        let clock: AnalysisClock = Arc::new(move || {
+            let written = std::fs::read_dir(&sharded_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|generation| std::fs::read_dir(generation.path()).ok())
+                .flat_map(|files| files.flatten())
+                .filter(|file| file.file_name().to_string_lossy().starts_with("shard-"))
+                .count();
+            clock_most.fetch_max(written, Ordering::SeqCst);
+            if written >= 3 {
+                clock_tripped.store(true, Ordering::SeqCst);
+                started + Duration::from_secs(1)
+            } else {
+                started
+            }
+        });
+        let token = AnalysisCancellationToken::with_budget(started, Duration::from_secs(1), clock);
+        let result = with_token(&token, || {
             with_shard_publish_workers(4, || {
                 cache.store_classified_seams_with_record_and_byte_limits(
                     &key, &seams, None, 3, ceiling,
@@ -1970,8 +1999,18 @@ mod tests {
             })
         });
         let loaded = cache.load_classified_seams(&key);
+        let leftover = listed_generation_dirs(&cache, &key)?;
         ignore_remove_dir_all(&dir);
 
+        assert!(
+            tripped.load(Ordering::SeqCst),
+            "the budget must expire mid-publication"
+        );
+        assert!(
+            most_written.load(Ordering::SeqCst) < seams.len() / 2,
+            "workers must stop claiming shards once the budget expires: {} written",
+            most_written.load(Ordering::SeqCst)
+        );
         assert!(
             result
                 .as_ref()
@@ -1982,6 +2021,10 @@ mod tests {
         assert!(
             !matches!(loaded, CacheLoad::Hit(_)),
             "a cancelled publication must not admit a generation"
+        );
+        assert!(
+            leftover.is_empty(),
+            "the unpublished generation must be removed: {leftover:?}"
         );
         Ok(())
     }
