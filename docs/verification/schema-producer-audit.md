@@ -123,6 +123,9 @@ rule for which bytes count:
   `not_run` unless live artifacts are passed with `--artifact`.
 - **Exempt rows** are the reserved envelopes and the capability schema, whose
   narrower authorities are named in the audit table above.
+- **Authority rows** (`repair-attempt`, `execution_result`) have no committed
+  producer bytes either; a named test checks real producer bytes instead (see
+  below). They report `authority_only` without `--artifact`.
 
 Hand-written edge fixtures are counted apart from producer bytes, so they can
 never be a row's only subjects.
@@ -143,20 +146,28 @@ hand-picked subject selection is still #3919.
 
 Reviewed narrower authority (#9561): `repair-attempt` and `execution_result`
 need an agent repair transaction, which is too heavy to add to the required
-gate, so the sweep binds them as exempt rows that name the test checking real
-producer bytes. `assert_manifest_matches_published_schema` (in
+gate, so the sweep binds them as authority rows that name the test checking
+real producer bytes. `assert_manifest_matches_published_schema` (in
 `python_repair_attempt.rs`) checks the `attempt.json` the real `ripr agent
 repair` before/after phases write, and `assert_result_matches_published_schema`
 (in `cli_smoke.rs`, run on the committed `--result-json` of the real
 `ripr agent verify-execute`) checks the execution result. Both run in the
-existing Rust test step, so this adds no time to the gate. The sweep test
-`exempt_rows_name_authorities_that_still_exist` fails if either helper, or the
-capability test, is deleted or no longer cited. Negative experiments:
-`published_schema_helper_rejects_results_the_schema_forbids` and
-`published_schema_conformance_rejects_manifests_the_schema_forbids` show each
-helper rejects a missing, undeclared, out-of-enum or malformed field. The rows
-stay a release-packet replay (below) when the full JSON-Schema validator is wanted. Exempt rows (reserved envelopes,
-`ripr-agent-capability`, `repair-attempt` and `execution_result`) are never counted as validated. Unit tests pin the
+existing Rust test step, so this adds no time to the gate. Without `--artifact`
+an authority row reports `authority_only`; a good release replay reports
+`artifact_validated` and a bad one fails. The row still flags a committed
+document carrying its discriminators as an unbound lookalike. The sweep test
+`exempt_rows_name_authorities_that_still_exist` fails if a named helper is
+deleted or never called, or the capability test loses its `#[test]`.
+Negative experiments: `published_schema_helper_rejects_results_the_schema_forbids`
+and `published_schema_conformance_rejects_manifests_the_schema_forbids` show each
+helper rejects a missing, undeclared, out-of-enum, mistyped or malformed field.
+The helpers check closed properties, required fields, `const`, `enum`, `type`,
+`minLength`, `minimum` and the digest `pattern`; they do not evaluate
+`allOf`/`oneOf`/`if`-`then` (the `repair-attempt` helper checks its
+state-to-`after` conditional by hand and skips `pattern`). The release-packet
+replay below runs the full validator. Exempt rows (reserved envelopes and
+`ripr-agent-capability`) and authority rows are never counted as producer
+subjects validated. Unit tests pin the
 sweep's own failure modes, that its binding table names exactly the published
 inventory, and that the required gate keeps the step and its three artifacts.
 

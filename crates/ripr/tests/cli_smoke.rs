@@ -29270,6 +29270,16 @@ fn assert_result_matches_published_schema(
                 return Err(format!("`{field}` is not a sha256 digest: {emitted}"));
             }
         }
+        if let Some(min) = declared.get("minLength").and_then(|m| m.as_u64())
+            && (emitted.as_str().map(|text| text.chars().count() as u64)).is_some_and(|n| n < min)
+        {
+            return Err(format!("`{field}` is {emitted}, shorter than {min}"));
+        }
+        if let Some(min) = declared.get("minimum").and_then(|m| m.as_i64())
+            && emitted.as_i64().is_some_and(|n| n < min)
+        {
+            return Err(format!("`{field}` is {emitted}, below the minimum {min}"));
+        }
         let kinds: Vec<&str> = match declared.get("type") {
             Some(serde_json::Value::String(kind)) => vec![kind.as_str()],
             Some(serde_json::Value::Array(kinds)) => {
@@ -29322,6 +29332,22 @@ fn published_schema_helper_rejects_results_the_schema_forbids()
         (
             "bad digest",
             ("stdout_sha256", Some(serde_json::json!("sha256:xyz"))),
+        ),
+        (
+            "type mismatch",
+            ("exit_status", Some(serde_json::json!("0"))),
+        ),
+        (
+            "empty string",
+            ("root_identity", Some(serde_json::json!(""))),
+        ),
+        (
+            "below minimum",
+            ("duration_ms", Some(serde_json::json!(-1))),
+        ),
+        (
+            "bool as integer",
+            ("stdout_bytes", Some(serde_json::json!(true))),
         ),
         (
             "wrong version",

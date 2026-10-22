@@ -55,6 +55,12 @@ enum Corpus {
     /// The producer writes only per-run bytes; nothing committed is producer
     /// output. Subjects come only from `--artifact`.
     RuntimeOnly(&'static str),
+    /// Like `RuntimeOnly`, but a named in-crate test already validates the
+    /// bytes the real producer writes, so a missing `--artifact` is
+    /// `authority_only`, not `not_run`. Lookalike detection still applies, so a
+    /// committed document with this schema's discriminators is not silently
+    /// skipped. The pin test below keeps the named authority alive (#9561).
+    Authority(&'static str),
     /// No producer emits this shape, or the producer is pinned by a narrower
     /// in-crate authority this validator cannot replace. Never counted as
     /// validated.
@@ -152,7 +158,7 @@ const BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/ripr/repair-attempt.schema.json",
         pointer: None,
-        corpus: Corpus::Exempt(
+        corpus: Corpus::Authority(
             "narrower authority (#9561): assert_manifest_matches_published_schema in crates/ripr/tests/python_repair_attempt.rs checks the bytes the real `ripr agent repair` before/after phases write; `ripr agent repair` writes target/ripr/repair-attempts/<id>/attempt.json per attempt, so release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
@@ -181,7 +187,7 @@ const BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/execution_result"),
-        corpus: Corpus::Exempt(
+        corpus: Corpus::Authority(
             "narrower authority (#9561): assert_result_matches_published_schema in crates/ripr/tests/cli_smoke.rs checks the result the real `ripr agent verify-execute --result-json` commits per bounded execution; release replay still passes it with --artifact",
         ),
         edge_fixtures: &[],
@@ -556,6 +562,18 @@ fn sweep(
             Corpus::Exempt(reason) => {
                 summary.push(format!("{label}: exempt ({reason})"));
                 json!({ "state": "exempt", "reason": reason })
+            }
+            Corpus::Authority(authority) => {
+                let state = if counts.artifacts > 0 {
+                    "artifact_validated"
+                } else {
+                    "authority_only"
+                };
+                summary.push(format!(
+                    "{label}: {state}, {} live artifact(s) validated ({authority})",
+                    counts.artifacts
+                ));
+                json!({ "state": state, "authority": authority })
             }
             Corpus::RuntimeOnly(route) => {
                 let state = if counts.artifacts > 0 {
@@ -1156,6 +1174,64 @@ mod tests {
     }
 
     #[test]
+    fn authority_rows_report_artifact_validated_or_authority_only_and_fail_bad_artifacts()
+    -> Result<(), String> {
+        let root = example_root();
+        let good = root.join("live.json");
+        write(&good, r#"{"schema_version":"0.1","status":"pass"}"#);
+        let authority = || binding(Corpus::Authority("named test"), &[]);
+        let artifact = |file: &Path| Artifact {
+            schema_path: EXAMPLE_SCHEMA.to_string(),
+            schema_pointer: None,
+            file: file.to_path_buf(),
+            subject_pointer: None,
+        };
+
+        let none = sweep_committed(&root, &[authority()], &[])?;
+        let state = |report: &SweepReport| report.packet["rows"][0]["disposition"]["state"].clone();
+        if !none.violations.is_empty() || state(&none) != "authority_only" {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!(
+                "no artifact must be authority_only: {}",
+                none.packet
+            ));
+        }
+        let ok = sweep_committed(&root, &[authority()], &[artifact(&good)])?;
+        if !ok.violations.is_empty() || state(&ok) != "artifact_validated" {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!("a good artifact must validate: {}", ok.packet));
+        }
+        write(&good, r#"{"schema_version":"0.1","status":"maybe"}"#);
+        let bad = run(&root, &[authority()], &[artifact(&good)])?;
+        if bad.violations.is_empty() {
+            return Err("a bad artifact on an authority row passed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_committed_lookalike_of_an_authority_row_fails_until_bound_or_excluded()
+    -> Result<(), String> {
+        let root = example_root();
+        write(
+            &root.join("fixtures/x/attempt.json"),
+            r#"{"schema_version":"0.1","status":"maybe"}"#,
+        );
+        let report = run(&root, &[binding(Corpus::Authority("named test"), &[])], &[])?;
+        if !report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("fixtures/x/attempt.json"))
+        {
+            return Err(format!(
+                "a committed lookalike was silently skipped: {:?}",
+                report.violations
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn the_sweep_reads_the_commit_not_the_working_tree() -> Result<(), String> {
         let root = example_root();
         let golden = root.join("fixtures/a/expected/example.json");
@@ -1293,29 +1369,47 @@ mod tests {
     /// leaving an exemption that points at nothing (#9561).
     #[test]
     fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
-        let pins: [(&str, &str, &str); 3] = [
+        // (name, is_test_fn, source). A helper must be defined and called; a
+        // test fn must sit directly under `#[test]`.
+        let pins: [(&str, bool, &str); 3] = [
             (
                 "assert_manifest_matches_published_schema",
-                "fn assert_manifest_matches_published_schema(",
+                false,
                 include_str!("../../crates/ripr/tests/python_repair_attempt.rs"),
             ),
             (
                 "assert_result_matches_published_schema",
-                "fn assert_result_matches_published_schema(",
+                false,
                 include_str!("../../crates/ripr/tests/cli_smoke.rs"),
             ),
             (
                 "capability_output_matches_the_published_schema",
-                "fn capability_output_matches_the_published_schema(",
+                true,
                 include_str!("../../crates/ripr/src/lsp/agent_protocol.rs"),
             ),
         ];
-        for (name, needle, source) in pins {
-            if !source.contains(needle) {
-                return Err(format!("named authority `{name}` no longer exists"));
+        for (name, is_test, source) in pins {
+            let defined = source.contains(&format!("fn {name}("));
+            let live = if is_test {
+                source
+                    .lines()
+                    .zip(source.lines().skip(1))
+                    .any(|(attr, def)| {
+                        attr.trim() == "#[test]"
+                            && def.trim_start().starts_with(&format!("fn {name}("))
+                    })
+            } else {
+                // Definition plus at least one call site.
+                source.matches(&format!("{name}(")).count() >= 2
+            };
+            if !defined || !live {
+                return Err(format!(
+                    "named authority `{name}` no longer exists or is never run"
+                ));
             }
-            if !BINDINGS.iter().any(|binding| {
-                matches!(&binding.corpus, Corpus::Exempt(reason) if reason.contains(name))
+            if !BINDINGS.iter().any(|binding| match &binding.corpus {
+                Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
+                _ => false,
             }) {
                 return Err(format!("no exempt binding cites authority `{name}`"));
             }
