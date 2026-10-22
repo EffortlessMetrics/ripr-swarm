@@ -19,16 +19,17 @@ impl TempRepo {
         ));
         std::fs::create_dir_all(root.join("src"))
             .map_err(|error| format!("create source directory failed: {error}"))?;
+        let repo = Self { root };
         std::fs::write(
-            root.join("Cargo.toml"),
+            repo.root.join("Cargo.toml"),
             "[package]\nname = \"implicit-trait-call\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), lib)
+        std::fs::write(repo.root.join("src/lib.rs"), lib)
             .map_err(|error| format!("write source failed: {error}"))?;
-        std::fs::write(root.join("diff.patch"), diff)
+        std::fs::write(repo.root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff failed: {error}"))?;
-        Ok(Self { root })
+        Ok(repo)
     }
 
     fn findings(&self) -> Result<Vec<Finding>, String> {
@@ -310,4 +311,41 @@ fn an_operator_impl_with_only_a_relational_check_keeps_the_gap() -> Result<(), S
         ADD_LINE,
         "relational",
     )
+}
+
+/// Control: a turbofish call is still a call by name.
+#[test]
+fn a_turbofish_call_by_name_keeps_the_gap() -> Result<(), String> {
+    let lib = "pub struct P;
+
+pub trait Parse {
+    fn parse_as<T: std::str::FromStr>(&self, text: &str) -> Option<T>;
+}
+
+impl Parse for P {
+    fn parse_as<T: std::str::FromStr>(&self, text: &str) -> Option<T> {
+        text.parse().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_as_a_number() {
+        assert_eq!(P.parse_as::<i32>(\"1\"), Some(1));
+    }
+}
+";
+    let diff = diff(
+        9,
+        "        text.parse().ok()",
+        "        text.parse().ok().or(None)",
+    );
+    let findings = findings_on(lib, &diff, 9)?;
+    if findings.iter().any(limited) {
+        return Err("a named turbofish call was withheld".to_string());
+    }
+    Ok(())
 }

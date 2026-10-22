@@ -60,11 +60,24 @@ pub(in crate::analysis) fn withhold_implicit_trait_call_gap(
     let Some(trait_name) = implemented_trait(&owner.id.0) else {
         return false;
     };
-    let trait_ident = trait_name.split(" for ").next().unwrap_or_default();
+    // `std::ops::Add<Money>` is written `dyn Add` at a use site.
+    let trait_ident = trait_name
+        .split(" for ")
+        .next()
+        .unwrap_or_default()
+        .split('<')
+        .next()
+        .unwrap_or_default()
+        .rsplit("::")
+        .next()
+        .unwrap_or_default()
+        .trim();
     // A test that calls the method name on a concrete type reaches it, or a
     // same-named method on another type, by an ordinary call the reach stage
     // already reads. Only a call through a trait object of this trait, or no
     // call by name at all, leaves the reach to implicit dispatch.
+    // A related test that cannot be found in the index is "cannot tell":
+    // the gap stays rather than reading as an implicit call.
     let named_concrete_call = finding.related_tests.iter().any(|related| {
         index
             .tests()
@@ -74,9 +87,11 @@ pub(in crate::analysis) fn withhold_implicit_trait_call_gap(
                     && test.file == related.file
                     && test.start_line == related.line
             })
-            .is_some_and(|test| {
-                text_calls(&test.body, &owner.name)
-                    && !calls_through_trait_object(&test.body, trait_ident)
+            .is_none_or(|test| {
+                // Comments and strings are not calls; `name::<T>(..)` is.
+                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+                (text_calls(&code, &owner.name) || code.contains(&format!("{}::<", owner.name)))
+                    && !calls_through_trait_object(&code, trait_ident)
             })
     });
     if named_concrete_call {

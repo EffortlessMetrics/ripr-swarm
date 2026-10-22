@@ -392,9 +392,11 @@ claim that an assertion is too weak.
 `static_limit_kind` under `rust_implicit_trait_call_unresolved` when the
 owner is a trait-impl method, the reach summary is the proximity-only
 reading, no related test is a `direct_owner_call`, and some test tied to the
-owner by name (`owner_named_test` or `weak_token_substring`) pins a strong
-exact value, and no related test calls the method name except through a
-`dyn <Trait>` object of the implemented trait. A call by name on a concrete
+owner by name (`owner_named_test` or `weak_token_substring`) has a strong
+oracle, and no related test calls the method name except through a
+`dyn <Trait>` object of the implemented trait. A test that both calls the
+method on a concrete type and mentions `dyn <Trait>` is treated as a trait
+object test, which withholds; telling the two receivers apart needs typing. A call by name on a concrete
 type is an ordinary call the reach stage already reads, so same-named methods
 on other types keep their gap (`rust_trait_impl_shadow`,
 `rust_adversarial_same_method_other_type`). A smoke test or relational check as the only name-tied test
@@ -402,7 +404,7 @@ keeps the gap (`shape-op-neg-smoke`, `shape-partialord-swapped-fields`,
 `shape-fromstr-boundary-unpinned`). Nothing is credited.
 
 Cost: `config-default-host` and `shape-dyn-trait-method-twin-input` are true
-gaps on a trait-impl method whose name-tied test pins an exact value of a
+gaps on a trait-impl method whose name-tied test has a strong oracle on a
 different input. Telling them from `shape-dyn-trait-method-exact` needs
 input-to-impl evaluation, so they read `limited`, which their cases accept.
 Corpus effect: `shape-op-add-impl`, `shape-drop-impl-side-effect` and
@@ -500,6 +502,7 @@ Tests in `crates/ripr/tests/implicit_trait_call_limit.rs`:
 - `a_drop_impl_reached_by_scope_end_is_withheld`
 - `a_trait_object_call_with_a_second_impl_is_withheld`
 - `a_trait_impl_method_called_by_name_keeps_the_gap`
+- `a_turbofish_call_by_name_keeps_the_gap`
 - `an_operator_impl_with_only_a_relational_check_keeps_the_gap`
 - `an_inherent_method_is_never_withheld_by_this_limit`
 

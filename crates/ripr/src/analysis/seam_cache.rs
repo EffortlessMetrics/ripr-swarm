@@ -614,7 +614,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.91";
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
 /// `0.96`: same mock call-count evidence as full `1.89`.
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.97";
+/// `0.98`: same trait-impl method limit as full `1.91`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.98";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -753,7 +754,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.97";
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
 /// `0.96`: same mock call-count evidence as full `1.89`.
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.97";
+/// `0.98`: same trait-impl method limit as full `1.91`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.98";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4790,8 +4792,8 @@ mod tests {
         // 0.94 -> 0.95: same `debug_` assertion limit as full 1.88 (#8051).
         // 0.95 -> 0.96: same mock call-count evidence as full 1.89.
         // 0.96 -> 0.97: same spawned-task assertion pins as full 1.90.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.97");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.97");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.98");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.98");
     }
 
     #[test]
