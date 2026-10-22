@@ -728,13 +728,13 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertThrowsRegex,
     /// `node:assert` `throws(fn, /text/)`: an unanchored regex of plain text,
-    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 16).
+    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 17).
     AssertThrowsContainsRegex,
     /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertThrowsObject,
     /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertRejectsRegex,
-    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 16).
+    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 17).
     AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,

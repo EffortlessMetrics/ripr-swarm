@@ -1008,7 +1008,7 @@ pub(super) fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_
 /// Matching `()` pairs are indexed in one forward pass, and each brace
 /// prefix is classified once, so nested control blocks are near-linear in
 /// depth instead of walking every enclosing `{` again for every nested `{`.
-fn has_method_like_block(body: &str) -> bool {
+pub(super) fn has_method_like_block(body: &str) -> bool {
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
     let open_of = matching_parens(body);
     let mut memo = BraceMemo::new(body.len());
@@ -1236,7 +1236,7 @@ fn matching_open_paren(text: &str) -> Option<usize> {
 }
 
 /// The identifier `text` ends with, or `""`.
-fn trailing_identifier(text: &str) -> &str {
+pub(super) fn trailing_identifier(text: &str) -> &str {
     let start = text
         .char_indices()
         .rev()

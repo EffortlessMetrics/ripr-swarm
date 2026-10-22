@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0243 rule 15: a method call replaced by `void <local>;` and
+//! RIPR-SPEC-0243 rule 16: a method call replaced by `void <local>;` and
 //! counted by a `node:test` mock.
 //!
 //! `sink.write(line);` becoming `void line;` removes the call and keeps the

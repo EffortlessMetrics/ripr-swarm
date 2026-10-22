@@ -471,7 +471,9 @@ and single-platform CI was the root cause enabling both.
   pull requests labeled `windows-ci` or `full-ci`.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
+  the Windows process-ownership (`process_owner::tests`), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
@@ -1494,6 +1496,18 @@ configure the workflow, so changing a mode never means editing the file:
 - `RIPR_GATE_BASELINE` is an optional path to a reviewed baseline ledger file,
   such as `.ripr/gate-baseline.json`, that `baseline-check` and
   `calibrated-gate` compare current evidence against. Empty by default.
+  The gate refuses a baseline whose recorded `schema_version` is not the
+  supported one (the same refusal `ripr baseline diff` applies; the gate,
+  unlike `baseline diff`, still accepts a hand-built baseline that omits
+  `schema_version`). It also refuses a baseline whose recorded `root`
+  (top-level or on any indexed item) is a non-string value or an absolute path
+  that differs from the gate's absolute root; this root refusal is gate-only.
+  Absent, `null`, blank and relative roots are accepted as unknown, because
+  relative and absolute spellings of one checkout are not comparable. The
+  comparison is textual (separators and trailing slashes are normalized, but
+  there is no canonicalization), so case, verbatim-prefix or symlink spellings
+  of the same checkout can differ. The remedy for a refused baseline is to
+  re-create it with `--root .`.
 - `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on

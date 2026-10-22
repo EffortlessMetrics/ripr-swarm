@@ -11387,6 +11387,70 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
     );
 }
 
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    for walk in ["iter()", "into_iter()", "iter_mut()"] {
+        let tail = format!("xs.{walk}.count()");
+        let lib = adaptor_lib(
+            &tail,
+            &adaptor_test(
+                "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 2);",
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", &tail);
+        assert!(pin.is_some(), "`{walk}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted_texts(&index, &pin),
+            vec!["assert_eq!(count_positive(&[3, 4]), 2);".to_string()],
+            "{walk}"
+        );
+    }
+}
+
+/// #9444 review: the refusal also reads a call wrapped in a rendered or
+/// indexed comparison, a spaced method call, and leaves a field receiver
+/// or a rebound parameter alone.
+#[test]
+fn walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter() {
+    for (tail, assertion, admitted) in [
+        (
+            "xs.iter().count()",
+            "assert_eq!(format!(\"{}\", count_positive(&[])), \"0\");",
+            false,
+        ),
+        (
+            "xs.iter().count()",
+            "assert_eq!(vec![count_positive(&[])][0], 0);",
+            false,
+        ),
+        (
+            "xs .iter() .count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            false,
+        ),
+        (
+            "row.xs.iter().count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            true,
+        ),
+    ] {
+        let lib = adaptor_lib(tail, &adaptor_test(&format!("        {assertion}")));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", tail);
+        assert!(pin.is_some(), "`{tail}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{tail} {assertion}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
 /// non-empty sequence.
 #[test]

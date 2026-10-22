@@ -32,6 +32,7 @@ Linked issues:
 - #8959 (lexically bound runner registrations)
 - #9496 (chai throw forms, anchored `assert.match`, substring rejection
   regex, counted removed call)
+- #9435 (exact oracle ignored on five changed-line shapes)
 
 Linked PRs:
 
@@ -553,7 +554,7 @@ class may set any `name`, so it does not credit. Otherwise each reads
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
-**Rule 15. A method call replaced by `void local;` is a call deletion
+**Rule 16. A method call replaced by `void local;` is a call deletion
 when a `node:test` mock counts it (2026-10-22, #9496).** The pair
 `receiver.method(...);` (optionally awaited, one two-segment call) to
 `void local;` has no probe shape of its own and reads as an unrecognised
@@ -566,7 +567,7 @@ runs the changed line once (the `MockCallFacts` condition of RIPR-SPEC-0247
 rule 1). A spy on another method or receiver, an unbound spy and a count of
 zero leave the line unrecognised.
 
-**Rule 16. A plain substring regex in `assert.throws` / `assert.rejects`
+**Rule 17. A plain substring regex in `assert.throws` / `assert.rejects`
 pins the error only when the change separates it (2026-10-22, #9496).** A
 regex literal with no flags but `u` and no metacharacter or escape
 (`/down/`) reads `exact_error_variant` / strong at extraction and passes
@@ -716,6 +717,75 @@ from owner credit when a body-local destructuring names it
 (`const { p } = helpers`). For the alias rename this also drops the
 `ImportAliasOwnerCall` relation; a default import keeps its
 `ImportedOwnerCall` relation, which the import record proves.
+
+### Changed-line shapes
+
+**Rule 15. A changed line whose value reaches the owner's return reads as a
+return-value change (#9435, 2026-10-22).** Four shapes carry no `return`
+keyword, so the probe-shape classifier reads them as unrecognised and a
+strong exact assertion on the owner stays `weakly_exposed` with
+`preview_advisory_only`. Each now reads as `ReturnValue` when the structure
+below holds, and keeps the old reading otherwise. A shape that does not
+prove its condition costs an abstention or a gap, never a credit.
+
+1. **Declared concise arrow.** `export const f = (n) => n * 2;`, when `f` is
+   the owner itself (a local arrow nested in the owner binds another name
+   and returns nothing), returns its body, including a body that passes a callback
+   (`xs.reduce((a, b) => a + b, 0)`). A body with a comparison operator or
+   a type argument (`<`, `>` outside the `=>` of a callback), a curried
+   arrow (the body is itself an arrow head) and a block body keep the old
+   reading: a comparison is a predicate boundary that an exact value does
+   not witness.
+2. **Compound assignment to the returned state.** `this.balance += amount;`
+   or `t += i * 2;` (any of `+= -= *= /= %= **= <<= >>= >>>= &= |= ^= &&=
+   ||= ??=`) where the target is a plain name or `this.name`, the old
+   statement wrote the same target, and the owner body has exactly one
+   `return`, at its top level and after the assignment, whose whole
+   expression is the target. Every block enclosing the assignment is a
+   `for`, `while` or `do` loop (a branch may skip it; a loop over an empty
+   input may run zero times, the same limit every return-value credit has
+   when the test's inputs never reach the changed line), the body has no
+   nested function, class or method, and no other statement writes the
+   target between the declaration and the return. For a `this.name` target
+   no call may sit between the assignment and the return, because a method
+   (`this.reset()`) can rewrite the field unseen. The changed span is the
+   statement between the common prefix and suffix of the old and new line,
+   widened to the nearest `;`, `{` or `}`, so one statement of a minified
+   line is read alone.
+3. **Edited arm of an unchanged conditional.** `return c ? a : b` where old
+   and new differ in exactly one arm and `c` is one comparison of an owner
+   parameter the body never writes (`===`, `!==`, `==`, `!=`, `<`, `<=`,
+   `>`, `>=`, either operand order) with a number, a plain string (no quote
+   or backslash inside), a boolean, `null`, `undefined` or a member path
+   (`Level.High`). It is
+   credited when a strong, pinned, exact-value assertion of an oracle
+   relation calls the owner with a literal argument that provably selects
+   the edited arm: numbers compare by value; strings, booleans and
+   `null`/`undefined` by equality; a member path only by the same text, and
+   not when the test body rebinds the path's root (`const Level = ...`). The
+   assertion must observe the owner's whole result (not `price(150) > 0`),
+   through the owner's name or an import alias, and an expected value that
+   provably equals neither the old nor the new arm is dead and credits
+   nothing. Two
+   different member paths decide nothing, because enum members may share a
+   value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
+   rule.
+4. **Generator loop bound.** `for (let i = 0; i <= n; i++)` against
+   `i < n` (or the descending `>=`/`>` with `i--`; the header is
+   `let`/`var i = <integer literal>` stepping by one, and the bound is a
+   read-only owner parameter or an integer literal), in a generator whose
+   loop is a direct child of the generator body with no `return` or `throw`
+   before it, and whose loop body has a plain `yield` at its own top level
+   (no `if`, `?`, `&&` or `||` before it there) and no `break`,
+   `continue`, `return`, `throw` or write to the counter. The extra
+   iteration yields one more element when the counter reaches the bound,
+   so an exact assertion on the whole drained sequence (`[...gen(3)]` or
+   `Array.from(gen(3))`) from a call whose literal argument satisfies
+   `init <= n` (`init >= n` descending) sees it. An assertion on a prefix
+   (`gen(3).next().value`), a call whose counter cannot reach the bound,
+   a conditional `yield` and a non-generator owner keep the old reading:
+   an extra iteration of a search or accumulation need not change the
+   result.
 
 ### Static limits
 
@@ -880,11 +950,11 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7, 10, 11, 15 and 16 move a finding to a stronger class only for an
+- Rules 1, 7, 10, 11, 16 and 17 move a finding to a stronger class only for an
   awaited root (rule 1), an alias-rename local (rule 7; via
   RIPR-SPEC-0251, also a renamed default import), a literal
   chai or `node:assert` message check (rule 10), a counted removed call
-  (rule 15), a substring rejection regex the change separates (rule 16)
+  (rule 16), a substring rejection regex the change separates (rule 17)
   or an inline literal table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
@@ -1131,17 +1201,25 @@ to `amount - 20`, and `tests/lib.test.ts` has
 38. `record` changed from `sink.write(line);` to `void line;` (corpus case
     `node-mock-method-call-removed`); the test binds `const write =
     mock.method(sink, "write", ...)` and asserts `write.mock.callCount()`
-    equals `1`: `exposed` (rule 15; today `weakly_exposed` with an
+    equals `1`: `exposed` (rule 16; today `weakly_exposed` with an
     unrecognised-shape discriminator). With a spy on `"flush"` instead, or a
     count of `0`: unchanged.
 39. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
     (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
-    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 16; today
+    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 17; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
 ## Test Mapping
 
+- #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
+  pins each shape's credit and the fallbacks that reach the rule (a weak
+  oracle, a curried or comparing arrow, a branch, a second return, another
+  write, an unselected or aliased arm, a prefix or unreached generator
+  sequence). Corpus rows `shape-arrow-const-export`,
+  `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
+  `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
+  gap to credited.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture
@@ -1187,7 +1265,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
   evidence pointer of an expanded call. The corpus case
   `jest-mined-suite-factory` reads `credited`.
 - #9496: `crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs`
-  pins rules 10, 15 and 16 end to end (chai class and message, anchored
+  pins rules 10, 16 and 17 end to end (chai class and message, anchored
   `assert.match`, substring `rejects` regex, `void local;` call removal)
   with a discriminating negative each; `call_removal_guard.rs` and
   `error_payload_guard.rs` unit tests pin the readers. The corpus cases
@@ -1254,6 +1332,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #9435 (rule 15): `probe_shape.rs` (`declared_arrow_value_body`),
+  `returned_state_guard.rs` (`ts_returned_state_change`),
+  `ternary_arm_guard.rs` (`ts_ternary_arm_change`),
+  `loop_bound_guard.rs` (`ts_loop_bound_change`), and the witnesses
+  `ts_arm_change_witnessed` and `ts_loop_bound_witnessed` in
+  `classifier.rs`, which promote the probe shape to `ReturnValue` before the
+  verdict ladder runs.
 - #7315: `expect_assertion_from_expression` reads the rejection modifier and
   concrete expected argument; `TypeScriptAssertionBindings` supplies the
   explicit runner import and existing scope filter. The existing
