@@ -97,6 +97,8 @@ pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
 #[cfg(test)]
+mod assertion_form_tests;
+#[cfg(test)]
 mod conditional_assertion_tests;
 mod parse;
 mod paths;
@@ -106,8 +108,6 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
-#[cfg(test)]
-mod assertion_form_tests;
 mod repo;
 #[cfg(test)]
 mod repo_tests;

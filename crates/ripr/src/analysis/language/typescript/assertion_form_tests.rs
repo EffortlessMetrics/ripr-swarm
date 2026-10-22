@@ -94,7 +94,12 @@ const REWORDED: &str = r#"throw new RangeError("lo is above hi");"#;
 
 #[test]
 fn chai_class_and_message_credit_a_class_change() -> Result<(), String> {
-    let finding = chai_class(r#"RangeError, "lo above hi""#, RANGE, TYPE, "chai-class-change")?;
+    let finding = chai_class(
+        r#"RangeError, "lo above hi""#,
+        RANGE,
+        TYPE,
+        "chai-class-change",
+    )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
@@ -122,7 +127,12 @@ fn chai_class_only_credits_a_class_change() -> Result<(), String> {
 /// versions, whatever the class says.
 #[test]
 fn chai_class_and_shared_substring_stay_weak_on_a_reword() -> Result<(), String> {
-    let finding = chai_class(r#"RangeError, "above""#, RANGE, REWORDED, "chai-shared-substring")?;
+    let finding = chai_class(
+        r#"RangeError, "above""#,
+        RANGE,
+        REWORDED,
+        "chai-shared-substring",
+    )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
@@ -131,7 +141,12 @@ fn chai_class_and_shared_substring_stay_weak_on_a_reword() -> Result<(), String>
 /// that keeps the message passes `to.throw(Error, "...")` on both versions.
 #[test]
 fn chai_error_class_and_message_stay_weak_on_a_class_change() -> Result<(), String> {
-    let finding = chai_class(r#"Error, "lo above hi""#, RANGE, TYPE, "chai-error-ancestor")?;
+    let finding = chai_class(
+        r#"Error, "lo above hi""#,
+        RANGE,
+        TYPE,
+        "chai-error-ancestor",
+    )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
@@ -156,7 +171,10 @@ fn match_slug(check: &str, label: &str) -> Result<Finding, String> {
     finding_for(
         label,
         NODE_TEST,
-        &[("src/slugify.ts", SLUG_AFTER), ("test/slugify.test.ts", &test)],
+        &[
+            ("src/slugify.ts", SLUG_AFTER),
+            ("test/slugify.test.ts", &test),
+        ],
         &replace_diff(
             "src/slugify.ts",
             2,
@@ -176,7 +194,12 @@ fn anchored_plain_regex_match_pins_the_value() -> Result<(), String> {
 
 #[test]
 fn unanchored_wildcard_or_flagged_regex_match_stays_weak() -> Result<(), String> {
-    for check in ["/hello/", "/^hello.world$/", "/^HELLO-WORLD$/i", "/^hello[-_]world$/"] {
+    for check in [
+        "/hello/",
+        "/^hello.world$/",
+        "/^HELLO-WORLD$/i",
+        "/^hello[-_]world$/",
+    ] {
         let finding = match_slug(check, "match-wide")?;
         assert_eq!(
             finding.class,
@@ -191,7 +214,13 @@ fn unanchored_wildcard_or_flagged_regex_match_stays_weak() -> Result<(), String>
 
 const RETRY_AFTER: &str = "export async function withRetry(fn: () => Promise<string>, attempts: number): Promise<string> {\n  let lastError: unknown;\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn();\n    } catch (error) {\n      lastError = error;\n    }\n  }\n  THROW\n}\n";
 
-fn rejects_retry(check: &str, old: &str, new: &str, extra: &str, label: &str) -> Result<Finding, String> {
+fn rejects_retry(
+    check: &str,
+    old: &str,
+    new: &str,
+    extra: &str,
+    label: &str,
+) -> Result<Finding, String> {
     let src = RETRY_AFTER.replace("THROW", new);
     let src = if extra.is_empty() {
         src
@@ -209,7 +238,12 @@ fn rejects_retry(check: &str, old: &str, new: &str, extra: &str, label: &str) ->
         label,
         NODE_TEST,
         &[("src/retry.ts", &src), ("test/retry.test.ts", &test)],
-        &replace_diff("src/retry.ts", line, &format!("  {old}"), &format!("  {new}")),
+        &replace_diff(
+            "src/retry.ts",
+            line,
+            &format!("  {old}"),
+            &format!("  {new}"),
+        ),
         line,
     )
 }

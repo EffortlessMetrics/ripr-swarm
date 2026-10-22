@@ -1835,12 +1835,14 @@ fn assert_call_assertion(
         OracleKind::ExactValue | OracleKind::RelationalCheck
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        match (anchored_match_literal, resolved_const.or(loose_number_literal)) {
-            (Some(literal), _) => (Some(format!("{literal:?}")), false),
-            (None, Some(literal)) => (Some(literal.to_string()), false),
-            (None, None) => expected_argument_metadata(expected_arg, source),
-        };
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = match (
+        anchored_match_literal,
+        resolved_const.or(loose_number_literal),
+    ) {
+        (Some(literal), _) => (Some(format!("{literal:?}")), false),
+        (None, Some(literal)) => (Some(literal.to_string()), false),
+        (None, None) => expected_argument_metadata(expected_arg, source),
+    };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
     let rendered_call = match &error_payload {

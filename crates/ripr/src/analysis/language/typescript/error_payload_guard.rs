@@ -396,7 +396,11 @@ impl ErrorChangeFacts {
             };
             count("throw") == 1
                 && count("reject") == 0
-                && !masked.split_whitespace().collect::<Vec<_>>().join(" ").contains("new Promise")
+                && !masked
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .contains("new Promise")
         });
         self
     }

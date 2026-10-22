@@ -160,7 +160,10 @@ mod tests {
             Some(("sink".to_string(), "write".to_string()))
         );
         // Not a bare discard, or not a single two-segment call.
-        assert_eq!(removed_method_call("line;", Some("sink.write(line);")), None);
+        assert_eq!(
+            removed_method_call("line;", Some("sink.write(line);")),
+            None
+        );
         assert_eq!(
             removed_method_call("void sink.write(line);", Some("sink.write(line);")),
             None
