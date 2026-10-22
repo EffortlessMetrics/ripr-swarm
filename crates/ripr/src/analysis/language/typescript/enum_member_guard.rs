@@ -51,16 +51,37 @@ fn enum_function_types(function: &Function<'_>, ranges: &mut Vec<oxc_span::Span>
     }
 }
 
-/// A root can only be read through a member. Bare aliases, casts, calls,
+/// An enum root can only be read through a scalar member; a namespace needs
+/// both the enum and scalar member segments. Bare aliases, casts, calls,
 /// assignments, deletion and member mutation all leave its value unknown.
 /// This runs once per imported/declared root over its whole module, including
 /// hooks and other tests, rather than trusting only the assertion callback.
-pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str) -> bool {
+pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: bool) -> bool {
     !tests_extract::identifier_written_in(code, root)
         && !ts_members_written(code, root, true)
         && mock_payload_guard::identifier_offsets(code, root)
             .into_iter()
-            .all(|at| code[at + root.len()..].trim_start().starts_with('.'))
+            .all(|at| {
+                let mut rest = &code[at + root.len()..];
+                // A namespace's first member is the enum object itself.
+                // Only its next member is a scalar enum value; handing the
+                // object to an alias or call can mutate every canonical alias.
+                for _ in 0..if namespace { 2 } else { 1 } {
+                    let Some(member) = rest.trim_start().strip_prefix('.') else {
+                        return false;
+                    };
+                    let member = member.trim_start();
+                    let length = member
+                        .chars()
+                        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(*ch, '_' | '$'))
+                        .count();
+                    if length == 0 {
+                        return false;
+                    }
+                    rest = &member[length..];
+                }
+                true
+            })
 }
 
 pub(crate) fn ts_same_enum_member(
@@ -79,7 +100,7 @@ pub(crate) fn ts_same_enum_member(
         || test.scope_bindings.iter().any(|binding| {
             binding.name == root
                 && (!binding.file_level
-                    || normalized_module_path(&test.file) != normalized_module_path(&owner.file))
+                    || normalized_path(&test.file) != normalized_path(&owner.file))
         })
         || test
             .unstable_member_roots_in_file

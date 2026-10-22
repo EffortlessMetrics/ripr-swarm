@@ -168,7 +168,11 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         let unstable_member_roots: Vec<String> = imports
             .iter()
             .filter(|import| {
-                !enum_member_guard::enum_member_root_is_read_only(&enum_code, &import.local)
+                !enum_member_guard::enum_member_root_is_read_only(
+                    &enum_code,
+                    &import.local,
+                    import.namespace,
+                )
             })
             .map(|import| import.local.clone())
             .collect();

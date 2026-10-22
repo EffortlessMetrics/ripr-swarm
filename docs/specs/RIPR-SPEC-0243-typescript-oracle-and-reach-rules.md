@@ -734,7 +734,14 @@ prove its condition costs an abstention or a gap, never a credit.
    const enums and arbitrary member-bearing objects remain unknown.
    Owner parameter/body shadows, test callback/enclosing/file bindings,
    root reassignments, member mutation/deletion and root escapes withhold
-   credit. The test check covers the whole file, including setup hooks.
+   credit. Known mutation or escape through another imported alias of the
+   same enum declaration also withholds credit; a bare call to an unrelated
+   imported function is not an enum mutation. A namespace enum-object read
+   (`levels.Level`) can escape, while a proven scalar member read
+   (`levels.Level.High`) retains identity. The test check covers the whole
+   file, including setup hooks. Distinct source files collapsed by extension
+   stripping (for example `constants.ts` and `constants.mts`) make that
+   module's enum identity unknown, even when an import names its extension.
    Supported function type annotations and import/export syntax are not
    runtime escapes. The
    assertion must observe the owner's whole result (not `price(150) > 0`),

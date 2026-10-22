@@ -29,6 +29,16 @@ fn classify_enum_source(
     test_source: &str,
     extra: &[(&str, &str)],
 ) -> Result<Finding, String> {
+    classify_enum_change(label, source, test_source, OLD, extra)
+}
+
+fn classify_enum_change(
+    label: &str,
+    source: &str,
+    test_source: &str,
+    old: &str,
+    extra: &[(&str, &str)],
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/level.ts"), source)?;
     for (path, source) in extra {
@@ -48,7 +58,7 @@ fn classify_enum_source(
         }],
         removed_lines: vec![crate::analysis::diff::ChangedLine {
             line: 4,
-            text: OLD.to_string(),
+            text: old.to_string(),
             new_side_line: 4,
         }],
     };
@@ -82,6 +92,90 @@ fn classify_enum_source(
         "{label}"
     );
     Ok(finding)
+}
+
+#[test]
+fn mutation_through_another_canonical_import_alias_withholds_credit() -> Result<(), String> {
+    let source = "import { Level, Level as Rank } from './constants';\nexport function weight(level: number): number {\n  Object.assign(Rank, { High: 1 });\n  return level === Level.High ? 11 : 10;\n}\n";
+    let test = "import { expect, it } from 'vitest';\nimport { weight } from '../src/level';\nimport { Level } from '../src/constants';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_source(
+        "owner-import-alias-mutation",
+        source,
+        test,
+        &[(
+            "src/constants.ts",
+            "export enum Level { Low = 1, High = 2 }\n",
+        )],
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    let test = "import { expect, it } from 'vitest';\nimport { weight, Level, Level as Rank } from '../src/level';\nit('high', () => { Object.assign(Rank, { High: 1 }); expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_source("test-import-alias-mutation", ENUM, test, &[])?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn namespace_enum_object_escapes_taint_other_canonical_aliases() -> Result<(), String> {
+    let source = "import * as levels from './constants'; const other = levels.Level;\nexport function weight(level: number): number {\n  Object.assign(other, { High: 1 });\n  return level === levels.Level.High ? 11 : 10;\n}\n";
+    let test = "import { expect, it } from 'vitest';\nimport { weight } from '../src/level';\nimport { Level } from '../src/constants';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_change(
+        "owner-namespace-object-escape",
+        source,
+        test,
+        "  return level === levels.Level.High ? 10 : 10;",
+        &[(
+            "src/constants.ts",
+            "export enum Level { Low = 1, High = 2 }\n",
+        )],
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    for (label, argument) in [
+        ("same-namespace", "levels.Level.High"),
+        ("named-alias", "Level.High"),
+    ] {
+        let test = format!(
+            "import {{ expect, it }} from 'vitest';\nimport {{ weight, Level }} from '../src/level';\nimport * as levels from '../src/level';\nconst other = levels.Level;\nit('high', () => {{ Object.assign(other, {{ High: 1 }}); expect(weight({argument})).toBe(10); }});\n"
+        );
+        let finding = classify_enum_source(label, ENUM, &test, &[])?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_callable_imports_and_scalar_namespace_reads_preserve_credit() -> Result<(), String> {
+    let test = "import { expect, it } from 'vitest';\nimport { weight, Level } from '../src/level';\nimport * as levels from '../src/level';\nconst high = levels.Level.High;\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_source("scalar-namespace-read", ENUM, test, &[])?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    let test = "import { expect, it } from 'vitest';\nimport { weight, Level } from '../src/level';\nimport { Level as Other } from '../src/other';\nObject.assign(Other, { High: 1 });\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_source(
+        "different-enum-mutation",
+        ENUM,
+        test,
+        &[("src/other.ts", "export enum Level { High = 3 }\n")],
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn extension_colliding_modules_cannot_establish_enum_identity() -> Result<(), String> {
+    let source = "import { Level } from './constants.ts';\n\nexport function weight(level: number): number {\n  return level === Level.High ? 11 : 10;\n}\n";
+    let test = "import { expect, it } from 'vitest';\nimport { weight } from '../src/level';\nimport { Level } from '../src/constants.mts';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    let finding = classify_enum_source(
+        "extension-collision",
+        source,
+        test,
+        &[
+            ("src/constants.ts", "export enum Level { High = 2 }\n"),
+            ("src/constants.mts", "export enum Level { High = 1 }\n"),
+        ],
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
 }
 
 #[test]
