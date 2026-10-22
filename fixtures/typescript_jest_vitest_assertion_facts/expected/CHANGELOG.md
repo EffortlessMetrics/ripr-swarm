@@ -651,7 +651,7 @@ Updated:
 ## Pending — typescript_jest_vitest_assertion_facts (24)
 
 Reason:
-RIPR-SPEC-0247 rule 5 (#9532): a truthiness assertion on a literal call to a boolean-declared owner is an exact pin, so the live toBeTruthy reads exact_value instead of smoke_only; verdict state unchanged except typescript_jest_vitest_assertion_facts isReady(1), which now credits the boundary pin
+isReady loses its boolean annotation so the fixture keeps exercising smoke-only truthiness after RIPR-SPEC-0247 rule 5 (#9532); only the source snapshot line changes
 
 Command:
 `cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`

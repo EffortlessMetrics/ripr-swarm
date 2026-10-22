@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_jest_vitest_assertion_facts/input
 config: <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input/ripr.toml
 
-Summary: 7 probes (5 exposed, 2 weak, 0 unrevealed, 0 no path); 7 of 7 findings unsuppressed
+Summary: 7 probes (4 exposed, 3 weak, 0 unrevealed, 0 no path); 7 of 7 findings unsuppressed
 
 Changed file(s) by language: typescript = 1
 
@@ -37,7 +37,7 @@ Next: drill into the top finding:
 Hidden:
   6 lower-priority finding(s) omitted from default human output (TypeScript preview: 6).
     - src/signals.ts:2 (exposed)
-    - src/signals.ts:13 (exposed)
+    - src/signals.ts:13 (weak)
     - src/signals.ts:17 (exposed)
     - src/signals.ts:21 (exposed)
     - src/signals.ts:25 (exposed)
