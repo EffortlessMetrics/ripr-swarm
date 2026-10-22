@@ -1852,6 +1852,59 @@ ungripped = "warning"
     }
 
     #[test]
+    fn same_file_seam_outside_hunks_and_owners_still_matches_working_set() {
+        // #9301: a seam in a changed file that no hunk or owner touches is
+        // not silently skipped; it matches at the same-file priority, so its
+        // absence from guidance cannot be mistaken for "not evaluated".
+        let untouched = classified(
+            "src/pricing.rs",
+            12,
+            "pricing::below_threshold",
+            "amount < discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        let seams = vec![untouched];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let selection = select(&seams, &working_set, 3);
+        assert_eq!(selection.top_seams.len(), 1);
+        assert_eq!(
+            selection.top_seams[0].why_now.reason,
+            AgentBriefWhyNowReason::SameFileSeam
+        );
+        assert_eq!(selection.omitted_by_policy, 0);
+    }
+
+    #[test]
+    fn selection_counts_every_policy_omission_in_omitted_by_policy() -> Result<(), String> {
+        let seams = (0..13)
+            .map(|index| {
+                classified(
+                    "src/pricing.rs",
+                    10 + index,
+                    &format!("pricing::case_{index}"),
+                    &format!("amount > {index}"),
+                    SeamGripClass::WeaklyGripped,
+                )
+            })
+            .collect::<Vec<_>>();
+        let working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]);
+        let config = tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
+        let selection = select_with_config(&seams, &working_set, 3, &config);
+        assert!(selection.top_seams.is_empty());
+        // More than the named-omission limit, so the sum must include both
+        // the named and the counted-only omissions.
+        assert_eq!(selection.omitted_by_policy, 13);
+        // An explicit --seam request never reaches review-comments (its
+        // scope is not diff-scoped), so its fixed 0 cannot enable a false
+        // resolution.
+        Ok(())
+    }
+
+    #[test]
     fn agent_brief_selector_omits_configured_off_working_set_seam() -> Result<(), String> {
         let seam = classified(
             "src/pricing.rs",

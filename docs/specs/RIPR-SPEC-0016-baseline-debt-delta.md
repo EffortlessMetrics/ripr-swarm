@@ -284,6 +284,10 @@ bucket:
   only the surviving ledger records' anchor files, not the files analyzed, so it
   always yields `not_evaluated` until the ledger path discloses real analyzed
   files (limitation tracked in #9599).
+  Coverage is file-level by construction: the seam selector matches every seam in
+  a working-set file (changed line, changed owner, related test, else same-file),
+  so a seam in a covered file is either present in the decisions or counted in
+  `unevaluated_seams`, `cap_omitted_seams` or `omitted_by_policy`.
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because

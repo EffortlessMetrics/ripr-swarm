@@ -3930,6 +3930,20 @@ mod tests {
             )
             .is_some()
         );
+        // Non-string entry in absent_changed_files fails closed; a scope
+        // object with no `scope` key is unrecognized.
+        assert!(
+            reason(
+                &scope(json!({"absent_changed_files": [7]})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        let mut no_kind = scope(json!({}));
+        if let Some(object) = no_kind.as_object_mut() {
+            object.remove("scope");
+        }
+        assert!(reason(&no_kind, Some("src/a.rs")).is_some_and(|r| r.contains("unknown")));
         let missing = json!({"scope": "diff_scoped_changed_files"});
         assert!(reason(&missing, Some("src/a.rs")).is_some());
         // Non-object or absent scope fails closed.

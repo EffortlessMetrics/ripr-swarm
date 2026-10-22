@@ -10086,8 +10086,11 @@ Field contract:
   `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
   is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
   whether a baseline entry absent from `decisions` was actually analyzed. A
-  review-comments scope may also carry `cap_omitted_seams` (seams dropped by the
-  brief cap). A gate decision without `analysis_scope` (a build before #9301),
+  review-comments scope also carries `cap_omitted_seams` (seams dropped by the
+  brief cap) and `omitted_by_policy` (working-set seams dropped by policy, such
+  as configured off), both always emitted with 0 when none; a nonzero or missing
+  value makes absent baseline entries `not_evaluated`. Only
+  `changed_production_files` counts as coverage. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
