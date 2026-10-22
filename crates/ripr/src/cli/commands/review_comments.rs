@@ -449,6 +449,7 @@ fn review_comments_with_admission(
         ));
     }
 
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
         root: options.root.clone(),
@@ -3176,6 +3177,37 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn review_comments_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let base = unique_command_test_dir("review-comments-review-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let result = review_comments(&args(&[
+            "--root",
+            &root.display().to_string(),
+            "--base",
+            "main",
+            "--head",
+            "HEAD",
+        ]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
         Ok(())
     }
 }

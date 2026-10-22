@@ -1,0 +1,10 @@
+diff --git a/hostile/tabs.py b/hostile/tabs.py
+--- a/hostile/tabs.py
++++ b/hostile/tabs.py
+@@ -1,5 +1,5 @@
+ def tabbed_total(items):
+ 	total = 0
+ 	for item in items:
+-		total += item
++		total -= item
+ 	return total

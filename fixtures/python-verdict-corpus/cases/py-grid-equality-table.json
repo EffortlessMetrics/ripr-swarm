@@ -1,0 +1,59 @@
+{
+  "case_id": "py-grid-equality-table",
+  "subject_id": "authored-py-grid-equality",
+  "diff": "cases/py-grid-equality-table.diff",
+  "anchor": {
+    "file": "grid_equality/core.py",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_equality",
+  "test_shape": "pytest_parametrized_table",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 6 != day % 7",
+        "mutated_line": "return 6 != day % 7",
+        "outcome": "tests_failed",
+        "failing_test": "test_saturday_table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      },
+      {
+        "replacement": "return True",
+        "mutated_line": "return True",
+        "outcome": "tests_failed",
+        "failing_test": "test_saturday_table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      },
+      {
+        "replacement": "return False",
+        "mutated_line": "return False",
+        "outcome": "tests_failed",
+        "failing_test": "test_saturday_table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: equality x parametrized table. Rows on both sides of day 6 mod 7.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

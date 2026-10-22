@@ -1,0 +1,44 @@
+{
+  "case_id": "py-shapes-context-exit-suppress",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-context-exit-suppress.diff",
+  "anchor": {
+    "file": "shapes/ctx.py",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "pytest_context_manager_no_exception_inside",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return True",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: exceptions inside the block are suppressed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only with block raises nothing, so swallowing exceptions in __exit__ is unobserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

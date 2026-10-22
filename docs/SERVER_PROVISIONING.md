@@ -80,10 +80,29 @@ A cached executable is eligible only when the receipt has
 `installationState: "complete"`, its requested/manifest version, target, and
 executable name match the request, and its current executable SHA-256 matches
 the receipt. Binary-only, partial, malformed, or tampered directories are not
-probed as cache candidates. A failed install for a new version leaves an
-already completed prior version unchanged. Contenders never reclaim an
-existing lock based only on age; they fail closed after a bounded wait rather
-than risk deleting a replacement owner's lock.
+probed as cache candidates. When a release-admitted manifest digest exists for
+the requested distribution generation, the receipt must also record that exact
+manifest SHA-256 (`manifestSha256`); a receipt recorded under another digest,
+or a legacy receipt with none, is a cache miss and the install re-verifies.
+The binding takes effect once a release descriptor admits a digest; today none
+is admitted, so cache hits are offline-trusted on version and local byte
+integrity alone. A failed install for a new version leaves an
+already completed prior version unchanged.
+
+A contender reclaims an install lock only when its owner pid is no longer
+running or its heartbeat is older than five minutes; a live owner with a fresh
+heartbeat is never reclaimed. A live owner whose heartbeat went stale (for
+example a suspended laptop) is reclaimed too. The lock is moved aside to
+`.install.lock.stale-*`; if its owner changed during the move it is restored on
+a best-effort basis, and if the restore fails the moved directory is left for
+the `.install.lock.stale-*` sweep instead of being deleted. A lock with a
+missing or unparseable owner is reclaimed only on a stale heartbeat. The holder
+heartbeats and releases only while the lock still carries its own token. The
+holder sweeps `.install-*` and `.install.lock.stale-*` siblings of its own
+target before installing, and `.replaced-*` only after a successful install,
+never the active install directory. Promotion is fenced on the holder still owning the lock: it is re-checked before the displace and promote renames and before the displaced copy is removed, and a lost lock aborts before promotion with a retryable error (restoring any displaced copy); after promotion it leaves the displaced copy for a later sweep. The check-to-rename window is not atomic, so this is best-effort rather than mutual exclusion. A valid cache hit that finds a leftover `.replaced-*` sibling clears it under a single non-blocking attempt at the lock, skipping silently when the lock is busy. Reclaim by pid
+probe is local-host only; the Windows branch relies on Node's `process.kill(pid, 0)`
+and has no Windows-capable proof here.
 
 The install receipt establishes local completion and byte integrity. It is not
 a producer provenance attestation; release provenance verification remains a

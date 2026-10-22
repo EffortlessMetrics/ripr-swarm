@@ -2290,7 +2290,8 @@ JSON fields:
   `rust_panic_outcome_unresolved`, or
   `rust_debug_assertion_profile_unresolved`, or
   `rust_call_fact_budget`, or
-  `rust_framework_oracle_unresolved`.
+  `rust_framework_oracle_unresolved`, or
+  `rust_implicit_call_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -2856,6 +2857,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, or an insta snapshot whose redactions do not name the changed field. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+- `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
 
@@ -8425,12 +8427,16 @@ tightening, not a current guarantee.
 
 ### Declared limitations
 
-- **Descendant containment.** Only the owned child is terminated. The workspace
-  forbids `unsafe_code` and the dependency policy admits neither `libc` nor
-  `windows-sys`, so no process-group or job-object substrate is available. The
-  authority boundary compensates structurally: the only executable route is one
-  leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
-  The posture is disclosed as `descendant_containment` in the response.
+- **Descendant containment.** The child is spawned through the shared owned
+  process authority (#3803). On Windows a Job Object owns the whole tree and
+  every terminal path (timeout, cancellation, output overflow, exit) ends it
+  before the output is read. On other platforms only the owned child is
+  terminated: the workspace forbids `unsafe_code` and the dependency policy
+  admits neither `libc` nor `windows-sys`, so no process-group substrate is
+  available. The authority boundary compensates structurally: the only
+  executable route is one leaf `ripr agent verify` invocation, which spawns no
+  long-lived descendants. The posture is disclosed as `descendant_containment`
+  in the response (`job_object` or `owned_child_only`).
 - **`verification_executed_fail`**, **`verification_timed_out`**, and
   **`verification_command_not_found`** are mapped and unit-tested but are not
   reachable end-to-end today. The only executable route is `ripr agent verify`
@@ -14975,6 +14981,15 @@ same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
 first-parent subject, `issue_refs` for other `#N` mentions).
 
+`release-ledger derive` writes the `release_ledger` DTO that `release-ledger
+--input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
+`selected_claims` and `open_prs` taken from `policy/release-selection.json`
+(`packet_digest` is the sha256 of the raw file bytes) and recomputed `digests`.
+Rows the rule cannot judge stay `blocking_unresolved` until
+`policy/release-ledger-overrides.json` (`kind: release_ledger_overrides`,
+entries `{commit_sha, disposition, owner, note}`) resolves them; a resolved row
+carries `override_ref`.
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into
@@ -18299,7 +18314,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.90",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.91",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19065,7 +19080,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.90",
+      "schema_version": "1.91",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

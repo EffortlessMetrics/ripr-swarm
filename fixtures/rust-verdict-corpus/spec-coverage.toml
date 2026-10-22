@@ -14,6 +14,25 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 144
 
+# Coverage axes beyond spec examples (`axes` on a case). Each axis names a
+# side of the Rust language or test ecosystem the corpus is held to cover;
+# `floor` is the fewest tagged cases `verdict-corpus validate` and `check`
+# accept, so an axis cannot shrink silently. Raise it when coverage grows.
+[[axis]]
+id = "test_library_idiom"
+description = "Test-library idioms: insta, proptest, quickcheck, rstest, test-case, tokio, mockall, assert_matches, claims, expect-test, trybuild, criterion and serial_test shapes."
+floor = 59
+
+[[axis]]
+id = "language_shape"
+description = "Language shapes: operator, conversion, iterator, Drop and Default impls; dyn dispatch, generics, const generics, impl Trait and associated consts; let-else, labeled break, slice patterns, casts and closures; async, threads and interior mutability."
+floor = 33
+
+[[axis]]
+id = "hostile_input"
+description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
+floor = 12
+
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
 # matches fall below `match_floor` or overclaims (ripr reads the test
@@ -828,3 +847,94 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0310"
 scope = "out"
 reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+
+
+[[known_false]]
+case = "regex-syntax-max-scalar-two-byte"
+issue = 5503
+reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
+
+
+[[known_false]]
+case = "shape-thread-join-result"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-sort-direction-truncate"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-let-else-branch-pinned"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-hostile-owner-as-path-value"
+issue = 9442
+reason = "Owner referenced as a path value is not followed (#9442)."
+
+[[known_false]]
+case = "shape-hostile-owner-through-fn-pointer"
+issue = 9442
+reason = "Owner reached through a fn pointer is not followed (#9442)."
+
+[[known_false]]
+case = "shape-hostile-cfg-attr-test"
+issue = 9442
+reason = "cfg_attr-wrapped test is not recognized (#9442)."
+
+[[known_false]]
+case = "shape-hostile-macro-defined-owner"
+issue = 9442
+reason = "Macro-defined owner is not resolved (#9442)."
+
+
+[[known_false]]
+case = "shape-cast-truncation-mask"
+issue = 9444
+reason = "Cast truncation mask case (#9444)."
+
+[[known_false]]
+case = "shape-closure-returned-adder"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-collect-result-short-circuit"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-impl-trait-return-filter"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-op-add-impl"
+issue = 9441
+reason = "Implicit-call impl is not followed (#9441)."
+
+[[known_false]]
+case = "shape-drop-impl-side-effect"
+issue = 9441
+reason = "Implicit-call Drop impl is not followed (#9441)."
+
+[[known_false]]
+case = "shape-dyn-trait-method-exact"
+issue = 9441
+reason = "Dyn-trait method call is not followed (#9441)."
+
+[[known_false]]
+case = "shape-async-fn-block-on"
+issue = 9443
+reason = "Async fn driven by block_on is not followed (#9443)."

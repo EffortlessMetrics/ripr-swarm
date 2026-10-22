@@ -345,6 +345,23 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A return value whose integer literal only changed spelling
+            // (`Some(21)` to `Some(0x15)`) holds the same value, so it is not
+            // changed behavior. As above, it is dropped only when another
+            // shape keeps a probe on the line: the arm head still stands for
+            // the edited arm, and the arm's own selection decides whether a
+            // test notices it.
+            let respelled_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        removed_span_of_shape(text, &shape_text, removed.trim())
+                            .is_some_and(|before| is_integer_respelling(&shape_text, &before))
+                            && canonical_shapes
+                                .iter()
+                                .any(|other| other.family != ProbeFamily::ReturnValue)
+                    })
+            };
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -380,7 +397,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
+                .filter(|shape| {
+                    !unchanged_return(shape) && !respelled_return(shape) && !guard_only_arm(shape)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
@@ -788,6 +807,79 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && !prose(before)
         && raw_differs
         && neutral_spelling(after) == neutral_spelling(before)
+}
+
+/// Whether `after` is `before` with integer literals respelled to the same
+/// value (`Some(0x15)` for `Some(21)`, `1_000` for `1000`), the literals'
+/// suffixes unchanged and everything around them the same. Text holding a
+/// string, character or macro is never a respelling: its characters or
+/// expansion may observe the spelling.
+fn is_integer_respelling(after: &str, before: &str) -> bool {
+    let observes = |text: &str| text.contains(['"', '\'', '!']);
+    after != before
+        && !observes(after)
+        && !observes(before)
+        && canonical_integer_literals(after) == canonical_integer_literals(before)
+}
+
+/// `text` with each plain integer literal (decimal, `0x`, `0o` or `0b`, with
+/// optional `_` separators and an integer suffix) rewritten as its decimal
+/// value. A literal that is part of a longer token (an identifier, a float,
+/// a tuple index after `.`) or too large for `u128` is left as written.
+fn canonical_integer_literals(text: &str) -> String {
+    const SUFFIXES: [&str; 12] = [
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    ];
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let free_start = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|prev| !(prev.is_alphanumeric() || matches!(prev, '_' | '.')));
+        if !(byte.is_ascii_digit() && free_start) {
+            let ch = text[at..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            at += ch.len_utf8();
+            continue;
+        }
+        let (radix, digits_at) = match (byte, bytes.get(at + 1)) {
+            (b'0', Some(b'x')) => (16, at + 2),
+            (b'0', Some(b'o')) => (8, at + 2),
+            (b'0', Some(b'b')) => (2, at + 2),
+            _ => (10, at),
+        };
+        let mut end = digits_at;
+        while end < bytes.len()
+            && (bytes[end] == b'_'
+                || char::from(bytes[end]).is_digit(if radix == 16 { 16 } else { 10 }))
+        {
+            end += 1;
+        }
+        // An `e` after a decimal run, or `.` and a digit, makes a float.
+        let digits = text[digits_at..end].replace('_', "");
+        let rest = &text[end..];
+        let suffix = SUFFIXES
+            .iter()
+            .find(|suffix| rest.starts_with(**suffix))
+            .copied()
+            .unwrap_or("");
+        let after = rest[suffix.len()..].chars().next();
+        let boundary = after.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+            && !(rest.starts_with('.') && rest[1..].starts_with(|ch: char| ch.is_ascii_digit()));
+        let value = u128::from_str_radix(&digits, radix).ok();
+        match value {
+            Some(value) if boundary && !digits.is_empty() => {
+                out.push_str(&value.to_string());
+                out.push_str(suffix);
+            }
+            _ => out.push_str(&text[at..end + suffix.len()]),
+        }
+        at = end + suffix.len();
+    }
+    out
 }
 
 /// Whether a block of added lines only rewraps and respells the block of
@@ -3542,6 +3634,102 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// A respelled integer literal in an arm's value holds the same value, so
+    /// the line keeps the arm probe and drops the return-value probe that
+    /// would ask for a discriminator of a value that never changed.
+    #[test]
+    fn a_respelled_arm_value_drops_the_return_value_probe() {
+        let probes = shapes_probes(
+            "\"ftp\" => Some(0x15),",
+            "\"ftp\" => Some(21),",
+            &[
+                (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                (ProbeShapeKind::ReturnValue, "Some(0x15)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert!(families.contains(&ProbeFamily::MatchArm), "{probes:?}");
+        assert!(!families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// Controls: a different value, a respelling that is not an equal integer
+    /// literal, and a respelled value with no other shape on the line all keep
+    /// the return-value probe.
+    #[test]
+    fn a_changed_or_unreadable_arm_value_keeps_the_return_value_probe() {
+        for (after, before, value) in [
+            (
+                "\"ftp\" => Some(0x16),",
+                "\"ftp\" => Some(21),",
+                "Some(0x16)",
+            ),
+            (
+                "\"ftp\" => Some(21u8),",
+                "\"ftp\" => Some(21),",
+                "Some(21u8)",
+            ),
+            (
+                "\"ftp\" => Some(1.5e0),",
+                "\"ftp\" => Some(1.5),",
+                "Some(1.5e0)",
+            ),
+            ("\"ftp\" => \"0x15\",", "\"ftp\" => \"21\",", "\"0x15\""),
+        ] {
+            let probes = shapes_probes(
+                after,
+                before,
+                &[
+                    (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                    (ProbeShapeKind::ReturnValue, value),
+                ],
+                "",
+            );
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::ReturnValue),
+                "{after}: {probes:?}"
+            );
+        }
+        let alone = shapes_probes(
+            "Some(0x15)",
+            "Some(21)",
+            &[(ProbeShapeKind::ReturnValue, "Some(0x15)")],
+            "",
+        );
+        assert!(
+            alone
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
+            "{alone:?}"
+        );
+    }
+
+    #[test]
+    fn integer_respelling_compares_values_and_nothing_else() {
+        assert!(is_integer_respelling("Some(0x15)", "Some(21)"));
+        assert!(is_integer_respelling("n + 1_000", "n + 1000"));
+        assert!(is_integer_respelling("x = 0b101u8;", "x = 5u8;"));
+        assert!(is_integer_respelling("-0o17", "-15"));
+        assert!(!is_integer_respelling("Some(21)", "Some(21)"));
+        assert!(!is_integer_respelling("Some(0x16)", "Some(21)"));
+        // A suffix, a float, a tuple index and a longer token are not integers.
+        assert!(!is_integer_respelling("5u16", "5u8"));
+        assert!(!is_integer_respelling("1e3", "1000"));
+        assert!(!is_integer_respelling("x.0x1", "x.1"));
+        assert!(!is_integer_respelling("v0x15", "v21"));
+        assert!(!is_integer_respelling("na\u{ef}ve0x1", "na\u{ef}ve1"));
+        // Text that can observe its spelling is never a respelling.
+        assert!(!is_integer_respelling("f(\"a\", 0x15)", "f(\"a\", 21)"));
+        assert!(!is_integer_respelling("stringify!(0x15)", "stringify!(21)"));
+        assert!(!is_integer_respelling("'a' as u8 + 0x15", "'a' as u8 + 21"));
     }
 
     /// A guard-only edit is the guard's predicate finding: the arm head adds

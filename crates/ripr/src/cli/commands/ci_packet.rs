@@ -73,7 +73,7 @@ pub(super) struct CiPacketOptions {
 
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}"))?;
     let settings = CiSettings::from_env()?;
@@ -318,8 +318,17 @@ impl PacketRun {
     }
 
     fn copy(&self, from: &str, to: &str) -> StageResult {
-        fs::copy(self.path(from), self.path(to))
-            .map(|_| ())
+        // Read, then write through the symlink-refusing advisory writer: a
+        // plain `fs::copy` follows a planted destination link.
+        let bytes = fs::read(self.path(from))
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+        crate::output::file_write::write(&self.path(to), &bytes)
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+        // `fs::copy` carried the source's permission bits; so does this.
+        let permissions = fs::metadata(self.path(from))
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?
+            .permissions();
+        fs::set_permissions(self.path(to), permissions)
             .map_err(|err| format!("cannot copy {from} to {to}: {err}"))
     }
 
@@ -378,8 +387,24 @@ impl PacketRun {
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
     /// the shell redirect did.
     fn ripr_to(&self, args: &[String], out: &str) -> StageResult {
-        let file =
-            fs::File::create(self.path(out)).map_err(|err| format!("cannot write {out}: {err}"))?;
+        let target = self.path(out);
+        // Same symlink-refusing owner as every other advisory write: refuse a
+        // planted link or non-regular leaf, then truncate by replacing the
+        // regular file with an exclusive no-follow create.
+        crate::output::file_write::validate_destination(&target)
+            .map_err(|err| format!("cannot write {out}: {err}"))?;
+        // `File::create` kept an existing file's mode; keep it across the
+        // replace too.
+        let previous_permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
+        if target.exists() {
+            fs::remove_file(&target).map_err(|err| format!("cannot write {out}: {err}"))?;
+        }
+        let file = crate::output::file_write::create_exclusive(&target)
+            .map_err(|err| format!("cannot write {out}: {err}"))?;
+        if let Some(permissions) = previous_permissions {
+            file.set_permissions(permissions)
+                .map_err(|err| format!("cannot write {out}: {err}"))?;
+        }
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
@@ -1208,7 +1233,7 @@ impl PacketRun {
             ],
         )
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}"))?;
-        fs::write(self.path("target/ripr/reports/pr.diff"), &diff)
+        crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}"))?;
         let receipt = DiffReceipt {
             tool: "ripr",
@@ -1222,9 +1247,11 @@ impl PacketRun {
         let mut json = serde_json::to_string_pretty(&receipt)
             .map_err(|err| format!("cannot render the diff receipt: {err}"))?;
         json.push('\n');
-        fs::write(self.path("target/ripr/reports/pr-diff.receipt.json"), json).map_err(|err| {
-            format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}")
-        })?;
+        crate::output::file_write::write(
+            &self.path("target/ripr/reports/pr-diff.receipt.json"),
+            json.as_bytes(),
+        )
+        .map_err(|err| format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}"))?;
         if diff.is_empty() {
             let names = git_bytes(
                 &self.root,
@@ -1332,7 +1359,7 @@ impl PacketRun {
         let mut json = serde_json::to_string(&serde_json::json!({ "labels": labels }))
             .map_err(|err| format!("cannot render the labels: {err}"))?;
         json.push('\n');
-        fs::write(self.path(LABELS_JSON), json)
+        crate::output::file_write::write(&self.path(LABELS_JSON), json.as_bytes())
             .map_err(|err| format!("cannot write {LABELS_JSON}: {err}"))
     }
 
@@ -2301,6 +2328,189 @@ mod tests {
             run.failed,
             vec!["Required".to_string(), "Gate input".to_string()]
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn recording_run(root: &Path) -> PacketRun {
+        PacketRun {
+            root: root.to_path_buf(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings::default(),
+            only: Vec::new(),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: Some(std::cell::RefCell::new(Vec::new())),
+        }
+    }
+
+    #[cfg(unix)]
+    fn link_scratch(label: &str) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let root = base.join("root");
+        fs::create_dir_all(root.join("target/ripr/reports")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("target/ci")).map_err(|e| e.to_string())?;
+        let sentinel = base.join("outside.txt");
+        fs::write(&sentinel, "ORIG").map_err(|e| e.to_string())?;
+        Ok((base, root, sentinel))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_to_refuses_a_planted_leaf_link_and_truncates_a_regular_file() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("ripr-to")?;
+        let run = recording_run(&root);
+        // Positive control: a regular file is truncated and recreated.
+        fs::write(root.join("target/ripr/reports/out.json"), "stale").map_err(|e| e.to_string())?;
+        run.ripr_to(&[], "target/ripr/reports/out.json")?;
+        let control =
+            fs::read(root.join("target/ripr/reports/out.json")).map_err(|e| e.to_string());
+        // Hostile: a planted leaf link.
+        std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports/link.json"))
+            .map_err(|e| e.to_string())?;
+        let refused = run.ripr_to(&[], "target/ripr/reports/link.json");
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(control?, b"".to_vec());
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_refuses_a_planted_destination_link() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("copy")?;
+        let run = recording_run(&root);
+        fs::write(root.join("target/ripr/reports/src.json"), "NEW").map_err(|e| e.to_string())?;
+        // Positive control.
+        run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/dst.json",
+        )?;
+        let control = fs::read_to_string(root.join("target/ripr/reports/dst.json"))
+            .map_err(|e| e.to_string());
+        std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports/link.json"))
+            .map_err(|e| e.to_string())?;
+        let refused = run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/link.json",
+        );
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(control?, "NEW");
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn labels_write_refuses_a_planted_leaf_link() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("labels")?;
+        let mut run = recording_run(&root);
+        run.settings.labels = Ok(Vec::new());
+        std::os::unix::fs::symlink(&sentinel, root.join(LABELS_JSON)).map_err(|e| e.to_string())?;
+        let refused = run.capture_labels();
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    /// `pr.diff` and its receipt are both written through the advisory writer.
+    #[cfg(unix)]
+    #[test]
+    fn pr_diff_and_receipt_refuse_planted_leaf_links() -> Result<(), String> {
+        for planted in ["pr.diff", "pr-diff.receipt.json"] {
+            let (base, root, sentinel) = link_scratch("pr-diff")?;
+            let run_git = |args: &[&str]| -> Result<String, String> {
+                crate::git::run_git(&root, args).map_err(|err| err.to_string())
+            };
+            run_git(&["init", "--initial-branch=main"])?;
+            run_git(&["config", "user.email", "ripr@example.invalid"])?;
+            run_git(&["config", "user.name", "ripr test"])?;
+            run_git(&["config", "commit.gpgSign", "false"])?;
+            fs::write(root.join("a.txt"), "one\n").map_err(|e| e.to_string())?;
+            run_git(&["add", "a.txt"])?;
+            run_git(&["commit", "-m", "base"])?;
+            let base_sha = run_git(&["rev-parse", "HEAD"])?;
+            run_git(&["update-ref", "refs/remotes/origin/main", &base_sha])?;
+            fs::write(root.join("a.txt"), "two\n").map_err(|e| e.to_string())?;
+            run_git(&["commit", "-am", "change"])?;
+            std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports").join(planted))
+                .map_err(|e| e.to_string())?;
+            let mut run = recording_run(&root);
+            run.recorded = None;
+            run.settings.base_ref = "main".to_string();
+            let refused = run.capture_pull_request_diff();
+            let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+            let _ = fs::remove_dir_all(&base);
+            assert!(refused.is_err(), "{planted}: planted link was followed");
+            assert_eq!(kept?, "ORIG", "{planted}");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_to_and_copy_preserve_file_modes() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let (base, root, _sentinel) = link_scratch("modes")?;
+        let run = recording_run(&root);
+        let mode_of = |rel: &str| -> Result<u32, String> {
+            fs::metadata(root.join(rel))
+                .map(|meta| meta.permissions().mode() & 0o777)
+                .map_err(|e| e.to_string())
+        };
+        let out = root.join("target/ripr/reports/out.json");
+        fs::write(&out, "stale").map_err(|e| e.to_string())?;
+        fs::set_permissions(&out, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        run.ripr_to(&[], "target/ripr/reports/out.json")?;
+        let redirected = mode_of("target/ripr/reports/out.json");
+        let src = root.join("target/ripr/reports/src.json");
+        fs::write(&src, "x").map_err(|e| e.to_string())?;
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/dst.json",
+        )?;
+        let copied = mode_of("target/ripr/reports/dst.json");
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(redirected?, 0o600);
+        assert_eq!(copied?, 0o600);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ci_packet_refuses_target_ripr_review_and_target_ci_links() -> Result<(), String> {
+        for link in ["target/ripr/review", "target/ci"] {
+            let (base, root, _sentinel) = link_scratch("guard")?;
+            let external = base.join("external");
+            fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+            fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+            let link_path = root.join(link);
+            let _ = fs::remove_dir_all(&link_path);
+            std::os::unix::fs::symlink(&external, &link_path).map_err(|e| e.to_string())?;
+            let result = ci_packet(&["--root".to_string(), root.display().to_string()]);
+            let leaked = fs::read_dir(&external).map_err(|e| e.to_string())?.count();
+            let _ = fs::remove_dir_all(&base);
+            assert!(
+                result.is_err_and(|err| err.contains("refusing to write ripr output")),
+                "{link}"
+            );
+            assert_eq!(leaked, 0, "{link}");
+        }
         Ok(())
     }
 

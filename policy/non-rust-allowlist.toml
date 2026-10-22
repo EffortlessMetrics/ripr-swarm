@@ -516,6 +516,24 @@ covered_by = [
 ]
 
 [[allow]]
+glob = ".github/ovsx/package-lock.json"
+kind = "editor_extension_lockfile"
+owner = "lsp/editor"
+surface = "release"
+classification = "metadata"
+reason = "Pinned npm graph for the ovsx publisher used only by publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
+glob = ".github/ovsx/package.json"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "release"
+classification = "config"
+reason = "Manifest pinning ovsx for publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
 glob = "editors/vscode/package-lock.json"
 kind = "editor_extension_lockfile"
 owner = "lsp/editor"
@@ -813,6 +831,15 @@ surface = "ci"
 classification = "tooling"
 reason = "Stdlib Python decision logic extracted from the pre-allocation admission action so the hard-cut and candidate decisions are testable outside embedded YAML shell (#5391, #2022)."
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
+
+[[allow]]
+glob = "policy/release-ledger-overrides.json"
+kind = "release_ledger_overrides"
+owner = "release/control"
+surface = "release"
+classification = "config"
+reason = "Reviewed per-commit disposition overrides for the rows disposition rule v1 cannot judge (two-parent first-parent merges, empty diffs, unclassified paths); read by `cargo xtask release-ledger derive` (#2768)."
+covered_by = ["cargo test -p xtask release_ledger", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "policy/release-hard-cut-admission.json"

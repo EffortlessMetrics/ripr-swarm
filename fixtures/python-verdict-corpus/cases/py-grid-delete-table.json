@@ -1,0 +1,59 @@
+{
+  "case_id": "py-grid-delete-table",
+  "subject_id": "authored-py-grid-delete",
+  "diff": "cases/py-grid-delete-table.diff",
+  "anchor": {
+    "file": "grid_delete/core.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "pytest_parametrized_table",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "test_miss_table",
+        "equivalence_review": "not equivalent: the counter is never updated"
+      },
+      {
+        "replacement": "self.misses -= 1",
+        "mutated_line": "self.misses -= 1",
+        "outcome": "tests_failed",
+        "failing_test": "test_miss_table",
+        "equivalence_review": "not equivalent: the counter moves the wrong way"
+      },
+      {
+        "replacement": "self.misses *= 1",
+        "mutated_line": "self.misses *= 1",
+        "outcome": "tests_failed",
+        "failing_test": "test_miss_table",
+        "equivalence_review": "not equivalent: the counter stays at zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: deletion x parametrized table over zero, one and three calls.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
