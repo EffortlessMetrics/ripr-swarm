@@ -4998,8 +4998,9 @@ pub(crate) fn classify_change_with_alias_state(
         .any(|candidate| candidate.relation.uses_oracle());
     // Reach only through a same-module entry (an exported wrapper or factory
     // product that calls the owner) is indirect: the entry's assertions see
-    // the owner's effect only after the entry's own code. Such reach stays
-    // `weakly_exposed`; `exposed` needs a relation that calls the owner.
+    // the owner's effect only after the entry's own code. Such reach is never
+    // `exposed` (that needs a relation that calls the owner): an exact oracle
+    // reads `static_unknown`, a weak one stays `weakly_exposed`.
     let reach_only_through_module_entry = has_oracle_eligible_relation
         && related_candidates
             .iter()
