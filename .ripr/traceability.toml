@@ -17757,6 +17757,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_function_body_split_at_its_braces_seeds_no_probe",
   "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes",
   "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_normalization_keeps_word_boundaries",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::position_literal_and_joint_punct_guards_keep_reformats_probed",
 ]
 fixtures = []
 code = [

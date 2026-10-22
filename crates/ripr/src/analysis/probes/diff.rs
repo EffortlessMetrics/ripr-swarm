@@ -775,9 +775,14 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
     let raw_differs = after != before;
     let (after, before) = (after.trim(), before.trim());
     // String and comment text is output or prose, so a line holding either is
-    // never a respelling.
+    // never a respelling. A position-observing macro (`line!`, `column!`)
+    // expands from where it sits, so even a reindent moves its value.
     let prose = |line: &str| {
-        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+        line.contains('"')
+            || line.contains("//")
+            || line.contains("/*")
+            || observes_tokens(line)
+            || observes_position(line)
     };
     !prose(after)
         && !prose(before)
@@ -798,7 +803,12 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
         return false;
     }
     let prose = |line: &&str| {
-        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+        line.contains('"')
+            || line.contains("//")
+            || line.contains("/*")
+            || observes_tokens(line)
+            || observes_position(line)
+            || has_whitespace_char_literal(line)
     };
     if after.iter().any(prose) || before.iter().any(prose) {
         return false;
@@ -818,17 +828,20 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
                 == neutral_spelling(&squeeze_bracket_spaces(&before)))
 }
 
-/// `text` with spaces beside a bracket, angle bracket, comma or semicolon
-/// removed, where spacing never separates Rust tokens (`{ a }` and `{a}`
-/// read alike). Interior spacing elsewhere is kept, so `a & &b` and
-/// `a && b` stay different, as do separated range dots.
+/// `text` with spaces beside a delimiter, comma or semicolon removed, where
+/// spacing never separates Rust tokens (`{ a }` and `{a}` read alike, also
+/// inside macro token trees, whose delimiters and lone `,`/`;` puncts are
+/// spacing-insensitive). Angle brackets are excluded: squeezing beside
+/// `<`/`>` could merge two puncts into one joint punct (`-` `>` into `->`),
+/// which macro matching distinguishes. Interior spacing elsewhere is kept,
+/// so `a & &b` and `a && b` stay different, as do separated range dots.
 fn squeeze_bracket_spaces(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == ' '
-            && (matches!(out.chars().last(), Some('(' | '[' | '{' | '<' | ',' | ';'))
-                || matches!(chars.peek(), Some(')' | ']' | '}' | '>' | ',' | ';')))
+            && (matches!(out.chars().last(), Some('(' | '[' | '{' | ',' | ';'))
+                || matches!(chars.peek(), Some(')' | ']' | '}' | ',' | ';')))
         {
             continue;
         }
@@ -961,15 +974,19 @@ fn continues_identifier(ch: char) -> bool {
     !is_rust_whitespace(ch) && (ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
 }
 
-/// Each token-observing macro invocation in `masked` text as the byte offset
-/// of its name and of the first byte after its `!`. Trivia (whitespace, and
-/// comments the mask turned into spaces) may sit before the bang, as Rust
-/// allows. A name inside a longer identifier, or a `!=` comparison, is not an
-/// invocation.
-fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
+/// Macros that expand from their source position (`line!`, `column!`), so a
+/// rewrap or reindent changes their value even when every token is unchanged.
+const POSITION_MACROS: [&str; 2] = ["line", "column"];
+
+/// Each invocation of a macro named in `names` in `masked` text as the byte
+/// offset of its name and of the first byte after its `!`. Trivia
+/// (whitespace, and comments the mask turned into spaces) may sit before the
+/// bang, as Rust allows. A name inside a longer identifier, or a `!=`
+/// comparison, is not an invocation.
+fn macro_bangs(masked: &str, names: &[&str]) -> Vec<(usize, usize)> {
     let bytes = masked.as_bytes();
     let mut found = Vec::new();
-    for name in TOKEN_MACROS {
+    for name in names {
         for (at, _) in masked.match_indices(name) {
             let before_ok = masked[..at]
                 .chars()
@@ -996,7 +1013,25 @@ fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
 /// check for callers without the whole file; [`token_macro_lines`] also
 /// covers the continuation lines of a multi-line invocation.
 fn observes_tokens(line: &str) -> bool {
-    !token_macro_bangs(&mask_comments_and_strings(line)).is_empty()
+    !macro_bangs(&mask_comments_and_strings(line), &TOKEN_MACROS).is_empty()
+}
+
+/// Whether `line` holds a position-observing macro invocation (`line!` or
+/// `column!`): its expansion is the source position it sits at, so moving
+/// the line changes the program even when its tokens are untouched.
+fn observes_position(line: &str) -> bool {
+    !macro_bangs(&mask_comments_and_strings(line), &POSITION_MACROS).is_empty()
+}
+
+/// Whether `line` holds a character or byte literal whose content is one
+/// whitespace character (`' '`, `'\t'` written with a real tab). Joining
+/// lines collapses whitespace runs, so that content would be erased from
+/// the comparison and a changed literal could read as a pure reformat.
+fn has_whitespace_char_literal(line: &str) -> bool {
+    let chars = line.chars().collect::<Vec<_>>();
+    chars
+        .windows(3)
+        .any(|window| window[0] == '\'' && is_rust_whitespace(window[1]) && window[2] == '\'')
 }
 
 /// 1-based lines of `source` inside a token-observing macro invocation, from
@@ -1014,7 +1049,7 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
     let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = token_macro_bangs(&masked);
+    let mut bangs = macro_bangs(&masked, &TOKEN_MACROS);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
@@ -2782,6 +2817,43 @@ mod tests {
         assert!(!is_behavior_neutral_rewrap(
             &["let c = 'x'; f(a, b);"],
             &["let c = 'x'; f(a,b);"]
+        ));
+    }
+
+    /// Review controls for #9450: position-observing macros, whitespace
+    /// character literals, and joint punctuation each keep a
+    /// formatting-only-looking change probed, because each changes the
+    /// program when the lines move.
+    #[test]
+    fn position_literal_and_joint_punct_guards_keep_reformats_probed() {
+        // `line!` expands to the line it sits on: splitting the statement
+        // moves it.
+        assert!(!is_behavior_neutral_rewrap(
+            &["    let l =", "        line!();"],
+            &["    let l = line!();"]
+        ));
+        // `column!` expands to its column: a pure reindent moves it.
+        assert!(!is_behavior_neutral_respelling(
+            "        let d = column!();",
+            "    let d = column!();"
+        ));
+        assert!(is_behavior_neutral_respelling(
+            "        let d = 1;",
+            "    let d = 1;"
+        ));
+        // A whitespace character literal (real tab) joined against a space
+        // literal would collapse to the same joined text.
+        assert!(has_whitespace_char_literal("let c = '\t';"));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let c = ' ';", "f(a, b);"],
+            &["let c = '\t'; f(a, b);"]
+        ));
+        // Squeezing must not merge `-` and `>` into the joint punct `->`:
+        // macro matching distinguishes them.
+        assert_eq!(squeeze_bracket_spaces("m!(a -> b)"), "m!(a -> b)");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = m!(a -> b);"],
+            &["let v = m!(a -", "    > b);"]
         ));
     }
 

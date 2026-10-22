@@ -103,7 +103,16 @@ Neutrality still requires all of:
   `prose_lines` sets (multi-line string continuations and token-macro
   continuation lines stay probed);
 - the `join_tokens` token-boundary conservatism: `a & &b` does not join to
-  `a && b`, separated range dots stay apart, word boundaries are kept.
+  `a && b`, separated range dots stay apart, word boundaries are kept;
+- no line holding a position-observing macro (`line!`, `column!`): each
+  expands from the source position it sits at, so moving the line moves
+  its value even when every token is unchanged;
+- no line holding a whitespace character literal (`' '` or a real tab
+  between quotes): joining collapses whitespace runs and would erase the
+  literal's content from the comparison;
+- the squeezed comparison never touches angle brackets, so two puncts
+  (`-` and `>`) are never merged into one joint punct (`->`) that macro
+  matching distinguishes.
 
 A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
 
@@ -145,7 +154,9 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   `rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes` (Rule 1
   squeezed comparison and the single-quote fail-closed),
   `rewrap_normalization_keeps_word_boundaries` (pure-reformat acceptance
-  plus word-boundary and operator controls).
+  plus word-boundary and operator controls),
+  `position_literal_and_joint_punct_guards_keep_reformats_probed`
+  (position-macro, whitespace-literal, and joint-punct controls).
 - Existing guards keep their tests: `a_respelling_inside_stringify_is_not_neutral`,
   `a_prose_line_on_one_side_keeps_a_shifted_rewrap_probed`,
   `rewrap_keeps_separated_dots_apart` (example 5 family).
