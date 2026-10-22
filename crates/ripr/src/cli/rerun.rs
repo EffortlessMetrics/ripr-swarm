@@ -2155,7 +2155,6 @@ mod tests {
         record
     }
 
-    #[cfg(feature = "lang-typescript")]
     #[test]
     fn published_store_failures_cap_rows_and_fold_excess_into_dropped() {
         use crate::analysis::seam_cache::{FileFactCacheStats, FileFactStoreFailure};
@@ -2182,6 +2181,7 @@ mod tests {
         assert_eq!(stats.store_failures_dropped, 3);
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn canonical_gap_rerun_recomputes_typescript_scope() -> Result<(), String> {
         let root = unique_temp_root("ts-rerun")?;

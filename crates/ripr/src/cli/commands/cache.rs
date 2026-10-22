@@ -689,7 +689,9 @@ fn cleanup_hint(cache_dir: &Path, root: Option<&Path>, env_governs: bool) -> Str
         return format!(
             "The cache is disposable; ripr rebuilds it on the next run. `ripr cache clear` \
              would refuse to clear it: {}.",
-            reason.trim_start_matches("refusing to clear ")
+            reason
+                .trim_start_matches("refusing to clear ")
+                .trim_end_matches('.')
         );
     }
     // RIPR_CACHE_DIR governs the location regardless of --root, so the printed
@@ -1281,8 +1283,8 @@ mod tests {
     -> Result<(), String> {
         let root = temp_dir("explicit-root");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        let canonical = fs::canonicalize(&root).map_err(|error| error.to_string())?;
-        let expected = canonical.join("target").join("ripr").join("cache");
+        let absolute = std::path::absolute(&root).map_err(|error| error.to_string())?;
+        let expected = absolute.join("target").join("ripr").join("cache");
         let resolved = cache_dir_for_explicit_root(&root, Err(std::env::VarError::NotPresent))?;
         if resolved != expected {
             return Err(format!(
@@ -1329,7 +1331,10 @@ mod tests {
         remove_base(&unowned)?;
         remove_base(&impostor)?;
         for (label, hint) in [("unowned", &unowned_hint), ("impostor", &impostor_hint)] {
-            if !hint.contains("would refuse to clear it") || hint.contains("cache clear --force`") {
+            if !hint.contains("would refuse to clear it")
+                || hint.contains("cache clear --force`")
+                || hint.contains("..")
+            {
                 return Err(format!("{label} root hint must carry the refusal: {hint}"));
             }
         }
