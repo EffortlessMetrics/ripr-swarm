@@ -17,6 +17,12 @@ pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
 hand-written mutant of the rewritten line is applied.
 
+A rewrite is behavior-preserving over the plain numeric, string and list
+arguments its subject's tests and callers use. Operator-overloaded objects are
+outside that domain: swapping the operands of `*` or `+`, or replacing `+=`
+with `+`, can dispatch to a different overload handler, and no case claims
+equivalence there.
+
 Cases named `perl-0235-*` start from another case's producer packet and edit
 it to carry a RIPR-SPEC-0235 fact the producer cannot emit yet. Their
 `perl_facts.provenance` is `edited_producer` and `perl_facts.edits` names the
