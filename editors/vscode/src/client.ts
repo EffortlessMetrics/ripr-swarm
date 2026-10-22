@@ -553,6 +553,13 @@ export class RiprClientController {
     this.updateStatus(this.status);
   }
 
+  private pendingServerMessage: Promise<void> = Promise.resolve();
+
+  /** Resolves once the last missing-server popup has been answered and handled. */
+  settleServerMessage(): Promise<void> {
+    return this.pendingServerMessage;
+  }
+
   async start(): Promise<void> {
     // Fast path: server is already up.
     if (this.client) {
@@ -652,7 +659,14 @@ export class RiprClientController {
         detail: server.detail,
         nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server);
+      // The popup waits on a user who may never answer (headless hosts never
+      // do), so start() must not wait on it: an unanswered popup would keep
+      // startingPromise pending, hang activation and swallow every later
+      // start() or Retry into the same stuck promise (#9526).
+      this.pendingServerMessage = this.showMissingServerMessage(server).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr missing-server message failed: ${message}`);
+      });
       return;
     }
     this.server = server;
