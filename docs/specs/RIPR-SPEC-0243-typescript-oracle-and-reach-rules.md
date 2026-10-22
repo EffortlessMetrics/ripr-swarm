@@ -1102,11 +1102,8 @@ rejected alternative. Any can be reversed later without touching the rest.
     accessor body (it can compute anything), and `accessor <field>` auto-
     accessors, which the owner index does not record yet.
 
-21. **Empty tables and mock call counts (2026-10-22, #9683, #9684).**
-    Adopted: a `for...of` loop over a top-level test-local `const` that is
-    an empty array literal and is named only in its declaration and that
-    loop runs the body zero times, so it reads as no assertions (rule 11's
-    loop form). Adopted: for a changed side-effect call (a probe whose
+21. **Mock call counts (2026-10-22, #9684).**
+    Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
     expression is a plain identifier path ending `.mock.callCount()` or
     `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
@@ -1375,7 +1372,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
     boundary: `exact_value` / strong, `exposed` through the rows 4999 and
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
-    `break`, stay `weakly_exposed` (rule 11).
+    `break`, stay `weakly_exposed` (rule 11). A loop over an empty `const`
+    table (`const rows: Array<[number, number, number]> = []`) runs no
+    iterations and holds no assertions, so a change is not `exposed` through
+    it (#9683); a `let` table or one read elsewhere keeps the loop's own
+    assertion.
 38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
     threw `` `not a count: ${text}` ``, and the Playwright spec runs
     `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
@@ -1407,11 +1408,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
     withdraws the second test, rule 18 shows `describeAttempt(0)` agrees on
     both versions). Corpus cases `node-t-skip-inside-test` and
     `node-first-attempt-nonnegative-bound`.
-43. `const rows: Array<[number, number, number]> = []; for (const [a, b,
-    want] of rows) { assert.equal(f(a, b), want); }` against a changed
-    `return a * b`: the loop runs zero times and asserts nothing, so the
-    test names no assertion and the change is not `exposed` (decision 21).
-44. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+43. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
     `const send = mock.fn(); mockedSend(4, { send });
     assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
     `weakly_exposed` (the count does not see the argument; today
@@ -1420,18 +1417,19 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
+  `const` table holds no assertions and a `let` table does not. Corpus row
+  `ts-trap-empty-table` moves from credited to gap.
+
 - #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
   pins the per-row assertions and the fail-closed fallbacks (a non-literal
   cell, a table read elsewhere, a `let` or late table, a row of the wrong
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
 
-- #9683, #9684 (decision 21): `table_loop_tests.rs`
-  (`an_empty_literal_table_asserts_nothing`) and
-  `tests/mock_call_count_tests.rs` pin the empty-table and call-count
-  readings and their controls. Corpus rows `ts-trap-empty-table` and
-  `ts-trap-mocked-send` move from credited to gap, and the trap kit's
-  `false_credit_ceiling` drops from 2 to 0.
+- #9684 (decision 21): `tests/mock_call_count_tests.rs` pins the call-count
+  reading and its controls. Corpus row `ts-trap-mocked-send` moves from
+  credited to gap.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
