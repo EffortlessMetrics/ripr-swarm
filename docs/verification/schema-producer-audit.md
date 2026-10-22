@@ -154,10 +154,12 @@ repair` before/after phases write, and `assert_result_matches_published_schema`
 `ripr agent verify-execute`) checks the execution result. Both run in the
 existing Rust test step, so this adds no time to the gate. Without `--artifact`
 an authority row reports `authority_only`; a good release replay reports
-`artifact_validated` and a bad one fails. The row still flags a committed
-document carrying its discriminators as an unbound lookalike. The sweep test
+`artifact_validated` and a bad one fails. The `repair-attempt` row still
+flags a committed document carrying its discriminators as an unbound lookalike
+(`execution_result` is a pointer binding, so that control does not apply to
+it). The sweep test
 `exempt_rows_name_authorities_that_still_exist` fails if a named helper is
-deleted or never called, or the capability test loses its `#[test]`.
+deleted or appears only once (definition without any other occurrence), or the capability test loses its `#[test]`.
 Negative experiments: `published_schema_helper_rejects_results_the_schema_forbids`
 and `published_schema_conformance_rejects_manifests_the_schema_forbids` show each
 helper rejects a missing, undeclared, out-of-enum, mistyped or malformed field.
