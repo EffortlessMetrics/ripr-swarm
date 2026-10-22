@@ -239,11 +239,34 @@ pub(crate) fn check_repo_exposure_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    repo_exposure_command("ripr", root, base, mode, out_path)
+}
+
+/// [`check_repo_exposure_command`] for a caller that must bind the command to
+/// a specific executable (#9500): a recovery that tells the user to rerun
+/// `ripr` from `PATH` loops when a stale binary wins `PATH` resolution.
+pub(crate) fn check_repo_exposure_command_with_program(
+    program: &str,
+    root: &str,
+    mode: &str,
+    out_path: &str,
+) -> String {
+    repo_exposure_command(program, root, None, mode, out_path)
+}
+
+fn repo_exposure_command(
+    program: &str,
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
     format!(
-        "ripr check --root {}{} --mode {} --format repo-exposure-json > {}",
+        "{} check --root {}{} --mode {} --format repo-exposure-json > {}",
+        shell_arg(program),
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
