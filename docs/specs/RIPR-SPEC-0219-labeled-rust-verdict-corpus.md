@@ -426,8 +426,8 @@ gated on it.
 `missed_credit_ceiling` in `spec-coverage.toml` counts abstained rows whose
 truth is `discriminated`: tests that catch the change while ripr says
 unknown. A whole-corpus `check` fails when the count rises above the ceiling
-or falls below it, so a fix lowers the ceiling in the same PR and the gain
-cannot regress. A corpus without the key is not gated.
+and passes with a printed note when it falls below it, so a fix lowers the
+ceiling but concurrent fixes never deadlock on the same number. A corpus without the key is not gated.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is

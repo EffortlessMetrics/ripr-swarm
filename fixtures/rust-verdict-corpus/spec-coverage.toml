@@ -15,8 +15,9 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 144
 
 # Most abstained rows whose tests do catch the change (missed credit). A
-# regression fails `verdict-corpus check`; an improvement must lower this
-# number in the same PR. Raising it is a reviewed edit with a reason.
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
 missed_credit_ceiling = 112
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
