@@ -17,8 +17,11 @@ on:
   # No tag trigger and no default-on marketplace: each channel is dispatched
   # explicitly per docs/RELEASE_TRANSACTION.md (#1646 owns the full topology).
 
+# Least privilege (#9303): the workflow default is read-only. Only
+# attach-release-asset widens to contents: write, at job level. The two
+# token-holding publish jobs get no GITHUB_TOKEN write scope at all.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   admit-dispatch:
@@ -71,7 +74,7 @@ jobs:
         run: |
           version="${EXTENSION_VERSION#v}"
           mkdir -p dist
-          npx @vscode/vsce package --out "dist/ripr-${version}.vsix"
+          npx --no-install vsce package --out "dist/ripr-${version}.vsix"
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -108,18 +111,39 @@ jobs:
     needs: [package, server-assets-ready]
     if: ${{ github.event.inputs.publish_vs_marketplace == 'true' }}
     runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds VSCE_PAT. The environment
+    # must be created and protected in repository settings (required reviewers,
+    # deployment branches limited to main) by a repository admin; this file
+    # only names it (#9303).
+    environment: vs-marketplace-publish
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: editors/vscode
     env:
       RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      # vsce comes from the locked devDependency graph, not the registry's
+      # latest; lifecycle scripts stay off in the job that holds the PAT.
+      - name: Install locked publish tooling
+        run: npm ci --ignore-scripts
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-vsix
-          path: dist
+          path: editors/vscode/dist
 
       - name: Require VSCE_PAT
         if: ${{ env.VSCE_PAT == '' }}
@@ -133,7 +157,7 @@ jobs:
           version="${RAW_VERSION#v}"
           vsix_file="dist/ripr-${version}.vsix"
           PUBLISHED_VERSION="$(
-            npx -y @vscode/vsce show EffortlessMetrics.ripr --json 2>/dev/null \
+            npx --no-install vsce show EffortlessMetrics.ripr --json 2>/dev/null \
               | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['versions'][0]['version'])" \
               2>/dev/null || echo ""
           )"
@@ -141,24 +165,43 @@ jobs:
             echo "::warning::VS Code Marketplace already has version $version; skipping publish."
             exit 0
           fi
-          npx -y @vscode/vsce publish --packagePath "$vsix_file" --pat "$VSCE_PAT"
+          npx --no-install vsce publish --packagePath "$vsix_file" --pat "$VSCE_PAT"
 
   publish-open-vsx:
     needs: [package, server-assets-ready]
     if: ${{ github.event.inputs.publish_open_vsx == 'true' }}
     runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds OVSX_PAT; see the note on
+    # publish-vs-marketplace. Created and protected in repository settings.
+    environment: open-vsx-publish
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: editors/vscode
     env:
       RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      # ovsx comes from the locked devDependency graph (exact pin), not the
+      # registry's latest; lifecycle scripts stay off in the job holding the PAT.
+      - name: Install locked publish tooling
+        run: npm ci --ignore-scripts
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-vsix
-          path: dist
+          path: editors/vscode/dist
 
       - name: Require OVSX_PAT
         if: ${{ env.OVSX_PAT == '' }}
@@ -170,13 +213,15 @@ jobs:
         if: ${{ env.OVSX_PAT != '' }}
         run: |
           version="${RAW_VERSION#v}"
-          npx -y ovsx publish "dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
+          npx --no-install ovsx publish "dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
 
   attach-release-asset:
     # The Release tag comes from the version input, not the execution ref, so a
     # fix-forward dispatch from a branch still attaches to the original Release.
     needs: [admit-dispatch, package]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
