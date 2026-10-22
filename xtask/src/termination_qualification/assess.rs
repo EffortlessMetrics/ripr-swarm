@@ -138,7 +138,10 @@ fn changed_finding_suppressed(case: &Case, findings: &[Value]) -> (usize, usize)
     let marked = of_changed
         .filter(|finding| {
             finding.get("suppressed").and_then(Value::as_bool) == Some(true)
-                && finding.get("suppressed_by").and_then(Value::as_str).is_some()
+                && finding
+                    .get("suppressed_by")
+                    .and_then(Value::as_str)
+                    .is_some()
         })
         .count();
     (total, marked)
