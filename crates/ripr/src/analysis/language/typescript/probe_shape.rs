@@ -75,6 +75,9 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     {
         return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
     }
+    if is_module_scalar_constant(line_text) {
+        return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
+    }
     if leading.starts_with("if (")
         || leading.starts_with("if(")
         || leading.starts_with("else if (")
@@ -495,6 +498,117 @@ pub(crate) fn declared_arrow_value_body(leading: &str) -> bool {
         let masked = ts_mask_literals_and_comments(body);
         !masked.replace("=>", "").contains(['<', '>'])
     })
+}
+
+/// `true` for a module-level scalar constant declaration at column zero,
+/// `[export ]const NAME[: Type] = <literal>;`, whose initializer is one
+/// string, number, boolean or `null` literal. A test that reads the constant
+/// observes its value the way a call observes a returned value, so the edit
+/// is a value change rather than an unrecognised line. A nested declaration
+/// (indented), a computed initializer, a template with a substitution or a
+/// destructuring head keeps the unrecognised-shape fallback.
+pub(crate) fn is_module_scalar_constant(line_text: &str) -> bool {
+    module_scalar_constant_literal(line_text).is_some()
+}
+
+/// The literal a column-zero module scalar constant declaration assigns.
+pub(crate) fn module_scalar_constant_literal(line_text: &str) -> Option<&str> {
+    let line = line_text.trim_end();
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let declaration = line.strip_prefix("export ").unwrap_or(line);
+    let declaration = declaration.strip_prefix("const ")?;
+    let (head, initializer) = declaration.split_once(" = ")?;
+    let name = head
+        .split_once(':')
+        .map_or(head, |(name, _)| name)
+        .trim_end();
+    if name.is_empty()
+        || name.starts_with(|c: char| c.is_ascii_digit())
+        || !name
+            .chars()
+            .all(|c| c == '_' || c == '$' || c.is_alphanumeric())
+        || head.contains(['(', '{', '[', ',', '='])
+    {
+        return None;
+    }
+    let initializer = initializer.trim();
+    let initializer = initializer
+        .strip_suffix(';')
+        .unwrap_or(initializer)
+        .trim_end();
+    is_scalar_literal(initializer).then_some(initializer)
+}
+
+/// A JavaScript numeric literal: decimal with optional fraction and exponent,
+/// a `0x`/`0o`/`0b` integer, `_` separators between digits, optional `n`.
+fn is_numeric_literal(text: &str) -> bool {
+    fn digits(text: &str, radix: u32) -> bool {
+        !text.is_empty()
+            && !text.starts_with('_')
+            && !text.ends_with('_')
+            && !text.contains("__")
+            && text.chars().all(|c| c == '_' || c.is_digit(radix))
+    }
+    let text = text.strip_suffix('n').unwrap_or(text);
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return digits(rest, radix);
+        }
+    }
+    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+        None => (text, None),
+    };
+    if let Some(exponent) = exponent
+        && !digits(exponent.strip_prefix(['+', '-']).unwrap_or(exponent), 10)
+    {
+        return false;
+    }
+    match mantissa.split_once('.') {
+        Some((whole, fraction)) => {
+            digits(whole, 10) && (fraction.is_empty() || digits(fraction, 10))
+        }
+        None => digits(mantissa, 10),
+    }
+}
+
+fn is_scalar_literal(text: &str) -> bool {
+    if matches!(text, "true" | "false" | "null") {
+        return true;
+    }
+    if is_numeric_literal(text.strip_prefix('-').unwrap_or(text)) {
+        return true;
+    }
+    let mut chars = text.chars();
+    let (Some(open), Some(close)) = (chars.next(), text.chars().next_back()) else {
+        return false;
+    };
+    if text.len() < 2 || open != close || !matches!(open, '"' | '\'' | '`') {
+        return false;
+    }
+    let inner = &text[open.len_utf8()..text.len() - close.len_utf8()];
+    // One literal: the quote does not recur unescaped, and a template has no
+    // substitution.
+    let mut escaped = false;
+    for c in inner.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == open {
+            return false;
+        }
+    }
+    !(escaped || open == '`' && inner.contains("${"))
 }
 
 /// The name a declared concise arrow line binds (`double` for

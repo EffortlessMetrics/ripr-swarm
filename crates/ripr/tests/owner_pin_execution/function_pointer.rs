@@ -300,3 +300,72 @@ fn function_pointer_mask_runtime_controls_match_the_selected_input() -> Result<(
     }
     Ok(())
 }
+
+const REBOUND_MASK_CASES: &[(&str, &str)] = &[
+    ("constant_shadow", "let n = 52;"),
+    ("partial_shadow", "let n = n & 0x34;"),
+];
+
+fn rebound_mask_source(statement: &str) -> String {
+    format!(
+        "pub fn low_byte(n: u32) -> u8 {{\n    {statement}\n    (n & 0xff) as u8\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pointer_mask() {{\n        let f: fn(u32) -> u8 = low_byte;\n        assert_eq!(f(255), 52);\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask() -> Result<(), String> {
+    for &(case, statement) in REBOUND_MASK_CASES {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"pointer-mask-rebound\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), rebound_mask_source(statement))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("change.diff"),
+            format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub fn low_byte(n: u32) -> u8 {{\n     {statement}\n-    n as u8\n+    (n & 0xff) as u8\n }}\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let changed: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 3
+            })
+            .collect();
+        assert_eq!(changed.len(), 1, "{case}: one changed masked return");
+        assert_eq!(changed[0].class, ExposureClass::WeaklyExposed, "{case}");
+    }
+    Ok(())
+}
+
+#[test]
+fn function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask() -> Result<(), String> {
+    for &(case, statement) in REBOUND_MASK_CASES {
+        for (label, expression) in [
+            ("neutral", "(n & 0xff) as u8"),
+            ("narrower", "(n & 0x7f) as u8"),
+        ] {
+            source_runtime_control(
+                &rebound_mask_source(statement).replacen("(n & 0xff) as u8", expression, 1),
+                &format!("function_pointer_rebound_mask_{case}_{label}"),
+                1,
+                false,
+            )?;
+        }
+    }
+    Ok(())
+}

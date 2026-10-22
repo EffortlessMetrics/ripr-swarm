@@ -147,7 +147,7 @@ pub(in crate::analysis) fn unexercised_mask_bits(
     index: &RustIndex,
 ) -> Option<UnexercisedMask> {
     let (param, mask_text, width) = masked_cast(expression)?;
-    if !owner_has_param(owner_body, param) {
+    if !owner_has_param(owner_body, param) || operand_rebound(owner_body, param) {
         return None;
     }
     let mask = integer_literal(mask_text)?;
@@ -212,6 +212,40 @@ fn masked_cast(expression: &str) -> Option<(&str, &str, u32)> {
     let (param, mask) = inner[..close - 1].split_once(" & ")?;
     let param = param.trim();
     is_identifier(param).then_some((param, mask.trim(), width))
+}
+
+/// Whether the owner body past its signature may rewrite or shadow `param`
+/// before the mask (`let n = n | 0x80;`, `n += 1`, a closure or pattern
+/// binding): the pinned input then no longer reaches the mask unchanged.
+/// Any binding construct or closure bar refuses, as does an assignment.
+fn operand_rebound(owner_body: &str, param: &str) -> bool {
+    let Some(open) = owner_body.find('(') else {
+        return true;
+    };
+    let Some(close) = matching_paren(owner_body, open) else {
+        return true;
+    };
+    let body = &owner_body[close + 1..];
+    if body.contains('|')
+        || ["let", "match", "for", "while", "loop", "if", "mut"]
+            .iter()
+            .any(|word| whole_word_count(body, word) > 0)
+    {
+        return true;
+    }
+    body.match_indices(param).any(|(at, _)| {
+        let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+        if body[..at].chars().next_back().is_some_and(ident)
+            || body[at + param.len()..].chars().next().is_some_and(ident)
+        {
+            return false;
+        }
+        let after = body[at + param.len()..].trim_start();
+        (after.starts_with('=') && !after.starts_with("=="))
+            || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+                .iter()
+                .any(|op| after.starts_with(op))
+    })
 }
 
 fn owner_has_param(owner_body: &str, param: &str) -> bool {
@@ -471,5 +505,27 @@ mod tests {
             PointerMaskGate::for_owner("n + 1", "low_byte", OWNER, &index())
                 .admits("low_byte(word)")
         );
+    }
+
+    #[test]
+    fn an_owner_that_rebinds_the_operand_keeps_the_credit() {
+        let tests = [test_with(&["assert_eq!(low_byte(0x1234), 0xb4);"])];
+        for body in [
+            "pub fn low_byte(n: u32) -> u8 {\n    let n = n | 0x80;\n    (n & 0xff) as u8\n}",
+            "pub fn low_byte(n: u32) -> u8 {\n    let n = n << 4;\n    (n & 0xff) as u8\n}",
+            "pub fn low_byte(n: u32) -> u8 {\n    let g = |n: u32| n | 0x80;\n    (g(n) & 0xff) as u8\n}",
+            "pub fn low_byte(n: u32) -> u8 {\n    n += 1;\n    (n & 0xff) as u8\n}",
+            "pub fn low_byte(n: u32) -> u8 {\n    n = n | 0x80;\n    (n & 0xff) as u8\n}",
+        ] {
+            let refs = tests
+                .iter()
+                .map(|test| (test, RelationReason::DirectOwnerCall))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                unexercised_mask_bits("(n & 0xff) as u8", "low_byte", body, &refs, &index()),
+                None,
+                "{body}"
+            );
+        }
     }
 }
