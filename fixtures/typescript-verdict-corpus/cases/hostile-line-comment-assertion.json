@@ -1,0 +1,44 @@
+{
+  "case_id": "hostile-line-comment-assertion",
+  "subject_id": "authored-ts-vitest-hostile",
+  "diff": "cases/hostile-line-comment-assertion.diff",
+  "anchor": {
+    "file": "src/commented.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_assertion_in_line_comment",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return 2 * w + h;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The exact assertion is a line comment; the live assertion only checks the result is a number."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The exact assertion is a line comment; the live assertion only checks the result is a number. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

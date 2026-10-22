@@ -1,0 +1,109 @@
+{
+  "subject_id": "authored-ts-vitest-hostile",
+  "origin": "authored",
+  "version_label": "authored@2026-10-22",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "af1261949671322e6e359bb1901b1e95adcb11f02bac936f72d35b822f0898e7"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/a/price.ts",
+      "sha256": "9d38750e0b45145fdd942b6e7a528c9fee1bf1f3380bc02a4e14277fd41b7f18"
+    },
+    {
+      "path": "src/b/price.ts",
+      "sha256": "0d6671bc0c8f06a295ee4b23f140503deed52cd689b099860b41626465ca4704"
+    },
+    {
+      "path": "src/bom.ts",
+      "sha256": "27c3a82484b1b1e8f7cb71e0695c145daa78aa89b69672119b9dcc4860514abe"
+    },
+    {
+      "path": "src/broken.ts",
+      "sha256": "dd2b138d607291d30826e6bc143d40a6be4168c74289bfa92302af66a5c634da"
+    },
+    {
+      "path": "src/commented.ts",
+      "sha256": "9fdc08ad2f4fe2d35f9b0cb3d7a0b621a9ae0aef39766402d7ec3ab11d4b6b79"
+    },
+    {
+      "path": "src/crlf.ts",
+      "sha256": "f65f7f32c1bb620b9414377bb8f7cb28284679f9c112aae17a6c4da59d69bf6f"
+    },
+    {
+      "path": "src/known.ts",
+      "sha256": "fff7f545e8989f8ba9404dfd69e8b06db8472618c6e88dbc48527564f4373743"
+    },
+    {
+      "path": "src/minified.ts",
+      "sha256": "aa0fd7ec240e748115f99c6615b1db01de44b7b102d7e54ad8b452bab014d084"
+    },
+    {
+      "path": "src/neverRun.ts",
+      "sha256": "94fdd6cac7f32866928bc9739b2796a8f486e80e4f907fda8fb669d25ff784b4"
+    },
+    {
+      "path": "src/okBesideBroken.ts",
+      "sha256": "fd079f855a041e0747b978f2b079320c3ac2ae3392ced6751ad81754fae95150"
+    },
+    {
+      "path": "src/skipped.ts",
+      "sha256": "3e4a7fcd103a8b7ab288ba86f7a2d6e51b5e948d80524b1d763cceb50a5c4788"
+    },
+    {
+      "path": "src/unicode.ts",
+      "sha256": "d2f53e6b40f20abc1c76b7c797a37ff51c6a38fcc51a4ab5f3d1541076476277"
+    },
+    {
+      "path": "test/bom.test.ts",
+      "sha256": "f1e3b5867beeb2c382e986abfc0ff56de2c3aa7a17c88fa2b687e8305c0656cc"
+    },
+    {
+      "path": "test/commented.test.ts",
+      "sha256": "741154d7c4d7c3a0fdd9ac6caea0918060a5b01fe00663cc7a75a76511a62cd9"
+    },
+    {
+      "path": "test/crlf.test.ts",
+      "sha256": "168dba3a0e7e0de6767c760b37abf4896843f10c852a46bdb01d6764c73119b3"
+    },
+    {
+      "path": "test/known.test.ts",
+      "sha256": "999a3aec23bad8659416d4d7d6f2c6f706cf71b2880744675bd0c05e4fb6af22"
+    },
+    {
+      "path": "test/minified.test.ts",
+      "sha256": "e970a15f7fb04456f5e2d27f488413c5b79bf9886a85bd9a04860057ecb779ee"
+    },
+    {
+      "path": "test/neverRun.test.ts",
+      "sha256": "18dc1f5beea367277cc6bceadc5bdeba718c6ccff15c44701777a0b65ec8e8a7"
+    },
+    {
+      "path": "test/okBesideBroken.test.ts",
+      "sha256": "7a2f684d1c8809ecbcefb60f3b01869e46793e53c8b0fdcef7de9eb40373d47c"
+    },
+    {
+      "path": "test/price.test.ts",
+      "sha256": "673442596a0f88d52db7a47d3648d65df3777888d5855679c557bbf6741684c2"
+    },
+    {
+      "path": "test/skipped.test.ts",
+      "sha256": "611bc58cbe7d06e4ab2cfe9765905a7fab7ff2d0354d4887ec6872aec49dada2"
+    },
+    {
+      "path": "test/unicode.test.ts",
+      "sha256": "47218db55fa422c21ad69eedd6d103688dbd4f4f8b26a97adfb6dff8e4f21a6e"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "09bdf63ee5798e8387796d3a50b6c9ce249e67c25e23e9878cb36205877819cc"
+    }
+  ]
+}
