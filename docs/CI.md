@@ -2269,7 +2269,9 @@ The ordinary size envelope (files and changed lines) does not count the lines of
 machine-written `package-lock.json` and `Cargo.lock` files, matched by exact file
 name; a dependency or fixture lockfile refresh is verified by the package manager
 and dependency review rather than by reading the diff. Hand-written lines are
-still limited as before.
+still limited as before. The `changed_lines` output stays the raw GitHub total;
+`counted_changed_lines` is the figure compared with the limit. If the PR head
+moves while admission reads the file list, the discount is dropped for that run.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,

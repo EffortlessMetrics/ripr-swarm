@@ -224,6 +224,7 @@ def refusal(
         "competing_prs": peers or [],
         "changed_files": changed_files,
         "changed_lines": changed_lines,
+        "counted_changed_lines": changed_lines,
         "max_changed_files": max_files,
         "max_changed_lines": max_lines,
     }
@@ -287,17 +288,18 @@ def decide(
         )
 
     changed_files = int(current.get("changed_files") or 0)
-    changed_lines = max(
-        0,
-        int(current.get("additions") or 0)
-        + int(current.get("deletions") or 0)
-        - generated_lines,
+    # changed_lines stays the raw GitHub total on every result; only the
+    # envelope comparison discounts machine-written lockfiles.
+    changed_lines = int(current.get("additions") or 0) + int(
+        current.get("deletions") or 0
     )
-    if not docs_only and (changed_files > max_files or changed_lines > max_lines):
-        return refuse(
+    counted_lines = max(0, changed_lines - generated_lines)
+    if not docs_only and (changed_files > max_files or counted_lines > max_lines):
+        oversized = refuse(
             "qualification_scope_oversized",
-            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines (generated lockfile lines are not counted); split or recompose the candidate before ordinary qualification",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines ({counted_lines} counted), exceeding the ordinary limit of {max_files} files / {max_lines} changed lines (generated lockfile lines are not counted); split or recompose the candidate before ordinary qualification",
         )
+        return {**oversized, "counted_changed_lines": counted_lines}
 
     return {
         "status": "admitted",
@@ -308,6 +310,7 @@ def decide(
         "competing_prs": [],
         "changed_files": changed_files,
         "changed_lines": changed_lines,
+        "counted_changed_lines": counted_lines,
         "max_changed_files": max_files,
         "max_changed_lines": max_lines,
     }
@@ -507,6 +510,12 @@ def self_test() -> None:
         decide(big, [big], head, False, max_files, max_lines, 50)["reason"]
         == "qualification_scope_oversized"
     )
+    admitted_big = decide(big, [big], head, False, max_files, max_lines, 1750)
+    assert admitted_big["changed_lines"] == 3100
+    assert admitted_big["counted_changed_lines"] == 1350
+    refused_big = decide(big, [big], head, False, max_files, max_lines, 50)
+    assert refused_big["changed_lines"] == 3100
+    assert refused_big["counted_changed_lines"] == 3050
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
         run(fixture(body=fixture_body(), head=head, draft=True), [], head)["reason"]
@@ -548,7 +557,50 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
-    print("candidate-admission self-test: 42 controls passed")
+
+    # The wrapper hands PR totals and the file list through the CLI; a broken
+    # --pr-files handoff would not show in the direct decide() controls.
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        lock_pr = fixture(body=fixture_body(), head=head, additions=3000, deletions=100)
+        (root / "current.json").write_text(json.dumps(lock_pr), encoding="utf-8")
+        (root / "open.json").write_text(json.dumps([lock_pr]), encoding="utf-8")
+        (root / "files.json").write_text(
+            json.dumps(
+                [
+                    {"filename": "web/package-lock.json", "additions": 1700, "deletions": 50},
+                    {"filename": "src/lib.rs", "additions": 1300, "deletions": 50},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def cli(*extra: str) -> dict[str, Any]:
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--current", str(root / "current.json"),
+                    "--open-prs", str(root / "open.json"),
+                    "--expected-head", head,
+                    *extra,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return json.loads(done.stdout)
+
+        without = cli()
+        assert without["reason"] == "qualification_scope_oversized"
+        with_files = cli("--pr-files", str(root / "files.json"))
+        assert with_files["status"] == "admitted"
+        assert with_files["changed_lines"] == 3100
+        assert with_files["counted_changed_lines"] == 1350
+    print("candidate-admission self-test: 45 controls passed")
 
 
 def load_json(path: Path) -> Any:

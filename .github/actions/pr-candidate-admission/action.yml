@@ -59,7 +59,7 @@ outputs:
     description: 'GitHub changed-files count for the current PR'
     value: ${{ steps.admit.outputs.changed_files }}
   changed_lines:
-    description: 'GitHub additions plus deletions for the current PR'
+    description: 'GitHub additions plus deletions for the current PR (lockfile lines included; the envelope counts fewer, see the step summary)'
     value: ${{ steps.admit.outputs.changed_lines }}
   cut_status:
     description: 'Hard-cut freeze status'
@@ -151,6 +151,7 @@ runs:
             and (.competing_prs | type == "array")
             and (.changed_files | type == "number")
             and (.changed_lines | type == "number")
+            and (.counted_changed_lines | type == "number")
             and (.max_changed_files | type == "number")
             and (.max_changed_lines | type == "number")
             and (.status as $status | ($allowed | split(",") | index($status)) != null)
@@ -187,10 +188,10 @@ runs:
         }
 
         if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
-          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"counted_changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass","detail":""}' > "$cut_result"
         elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
-          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"counted_changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation","detail":""}' > "$cut_result"
         else
           [ -n "${GH_TOKEN:-}" ] || refuse_early "token_missing" "candidate admission requires a read-only GitHub token"
@@ -198,6 +199,13 @@ runs:
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+          # The file list is only valid for the snapshot head. If the PR head
+          # moved between the two reads, drop the list so no lockfile discount
+          # from one revision is applied to another revision's totals.
+          files_head="$(gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" --jq '.head.sha // empty')"
+          if [ "$files_head" != "$(jq -r '.head.sha // empty' "$current")" ]; then
+            echo '[]' > "$pr_files"
+          fi
 
           base_ref="$(jq -r '.base.ref // empty' "$current")"
           [ -n "$base_ref" ] || refuse_early "base_ref_missing" "candidate admission received no base ref from the PR snapshot; refresh the exact PR evidence and retry"
@@ -296,6 +304,7 @@ runs:
         competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
         changed_files="$(jq -r '.changed_files' "$result")"
         changed_lines="$(jq -r '.changed_lines' "$result")"
+        counted_lines="$(jq -r '.counted_changed_lines' "$result")"
         max_files="$(jq -r '.max_changed_files' "$result")"
         max_lines="$(jq -r '.max_changed_lines' "$result")"
         cut_status="$(jq -r '.status' "$cut_result")"
@@ -309,6 +318,7 @@ runs:
         competing_prs="$(sanitize_output_value "$competing_prs")"
         changed_files="$(sanitize_output_value "$changed_files")"
         changed_lines="$(sanitize_output_value "$changed_lines")"
+        counted_lines="$(sanitize_output_value "$counted_lines")"
         max_files="$(sanitize_output_value "$max_files")"
         max_lines="$(sanitize_output_value "$max_lines")"
         cut_status="$(sanitize_output_value "$cut_status")"
@@ -345,7 +355,7 @@ runs:
           echo "- claim: \`$claim\`"
           echo "- acceptance delta: \`$acceptance_delta\`"
           echo "- competing PRs: \`${competing_prs:-none}\`"
-          echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
+          echo "- scope: \`$changed_files files / $changed_lines changed lines ($counted_lines counted toward the limit)\`"
           echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
         } >> "$GITHUB_STEP_SUMMARY"
 
