@@ -19,6 +19,7 @@ pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, Implicit
 mod implicit_call;
 mod infection;
 mod macro_item_names;
+mod mask_pin;
 mod match_transfer;
 mod operand_pin;
 mod owner_pin;
@@ -78,6 +79,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
+pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,

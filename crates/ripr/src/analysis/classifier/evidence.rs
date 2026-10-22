@@ -14,7 +14,7 @@ use crate::analysis::classify::{
     owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field,
+    unconditional_owner_insert_field, unexercised_mask_bits,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -958,6 +958,23 @@ impl ClassifiedProbeEvidence {
                 context.index,
             ) {
             StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
+        } else {
+            discriminate
+        };
+        // #9444: an exact pin on a masked integer cast is no discriminator
+        // for mask bits that no pinned input sets: a narrower mask returns
+        // the same value there.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(owner) = context.owner_fn
+            && let Some(mask) = unexercised_mask_bits(
+                &context.probe.expression,
+                &owner.name,
+                owner.body.as_str(),
+                &context.related_tests,
+                context.index,
+            ) {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, mask.summary())
         } else {
             discriminate
         };
