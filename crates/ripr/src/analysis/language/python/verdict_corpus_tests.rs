@@ -1986,6 +1986,17 @@ fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<()
         ExposureClass::WeaklyExposed,
         "the module rebinds fee"
     );
+    let conditional = format!("{FEE}\n\nif DEBUG:\n    fee = lambda amount: amount + 4\n");
+    assert_eq!(
+        classify(
+            &conditional,
+            2,
+            FEE_OLD,
+            &test_module("from src.shop import *", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "the module conditionally rebinds fee"
+    );
     for (import, why) in [
         (
             "from src.shop import *\nfrom src.shop import charge as fee",
