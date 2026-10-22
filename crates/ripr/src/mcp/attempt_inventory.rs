@@ -271,6 +271,11 @@ mod tests {
                 "ripr-mcp-inventory-{label}-{}-{stamp}",
                 std::process::id()
             ));
+            if let Some(parent) = path.parent() {
+                // Cargo points TMPDIR under target/, which a fresh worktree lacks.
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create temp parent {}: {error}", parent.display()))?;
+            }
             std::fs::create_dir(&path)
                 .map_err(|error| format!("create {}: {error}", path.display()))?;
             Ok(Self(path))
