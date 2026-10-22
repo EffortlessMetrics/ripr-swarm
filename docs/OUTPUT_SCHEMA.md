@@ -10078,6 +10078,14 @@ Field contract:
 - `inputs.gap_ledger` - optional explicit gap decision ledger input. When
   supplied, gate candidates come from GapRecord gate-candidate projection
   targets instead of raw PR guidance candidates.
+- `analysis_scope` - additive (#9301). The candidate source's `analysis_scope`
+  copied verbatim: from the `--pr-guidance` review-comments document, or the
+  `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
+  is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
+  whether a baseline entry absent from `decisions` was actually analyzed. A
+  review-comments scope may also carry `cap_omitted_seams` (seams dropped by the
+  brief cap). A gate decision without `analysis_scope` (a build before #9301),
+  or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
   records) plus one entry per consumed input keyed by input name — every
@@ -10663,6 +10671,15 @@ Field contract:
   recording the same build keep the legacy `resolved` classification. The
   same set is exhaustive in the Markdown `Analyzer-version identity
   discontinuities` section, and each entry also emits a warning.
+- `items[].evaluation`, `items[].not_evaluated_reason` - additive (#9301),
+  present only on a `stale_baseline_entry` item whose baseline entry is absent
+  from current evidence but whose file the current `analysis_scope` does not
+  cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
+  is a `gap_ledger_artifact` scope, tracked in #9599). `evaluation` is
+  `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
+  item is never `resolved` and `baseline update --remove-resolved` keeps it. The
+  same set is exhaustive in the Markdown `Not evaluated by the current analysis`
+  section.
 - `items[].review` - optional reviewed baseline metadata copied from the
   baseline ledger when the item is baseline-derived. It preserves
   `reviewed`, `owner`, `reason`, `created_at`, `review_after`, and `source`

@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "analysis_scope": {
-    "scope": "gap_ledger_artifact",
+    "scope": "diff_scoped_changed_files",
     "changed_files": ["src/gone.rs"]
   },
   "tool": "ripr",

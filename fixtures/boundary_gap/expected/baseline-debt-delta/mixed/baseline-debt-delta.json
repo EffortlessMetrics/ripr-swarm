@@ -3,7 +3,7 @@
     "changed_files": [
       "src/gone.rs"
     ],
-    "scope": "gap_ledger_artifact"
+    "scope": "diff_scoped_changed_files"
   },
   "baseline": {
     "entries": 3,

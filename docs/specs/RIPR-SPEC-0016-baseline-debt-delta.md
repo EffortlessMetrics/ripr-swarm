@@ -270,13 +270,18 @@ bucket:
   cleanly because its identity is ambiguous, obsolete, or incompatible,
   including analyzer-version identity discontinuity across an upgrade. A
   baseline entry absent from current evidence whose path is not covered by the
-  current decision's disclosed `analysis_scope` (`changed_files` and
-  `changed_production_files`), or whose current decision discloses no or an
-  unrecognized scope, or skipped seams, is also `stale_baseline_entry` and
+  current decision's disclosed `diff_scoped_changed_files` `analysis_scope`
+  (`changed_files` and `changed_production_files`), or whose current decision
+  discloses no, a malformed, or an unrecognized scope, skipped seams
+  (`unevaluated_seams`), brief-cap-omitted seams (`cap_omitted_seams`), or
+  lists the path in `absent_changed_files`, is also `stale_baseline_entry` and
   carries `"evaluation": "not_evaluated"` plus `not_evaluated_reason`
   (issue #9301). It is never `resolved`, and `baseline update
   --remove-resolved` keeps it through the shared
-  `absence_not_evaluated_reason` predicate.
+  `absence_not_evaluated_reason` predicate. A `gap_ledger_artifact` scope lists
+  only the surviving ledger records' anchor files, not the files analyzed, so it
+  always yields `not_evaluated` until the ledger path discloses real analyzed
+  files (limitation tracked in #9599).
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because

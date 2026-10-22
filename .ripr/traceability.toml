@@ -2335,6 +2335,15 @@ tests = [
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_discloses_version_crossing_when_both_sides_recorded",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_keeps_same_or_unversioned_builds_resolved",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_withholds_achieved_on_analyzer_version_identity_discontinuity",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_and_update_keep_out_of_scope_gaps_not_evaluated",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_unrelated_diff_resolves_nothing_and_missing_scope_fails_closed",
+  "crates/ripr/src/output/baseline_delta.rs::tests::absence_predicate_covers_scope_edge_cases",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_update_reports_preserved_not_evaluated_entries",
+  "crates/ripr/src/output/gate/tests.rs::e2e_pr_guidance_scope_resolves_only_analyzed_absent_gap",
+  "crates/ripr/src/output/gate/tests.rs::e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated",
+  "crates/ripr/src/output/gate/tests.rs::e2e_malformed_scope_counters_and_lists_fail_closed",
+  "crates/ripr/src/output/gate/tests.rs::e2e_gap_ledger_path_fails_closed_until_analyzed_files_are_disclosed",
+  "crates/ripr/src/output/gate/tests.rs::e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

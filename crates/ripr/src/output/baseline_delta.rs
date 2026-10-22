@@ -781,6 +781,29 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         }
     }
 
+    // Not-evaluated disclosure (issue #9301): entries absent from current
+    // evidence whose file the current analysis did not cover. Exhaustive.
+    let not_evaluated_items = report
+        .items
+        .iter()
+        .filter(|item| item.not_evaluated.is_some())
+        .collect::<Vec<_>>();
+    if !not_evaluated_items.is_empty() {
+        out.push_str(&format!(
+            "\nNot evaluated by the current analysis ({} total):\n",
+            not_evaluated_items.len()
+        ));
+        for item in not_evaluated_items {
+            out.push_str(&format!("- {}\n", item_headline(item)));
+            if let Some(reason) = item.not_evaluated.as_deref() {
+                out.push_str(&format!("  Reason: {reason}\n"));
+            }
+            out.push_str(
+                "  Action: run an analysis that covers this file before treating the entry as fixed; it is neither resolved nor removable.\n",
+            );
+        }
+    }
+
     if !report.warnings.is_empty() {
         out.push_str("\nWarnings:\n");
         for warning in &report.warnings {
@@ -1451,23 +1474,36 @@ pub(super) fn absence_not_evaluated_reason(
         .get("scope")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    if !matches!(
-        kind,
-        "diff_scoped_changed_files" | "working_set" | "gap_ledger_artifact"
-    ) {
+    if kind == "gap_ledger_artifact" {
+        return Some(
+            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution (a real analyzed-files disclosure for the ledger path is tracked in #9599)"
+                .to_string(),
+        );
+    }
+    if kind != "diff_scoped_changed_files" {
         return Some(format!(
             "the current gate decision's analysis scope `{kind}` is not recognized, so file coverage is not established"
         ));
     }
-    if scope
-        .get("unevaluated_seams")
-        .and_then(Value::as_u64)
-        .is_some_and(|count| count > 0)
-    {
-        return Some(
-            "the current analysis skipped seams inside its scope, so absence is not evidence of resolution"
-                .to_string(),
-        );
+    // Counters must be absent or a nonnegative integer; anything else is a
+    // malformed disclosure and fails closed.
+    for key in ["unevaluated_seams", "cap_omitted_seams"] {
+        match scope.get(key) {
+            None => {}
+            Some(value) => match value.as_u64() {
+                Some(0) => {}
+                Some(_) => {
+                    return Some(format!(
+                        "the current analysis did not evaluate every seam in its scope (`{key}` > 0), so absence is not evidence of resolution"
+                    ));
+                }
+                None => {
+                    return Some(format!(
+                        "the current gate decision's analysis scope has a malformed `{key}`, so coverage is not established"
+                    ));
+                }
+            },
+        }
     }
     let Some(path) = entry_path
         .map(normalize_scope_path)
@@ -1477,12 +1513,51 @@ pub(super) fn absence_not_evaluated_reason(
             "the baseline entry has no path to join against the analyzed scope".to_string(),
         );
     };
-    let covered = ["changed_files", "changed_production_files"]
-        .iter()
-        .filter_map(|key| scope.get(*key).and_then(Value::as_array))
-        .flatten()
-        .filter_map(Value::as_str)
-        .any(|file| normalize_scope_path(file) == path);
+    let mut covered = false;
+    for key in ["changed_files", "changed_production_files"] {
+        let Some(value) = scope.get(key) else {
+            if key == "changed_files" {
+                return Some(
+                    "the current gate decision's analysis scope has no `changed_files`, so coverage is not established"
+                        .to_string(),
+                );
+            }
+            continue;
+        };
+        let Some(array) = value.as_array() else {
+            return Some(format!(
+                "the current gate decision's analysis scope has a malformed `{key}`, so coverage is not established"
+            ));
+        };
+        for item in array {
+            let Some(file) = item.as_str() else {
+                return Some(format!(
+                    "the current gate decision's analysis scope has a non-string entry in `{key}`, so coverage is not established"
+                ));
+            };
+            if normalize_scope_path(file) == path {
+                covered = true;
+            }
+        }
+    }
+    let absent_hit = match scope.get("absent_changed_files") {
+        None => false,
+        Some(Value::Array(items)) => items.iter().any(|item| {
+            item.as_str()
+                .is_none_or(|f| normalize_scope_path(f) == path)
+        }),
+        Some(_) => {
+            return Some(
+                "the current gate decision's analysis scope has a malformed `absent_changed_files`, so coverage is not established"
+                    .to_string(),
+            );
+        }
+    };
+    if absent_hit {
+        return Some(format!(
+            "`{path}` is absent from the working tree the current analysis read, so it was not evaluated"
+        ));
+    }
     if covered {
         None
     } else {
@@ -1899,10 +1974,10 @@ mod tests {
     }
 
     use super::{
-        BaselineDeltaInput, build_baseline_delta_report, render_baseline_delta_json,
-        render_baseline_delta_markdown,
+        BaselineDeltaInput, absence_not_evaluated_reason, build_baseline_delta_report,
+        render_baseline_delta_json, render_baseline_delta_markdown,
     };
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -2007,7 +2082,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
-          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/gone.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/gone.rs"]},
           "decisions": [
             {
               "decision": "advisory",
@@ -2266,7 +2341,7 @@ mod tests {
             }
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/legacy.rs"]}}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/legacy.rs"]}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -2415,7 +2490,7 @@ mod tests {
     }
 
     #[test]
-    fn baseline_delta_markdown_renders_headline_variants() {
+    fn baseline_delta_markdown_renders_headline_variants() -> Result<(), String> {
         let baseline = r#"{
           "schema_version": "0.1",
           "entries": [
@@ -2425,7 +2500,7 @@ mod tests {
             {"identity": {"seam_id": "identity-only"}}
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/line.rs", "src/class.rs", "src/path.rs"]}}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/line.rs", "src/class.rs", "src/path.rs"]}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -2439,8 +2514,23 @@ mod tests {
         assert!(markdown.contains("- src/class.rs weakly_gripped"));
         assert!(markdown.contains("- src/path.rs"));
         // A pathless entry cannot be placed inside the analyzed scope, so it
-        // is never listed as a resolved headline (issue #9301 F2).
+        // is `not_evaluated` (stale), never resolved (issue #9301 F2).
+        let json: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(json["delta"]["resolved"], 3, "{json}");
+        assert_eq!(json["delta"]["stale_baseline_entry"], 1, "{json}");
+        let pathless = json["items"].as_array().and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["bucket"] == "stale_baseline_entry")
+        });
+        assert_eq!(
+            pathless.map(|i| i["evaluation"].clone()),
+            Some(json!("not_evaluated"))
+        );
+        assert!(markdown.contains("Not evaluated by the current analysis (1 total):"));
         assert!(!markdown.contains("Resolved baseline entries:\n- identity-only"));
+        Ok(())
     }
 
     #[test]
@@ -3529,13 +3619,13 @@ mod tests {
         assert!(baseline_with_version.contains("0.11.0+same"));
         let unversioned_current = r#"{
           "schema_version": "0.1",
-          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/fixed.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/fixed.rs"]},
           "decisions": []
         }"#;
         let versioned_current = r#"{
           "schema_version": "0.1",
           "subject": {"analyzer_version": "0.11.0+same"},
-          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/fixed.rs"]},
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_files": ["src/fixed.rs"]},
           "decisions": []
         }"#;
 
@@ -3652,6 +3742,12 @@ mod tests {
             .ok_or("no elsewhere item")?;
         assert_eq!(skipped["bucket"], "stale_baseline_entry", "{skipped}");
         assert_eq!(skipped["evaluation"], "not_evaluated", "{skipped}");
+        assert!(
+            skipped["not_evaluated_reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("outside the files")),
+            "{skipped}"
+        );
 
         let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
             crate::output::baseline_update::BaselineUpdateInput {
@@ -3708,6 +3804,109 @@ mod tests {
                 2
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn absence_predicate_covers_scope_edge_cases() {
+        let scope = |extra: Value| {
+            let mut base = json!({
+                "scope": "diff_scoped_changed_files",
+                "changed_files": ["src/a.rs"],
+            });
+            if let (Some(b), Some(e)) = (base.as_object_mut(), extra.as_object()) {
+                for (k, v) in e {
+                    b.insert(k.clone(), v.clone());
+                }
+            }
+            base
+        };
+        let reason = |s: &Value, path: Option<&str>| absence_not_evaluated_reason(Some(s), path);
+        // Covered: plain, `./`, and backslash spellings normalize.
+        assert!(reason(&scope(json!({})), Some("src/a.rs")).is_none());
+        assert!(reason(&scope(json!({})), Some("./src/a.rs")).is_none());
+        assert!(reason(&scope(json!({})), Some("src\\a.rs")).is_none());
+        assert!(
+            reason(
+                &scope(json!({"changed_files": ["./src/a.rs"]})),
+                Some("src/a.rs")
+            )
+            .is_none()
+        );
+        // changed_production_files alone is enough for coverage.
+        assert!(
+            reason(
+                &scope(json!({"changed_files": [], "changed_production_files": ["src/b.rs"]})),
+                Some("src/b.rs")
+            )
+            .is_none()
+        );
+        // Negatives.
+        assert!(reason(&scope(json!({})), Some("src/other.rs")).is_some());
+        assert!(reason(&scope(json!({})), None).is_some());
+        assert!(reason(&scope(json!({})), Some("")).is_some());
+        assert!(reason(&scope(json!({"scope": "mystery"})), Some("src/a.rs")).is_some());
+        assert!(reason(&scope(json!({"scope": "working_set"})), Some("src/a.rs")).is_some());
+        let ledger = reason(
+            &scope(json!({"scope": "gap_ledger_artifact"})),
+            Some("src/a.rs"),
+        );
+        assert!(ledger.is_some_and(|r| r.contains("#9599")));
+        assert!(reason(&scope(json!({"unevaluated_seams": 2})), Some("src/a.rs")).is_some());
+        assert!(reason(&scope(json!({"unevaluated_seams": 0})), Some("src/a.rs")).is_none());
+        assert!(reason(&scope(json!({"unevaluated_seams": "1"})), Some("src/a.rs")).is_some());
+        assert!(reason(&scope(json!({"cap_omitted_seams": 1})), Some("src/a.rs")).is_some());
+        assert!(
+            reason(
+                &scope(json!({"absent_changed_files": ["src/a.rs"]})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        assert!(
+            reason(
+                &scope(json!({"absent_changed_files": "src/a.rs"})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        assert!(
+            reason(
+                &scope(json!({"changed_files": "src/a.rs"})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        let missing = json!({"scope": "diff_scoped_changed_files"});
+        assert!(reason(&missing, Some("src/a.rs")).is_some());
+        // Non-object or absent scope fails closed.
+        assert!(absence_not_evaluated_reason(Some(&json!("scoped")), Some("src/a.rs")).is_some());
+        assert!(absence_not_evaluated_reason(Some(&json!([1])), Some("src/a.rs")).is_some());
+        assert!(absence_not_evaluated_reason(None, Some("src/a.rs")).is_some());
+    }
+
+    #[test]
+    fn baseline_update_reports_preserved_not_evaluated_entries() -> Result<(), String> {
+        let current = scoped_gate_decision(&["src/fixed.rs"]);
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: two_gap_baseline().to_string(),
+                current_gate_decision_json: current,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        assert_eq!(
+            crate::output::baseline_update::baseline_update_preserved_stale_count(&update),
+            1
+        );
+        let rendered = crate::output::baseline_update::render_baseline_update_json(&update)?;
+        assert!(
+            rendered.contains("outside the files the current analysis covered"),
+            "{rendered}"
+        );
         Ok(())
     }
 

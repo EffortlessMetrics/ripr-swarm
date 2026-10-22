@@ -244,6 +244,9 @@ pub(crate) struct AgentBriefSelection<'a> {
     pub(crate) hard_cap: usize,
     pub(crate) top_seams: Vec<AgentBriefSelectedSeam<'a>>,
     pub(crate) warnings: Vec<String>,
+    /// Visible seams dropped by the brief cap. Absence of such a seam from
+    /// the rendered guidance is not evidence that it was resolved (#9301).
+    pub(crate) omitted_by_cap: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -333,6 +336,7 @@ pub(crate) fn select_agent_brief_seams<'a>(
         hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
         top_seams: direct.candidates,
         warnings,
+        omitted_by_cap,
     }
 }
 

@@ -4735,3 +4735,257 @@ fn fallback_identity_for_normalizes_like_the_baseline_writers() -> Result<(), St
     }
     Ok(())
 }
+
+// ---- #9301 F2 end-to-end: real producers -> gate decision -> baseline delta/update ----
+
+const E2E_TWO_GAP_BASELINE: &str = r#"{
+  "schema_version": "0.1",
+  "kind": "gate_baseline",
+  "entries": [
+    {"identity": {"canonical_gap_id": "gap:fixed"}, "path": "src/fixed.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"},
+    {"identity": {"canonical_gap_id": "gap:elsewhere"}, "path": "src/elsewhere.rs", "line": 9, "static_class": "weakly_gripped", "decision": "advisory"}
+  ]
+}"#;
+
+/// A real review-comments document rendered by the production renderer with a
+/// `diff_scoped_changed_files` scope and no findings.
+fn e2e_review_comments_doc(
+    changed: &[&str],
+    omitted_by_cap: usize,
+    mutate: impl FnOnce(&mut Value),
+) -> Result<String, String> {
+    use crate::app::Mode;
+    use crate::app::agent_brief::{
+        AGENT_BRIEF_HARD_MAX_SEAMS, AgentBriefResolvedWorkingSet, AgentBriefSelection,
+        DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+    };
+    use crate::output::review_comments::{
+        ReviewCommentsAnalysisScope, ReviewCommentsRenderContext,
+        render_review_comments_json_with_scope,
+    };
+    let files = changed.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let working_set = AgentBriefResolvedWorkingSet::files(files);
+    let scope = ReviewCommentsAnalysisScope {
+        scope: "diff_scoped_changed_files",
+        run_status: "limited_diff_scope",
+        basis: "changed_production_files_plus_immediate_callers",
+        changed_files: changed.iter().map(|f| f.to_string()).collect(),
+        changed_lines: 1,
+        changed_owner_functions: 0,
+        changed_production_files: changed.iter().map(|f| f.to_string()).collect(),
+        immediate_caller_files: Vec::new(),
+        scoped_production_files: changed.iter().map(|f| f.to_string()).collect(),
+        total_rust_files: Some(10),
+        total_production_files: Some(8),
+        production_files_considered: changed.len(),
+        classified_seams_considered: 0,
+        unevaluated_seams: 0,
+        absent_changed_files: Vec::new(),
+        downstream_consumable: true,
+        limitation: "review_comments_diff_scope_only",
+        repair_route: "analysis/diff-scoped-large-repo-review-fast-path",
+    };
+    let selection = AgentBriefSelection {
+        requested: 10,
+        returned: 0,
+        default: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+        hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
+        top_seams: Vec::new(),
+        warnings: Vec::new(),
+        omitted_by_cap,
+    };
+    let config = crate::config::RiprConfig::default();
+    let context = ReviewCommentsRenderContext {
+        root: Path::new("."),
+        base: "main",
+        head: "HEAD",
+        mode: &Mode::Draft,
+        config: &config,
+    };
+    let rendered =
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let mut value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+    mutate(&mut value);
+    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+}
+
+/// Gate-evaluate `doc` (pr-guidance) or a ledger, then run delta and update
+/// against `E2E_TWO_GAP_BASELINE`. Returns (delta JSON, update entry count).
+fn e2e_delta_and_update(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+) -> Result<(Value, usize, String), String> {
+    e2e_delta_and_update_with(pr_guidance, gap_ledger, E2E_TWO_GAP_BASELINE)
+}
+
+fn e2e_delta_and_update_with(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+) -> Result<(Value, usize, String), String> {
+    let dir = temp_dir("gate-e2e-9301")?;
+    let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
+        let path = write_temp_json(&dir, name, body)?;
+        Ok(path
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf())
+    };
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: pr_guidance.map(|d| rel("comments.json", d)).transpose()?,
+        gap_ledger: gap_ledger.map(|d| rel("gap-ledger.json", d)).transpose()?,
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+    let report = build_gate_decision_report(&input)?;
+    let gate_json = render_gate_decision_json(&report)?;
+    ignore_remove_dir_all(dir);
+
+    // Stamp the baseline with the producing build so the same-build rule
+    // applies and only scope decides resolved vs not_evaluated.
+    let gate_value: Value = serde_json::from_str(&gate_json).map_err(|err| err.to_string())?;
+    let mut baseline_value: Value =
+        serde_json::from_str(baseline_template).map_err(|err| err.to_string())?;
+    baseline_value["subject"] =
+        json!({"analyzer_version": gate_value["subject"]["analyzer_version"].clone()});
+    let baseline_json = serde_json::to_string(&baseline_value).map_err(|err| err.to_string())?;
+
+    let delta = crate::output::baseline_delta::build_baseline_delta_report(
+        crate::output::baseline_delta::BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "gate-decision.json".to_string(),
+            baseline_json: Ok(baseline_json.clone()),
+            current_gate_decision_json: Ok(gate_json.clone()),
+        },
+    );
+    let delta_json: Value = serde_json::from_str(
+        &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+    )
+    .map_err(|err| err.to_string())?;
+    let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+        crate::output::baseline_update::BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "gate-decision.json".to_string(),
+            baseline_json,
+            current_gate_decision_json: gate_json,
+            remove_resolved: true,
+            migrate_legacy_identities: false,
+        },
+    )?;
+    let updated = crate::output::baseline_update::render_baseline_update_json(&update)?;
+    Ok((
+        delta_json,
+        crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        updated,
+    ))
+}
+
+#[test]
+fn e2e_pr_guidance_scope_resolves_only_analyzed_absent_gap() -> Result<(), String> {
+    let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, |_| {})?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
+    assert_eq!(after, 1);
+    assert!(updated.contains("gap:elsewhere"), "{updated}");
+    assert!(!updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String> {
+    // Both files are analyzed, but the brief cap dropped seams: absence of
+    // `src/fixed.rs` must not read as resolved.
+    let doc = e2e_review_comments_doc(&["src/fixed.rs", "src/elsewhere.rs"], 2, |_| {})?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_malformed_scope_counters_and_lists_fail_closed() -> Result<(), String> {
+    type Mutation = fn(&mut Value);
+    let mutations: [(&str, Mutation); 5] = [
+        ("string unevaluated_seams", |v| {
+            v["analysis_scope"]["unevaluated_seams"] = json!("1");
+        }),
+        ("negative unevaluated_seams", |v| {
+            v["analysis_scope"]["unevaluated_seams"] = json!(-1);
+        }),
+        ("non-array changed_files", |v| {
+            v["analysis_scope"]["changed_files"] = json!("src/fixed.rs");
+        }),
+        ("non-string changed_files entry", |v| {
+            v["analysis_scope"]["changed_files"] = json!(["src/fixed.rs", 7]);
+        }),
+        ("malformed cap_omitted_seams", |v| {
+            v["analysis_scope"]["cap_omitted_seams"] = json!("2");
+        }),
+    ];
+    for (label, mutate) in mutations {
+        let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, mutate)?;
+        let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(after, 2, "{label}");
+        assert!(updated.contains("gap:fixed"), "{label}: {updated}");
+    }
+    Ok(())
+}
+
+#[test]
+fn e2e_gap_ledger_path_fails_closed_until_analyzed_files_are_disclosed() -> Result<(), String> {
+    let (delta, after, updated) = e2e_delta_and_update(None, Some(GAP_LEDGER_BLOCKING_JSON))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
+    let items = delta["items"].as_array().ok_or("items missing")?;
+    let stale = items
+        .iter()
+        .filter(|item| item["bucket"] == "stale_baseline_entry")
+        .collect::<Vec<_>>();
+    assert_eq!(stale.len(), 2);
+    for item in stale {
+        assert_eq!(item["evaluation"], "not_evaluated", "{item}");
+        let reason = item["not_evaluated_reason"].as_str().unwrap_or_default();
+        assert!(reason.contains("#9599"), "{reason}");
+    }
+    Ok(())
+}
+
+#[test]
+fn e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated() -> Result<(), String> {
+    // The ledger holds only `gap:kept` at src/pricing.rs:88 (its anchor file
+    // is src/pricing.rs); the baseline entry `gap:omitted` is in the same
+    // file but was filtered out of the ledger. Anchor-file coverage must not
+    // read it as resolved or let --remove-resolved delete it.
+    let baseline = r#"{
+      "schema_version": "0.1",
+      "kind": "gate_baseline",
+      "entries": [
+        {"identity": {"canonical_gap_id": "gap:omitted"}, "path": "src/pricing.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"}
+      ]
+    }"#;
+    let (delta, after, updated) =
+        e2e_delta_and_update_with(None, Some(GAP_LEDGER_BLOCKING_JSON), baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
+    assert_eq!(after, 1);
+    assert!(updated.contains("gap:omitted"), "{updated}");
+    Ok(())
+}

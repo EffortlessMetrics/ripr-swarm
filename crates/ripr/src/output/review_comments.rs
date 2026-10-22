@@ -192,6 +192,12 @@ pub(crate) fn render_review_comments_json_with_scope(
         }
     }
 
+    let mut scope_json = analysis_scope_json(analysis_scope);
+    // Seams dropped by the brief cap are absent from this document without
+    // being evaluated as resolved (#9301).
+    if selection.omitted_by_cap > 0 {
+        scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
+    }
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -204,7 +210,7 @@ pub(crate) fn render_review_comments_json_with_scope(
         "base": context.base,
         "head": context.head,
         "mode": context.mode.as_str(),
-        "analysis_scope": analysis_scope_json(analysis_scope),
+        "analysis_scope": scope_json,
         "rendering_limits": {
             "max_inline_comments": DEFAULT_REVIEW_MAX_INLINE_COMMENTS,
             "max_summary_items": DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
@@ -1964,6 +1970,7 @@ mod tests {
                 })
                 .collect(),
             warnings: Vec::new(),
+            omitted_by_cap: 0,
         }
     }
 
@@ -2795,6 +2802,7 @@ mod tests {
                 },
             }],
             warnings: Vec::new(),
+            omitted_by_cap: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -4148,6 +4156,7 @@ mod tests {
                 "seam {} at src/pricing.rs:88 is configured off for weakly_gripped seams and is not included in agent brief results",
                 exact_seams[0].seam.id().as_str()
             )],
+            omitted_by_cap: 0,
         };
         assert_json_fixture(
             "configured-off",

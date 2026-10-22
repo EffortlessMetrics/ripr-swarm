@@ -6,5 +6,9 @@
   (additive field); a baseline entry absent from current evidence whose file
   was outside that scope, or whose decision discloses no scope, is reported as
   `stale_baseline_entry` with `evaluation: not_evaluated` and is kept by
-  `--remove-resolved`. Gates built before this change fail closed until
-  regenerated (#9301).
+  `--remove-resolved`. Gate decisions written before this change carry no `analysis_scope`, so
+  every absent baseline entry reads `not_evaluated` until the gate decision is
+  regenerated. Seams dropped by the brief cap, skipped seams, and malformed
+  scope disclosures also fail closed. `--gap-ledger` gate decisions always
+  read `not_evaluated` until the ledger path discloses analyzed files (#9599)
+  (#9301).

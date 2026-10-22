@@ -235,6 +235,7 @@ impl<'a> BoundedAgentBrief<'a> {
                 })
                 .collect(),
             warnings,
+            omitted_by_cap: omitted,
         })
     }
 }

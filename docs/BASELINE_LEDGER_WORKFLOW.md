@@ -129,7 +129,7 @@ Read the buckets this way:
 | `new_policy_eligible` | Current policy-eligible gap is not in the baseline. | Add a focused test or acknowledge visibly. |
 | `acknowledged` | Current gap was accepted for this PR with a label such as `ripr-waive`. | Keep visible in review; do not treat as hidden success. |
 | `suppressed` | Current gap is hidden or configured off by repository policy. | Review suppression policy separately from baseline debt. |
-| `stale_baseline_entry` | Baseline entry parses but cannot join cleanly to current evidence, including analyzer-version identity discontinuity across an upgrade (issue #7421). An entry carrying `"evaluation": "not_evaluated"` is absent from current evidence but its file was outside the files the current analysis covered (issue #9301). | Repair or remove after review; for a version discontinuity, re-create the baseline with the current build; for `not_evaluated`, run an analysis that covers the file. |
+| `stale_baseline_entry` | Baseline entry parses but cannot join cleanly to current evidence, including analyzer-version identity discontinuity across an upgrade (issue #7421). An entry carrying `"evaluation": "not_evaluated"` is absent from current evidence but its file was outside the files the current analysis covered (issue #9301); the Markdown report lists these under `Not evaluated by the current analysis`. | Repair or remove after review; for a version discontinuity, re-create the baseline with the current build; for `not_evaluated`, run an analysis that covers the file. |
 | `invalid_baseline_entry` | Baseline entry is malformed or lacks stable identity fields. | Repair the baseline before relying on stricter modes. |
 | `missing_current_input` | Current gate evidence was unavailable or unreadable. | Regenerate the missing artifact. |
 
@@ -216,7 +216,11 @@ A gate decision built from a PR-diff-scoped `review-comments` document only
 covers the changed files. A baselined gap in any other file is reported as
 `stale_baseline_entry` with `"evaluation": "not_evaluated"`, never `resolved`,
 and `--remove-resolved` keeps it. A gate decision with no `analysis_scope`
-disclosure (an older build) fails closed the same way. To retire a gap, feed
+disclosure (an older build) fails closed the same way. Seams dropped by the brief cap, skipped scoped seams, and any
+malformed scope disclosure fail closed too. A gate decision built from
+`--gap-ledger` currently always yields `not_evaluated`, because the ledger
+disclosure lists only surviving records' anchor files (limitation tracked in
+#9599); use a `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.
 
