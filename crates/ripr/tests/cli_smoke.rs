@@ -16103,12 +16103,19 @@ fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), Str
         &out_arg,
     ]);
     assert_success(&output);
+    // #9806: creation-time warnings ride stderr like every other advisory
+    // surface, so piping stdout cannot drop them.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("source gate-decision report carries no subject.analyzer_version"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Warnings: 1"), "{stderr}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("source gate-decision report carries no subject.analyzer_version"),
-        "{stdout}"
+        stdout.contains("Wrote "),
+        "stdout keeps only the write confirmation: {stdout}"
     );
-    assert!(stdout.contains("Warnings: 1"), "{stdout}");
 
     let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
     assert!(
