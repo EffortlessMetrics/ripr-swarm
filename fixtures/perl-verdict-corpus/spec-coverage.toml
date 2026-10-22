@@ -531,3 +531,15 @@ reason = "check --path/--exclude diff-scope filter for oversized diffs; not an e
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+[[known_false]]
+case = "perl-testmore-tier-far-from-boundary"
+issue = 8979
+reason = "False exposed: test inputs far from the changed threshold; needs the row-owned discriminator fact from perl-lsp-swarm#17237, consumed by #5562."

@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/quantity.py:normalize_quantity:predicate_boundary:predicate:value<=0
   Changed behavior: if value <= 0:
   Missing discriminator (1 of 2): Related Python test reaches `normalize_quantity` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_quantity.py:6 test_rejects_zero_quantity
+  Related test: tests/test_quantity.py:6 test_rejects_zero_quantity (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_quantity.py
   Suggested test: test_rejects_zero_quantity
   Test node: tests/test_quantity.py::test_rejects_zero_quantity
