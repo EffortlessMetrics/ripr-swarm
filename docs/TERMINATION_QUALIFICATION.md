@@ -80,7 +80,10 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
   the deadline kill.
 - **Execution controls** (Unix) run stubs through the launch path and check that
   the harness decided what ran: the child sees only the harness `PATH` and no
-  ambient `ripr`, runs in the owned case root, cannot read an artifact that was
+  ambient `ripr`, runs in the owned case root, discovers no repository above it
+  (Git discovery stops at the case root's parent and `GIT_DIR`, `GIT_WORK_TREE`
+  and `GIT_INDEX_FILE` are removed; the control plants a decoy repository above
+  the root and the probe must not find it), cannot read an artifact that was
   in the workspace before launch (the harness removes it first), and runs the
   admitted bytes after the candidate path is rewritten. A passing row whose
   workspace cannot be removed becomes an `instrument_failure`; the denial is
@@ -122,7 +125,9 @@ reports in `--version`, not the build that produced it. It does not exercise LSP
 Known gaps against the child issues, each deliberate for this first harness:
 
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
-- #4510 controls not built: a decoy repository in the caller's directory.
+- The decoy-repository control plants its repository above the case root; it
+  does not run the harness from a decoy caller directory, because the child's
+  working directory is always the owned root.
   `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
 - The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
   and is tested against an inline fixture, not the real DTO.
