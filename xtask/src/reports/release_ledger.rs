@@ -8,9 +8,12 @@
 //! merge, tag or publish a candidate. The historical C/T model stays in
 //! `release-denominator` (RIPR-SPEC-0146).
 
+mod capture;
 mod dto;
 mod validate;
 
+#[cfg(test)]
+mod capture_tests;
 #[cfg(test)]
 mod tests;
 
@@ -36,6 +39,9 @@ struct Args<'a> {
 }
 
 pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
+    if args.first().map(String::as_str) == Some("capture") {
+        return run_capture(&args[1..]);
+    }
     let args = parse_args(args)?;
     let ledger: Ledger = read_json(args.input, "ledger")?;
     let context = Context {
@@ -80,6 +86,67 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
             reasons[0]
         ))
     }
+}
+
+fn run_capture(args: &[String]) -> Result<(), String> {
+    let mut base = None;
+    let mut cut = "origin/main";
+    let mut main = "origin/main";
+    let mut repo = None;
+    let mut repository = "EffortlessMetrics/ripr-swarm";
+    let mut output = None;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = args
+            .get(index + 1)
+            .map(String::as_str)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--base" => base = Some(value),
+            "--cut" => cut = value,
+            "--main" => main = value,
+            "--repo" => repo = Some(value),
+            "--repository" => repository = value,
+            "--output" => output = Some(value),
+            _ => return Err(format!("unknown release-ledger capture argument `{flag}`")),
+        }
+        index += 2;
+    }
+    let base = base.ok_or("release-ledger capture requires --base <sha>")?;
+    let output = output.ok_or("release-ledger capture requires --output <facts.json>")?;
+    let default_repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        );
+    let repo = repo.map_or(default_repo, std::path::PathBuf::from);
+    let facts = capture::capture(&capture::CaptureArgs {
+        repo: &repo,
+        repository,
+        base,
+        cut,
+        main,
+    })?;
+    let text = serde_json::to_string_pretty(&facts)
+        .map_err(|error| format!("failed to serialize release-ledger facts: {error}"))?;
+    if let Some(parent) = std::path::Path::new(output).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(output, format!("{text}\n"))
+        .map_err(|error| format!("failed to write {output}: {error}"))?;
+    println!(
+        "Wrote {output}: {} first-parent, {} reachable commits, {} alive paths, {} blamed paths",
+        facts.range.first_parent.len(),
+        facts.range.reachable.len(),
+        facts.alive_paths_at_cut,
+        facts.blamed_paths
+    );
+    Ok(())
 }
 
 fn parse_args(args: &[String]) -> Result<Args<'_>, String> {

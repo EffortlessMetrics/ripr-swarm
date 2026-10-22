@@ -17361,12 +17361,15 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::packet_roster_and_final_capture_commit_are_compared",
   "xtask/src/reports/release_ledger/tests.rs::final_ledger_rejects_pending_claims_and_open_non_terminal_prs",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
+  "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
+  "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]
 fixtures = []
 code = [
   "xtask/src/reports/release_ledger.rs",
   "xtask/src/reports/release_ledger/dto.rs",
   "xtask/src/reports/release_ledger/validate.rs",
+  "xtask/src/reports/release_ledger/capture.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md",

@@ -360,9 +360,6 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
         PRESENT_EFFECTIVE if owned == 0 => {
             Some("present_effective needs a last-toucher path or a blamed line")
         }
-        PRESENT_EFFECTIVE if basis.alive_paths == 0 => {
-            Some("present_effective needs an alive touched path")
-        }
         PRESENT_BUT_SUPERSEDED if basis.alive_paths == 0 || owned > 0 => {
             Some("present_but_superseded needs alive paths and no owned path or line")
         }
