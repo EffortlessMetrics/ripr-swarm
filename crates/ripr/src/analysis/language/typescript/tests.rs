@@ -17435,6 +17435,7 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
+mod nullish_chain_tests;
 mod out_dir_specifier_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;

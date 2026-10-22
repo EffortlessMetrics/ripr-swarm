@@ -86,6 +86,7 @@ mod module_entries;
 mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
+mod nullish_chain_guard;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -162,6 +163,7 @@ pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
+pub(crate) use nullish_chain_guard::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
