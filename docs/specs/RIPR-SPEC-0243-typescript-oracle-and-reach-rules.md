@@ -30,6 +30,7 @@ Linked issues:
 - #9138 (assertion after an always-exiting try/finally)
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9435 (exact oracle ignored on five changed-line shapes)
 
 Linked PRs:
 
@@ -302,6 +303,23 @@ parameter used other than as a plain read, a parameter re-declared or
 shadowed in the body, a nested `function`, a template substitution, a
 regular-expression literal, a non-ASCII parameter or callback body, or a
 substituted body that does not re-parse.
+
+Amended for #9533: a `for (const [a, b] of rows) { ... }` loop over a
+test-local table reads the same way. `rows` must be a top-level `const`
+in the test body holding an inline array of literal rows, declared before
+the loop and named nowhere else in the body (a `rows.push(...)` or a second
+read could change what the loop sees), and the destructuring must be plain
+`const` identifiers matching every row's length. The loop body must be a
+block with no `break`, `continue`, `return` or `throw`, which could end
+the loop before a row runs, and no branch or inner loop (`if`, `else`,
+`switch`, `while`, `for`, `try`, `?:`, `&&`, `||`), which decides per row
+whether an assertion runs, so a substituted literal would credit rows it
+never reaches. Anything else keeps the loop's own assertions (a
+non-literal cell, a table that is a call result or a parameter, a `let`,
+a table declared after the loop, a row longer or shorter than the
+pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
+loop variable re-declared in the body, and every condition that already
+refuses an `.each` row).
 
 ### Recogniser order
 
@@ -678,6 +696,119 @@ from owner credit when a body-local destructuring names it
 `ImportAliasOwnerCall` relation; a default import keeps its
 `ImportedOwnerCall` relation, which the import record proves.
 
+### Changed-line shapes
+
+**Rule 15. A changed line whose value reaches the owner's return reads as a
+return-value change (#9435, 2026-10-22).** Four shapes carry no `return`
+keyword, so the probe-shape classifier reads them as unrecognised and a
+strong exact assertion on the owner stays `weakly_exposed` with
+`preview_advisory_only`. Each now reads as `ReturnValue` when the structure
+below holds, and keeps the old reading otherwise. A shape that does not
+prove its condition costs an abstention or a gap, never a credit.
+
+1. **Declared concise arrow.** `export const f = (n) => n * 2;`, when `f` is
+   the owner itself (a local arrow nested in the owner binds another name
+   and returns nothing), returns its body, including a body that passes a callback
+   (`xs.reduce((a, b) => a + b, 0)`). A body with a comparison operator or
+   a type argument (`<`, `>` outside the `=>` of a callback), a curried
+   arrow (the body is itself an arrow head) and a block body keep the old
+   reading: a comparison is a predicate boundary that an exact value does
+   not witness.
+2. **Compound assignment to the returned state.** `this.balance += amount;`
+   or `t += i * 2;` (any of `+= -= *= /= %= **= <<= >>= >>>= &= |= ^= &&=
+   ||= ??=`) where the target is a plain name or `this.name`, the old
+   statement wrote the same target, and the owner body has exactly one
+   `return`, at its top level and after the assignment, whose whole
+   expression is the target. Every block enclosing the assignment is a
+   `for`, `while` or `do` loop (a branch may skip it; a loop over an empty
+   input may run zero times, the same limit every return-value credit has
+   when the test's inputs never reach the changed line), the body has no
+   nested function, class or method, and no other statement writes the
+   target between the declaration and the return. For a `this.name` target
+   no call may sit between the assignment and the return, because a method
+   (`this.reset()`) can rewrite the field unseen. The changed span is the
+   statement between the common prefix and suffix of the old and new line,
+   widened to the nearest `;`, `{` or `}`, so one statement of a minified
+   line is read alone.
+3. **Edited arm of an unchanged conditional.** `return c ? a : b` where old
+   and new differ in exactly one arm and `c` is one comparison of an owner
+   parameter the body never writes (`===`, `!==`, `==`, `!=`, `<`, `<=`,
+   `>`, `>=`, either operand order) with a number, a plain string (no quote
+   or backslash inside), a boolean, `null`, `undefined` or a member path
+   (`Level.High`). It is
+   credited when a strong, pinned, exact-value assertion of an oracle
+   relation calls the owner with a literal argument that provably selects
+   the edited arm: numbers compare by value; strings, booleans and
+   `null`/`undefined` by equality; a member path only by the same text, and
+   not when the test body rebinds the path's root (`const Level = ...`) or
+   imports it from a module other than the owner's. The
+   assertion must observe the owner's whole result (not `price(150) > 0`),
+   through the owner's name or an import alias, and an expected value that
+   provably equals neither the old nor the new arm is dead and credits
+   nothing. Two
+   different member paths decide nothing, because enum members may share a
+   value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
+   rule.
+4. **Generator loop bound.** `for (let i = 0; i <= n; i++)` against
+   `i < n` (or the descending `>=`/`>` with `i--`; the header is
+   `let`/`var i = <integer literal>` stepping by one, and the bound is a
+   read-only owner parameter or an integer literal), in a generator whose
+   loop is a direct child of the generator body with no `return` or `throw`
+   before it, and whose loop body has a plain `yield` at its own top level
+   (no `if`, `?`, `&&` or `||` before it there) and no `break`,
+   `continue`, `return`, `throw` or write to the counter. The extra
+   iteration yields one more element when the counter reaches the bound,
+   so an exact assertion on the whole drained sequence (`[...gen(3)]` or
+   `Array.from(gen(3))`) from a call whose literal argument satisfies
+   `init <= n` (`init >= n` descending) sees it. An assertion on a prefix
+   (`gen(3).next().value`), a call whose counter cannot reach the bound,
+   a conditional `yield` and a non-generator owner keep the old reading:
+   an extra iteration of a search or accumulation need not change the
+   result.
+
+**Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
+that imports `expect` and `test` from `@playwright/test` reads like its
+plain form in six places:
+
+1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
+   records its failure and fails the test when it ends.
+2. An `await test.step(name, [options,] body)` (or a returned one) whose
+   `test` is the named import runs `body` inside the test and rejects with
+   its failure, so the assertions in `body` are the test's own. A step that
+   is not awaited or returned floats, and a `test` bound elsewhere has no
+   such `step`.
+3. `toThrow(/^message$/)` (and `.rejects.toThrow`) with a pattern anchored
+   by `^` and `$`, no top-level `|` and no flag but `u` pins the whole
+   message, like rule 10's `node:assert` regex. Jest and Vitest test the
+   regex against `error.message`, so `/^blank$/` matches `blank`.
+4. A moved threshold of an unchanged returned conditional
+   (`weightKg > 5 ? 900 : 400` becoming `> 25`: same parameter, same
+   comparison, one number differing, arms distinct constants) is a
+   return-value change. It is credited when a strong exact assertion of an
+   oracle relation observes the whole owner call with a literal argument the
+   old and new threshold put on opposite sides of the comparison (`20`), and
+   the expected value is one of the two arms. An argument outside that
+   interval, an expected value equal to neither arm, a wrapped call and
+   equal arms keep the old reading.
+5. A message that is one template literal with interpolations (`not a
+   count: ${text}` becoming `not a number: ${text}`, the same expressions
+   in both) is read as fixed text around holes. An anchored `toThrow`
+   pattern separates the versions when its literal text can be the whole
+   message of exactly one version for some filling of the holes, and the
+   same call fills both. The test's literal argument then yields the text
+   the pattern pins on one version and cannot on the other. A pattern that
+   fits neither or both versions, a changed or different interpolated
+   expression, a second throw site, and unanchored, flagged or substring
+   payloads (`toThrow("...")`) keep the old reading.
+6. A changed field of a single-line returned object literal
+   (`return { area: w * h, perimeter: 2 * w + h };`, one `key: value`
+   differing from the removed line) is observed by an assertion on that
+   field of the owner's result: `d.perimeter` for `const d = dims(3, 4)` or
+   `dims(3, 4).perimeter`, including the second term of an `expect.soft`
+   pair. The base must be the owner call or a local alias of it; a field
+   whose value is unchanged, another object's field and another owner keep
+   the old reading.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -805,7 +936,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 14. **Literal tables (#6798).** Adopted: rule 11, because a literal row
     is the same evidence as a hand-written test with those literals.
     Rejected: resolve tables held in a `const`, which needs scope
-    resolution the adapter does not have.
+    resolution the adapter does not have. Amended by #9533: a top-level
+    test-local `const` table that the test names only in its declaration
+    and in one `for...of` loop is resolvable without scope analysis, so
+    that one loop shape reads per row (rule 11).
 15. **Default-exported object members (2026-10-19).** Adopted: rule 5's
     default-object arm, for the axios `utils.merge` shape that read
     `no_static_path` (`jest-mined-default-export-object`). A plain
@@ -831,6 +965,56 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
+18. **Field updates a test reads (2026-10-22, #9515).** Adopted: a changed
+    `this.f += e` / `this.f = this.f + e` in a class method is a
+    return-value change when the method has one write to `this.f`, the
+    statement sits at the top level of the method body, and a strong,
+    pinned, exact-value assertion whose observed expression is exactly
+    `recv.f` reads it from a `const`/`let recv = new Class(..)` the test
+    called the method on, in the read's own scope, as a statement of its
+    own, before the read. The method body has no `return` or `throw` before
+    the statement, no nested function or arrow, and uses `this` only as
+    `this.name`; the old line updated the same field. The receiver is only
+    ever used as `recv.name` (no computed access, alias, or pass to another
+    function) and is not reassigned, written through, or mutated by another
+    method call; the owner
+    call's argument is not a neutral literal (`0`, `""`, `false`, `null`);
+    and the expected value is not one (a zero equals the field's initial
+    state). Rejected: early exits, computed or escaped writes, other
+    mutators, neutral arguments or expectations, derived observed
+    expressions, calls in a braceless conditional or a loop that may not run,
+    reads before the call, calls inside a branch or callback, rebound or
+    factory-made receivers, `do { } while` bodies, and tables or helpers as
+    the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
+    gaps until the adapter resolves literal tables and same-file helper
+    assertions, #9534). A getter-backed field is refused by decision 20.
+
+19. **Literal tables and same-file assertion helpers (2026-10-22, #9534).**
+    Adopted, extending decision 18. (a) A table-driven expected side counts when
+    it is a bare name destructured by `for (const [a, b] of rows)` from a
+    constant numeric table (`const rows = [[0, 0], [1, 1]]`, equal-width rows,
+    each cell an integer), the owner call is in that loop (and counting loops
+    `for (let i = 0; i < n; i++)` bounded by a column or a positive literal),
+    nothing rebinds the destructured names, and some row calls the owner at
+    least once and expects a nonzero value. Other loops, computed or ragged
+    tables, and bounds the scan cannot read refuse. (b) A same-file top-level
+    function whose body is exactly one assertion call is treated as that
+    assertion at each call site: the call must be its own statement ending in
+    `;`, every argument a bare name or non-negative integer, every use of a
+    parameter a plain argument or member base, and every mention of the helper
+    such a call; a helper free name declared more than once refuses. The
+    renamed assertion then passes every ordinary gate (binding, oracle kind,
+    pinned expected side, field-update rules). Rejected: helpers with more than
+    one statement, defaults, async or generator helpers, aliases and exports,
+    computed arguments, strings, and calls inside expressions.
+
+20. **Accessor-backed fields (2026-10-22, #9768).** Adopted, extending decision
+    18. A field update is not credited when the owner's class, in the same
+    file, declares `get <field>` or `set <field>`: reading the field runs the
+    accessor, which need not return what the changed statement wrote, so an
+    exact assertion on it does not observe the update. Rejected: modelling the
+    accessor body (it can compute anything), and `accessor <field>` auto-
+    accessors, which the owner index does not record yet.
 
 ## Required Evidence
 
@@ -1074,9 +1258,53 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `exact_error_variant` / strong, `exposed` (today `broad_error` / weak,
     `weakly_exposed`; rule 10). With `{ name: "Error" }`: `broad_error` /
     weak (unchanged; no `message`).
+36. `src/steps.ts` returns `weightKg > 25 ? 900 : 400` where it returned
+    `weightKg > 5 ? 900 : 400`, and the Playwright spec runs `await
+    test.step("heavy", async () => { expect(shipping(20)).toBe(900); })`:
+    `exact_value` / strong, `exposed` (`20` is between 5 and 25). The same
+    with `shipping(30)`, `shipping(1)`, `toBe(123)`, `shipping(20) > 0`, a
+    step that is not awaited or a `test` not imported from
+    `@playwright/test`: `weakly_exposed`. `expect.soft(area(3, 4)).toBe(24)`
+    reads as `expect(area(3, 4)).toBe(24)`, and `toThrow(/^not a count$/)`
+    pins a literal `throw new Error("not a count")` message that became
+    `"not a number"` (`/not a/` and `/^not a count$/i` stay broad).
+37. `const rows = [[0, false], [4999, false], [5000, true], [12000,
+    true]]; for (const [cents, want] of rows) { assert.equal(
+    freeShipping(cents), want); }` against a changed `cents >= 5000`
+    boundary: `exact_value` / strong, `exposed` through the rows 4999 and
+    5000 (today `weakly_exposed`: the loop variable names no literal).
+    Rows that sit on one side of the boundary, or a loop whose body can
+    `break`, stay `weakly_exposed` (rule 11).
+38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
+    threw `` `not a count: ${text}` ``, and the Playwright spec runs
+    `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
+    `exact_error_variant` / strong, `exposed` (the pinned text fits only the
+    old pieces for some fill of `${text}`). With `/^something else$/`,
+    `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
+    unchanged.
+39. `src/soft.ts` returns `{ area: w * h, perimeter: 2 * w + h }` where it
+    returned `perimeter: 2 * (w + h)`, and the Playwright spec runs
+    `const d = dims(3, 4); expect.soft(d.area).toBe(12);
+    expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
+    (today `weakly_exposed`: only the unchanged `area` term reached the
+    changed-value check). With only the `d.area` assertion: unchanged.
 
 ## Test Mapping
 
+- #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
+  pins the per-row assertions and the fail-closed fallbacks (a non-literal
+  cell, a table read elsewhere, a `let` or late table, a row of the wrong
+  length, an early exit, a branch in the body, a non-block body). Corpus row
+  `ts-grid-boundary-table` moves from gap to credited.
+
+- #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
+  pins each shape's credit and the fallbacks that reach the rule (a weak
+  oracle, a curried or comparing arrow, a branch, a second return, another
+  write, an unselected or aliased arm, a prefix or unreached generator
+  sequence). Corpus rows `shape-arrow-const-export`,
+  `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
+  `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
+  gap to credited.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture
@@ -1179,8 +1407,28 @@ to `amount - 20`, and `tests/lib.test.ts` has
   the asserted parsed subject (registered test, collected assertion,
   relation) checked before the class.
 
+- #9434 (rule 16): `crates/ripr/src/analysis/language/typescript/tests/playwright_unit_tests.rs`
+  pins example 36. Corpus row `pw-step-heavy-parcel-threshold` moves from
+  `gap` to `credited`; `pw-expect-soft-second-term`,
+  `pw-tothrow-anchored-regex` and `pw-loop-registered-rounding-mode` keep
+  their `known_false` entries under #9651, #9652 and #9653.
+
 ## Implementation Mapping
 
+- #9434 (rule 16): `oracle.rs` (`call_expression_is_expect` for
+  `expect.soft`, the `step` arm of `collect_nested_callback_assertions` with
+  `TypeScriptAssertionBindings::playwright_tests`, and the `ThrowsRegex` /
+  `RejectsThrowRegex` payloads read by `error_payload_credits`),
+  `ternary_arm_guard.rs` (`ts_ternary_threshold_move`) and
+  `ts_threshold_move_witnessed` in `classifier.rs`.
+
+- #9435 (rule 15): `probe_shape.rs` (`declared_arrow_value_body`),
+  `returned_state_guard.rs` (`ts_returned_state_change`),
+  `ternary_arm_guard.rs` (`ts_ternary_arm_change`),
+  `loop_bound_guard.rs` (`ts_loop_bound_change`), and the witnesses
+  `ts_arm_change_witnessed` and `ts_loop_bound_witnessed` in
+  `classifier.rs`, which promote the probe shape to `ReturnValue` before the
+  verdict ladder runs.
 - #7315: `expect_assertion_from_expression` reads the rejection modifier and
   concrete expected argument; `TypeScriptAssertionBindings` supplies the
   explicit runner import and existing scope filter. The existing

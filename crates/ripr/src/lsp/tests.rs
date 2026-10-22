@@ -9189,6 +9189,327 @@ async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Resul
     Ok(())
 }
 
+#[test]
+#[serial]
+fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> Result<(), String> {
+    // The dedup ledger records a save digest before its refresh runs. When
+    // that refresh fails nothing analyzed those bytes, so an identical
+    // re-save (the natural retry once the environment recovers) must
+    // schedule a refresh instead of being swallowed as "unchanged".
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("save-retry-after-failed-refresh")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes every analysis attempt fail
+                    // fast, like a transiently unusable repository.
+                    "initializationOptions": {"baseRef": "ripr-lsp-save-retry-missing-base"},
+                    "capabilities": {}
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri.as_str(), "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let save = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didSave",
+            "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
+        });
+        write_lsp_message(&mut client_write, save.clone()).await?;
+        let first = log_notification_messages(
+            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
+        );
+        if !first
+            .iter()
+            .any(|message| message.starts_with("ripr analysis refresh failed"))
+        {
+            return Err(format!("expected the first refresh to fail: {first:?}"));
+        }
+
+        write_lsp_message(&mut client_write, save).await?;
+        let second = log_notification_messages(
+            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
+        );
+        if second
+            .iter()
+            .any(|message| message.contains("didSave deduplicated"))
+        {
+            return Err(format!(
+                "re-save after a failed refresh was deduplicated: {second:?}"
+            ));
+        }
+        if !second
+            .iter()
+            .any(|message| message.starts_with("ripr analysis refresh queued"))
+        {
+            return Err(format!("re-save did not schedule a refresh: {second:?}"));
+        }
+        server_task.abort();
+        Ok(())
+    })
+}
+
+async fn save_and_collect_logs<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    uri: &tower_lsp_server::ls_types::Uri,
+    text: &str,
+) -> Result<Vec<String>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didSave",
+            "params": {"textDocument": {"uri": uri.as_str()}, "text": text}
+        }),
+    )
+    .await?;
+    Ok(log_notification_messages(
+        &read_lsp_messages_for(reader, Duration::from_secs(3)).await?,
+    ))
+}
+
+fn logs_contain(logs: &[String], prefix: &str) -> bool {
+    logs.iter().any(|message| message.contains(prefix))
+}
+
+#[test]
+#[serial]
+fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Result<(), String> {
+    // A and B are saved and analyzed. A changed save of A then fails. B's
+    // digest is covered by a published snapshot, so an unchanged B save still
+    // dedups; A's digest is not, so an unchanged A re-save retries, and once
+    // that retry publishes, a further unchanged A save dedups again.
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("save-digest-coverage")?;
+        write_lsp_scope_fixture(root.path())?;
+        let (path_a, path_b) = (
+            root.path().join("src/lib.rs"),
+            root.path().join("src/other.rs"),
+        );
+        fs::write(&path_b, "pub fn other() -> u8 { 1 }\n").map_err(|e| format!("write B: {e}"))?;
+        run_lsp_scope_git(root.path(), &["init"])?;
+        run_lsp_scope_git(
+            root.path(),
+            &["config", "user.email", "ripr@example.invalid"],
+        )?;
+        run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+        run_lsp_scope_git(root.path(), &["add", "."])?;
+        run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+        let a1 =
+            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n";
+        let a2 =
+            "pub fn gate_state(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n";
+        fs::write(&path_a, a1).map_err(|e| format!("write A: {e}"))?;
+        let (uri_a, uri_b) = (file_uri_for_path(&path_a)?, file_uri_for_path(&path_b)?);
+        let b_text = "pub fn other() -> u8 { 1 }\n";
+
+        let (client_io, server_io) = tokio::io::duplex(256 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    "initializationOptions": {"baseRef": "HEAD"},
+                    "capabilities": {}
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        for (uri, text) in [(&uri_a, a1), (&uri_b, b_text)] {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                    "params": {"textDocument": {
+                        "uri": uri.as_str(), "languageId": "rust", "version": 1, "text": text
+                    }}
+                }),
+            )
+            .await?;
+        }
+        read_lsp_messages_for(&mut client_read, Duration::from_secs(3)).await?;
+
+        let a_first =
+            save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a1).await?;
+        let b_first =
+            save_and_collect_logs(&mut client_read, &mut client_write, &uri_b, b_text).await?;
+        for logs in [&a_first, &b_first] {
+            if !logs_contain(logs, "outcome=published") {
+                return Err(format!("setup save did not publish: {logs:?}"));
+            }
+        }
+
+        // A changed save of A fails because the repository is unusable.
+        let hidden = root.path().join(".git-off");
+        fs::rename(root.path().join(".git"), &hidden).map_err(|e| format!("hide .git: {e}"))?;
+        // A dangling gitfile makes the VCS fail instead of discovering the
+        // enclosing repository.
+        fs::write(
+            root.path().join(".git"),
+            "gitdir: /nonexistent/ripr-save-digest\n",
+        )
+        .map_err(|e| format!("write dangling gitfile: {e}"))?;
+        fs::write(&path_a, a2).map_err(|e| format!("rewrite A: {e}"))?;
+        let failed = save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a2).await?;
+        fs::remove_file(root.path().join(".git")).map_err(|e| format!("drop gitfile: {e}"))?;
+        fs::rename(&hidden, root.path().join(".git")).map_err(|e| format!("restore .git: {e}"))?;
+        if !logs_contain(&failed, "refresh failed") {
+            return Err(format!("expected A's changed save to fail: {failed:?}"));
+        }
+
+        let b_again =
+            save_and_collect_logs(&mut client_read, &mut client_write, &uri_b, b_text).await?;
+        if !logs_contain(&b_again, "didSave deduplicated")
+            || logs_contain(&b_again, "refresh queued")
+        {
+            return Err(format!("unchanged B save must still dedup: {b_again:?}"));
+        }
+        let a_retry =
+            save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a2).await?;
+        if logs_contain(&a_retry, "didSave deduplicated")
+            || !logs_contain(&a_retry, "outcome=published")
+        {
+            return Err(format!(
+                "unchanged A re-save must retry and publish: {a_retry:?}"
+            ));
+        }
+        let a_after =
+            save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a2).await?;
+        if !logs_contain(&a_after, "didSave deduplicated")
+            || logs_contain(&a_after, "refresh queued")
+        {
+            return Err(format!("A must dedup again after recovery: {a_after:?}"));
+        }
+        server_task.abort();
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn non_published_terminal_outcomes_invalidate_uncovered_save_digests() -> Result<(), String> {
+    // Cancelled, deadline-exceeded and never-started attempts end without a
+    // successor snapshot just like a failure, so an identical re-save must
+    // retry; a published or superseded attempt must keep deduplicating.
+    for (outcome, retries) in [
+        (RefreshAttemptOutcome::Cancelled, true),
+        (RefreshAttemptOutcome::DeadlineExceeded, true),
+        (RefreshAttemptOutcome::NotStarted, true),
+        (RefreshAttemptOutcome::Superseded, false),
+        (RefreshAttemptOutcome::Published, false),
+    ] {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    uri.clone(),
+                    "rust".to_string(),
+                    1,
+                    "fn same() {}".to_string(),
+                ),
+            })
+            .await;
+        let save = || DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        };
+        backend.did_save(save()).await;
+        let saved_revision = backend.workspace_revision();
+        let request = RefreshRequest {
+            generation: 11,
+            authority_epoch: 0,
+            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                PathBuf::from("/workspace"),
+                1,
+                &LspAnalysisConfig::default(),
+            ),
+            git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
+                Path::new("/workspace"),
+                None,
+                None,
+            ),
+            root: PathBuf::from("/workspace"),
+            config: LspAnalysisConfig::default(),
+            workspace_revision: saved_revision,
+            scope: RefreshScope::Interactive,
+            reason: RefreshReason::DidSave,
+            cancellation: AnalysisCancellationToken::new(),
+        };
+        backend.record_health_outcome(&request, outcome);
+        backend.did_save(save()).await;
+        let advanced = backend.workspace_revision() == saved_revision + 1;
+        if advanced != retries {
+            return Err(format!(
+                "{outcome:?}: expected retry={retries}, revision {saved_revision} -> {}",
+                backend.workspace_revision()
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
@@ -14086,6 +14407,12 @@ fn file_uri_to_path_normalizes_backslash_separators() -> Result<(), String> {
     let drive = "C";
     let uri = test_uri(&format!("file:///{drive}:%5Cworkspace%5Csrc%5Clib.rs"))?;
 
+    if !cfg!(windows) {
+        // `%5C` is a literal filename byte on Unix, never a separator; the
+        // drive-shaped result is drive-relative and fails closed.
+        assert_eq!(path_from_file_uri(&uri), None);
+        return Ok(());
+    }
     let Some(path) = path_from_file_uri(&uri) else {
         return Err("expected path from file URI".to_string());
     };

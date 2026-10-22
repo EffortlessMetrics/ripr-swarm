@@ -155,7 +155,12 @@ pub(super) struct Backend {
     /// confirmation step bound to the folder-set epoch.
     workspace_folders: Mutex<WorkspaceFolderSet>,
     documents: Mutex<DocumentStore>,
-    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, (String, u64)>>,
+    /// Highest workspace revision a published snapshot analyzed.
+    last_published_workspace_revision: AtomicU64,
     analysis_config: Mutex<LspAnalysisConfig>,
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     /// Negotiated session-configuration transport (#2031, RIPR-SPEC-0136).
@@ -345,6 +350,7 @@ impl Backend {
             workspace_folders: Mutex::new(WorkspaceFolderSet::default()),
             documents: Mutex::new(DocumentStore::default()),
             saved_content_digests: Mutex::new(BTreeMap::new()),
+            last_published_workspace_revision: AtomicU64::new(0),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
             configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
@@ -2066,6 +2072,7 @@ impl Backend {
         kind: AnalysisFailureKind,
         message: &str,
     ) {
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -2080,6 +2087,9 @@ impl Backend {
     }
 
     fn mark_attempt_cancelled(&self, request: &RefreshRequest) {
+        // An aborted refresh future never reaches the outcome handler, so
+        // drop its uncovered save digests here (#9366).
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -2105,6 +2115,8 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
+                self.last_published_workspace_revision
+                    .fetch_max(request.workspace_revision, Ordering::AcqRel);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -2136,13 +2148,17 @@ impl Backend {
                 // `mark_attempt_failed` records the bounded error and preserves
                 // the completed snapshot. Keep that richer state here.
             }
-            RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
+            RefreshAttemptOutcome::Cancelled => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Cancelled;
+            }
             // A deadline-expired attempt is a fail-closed dropped refresh
             // (#1972, #5093). Keep `state` on the existing `cancelled`
             // allowlist so fail-closed clients (including VS Code) still parse
             // the payload, and distinguish it from a user or superseded cancel
             // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
+                self.invalidate_uncovered_save_digests();
                 health.state = AnalysisAttemptState::Cancelled;
                 health.failure = Some(AnalysisFailure {
                     kind: AnalysisFailureKind::DeadlineExceeded,
@@ -2152,7 +2168,10 @@ impl Backend {
                 });
             }
             RefreshAttemptOutcome::Superseded => health.state = AnalysisAttemptState::Superseded,
-            RefreshAttemptOutcome::NotStarted => health.state = AnalysisAttemptState::Stopped,
+            RefreshAttemptOutcome::NotStarted => {
+                self.invalidate_uncovered_save_digests();
+                health.state = AnalysisAttemptState::Stopped;
+            }
         }
     }
 
@@ -3899,13 +3918,41 @@ impl Backend {
         self.saved_content_digests
             .lock()
             .ok()
-            .and_then(|digests| digests.get(uri).cloned())
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
             .is_some_and(|recorded| recorded == digest)
     }
 
-    fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, digest: String) {
+    /// Record a save digest and advance the workspace revision as one step,
+    /// stamping the digest with the exact revision this advance produces. The
+    /// record lands before any refresh for the revision can be scheduled, so a
+    /// fast failure cannot precede it, and a concurrent advance cannot make
+    /// the stamp an under-estimate.
+    fn record_saved_content_digest_and_advance(
+        &self,
+        uri: &tower_lsp_server::ls_types::Uri,
+        digest: String,
+    ) {
+        let Ok(mut revision) = self.workspace_revision.lock() else {
+            return;
+        };
+        let next = revision.saturating_add(1);
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), digest);
+            digests.insert(uri.clone(), (digest, next));
+        }
+        *revision = next;
+    }
+
+    /// Drop the save digests no published snapshot has covered. Called when a
+    /// refresh ends without publishing and without a successor (failed,
+    /// cancelled, deadline-exceeded, never started): nothing analyzed those
+    /// bytes, so an identical re-save must retry (#9366). Digests a published
+    /// snapshot covered stay, so unrelated unchanged saves still dedup.
+    fn invalidate_uncovered_save_digests(&self) {
+        let covered = self
+            .last_published_workspace_revision
+            .load(Ordering::Acquire);
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered);
         }
     }
 
@@ -4231,11 +4278,10 @@ fn root_relative_components_on(
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if case_insensitive {
-            expected.eq_ignore_ascii_case(actual)
-        } else {
-            expected == actual
+        let key = |name: &str| {
+            crate::output::path::path_identity_key_on(Path::new(name), false, case_insensitive)
         };
+        let matched = key(expected) == key(actual);
         if !matched {
             return None;
         }
@@ -4314,7 +4360,9 @@ fn diagnostics_input_watchers(
             })
             .collect());
     }
-    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Display/glob text, not an identity key: lossy for non-UTF-8, `\`
+    // rewritten only on Windows (a Unix `\` is a filename byte).
+    let absolute = crate::output::path::path_display_lossy(root);
     // Glob syntax has no portable escape, so a root containing
     // metacharacters would match other paths or none at all.
     if absolute.contains(['*', '?', '[', ']', '{', '}']) {
@@ -4630,7 +4678,7 @@ mod workspace_input_tests {
         // Without it: absolute string globs, because VS Code matches a
         // string glob against the absolute path and a bare relative string
         // never fires.
-        let absolute = root.to_string_lossy().replace('\\', "/");
+        let absolute = crate::output::path::path_display_lossy(&root);
         let expected_absolute = expected
             .iter()
             .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
@@ -6317,12 +6365,12 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
-        if let Some(digest) = digest {
-            self.record_saved_content_digest(&uri, digest);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
         }
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
-        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
@@ -11110,8 +11158,15 @@ mod gap_record_context_tests {
 
     #[test]
     fn display_path_normalizes_backslashes_to_forward_slashes() {
+        // Display-only: `\` is rewritten on Windows hosts; a Unix `\` is a
+        // filename byte and stays visible.
         let path = std::path::PathBuf::from(r"a\b\c.rs");
-        assert_eq!(display_path(&path), "a/b/c.rs");
+        let expected = if cfg!(windows) {
+            "a/b/c.rs"
+        } else {
+            r"a\b\c.rs"
+        };
+        assert_eq!(display_path(&path), expected);
     }
 
     #[test]
@@ -12377,6 +12432,68 @@ mod work_done_progress_guard_tests {
     use super::*;
     use crate::lsp::progress::ProgressEvent;
     use tower_lsp_server::LspService;
+
+    #[test]
+    fn dropped_refresh_guard_invalidates_only_uncovered_save_digests() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri_of = |name: &str| {
+                format!("file:///workspace/src/{name}.rs")
+                    .parse::<Uri>()
+                    .map_err(|err| format!("uri: {err}"))
+            };
+            let (covered_uri, uncovered_uri) = (uri_of("covered")?, uri_of("uncovered")?);
+
+            // `covered` is saved and then covered by a published snapshot.
+            backend.record_saved_content_digest_and_advance(&covered_uri, "c".to_string());
+            let first = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(first) = &first else {
+                return Err(format!("expected Start decision, got {first:?}"));
+            };
+            let first = first.as_ref().clone();
+            backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
+            // `uncovered` is saved afterwards; the still-active refresh is aborted.
+            backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
+            let held = |backend: &Backend| -> Vec<Uri> {
+                backend
+                    .saved_content_digests
+                    .lock()
+                    .map(|digests| digests.keys().cloned().collect())
+                    .unwrap_or_default()
+            };
+            if held(backend).len() != 2 {
+                return Err("precondition: both digests recorded".to_string());
+            }
+            {
+                let _guard = RefreshCancellationGuard::new(
+                    backend,
+                    &backend.refresh_scheduler,
+                    &backend.refresh_idle,
+                    first,
+                );
+            }
+            let remaining = held(backend);
+            if remaining != vec![covered_uri] {
+                return Err(format!(
+                    "aborted refresh must drop only the uncovered digest: {remaining:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
 
     #[test]
     fn dropped_refresh_guard_ends_active_and_queued_progress_exactly_once() -> Result<(), String> {

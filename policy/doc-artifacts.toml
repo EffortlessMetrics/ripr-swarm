@@ -1804,6 +1804,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #9277 records the oversized-diff subset contract: repeatable --path/--exclude narrow the changed files before the size guards, every removed file is named in a limitation and never reads as clean, a scope matching nothing is an error, and the guards still fire on an oversized in-scope diff."
 
 [[artifact]]
+id = "RIPR-SPEC-0310"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0310-check-findings-artifact-verifies-by-gap-id.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #9103 records the check-findings artifact contract: a producer-identified, unbounded diff-scoped findings snapshot verifies movement by canonical gap id through the same identity and commitment validator as repo-exposure, and an incomplete, edited, unenveloped, duplicate or reversed snapshot is refused."
+
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"

@@ -781,6 +781,10 @@ mod tests {
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
         assert!(PILOT_HELP.contains("--format FORMAT"));
         assert!(PILOT_HELP.contains("--format json"));
+        // #9368: every env var pilot honors appears in its help.
+        assert!(PILOT_HELP.contains("RIPR_PILOT_SEAM_BUDGET"));
+        assert!(PILOT_HELP.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"));
+        assert!(PILOT_HELP.contains("RIPR_GIT_TIMEOUT"));
         assert!(OUTCOME_HELP.starts_with("Compare before/after static evidence"));
         assert!(OUTCOME_HELP.contains("Usage: ripr outcome"));
         assert!(OUTCOME_HELP.contains("--before PATH"));
@@ -1291,9 +1295,17 @@ mod tests {
             BASELINE_PARSER_RS,
             &["parse_baseline_update_options"],
         ),
-        ("cache clear", CACHE_PARSER_RS, &["parse_clear_args"]),
+        (
+            "cache clear",
+            CACHE_PARSER_RS,
+            &["parse_clear_args", "split_root_arg"],
+        ),
         ("cache export", CACHE_PARSER_RS, &["parse_export_args"]),
-        ("cache status", CACHE_PARSER_RS, &["parse_status_args"]),
+        (
+            "cache status",
+            CACHE_PARSER_RS,
+            &["parse_status_args", "split_root_arg"],
+        ),
         (
             "calibrate cargo-mutants",
             CLI_COMMANDS_RS,
