@@ -535,6 +535,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-pr",
         "fixtures [name]",
         "fixtures new <name>",
+        "fixtures refresh-identity <typescript|python>",
         "goldens prepare [--offline]",
         "goldens check",
         "goldens bless <name> --reason <reason>",
