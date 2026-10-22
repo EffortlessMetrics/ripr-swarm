@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
-  File: app/checkout.py:13
+  File: app/checkout.py:15
   Language: python
   Language status: preview
   Static exposure: no path (severity: warning, confidence 0.40)
