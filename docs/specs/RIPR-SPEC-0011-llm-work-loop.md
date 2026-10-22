@@ -431,7 +431,15 @@ after phase applies) and selects `next_command` in this order:
    exposure report where each withheld seam names its unresolved stage
    (#5497). When that run's repo exposure report says a seam limit applied,
    the warning names raising the limit and rerunning pilot instead, since
-   seams past the cut may hold gaps. Likewise a complete pilot summary that ranked no seam,
+   seams past the cut may hold gaps. A complete pilot summary that ranked and
+   withheld no seam, recorded no repair start and carries
+   `declined_rust_files` (a parse limit declined Rust files, #9308) selects
+   nothing and warns `pilot_declined_rust_files_no_repair_target`, naming the
+   declined file(s) and the parse-limit repair (split below the Rust parse
+   budget or save as UTF-8, then rerun pilot with the selected root); a
+   recorded `seam_limit` adds the raise-the-limit remedy. With withheld
+   seams the withheld warning above keeps precedence and already names the
+   declined files (#9371). Likewise a complete pilot summary that ranked no seam,
    recorded no repair card (`python_first_use` absent, `null`, or status
    `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
    this fact), routed the code to `ripr check` (`language_routes.state:
