@@ -4,4 +4,4 @@
   still pins the unchanged value keeps the boundary witness, so
   `mocha-done-callback-value` and `mocha-nested-describe-boundary` move from
   false actionable to `exposed`. A registration inside a skipped `describe` is
-  no longer disclosed as a dropped one.
+  no longer disclosed as a dropped one (#9496, #9627).
