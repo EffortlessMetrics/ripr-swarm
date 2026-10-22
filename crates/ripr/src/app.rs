@@ -83,6 +83,7 @@ pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
+pub(crate) use check::check_workspace_with_config_typed;
 #[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
 pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
@@ -104,8 +105,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, FindingDrillIn, FindingNavigation, RepairRoute, finding_navigation,
-    finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
+    finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,

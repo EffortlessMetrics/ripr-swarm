@@ -47,6 +47,13 @@ pub(crate) struct TypeScriptOwner {
     /// export. Constructor matching uses it to credit
     /// `new <default-import local>(...)` (#4104-B, review #4138).
     pub(crate) class_default_export: bool,
+    /// `true` when the module's `export default { name }` (or `{ name: name
+    /// }`) object holds this top-level function under its own name, so a
+    /// default import `utils` calls it as `utils.name(...)`. Set only for a
+    /// literal made of plain same-name entries (no spread, computed key,
+    /// method, getter or duplicate), which keeps the member from being
+    /// replaced inside the object. RIPR-SPEC-0243 rule 5.
+    pub(crate) default_object_member: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -105,6 +112,9 @@ pub(crate) struct TypeScriptTest {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) body_text: String,
+    /// Reach-only source with unreferenced local function values masked.
+    /// The original body remains available for snippets and oracle evidence.
+    pub(crate) reach_body_text: Option<String>,
     pub(crate) assertions: Vec<TypeScriptAssertion>,
     /// Module paths referenced by syntactic `vi.mock("...")` /
     /// `jest.mock("...")` calls discovered at the top level of the
@@ -130,6 +140,12 @@ pub(crate) struct TypeScriptTest {
     /// `f(`. Populated once per file by `extract_tests`; empty when anything
     /// could rebind or replace the name.
     pub(crate) identity_helpers_in_file: Vec<String>,
+    /// `(local, member)` pairs for default imports of the containing test
+    /// file whose local appears nowhere in the whole file (setup hooks and
+    /// file-level code included) except as its own import binding and as
+    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// Populated once per file by `extract_tests`.
+    pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -139,11 +155,45 @@ pub(crate) struct TypeScriptTest {
     /// test-body `const p = f();` is read as that literal. Empty when
     /// anything could rebind or replace the name.
     pub(crate) mock_factories_in_file: Vec<(String, String)>,
+    /// Test-file spread sources (RIPR-SPEC-0247 rule 1, amended 2026-10-18):
+    /// top-level `const defaults = { key: value, ... };` declarations whose
+    /// name appears nowhere else in the file except after a `...` spread,
+    /// each paired with the source of its object literal. Nothing can write
+    /// the object before a spread copies it, so `{ m: jest.fn(), ...defaults }`
+    /// keeps its mock when the literal has no `m` key. Empty when anything
+    /// could rebind or replace the name.
+    pub(crate) mock_spread_sources_in_file: Vec<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty
     /// `assertions` vector alone is never authority for "no assertion".
     pub(crate) assertion_admission: TypeScriptAssertionAdmission,
+    /// RIPR-SPEC-0243 rule 13: the line of the suite-factory call this test
+    /// was expanded from. `line` and each assertion's `line` stay offsets
+    /// from that call (the classifier indexes `body_text` by their
+    /// difference), so a rendered pointer reads this instead: the lines
+    /// after the call hold other statements, not the assertion. `None` for a
+    /// test written out in the file.
+    pub(crate) factory_call_line: Option<usize>,
+}
+
+impl TypeScriptTest {
+    /// The file line a rendered pointer to `assertion` should name.
+    pub(crate) fn evidence_line(&self, assertion: &TypeScriptAssertion) -> usize {
+        self.factory_call_line.unwrap_or(assertion.line)
+    }
+}
+
+impl TypeScriptTest {
+    /// Relation decisions use the admitted execution surface without changing
+    /// the source/oracle object retained in a related-test candidate.
+    pub(crate) fn reach_view(&self) -> Option<Self> {
+        let body = self.reach_body_text.as_ref()?;
+        let mut view = self.clone();
+        view.body_text = body.clone();
+        view.reach_body_text = None;
+        Some(view)
+    }
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.
@@ -219,6 +269,21 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
     pub(crate) snippet: String,
 }
 
+/// One concrete, observed conditional or loop branch that holds an extracted
+/// assertion under a condition static analysis cannot evaluate (#8714).
+/// Produced by `detect_conditional_assertion_credit`; consumed by the
+/// `typescript_conditional_assertion_credit` named-limitation producer.
+/// Classification-neutral, additive disclosure only: the branch recursion is
+/// deliberate, and this record carries the caveat so a credited oracle is
+/// known to possibly never execute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptConditionalCreditGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeScriptRelationKind {
     DirectOwnerCall,
@@ -247,6 +312,12 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test imports a module-level value (`export const stop =
+    /// Symbol('stop')`) from the owner's module and uses it as a value
+    /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
+    /// shows the test consumes the binding, not that an assertion observes
+    /// its initializer, so it never lends oracle credit.
+    ModuleValueUse,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -266,6 +337,7 @@ impl TypeScriptRelationKind {
             // Below every relation that calls the owner itself.
             Self::ModuleEntryCall => 3,
             Self::SameFileProximity => 3,
+            Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -299,6 +371,7 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",

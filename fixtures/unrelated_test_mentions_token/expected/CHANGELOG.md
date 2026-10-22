@@ -496,3 +496,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (17)
+
+Reason:
+RIPR-SPEC-0002: #8166 static-limited (no static path) findings no longer print a runnable ripr repair line beside their limitation guidance
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (18)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

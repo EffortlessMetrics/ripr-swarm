@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast probe:src_auth.py:python_preview:d982555b
   ripr context --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast --at probe:src_auth.py:python_preview:d982555b
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_auth.py:python_preview:d982555b --root <cwd>/fixtures/python_adversarial_same_method_other_class/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

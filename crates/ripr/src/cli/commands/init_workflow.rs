@@ -32,7 +32,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write # inline comments only (RIPR_COMMENT_MODE=inline)
+  pull-requests: write # the summary comment and inline comments (RIPR_SUMMARY_COMMENT, RIPR_COMMENT_MODE=inline)
   security-events: write # SARIF upload only (RIPR_UPLOAD_SARIF=true)
 
 env:
@@ -43,6 +43,8 @@ env:
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
   # RIPR_COMMENT_MODE: off, plan or inline.
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
+  # RIPR_SUMMARY_COMMENT: "false" turns off the one summary comment on the pull request.
+  RIPR_SUMMARY_COMMENT: ${{ vars.RIPR_SUMMARY_COMMENT || 'true' }}
 
 defaults:
   run:
@@ -114,22 +116,44 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api --paginate --slurp "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments" \
+          gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/comments" \
             | ripr pr-comments existing --root . --raw -
 
       - name: Run RIPR
         run: ripr reports ci-packet --root .
+
+      - name: Publish RIPR summary comment
+        if: always() && github.event_name == 'pull_request' && env.RIPR_SUMMARY_COMMENT != 'false' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('target/ripr/review/comments.json') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+            | ripr pr-comments summary --root . --raw - --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          while IFS=$'\t' read -r method endpoint request message; do
+            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
+            echo "$message"
+          done < target/ripr/review/summary/summary.tsv
 
       - name: Publish RIPR inline comments
         if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          ripr pr-comments requests --root . --pull-request "${{ github.event.pull_request.number }}" --head-sha "${{ github.event.pull_request.head.sha }}"
+          ripr pr-comments requests --root . --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" </dev/null >/dev/null
+            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/publish/requests.tsv
 
@@ -341,13 +365,15 @@ mod template_pin_tests {
     /// #5428 ci-packet step replacement. #5409 moved the comment JSON work
     /// into `ripr pr-comments existing|requests`, the summary flags into the
     /// workflow env, and the setting docs into docs/CI.md (385 → 150 rendered
-    /// lines), and re-measured the hash below.
+    /// lines). #4452 moved pull-request number, head SHA, and repository
+    /// interpolations out of `run:` shell text into step `env:`, and
+    /// re-measured the hash below.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "99aa7d203404ac34e93b7a55eead9882a1e04328bc7efa88786bdcf2522ea331";
+        "50ca3c66abbb3e8e23b333db55c653db979784bfa02f0c5fa097aa145cc4cbec";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

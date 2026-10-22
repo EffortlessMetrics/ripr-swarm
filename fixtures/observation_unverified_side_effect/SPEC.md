@@ -54,8 +54,13 @@ before this fix, a single broad `assert!(result)` would be credited as
 discriminating the specific `order_id` payload change via the
 `assertion_count == 1` escape hatch — a false-actionable claim.
 
+The fixture also yields a separate `return_value` probe for the same line.
+The let-bound `assert!(result)` is a whole-value pin of `process_order`'s
+returned bool (identical to `assert!(process_order(..))`), so that probe is
+`exposed`; the contract above binds the `SideEffect` probe only.
+
 ## Must Not
 
-- Report `exposed` when no assertion text references any token from the changed send call.
+- Report `exposed` for the `SideEffect` probe when no assertion text references any token from the changed send call.
 - Use mutation-runtime outcome vocabulary.
 - Report `reachable_unrevealed` (the test IS reachable and DOES have an assertion).

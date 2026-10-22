@@ -434,8 +434,7 @@ fn inspect_repository(
 ) -> Result<InspectedRepository, String> {
     let root = repository_root(repo)?;
     let common_dir = git_common_dir(&root)?;
-    let remote = git(&root, &["remote", "get-url", "origin"])?;
-    let remote = remote.trim().to_string();
+    let remote = configured_origin_url(&root).map_err(|error| format!("{role} {error}"))?;
     if !remote_matches(&remote, expected_remote) {
         return Err(format!(
             "{role} repository origin `{remote}` does not match expected `{expected_remote}`"
@@ -481,6 +480,30 @@ fn inspect_repository(
         common_dir,
         resolved_main,
     })
+}
+
+fn configured_origin_url(root: &Path) -> Result<String, String> {
+    // Judge the origin as configured in the checkout. `remote get-url`
+    // applies `url.<base>.insteadOf`, so an operator's (or the checkout's
+    // own) rewrite could turn a foreign origin into an approved one.
+    // `--local` also keeps the read independent of user/system config.
+    let origin = git(
+        root,
+        &[
+            "config",
+            "--local",
+            "--no-includes",
+            "--get-all",
+            "remote.origin.url",
+        ],
+    )?;
+    // Count before trimming so an empty extra value cannot hide.
+    if origin.lines().count() != 1 {
+        return Err(
+            "origin is ambiguous: remote.origin.url must have exactly one value".to_string(),
+        );
+    }
+    Ok(origin.trim().to_string())
 }
 
 fn repository_root(repo: &Path) -> Result<PathBuf, String> {
@@ -1149,6 +1172,97 @@ mod tests {
             return Err("abbreviated SHA unexpectedly accepted".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn inspect_repository_judges_configured_origin_not_insteadof_rewrite() -> Result<(), String> {
+        let root = temp_repo("source-promotion-origin")?;
+        fixture_git(&root, &["init", "--quiet"])?;
+        fixture_git(&root, &["config", "user.email", "test@example.invalid"])?;
+        fixture_git(&root, &["config", "user.name", "test"])?;
+        write_repo_file(&root, "README", "origin gate\n")?;
+        fixture_git(&root, &["add", "README"])?;
+        fixture_git(&root, &["commit", "--quiet", "-m", "init"])?;
+        let head = git(&root, &["rev-parse", "HEAD"])?.trim().to_string();
+        let approved = "https://github.com/EffortlessMetrics/ripr.git";
+        let foreign = "https://example.invalid/foreign.git";
+        fixture_git(&root, &["remote", "add", "origin", foreign])?;
+        fixture_git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "url.https://github.com/EffortlessMetrics/ripr.git.insteadOf",
+                foreign,
+            ],
+        )?;
+        let rewritten = git(&root, &["remote", "get-url", "origin"])?;
+        if !remote_matches(rewritten.trim(), "EffortlessMetrics/ripr") {
+            fs::remove_dir_all(&root)
+                .map_err(|err| format!("cleanup {}: {err}", root.display()))?;
+            return Err(format!(
+                "discriminator setup failed: get-url did not rewrite, got {}",
+                rewritten.trim()
+            ));
+        }
+        if inspect_repository(
+            "source",
+            &root,
+            "EffortlessMetrics/ripr",
+            &head,
+            "HEAD",
+            None,
+        )
+        .is_ok()
+        {
+            fs::remove_dir_all(&root)
+                .map_err(|err| format!("cleanup {}: {err}", root.display()))?;
+            return Err("rewritten foreign origin accepted".to_string());
+        }
+        fixture_git(&root, &["remote", "set-url", "origin", approved])?;
+        fixture_git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "--unset",
+                "url.https://github.com/EffortlessMetrics/ripr.git.insteadOf",
+            ],
+        )?;
+        inspect_repository(
+            "source",
+            &root,
+            "EffortlessMetrics/ripr",
+            &head,
+            "HEAD",
+            None,
+        )?;
+        fixture_git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "--add",
+                "remote.origin.url",
+                "https://example.invalid/second.git",
+            ],
+        )?;
+        let multi = inspect_repository(
+            "source",
+            &root,
+            "EffortlessMetrics/ripr",
+            &head,
+            "HEAD",
+            None,
+        );
+        fs::remove_dir_all(&root).map_err(|err| format!("cleanup {}: {err}", root.display()))?;
+        match multi {
+            Ok(_) => Err("multi-valued origin accepted".to_string()),
+            Err(error) if error.contains("ambiguous") => Ok(()),
+            Err(error) => Err(format!(
+                "multi-valued origin failed for the wrong reason: {error}"
+            )),
+        }
     }
 
     #[test]

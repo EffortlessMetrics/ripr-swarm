@@ -610,6 +610,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
     let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
     let exact = (OracleKind::ExactValue, OracleStrength::Strong);
     let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    let whole = (OracleKind::WholeObjectEquality, OracleStrength::Strong);
     for (text, expected) in [
         // A comparison asserted false is the inequality it states.
         ("assert_eq!(r == Err(E::Bad), false);", &weak),
@@ -1097,6 +1098,26 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(<u8 as From<bool>>::from(r == Err(E::Bad)), 0);",
         "assert_eq!(Into::<u8>::into(r == Err(E::Bad)), n);",
         "assert_eq!(std::primitive::u8::from(r == Err(E::Bad)), 0);",
+        // #8101: a value wrapper holds the test it wraps.
+        "assert_eq!(Some(r == Err(E::Bad)), Some(expected));",
+        "assert_eq!(Some(matches!(r, Err(E::Bad))), Some(false));",
+        "assert_eq!(Some(r == Err(E::Bad)), Some(false));",
+        "assert_eq!(Ok::<bool, ()>(r == Err(E::Bad)), Ok(expected));",
+        "assert_eq!(Wrapper(r == Err(E::Bad)), Wrapper(false));",
+        "assert_eq!(E::V(r == Err(E::Bad)), E::V(flag));",
+        "assert_eq!(Box::new(r == Err(E::Bad)), Box::new(false));",
+        "assert_eq!([r == Err(E::Bad)], [false]);",
+        "assert_eq!([r == Err(E::Bad); 2], [false; 2]);",
+        "assert_eq!(vec![r == Err(E::Bad)], vec![x]);",
+        "assert_eq!(Some(Some(r == Err(E::Bad))), Some(Some(false)));",
+        "assert_eq!(Some(r == Err(E::Bad)), opt);",
+        "assert_eq!(Some(!(r == Err(E::Bad))), Some(true));",
+        "assert_eq!(Some(r == Err(E::Bad)).unwrap(), expected);",
+        "assert_eq!(Some(r == Err(E::Bad)).expect(\"set\"), false);",
+        "assert_eq!((r == Err(E::Bad)).clone(), expected);",
+        "assert!(Some(r == Err(E::Bad)) == Some(false));",
+        "assert_eq!(Wrapper::from(r == Err(E::Bad)), Wrapper::from(false));",
+        "assert_eq!((r == Err(E::Bad)).to_owned(), expected);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -1145,6 +1166,213 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &weak,
         ),
         ("assert_eq!(flags | (a == b), X);", &weak),
+        // #8101: a wrapped test asserted true, and wrappers of plain values,
+        // still pin.
+        ("assert_eq!(Some(r == Err(E::Bad)), Some(true));", &err),
+        (
+            "assert_eq!(Ok::<bool, ()>(r == Err(E::Bad)), Ok(true));",
+            &err,
+        ),
+        ("assert_eq!(Some(x == 3), Some(true));", &exact),
+        ("assert_eq!(Some(matches!(r, Ok(3))), Some(true));", &exact),
+        (
+            "assert_eq!(Some(matches!(r, Ok(3))).unwrap(), true);",
+            &exact,
+        ),
+        // Review of 5f6ffed: a wrapper compared with a bare literal stays an
+        // unread call over its pattern.
+        ("assert_eq!(Wrapper(matches!(r, Ok(3))), true);", &weak),
+        ("assert_eq!(Foo::new(matches!(r, Ok(3))), true);", &weak),
+        (
+            "assert_eq!(Wrapper(matches!(r, Ok(3))).clone(), true);",
+            &weak,
+        ),
+        ("assert_eq!([x == 3; 2], [true; 2]);", &exact),
+        // Review of 6b1c3c4: an empty or unknown-length repeat holds no read
+        // value, a mismatched or arbitrary constructor pins nothing, and a
+        // repeat checked against a list of names compares the test with a
+        // non-literal.
+        ("assert_eq!([x == 3; 0], [true; 0]);", &weak),
+        ("assert_eq!([r == Err(E::Bad); n], [true; n]);", &weak),
+        (
+            "assert_eq!(Wrapper(matches!(r, Ok(3))), Other(true));",
+            &weak,
+        ),
+        (
+            "assert_eq!(Foo::new(matches!(r, Ok(3))), Foo::new(true));",
+            &weak,
+        ),
+        (
+            "assert_eq!(Foo::new(matches!(r, Ok(3))).unwrap(), true);",
+            &weak,
+        ),
+        (
+            "assert_eq!([r == Err(E::Bad); 2], [expected, other]);",
+            &weak,
+        ),
+        // Review of ed1a892ca: only `Some` and `Ok` unwrap to what they
+        // hold, a pattern in an empty or unknown-length repeat is held by
+        // nothing, a test paired with `false` is asserted false, and any
+        // other wrapper around a test fails closed.
+        (
+            "assert_eq!(SomeWrapper(matches!(r, Ok(3))).unwrap(), true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(Okay(matches!(r, Ok(3))).unwrap(), true);",
+            &weak,
+        ),
+        ("assert_eq!([matches!(r, Ok(3)); n], [true; n]);", &weak),
+        ("assert_eq!([matches!(r, Ok(3)); 0], [true; 0]);", &weak),
+        (
+            "assert_eq!([matches!(r, Err(E::Bad)); n], [expected; n]);",
+            &weak,
+        ),
+        (
+            "assert_eq!([r == Err(E::Bad), x == 1], [false, true]);",
+            &weak,
+        ),
+        ("assert_eq!(vec![r == Err(E::Bad), x == 1], v);", &weak),
+        (
+            "assert_eq!(Foo::new(r == Err(E::Bad)), Foo::new(true));",
+            &weak,
+        ),
+        ("assert_eq!(Wrapper(r == Err(E::Bad)), true);", &weak),
+        (
+            "assert_eq!(Foo::new(r == Err(E::Bad)).unwrap(), true);",
+            &weak,
+        ),
+        ("assert_eq!(Some(r == Err(E::Bad)).unwrap(), true);", &err),
+        (
+            "assert_eq!([r == Err(E::Bad), x == 1], [true, true]);",
+            &err,
+        ),
+        ("assert_eq!(Box::new(x == 3), Box::new(true));", &exact),
+        // #8615: a struct literal, a statement block and a field or method
+        // on a wrapper hold a test the same way a call does.
+        ("assert_eq!(Foo { ok: x == 1 }, f);", &weak),
+        ("assert_eq!(Some(Foo { ok: x == 1 }), Some(f));", &weak),
+        (
+            "assert_eq!(Foo { n: 0, ok: matches!(r, Ok(3)) }, f);",
+            &weak,
+        ),
+        ("assert_eq!(Foo { ok: x == 1 }, Foo { ok: true });", &weak),
+        ("assert_eq!(Foo { ok, n: x + 1 }, f);", &whole),
+        ("assert_eq!(Foo { n: f(a == b) }, f);", &whole),
+        ("assert_eq!(Wrapper(x == 1).0, flag);", &weak),
+        ("assert_eq!(Wrapper(x == 1).0, false);", &weak),
+        ("assert_eq!(Wrapper(x == 1).0, true);", &exact),
+        ("assert_eq!(Foo { ok: x == 1 }.ok, flag);", &weak),
+        (
+            "assert_eq!(Some(x == 3).unwrap_or(false), expected);",
+            &weak,
+        ),
+        ("assert_eq!(Some(x == 3).unwrap_or(false), true);", &weak),
+        ("assert_eq!(Some(x == 3).map(|b| !b), Some(true));", &weak),
+        ("assert_eq!(Wrapper(x).0, flag);", &exact),
+        ("assert_eq!(Some(x).unwrap_or(0), 3);", &exact),
+        ("assert_eq!(Foo::new({ let a = 1; a == b }), f);", &weak),
+        ("assert_eq!(Some({ x == 1 }), Some(f));", &weak),
+        ("assert_eq!(Foo::new({ let a = 1; a }), f);", &whole),
+        // Review of db31eba: field chains and bare blocks.
+        ("assert_eq!(Wrap(Wrap(x == 1)).0.0, false);", &weak),
+        (
+            "assert_eq!(Outer { inner: Inner { ok: x == 1 } }.inner.ok, e);",
+            &weak,
+        ),
+        ("assert_eq!({ let a = 1; a == b }, expected);", &weak),
+        ("assert_eq!({ x == 1 }, f);", &weak),
+        ("assert_eq!({ x == 1 }, true);", &whole),
+        ("assert_eq!({ let a = 1; a }, 1);", &whole),
+        ("assert_eq!(cfg.enabled.inner, 3);", &exact),
+        ("assert_eq!(Ok::<bool, ()>(x == 3).unwrap(), true);", &exact),
+        (
+            "assert_eq!(Some::<(u8, u8)>((1, 2)).unwrap(), (1, 2));",
+            &exact,
+        ),
+        // Review of 2136bbda8: a field read need not select the test.
+        (
+            "assert_eq!(Foo { ok: score(x) == 1, other: true }.other, true);",
+            &weak,
+        ),
+        ("assert_eq!(Wrapper(x == 1, true).1, true);", &weak),
+        ("assert_eq!(Foo { ok: x == 1 }.ok, true);", &whole),
+        (
+            "assert_eq!(custom::Option::Some(x == 3).unwrap(), true);",
+            &weak,
+        ),
+        ("assert_eq!(MyOption::Some(x == 3).unwrap(), true);", &weak),
+        (
+            "assert_eq!(std::option::Option::Some(x == 3).unwrap(), true);",
+            &exact,
+        ),
+        // Index reads, grouped and referenced wrappers, and bare tuples (#8654).
+        ("assert_eq!(vec![x == 1, y][0], expected);", &weak),
+        ("assert_eq!([x == 1, y][0], f);", &weak),
+        ("assert_eq!(f, [x == 1, y][0]);", &weak),
+        ("assert_eq!((Wrapper(x == 1)).0, flag);", &weak),
+        ("assert_eq!((Some(x == 3)).unwrap_or(false), e);", &weak),
+        ("assert_eq!(&Foo { ok: x == 1 }, &f);", &weak),
+        ("assert_eq!(&mut Foo { ok: x == 1 }, &mut f);", &weak),
+        ("assert_eq!((x == 1, y).0, e);", &weak),
+        ("assert_eq!(e, (x == 1, y).0);", &weak),
+        ("assert_eq!((x == 1, y), (f, y));", &weak),
+        ("assert_eq!((x == 1, y), (true, y));", &exact),
+        ("assert_eq!([x == 1][0], true);", &exact),
+        ("assert_eq!([x == 1, y][0], true);", &weak),
+        ("assert_eq!(table[i], expected);", &exact),
+        ("assert_eq!(&x, &y);", &exact),
+        ("assert_eq!((Wrapper(x == 1).0).clone(), flag);", &weak),
+        ("assert_eq!((x == 1,).0, true);", &exact),
+        ("assert_eq!((x == 1, y).0, true);", &weak),
+        ("assert_eq!((Wrapper(x == 1)).0, true);", &exact),
+        ("assert_eq!(&mut x, &mut y);", &exact),
+        ("assert_eq!((x == 1, /* note */).0, expected);", &weak),
+        (
+            "assert_eq!(&mut(Foo { ok: x == 1 }), &mut expected);",
+            &weak,
+        ),
+        (
+            "assert_eq!(&mut\nFoo { ok: x == 1 }, &mut expected);",
+            &weak,
+        ),
+        ("assert_eq!(&mutable, &other);", &exact),
+        ("assert_eq!(vec![x == 1, y][idx[0]], expected);", &weak),
+        ("assert_eq!(vec![vec![x == 1, y]][0][1], expected);", &weak),
+        ("assert_eq!(table[idx[0]], expected);", &exact),
+        // Negative controls for the helper branches.
+        ("assert_eq!(Foo::Some(x == 3).unwrap(), true);", &weak),
+        ("assert_eq!(m::Foo { ok: x == 1 }, f);", &weak),
+        ("assert_eq!(Foo { ok: x == 1, ..base }, f);", &weak),
+        ("assert_eq!(Foo { ok: m::f(x == 1) }, g);", &whole),
+        ("assert_eq!(1.5, x);", &exact),
+        ("assert_eq!(a..b, r);", &exact),
+        // Path spellings of the standard wrappers.
+        (
+            "assert_eq!(Box::<bool>::new(x == 3), Box::new(true));",
+            &exact,
+        ),
+        ("assert_eq!(Option::Some(x == 3), Some(true));", &exact),
+        (
+            "assert_eq!(Result::<bool, ()>::Ok(x == 3), Ok(true));",
+            &exact,
+        ),
+        ("assert_eq!(Option::Some(x == 3).unwrap(), true);", &exact),
+        ("assert_eq!(Option::Some(x == 3), Some(flag));", &weak),
+        ("assert_eq!(Some(x == 3), Option::Some(flag));", &weak),
+        // A trailing comma ends a list.
+        ("assert_eq!(vec![x == 3,], vec![true,]);", &exact),
+        ("assert_eq!(vec![x == 3], vec![true,]);", &exact),
+        ("assert_eq!([x == 3, y == 1], [true, true,]);", &exact),
+        ("assert_eq!([x == 3, y == 1,], [true, false]);", &weak),
+        ("assert_eq!([Pair(r == Err(E::Bad), 0); 2], [p, q]);", &weak),
+        ("assert_eq!(Some(r), Some(Err(E::Bad)));", &err),
+        ("assert_eq!(Some(x), Some(3));", &exact),
+        ("assert_eq!(Some(is_valid(x)), Some(false));", &exact),
+        ("assert_eq!(v, vec![1, 2]);", &exact),
+        ("assert_eq!(a == b.clone(), true);", &exact),
+        ("assert_eq!(x.unwrap(), 3);", &exact),
+        ("assert_eq!(r.clone(), Err(E::Bad));", &err),
         // Review of e2f22d1: a parenthesized type inside the conversion's
         // path, and a const-generic block or `->` inside a turbofish.
         (

@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_test_module_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
   ripr context --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_test_module_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:field_construction:721bb1ba --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --at src/lib.rs:17 --kind field_construction
 

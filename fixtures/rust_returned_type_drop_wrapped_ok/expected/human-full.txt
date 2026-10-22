@@ -1,0 +1,81 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_returned_type_drop_wrapped_ok/input
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING ./src/lib.rs:13
+  id: probe:src_lib.rs:field_construction:7199daa5
+
+Changed
+  before: n: x * 2
+  after:  n: x * 3
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  src/lib.rs::make
+  canonical gap: gap:rust:src/lib.rs:make:field_construction:field_construction:n_x*3
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach make: makes
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches constructed field: n: x * 3
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches constructed field: n: x * 3 (line 13)
+  - related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Ok(Cfg { n: 12 })); misses: no assertion pins `n: x * 3`
+  - source assertion argument value 12 at line 22
+  - source function argument value x = 4 at line 22
+
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator n: x * 3: No field-value assertion observes the constructed field: n: x * 3
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/input --diff <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/diff.patch --mode fast probe:src_lib.rs:field_construction:7199daa5
+  ripr context --root <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/input --diff <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/diff.patch --mode fast --at probe:src_lib.rs:field_construction:7199daa5
+
+WARNING ./src/lib.rs:13
+  id: probe:src_lib.rs:return_value:049680aa
+
+Changed
+  before: Ok(Cfg { n: x * 2 })
+  after:  Ok(Cfg { n: x * 3 })
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::make
+  canonical gap: gap:rust:src/lib.rs:make:return_value:return_value:ok_cfg_n_x*3
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach make: makes
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: Ok(Cfg { n: x * 3 })
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)
+  - local flow reaches returned value: Ok(Cfg { n: x * 3 }) (line 13)
+  - related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Ok(Cfg { n: 12 })); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 12 at line 22
+  - source function argument value x = 4 at line 22
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  The related test `makes` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/input --diff <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/diff.patch --mode fast probe:src_lib.rs:return_value:049680aa
+  ripr context --root <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/input --diff <cwd>/fixtures/rust_returned_type_drop_wrapped_ok/diff.patch --mode fast --at probe:src_lib.rs:return_value:049680aa

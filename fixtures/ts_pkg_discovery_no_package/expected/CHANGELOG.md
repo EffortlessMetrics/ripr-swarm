@@ -444,3 +444,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

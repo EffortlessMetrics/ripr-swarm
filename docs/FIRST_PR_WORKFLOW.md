@@ -117,7 +117,8 @@ ripr reports gap-ledger \
 For presentation/output-text changes or scoped Python/TypeScript repair-card findings,
 derive the PR-local route from the checked JSON output (this route projects
 presentation/output and Python/TypeScript/Perl findings only; a Rust-only
-finding produces no record, so use the repo-exposure ledger above):
+finding produces no record; for Rust findings read `ripr check` and start
+`ripr repair` instead):
 
 ```bash
 ripr check --root . --format json > target/ripr/reports/check.json

@@ -3,12 +3,16 @@ use std::convert::Infallible;
 use std::path::PathBuf;
 
 use super::{
-    ChangedFile, DIFF_FILE_LIMIT_ENV, ParsedDiff, is_new_path_marker, parse_old_path_marker,
-    parser_state,
+    ChangedFile, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker,
+    parse_old_path_marker, parser_state, path_marker_exceeds_depth_bound,
 };
 
 pub(super) fn parse_unbounded(input: &str) -> ParsedDiff {
-    match parse_lines(input.lines(), |_| Ok::<(), Infallible>(())) {
+    match parse_lines(
+        input.lines(),
+        |_| Ok::<(), Infallible>(()),
+        |_| Ok::<(), Infallible>(()),
+    ) {
         Ok(parsed) => parsed,
         Err(never) => match never {},
     }
@@ -18,18 +22,33 @@ pub(super) fn parse_bounded_lines<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
-    parse_lines(lines, |count| {
-        if count <= limit {
-            return Ok(());
-        }
-        Err(format!(
-            "diff_scope_oversized: at least {count} changed files exceed the \
-             {DIFF_FILE_LIMIT_ENV} limit ({limit}); parsing stopped before the \
-             remaining file bodies and analysis was not run. Repair route: reduce \
-             the diff scope, split the extraction PR, run a narrower diff, or \
-             raise the limit via {DIFF_FILE_LIMIT_ENV}=<number>."
-        ))
-    })
+    parse_lines(
+        lines,
+        |count| {
+            if count <= limit {
+                return Ok(());
+            }
+            Err(format!(
+                "diff_scope_oversized: at least {count} changed files exceed the \
+                 {DIFF_FILE_LIMIT_ENV} limit ({limit}); parsing stopped before the \
+                 remaining file bodies and analysis was not run. Repair route: reduce \
+                 the diff scope, split the extraction PR, run a narrower diff, or \
+                 raise the limit via {DIFF_FILE_LIMIT_ENV}=<number>."
+            ))
+        },
+        |raw| {
+            if !path_marker_exceeds_depth_bound(raw) {
+                return Ok(());
+            }
+            Err(format!(
+                "diff_path_too_deep: a diff path header exceeds the \
+                 {MAX_DIFF_PATH_COMPONENTS}-component path depth bound; parsing \
+                 stopped before the header was resolved and analysis was not run. \
+                 Repair route: regenerate the diff from a real checkout, whose \
+                 paths are far shallower than this bound."
+            ))
+        },
+    )
 }
 
 /// Both entry points use the same grammar and accepted-path map. The admission
@@ -39,6 +58,7 @@ pub(super) fn parse_bounded_lines<'a>(
 fn parse_lines<'a, E>(
     lines: impl Iterator<Item = &'a str>,
     mut admit_file_count: impl FnMut(usize) -> Result<(), E>,
+    mut admit_line: impl FnMut(&str) -> Result<(), E>,
 ) -> Result<ParsedDiff, E> {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
     let mut state = parser_state::ParserState::default();
@@ -47,6 +67,29 @@ fn parse_lines<'a, E>(
     // this file-count policy does not bound its bytes or a single large hunk.
     let mut lines = lines.peekable();
     while let Some(raw) = lines.next() {
+        if state.combined_quarantine()
+            && parse_old_path_marker(raw)
+            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+        {
+            // Quarantined parent columns remain inert until this grammar
+            // recognizes an unprefixed plain file boundary.
+            state.close_combined_quarantine();
+        }
+
+        if state.in_hunk()
+            && state.can_end_at_plain_boundary()
+            && parse_old_path_marker(raw)
+            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+        {
+            state.close_hunk();
+        }
+
+        // Decide whether ---/+++ is hunk data before path admission. A Git
+        // boundary can close even an unfinished hunk and resolves its old
+        // path immediately, so it must still be admitted before that work.
+        if (!state.in_hunk() && !state.combined_quarantine()) || raw.starts_with("diff --git ") {
+            admit_line(raw)?;
+        }
         if state.handle_diff_boundary(raw) {
             continue;
         }
@@ -69,23 +112,6 @@ fn parse_lines<'a, E>(
         if state.handle_rename_metadata(raw, &mut files) {
             admit_file_count(files.len())?;
             continue;
-        }
-
-        if state.combined_quarantine()
-            && parse_old_path_marker(raw)
-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
-        {
-            // Unprefixed plain markers may follow a combined hunk without a
-            // diff --git boundary; quarantined parent columns must stay inert.
-            state.close_combined_quarantine();
-        }
-
-        if state.in_hunk()
-            && state.can_end_at_plain_boundary()
-            && parse_old_path_marker(raw)
-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
-        {
-            state.close_hunk();
         }
 
         if state.register_path_marker(raw, &mut files) {
@@ -121,3 +147,6 @@ fn parse_lines<'a, E>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod path_admission_tests;

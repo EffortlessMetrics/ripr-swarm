@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0279-doc-use",
+  "origin": "authored",
+  "version_label": "authored 2026-10-18 for RIPR-SPEC-0279 example 2 (a doc example that imports the owner with use)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "691031773a13f06597c44af20385189d753fb566e1e65e8a84c81496198a309f"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c37a8f17f973768942ff739fcf1fa8919438306cc9dc26b0106080b8bb9d405c"
+    }
+  ]
+}

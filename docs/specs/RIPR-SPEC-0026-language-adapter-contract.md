@@ -116,7 +116,8 @@ Rust-only when only Rust is enabled.
 Routing rules:
 
 - `*.rs` → Rust adapter (always).
-- `*.ts`, `*.tsx`, `*.mts`, `*.cts` → TypeScript adapter (preview, opt-in).
+- `*.ts`, `*.tsx`, `*.mts`, `*.cts` → TypeScript adapter (preview; auto-enabled by
+  project detection when no `ripr.toml` exists).
 - `*.js`, `*.jsx`, `*.mjs`, `*.cjs` → TypeScript-family adapter with
   JavaScript preview labels (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
@@ -139,7 +140,14 @@ enabled = ["rust"]
 The default `enabled` value is `["rust"]`. Preview adapters do not run
 when absent from explicit `enabled`. When `ripr.toml` is missing, a
 language-specific project detector may add a preview adapter for a recognized
-project root; Python project detection is the first such exception. A
+project root. Python project detection is the first such exception;
+TypeScript project detection follows it, selecting the TypeScript adapter
+from a root `tsconfig.json` or `jsconfig.json`, or from detectable
+TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`; not generated names,
+`.d.ts` declarations or excluded directories) below root `src` or `tests`. `package.json` and
+JavaScript source files without a `tsconfig.json` or `jsconfig.json` do not
+select it (a `jsconfig.json` does mark a JavaScript project). A binary built without
+`lang-typescript` ignores the detector silently. A
 `--languages rust,typescript` CLI flag overrides config when needed.
 
 An explicit `ripr.toml` is authoritative. For example, a Python-shaped

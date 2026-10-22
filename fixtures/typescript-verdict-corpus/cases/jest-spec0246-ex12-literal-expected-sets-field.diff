@@ -1,0 +1,11 @@
+diff --git a/src/settingsPinned.ts b/src/settingsPinned.ts
+index 0000000..1111111 100644
+--- a/src/settingsPinned.ts
++++ b/src/settingsPinned.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function pinOk(cfg: Flags): Flags {
+-  return { ...cfg, ok: true };
++  return { ...cfg };
+ }

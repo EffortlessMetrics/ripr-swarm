@@ -1,0 +1,305 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_returned_error_drop_exit/input",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:74315a051a3c5fa1acc03c91dc696e59c8f936f331ff0092186daf2810ea5e3f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:error_path:ac1e8194",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse:error_variant:error_path:err_cfg_n_x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse:error_variant:error_path:err_cfg_n_x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_cfg_n_x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:ac1e8194",
+        "family": "error_path",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "Err(Cfg { n: x * 3 })"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse: parses"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach parse: parses", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "local flow reaches error variant: Result::Err(Cfg { n: x * 3 }) (line 13)", "related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 }));", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(Cfg { n: x * 3 })","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })", "Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse: parses"],
+      "missing": ["No exact error variant discriminator was detected"],
+      "assertion_texts": {
+        "22": "assert_eq!(parse(4), Err(Cfg { n: 12 }));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "12",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "12",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "parses",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "assert_eq!(parse(4), Err(Cfg { n: 12 }));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `parses` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
+      "suggested_next_action": "The related test `parses` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:field_construction:9382a2f4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse:field_construction:field_construction:n_x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse:field_construction:field_construction:n_x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "n_x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:9382a2f4",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "n: x * 3"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse: parses"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: n: x * 3"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach parse: parses", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: n: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: n: x * 3 (line 13)", "related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 }));", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22", "missing discriminator n: x * 3: No field-value assertion observes the constructed field: n: x * 3"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"n: x * 3","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: n: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse: parses"],
+      "missing": ["Missing discriminator value: n: x * 3", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "assert_eq!(parse(4), Err(Cfg { n: 12 }));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "12",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "n: x * 3",
+            "reason": "No field-value assertion observes the constructed field: n: x * 3",
+            "flow_sink": {"kind":"struct_field","text":"n: x * 3","line":13}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "12",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "n: x * 3",
+          "reason": "No field-value assertion observes the constructed field: n: x * 3",
+          "flow_sink": {"kind":"struct_field","text":"n: x * 3","line":13}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "parses",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "assert_eq!(parse(4), Err(Cfg { n: 12 }));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `n: x * 3`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:0c35ce00",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse:return_value:return_value:err_cfg_n_x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse:return_value:return_value:err_cfg_n_x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_cfg_n_x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:0c35ce00",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "Err(Cfg { n: x * 3 })"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse: parses"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach parse: parses", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "local flow reaches error variant: Result::Err(Cfg { n: x * 3 }) (line 13)", "related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 }));", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(Cfg { n: x * 3 })","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(Cfg { n: x * 3 })", "Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse: parses"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "assert_eq!(parse(4), Err(Cfg { n: 12 }));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "12",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "12",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "parses",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "assert_eq!(parse(4), Err(Cfg { n: 12 }));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `parses` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `parses` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

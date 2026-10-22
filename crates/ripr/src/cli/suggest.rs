@@ -75,6 +75,27 @@ pub(in crate::cli) fn unknown_value(label: &str, value: &str, accepted: &[&str])
     }
 }
 
+/// Build the error for an unrecognized `ripr check --format` value.
+///
+/// The check format catalog carries 23 entries; a first-run typo should meet
+/// the handful of formats that answer "how do I read the output" plus a
+/// pointer to the exhaustive reference, not a wall of badge/repo report
+/// names (#9359). The near-miss suggestion still names the fix when one
+/// format is close enough (#4318).
+pub(in crate::cli) fn unknown_format_value(value: &str, accepted: &[&str]) -> String {
+    match closest(value, accepted.iter().copied()) {
+        Some(suggestion) => format!(
+            "unknown format {value:?}. Did you mean `{suggestion}`? \
+             Run `ripr check --help --all` for every accepted format."
+        ),
+        None => format!(
+            "unknown format {value:?}. Common analysis formats: \
+             human, human-full, json, github, sarif. \
+             Run `ripr check --help --all` for every accepted format."
+        ),
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be
@@ -256,6 +277,7 @@ fn option_section(command: &str) -> Option<&'static str> {
         "pr-comments existing" => Some("Existing options:"),
         "pr-comments plan" => Some("Plan options:"),
         "pr-comments requests" => Some("Requests options:"),
+        "pr-comments summary" => Some("Summary options:"),
         "reports index" => Some("Index options:"),
         "reports ci-packet" => Some("CI packet options:"),
         "reports ci-summary" => Some("CI summary options:"),

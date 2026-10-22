@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0201-ex02-same-class-name-from-other-module",
+  "subject_id": "authored-py-pytest-self-reach",
+  "origin": "authored",
+  "anchor": "reach/table_other.py:3",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_same_class_name_other_module",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
