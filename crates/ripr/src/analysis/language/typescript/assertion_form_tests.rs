@@ -330,19 +330,33 @@ fn rejects_substring_regex_in_both_messages_stays_weak() -> Result<(), String> {
 
 const AUDIT_AFTER: &str = "export const sink = {\n  write(line: string): void {\n    void line;\n  },\n};\n\nexport function record(event: string): string {\n  const line = `event:${event}`;\n  void line;\n  return line;\n}\n";
 
-fn audit_test(spy: &str, expected: &str) -> String {
+fn audit_test(spy: &str, assertion: &str) -> String {
     format!(
-        "import {{ mock, test }} from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ record, sink }} from \"../src/audit\";\n\ntest(\"record writes once\", () => {{\n  {spy}\n  record(\"login\");\n  assert.equal(write.mock.callCount(), {expected});\n}});\n"
+        "import {{ mock, test }} from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ record, sink }} from \"../src/audit\";\n\ntest(\"record writes once\", () => {{\n  {spy}\n  record(\"login\");\n  {assertion}\n}});\n"
     )
 }
 
 fn removed_call(spy: &str, expected: &str, label: &str) -> Result<Finding, String> {
+    removed_call_with(
+        AUDIT_AFTER,
+        spy,
+        &format!("assert.equal(write.mock.callCount(), {expected});"),
+        label,
+    )
+}
+
+fn removed_call_with(
+    src: &str,
+    spy: &str,
+    assertion: &str,
+    label: &str,
+) -> Result<Finding, String> {
     finding_for(
         label,
         NODE_TEST,
         &[
-            ("src/audit.ts", AUDIT_AFTER),
-            ("test/audit.test.ts", &audit_test(spy, expected)),
+            ("src/audit.ts", src),
+            ("test/audit.test.ts", &audit_test(spy, assertion)),
         ],
         &replace_diff("src/audit.ts", 9, "  sink.write(line);", "  void line;"),
         9,
@@ -381,5 +395,135 @@ fn void_replacement_stays_unrecognised_when_the_count_is_zero() -> Result<(), St
         "void-zero-count",
     )?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const SPY: &str = "const write = mock.method(sink, \"write\", () => undefined);";
+
+/// Negative: a lower bound (`>= 1`, `> 0`) is a relational check, not a pin.
+#[test]
+fn void_replacement_stays_unrecognised_for_a_count_lower_bound() -> Result<(), String> {
+    for assertion in [
+        "assert.ok(write.mock.callCount() >= 1);",
+        "assert.ok(write.mock.callCount() > 0);",
+    ] {
+        let finding = removed_call_with(AUDIT_AFTER, SPY, assertion, "void-lower-bound")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{assertion}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Negative: a loop may run the removed call many times, so one removed
+/// iteration need not change the count the test pins.
+#[test]
+fn void_replacement_stays_unrecognised_in_an_owner_with_a_loop() -> Result<(), String> {
+    let looped = AUDIT_AFTER.replace(
+        "  void line;\n  return line;",
+        "  for (let i = 0; i < 2; i++) {\n    void line;\n  }\n  return line;",
+    );
+    let diff = replace_diff(
+        "src/audit.ts",
+        10,
+        "    sink.write(line);",
+        "    void line;",
+    );
+    let finding = finding_for(
+        "void-loop",
+        NODE_TEST,
+        &[
+            ("src/audit.ts", &looped),
+            (
+                "test/audit.test.ts",
+                &audit_test(SPY, "assert.equal(write.mock.callCount(), 2);"),
+            ),
+        ],
+        &diff,
+        10,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// Negative: chai tests `instanceof`, so a subclass or an alias of the
+/// pinned class still passes; only a swap of built-in siblings separates.
+#[test]
+fn chai_class_stays_weak_unless_built_in_siblings_swap() -> Result<(), String> {
+    let validation = r#"throw new ValidationError("lo above hi");"#;
+    let field = r#"throw new FieldValidationError("lo above hi");"#;
+    for (check, old, new, label) in [
+        ("ValidationError", validation, field, "chai-subclass"),
+        ("Error", RANGE, TYPE, "chai-bare-error"),
+        ("RangeError", RANGE, validation, "chai-user-class"),
+        (
+            r#"ValidationError, "lo above hi""#,
+            validation,
+            field,
+            "chai-subclass-msg",
+        ),
+    ] {
+        let finding = chai_class(check, old, new, label)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: {finding:?}"
+        );
+    }
+    let finding = chai_class("TypeError", RANGE, TYPE, "chai-sibling-swap")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// Negative: a negated class check and a regex argument are not pins.
+#[test]
+fn chai_negated_class_and_regex_stay_weak() -> Result<(), String> {
+    for (check, label) in [
+        ("/lo above/", "chai-regex"),
+        ("RangeError, /lo/", "chai-class-regex"),
+    ] {
+        let finding = chai_class(check, RANGE, TYPE, label)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: {finding:?}"
+        );
+    }
+    let test = chai_test("RangeError").replace(".to.throw", ".to.not.throw");
+    let finding = finding_for(
+        "chai-not-class",
+        MOCHA,
+        &[
+            ("src/range.ts", &RANGE_SRC_AFTER.replace("THROW", TYPE)),
+            ("test/range.test.ts", &test),
+        ],
+        &replace_diff(
+            "src/range.ts",
+            3,
+            &format!("    {RANGE}"),
+            &format!("    {TYPE}"),
+        ),
+        3,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+/// Negative: with another path that can throw the pinned text, a readable
+/// message change is not shown to separate the versions.
+#[test]
+fn rejects_regex_stays_weak_with_another_throwing_path() -> Result<(), String> {
+    let boom = r#"throw new Error("boom");"#;
+    let bang = r#"throw new Error("bang");"#;
+    let second = "  if (attempts < 0) throw new Error(\"boom\");";
+    let finding = rejects_retry("/boom/", boom, bang, second, "rejects-readable-second")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let call = "  helper();";
+    let finding = rejects_retry("/boom/", boom, bang, call, "rejects-readable-call")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let finding = rejects_retry("/boom/", boom, bang, "", "rejects-readable-sole")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

@@ -520,7 +520,7 @@ strong:
   one argument that is a string literal (chai matches it as a substring
   of the message, as Jest matches `toThrow("...")`), exactly one argument
   that is a PascalCase class reference (as Jest's `toThrow(Class)`), or a
-  class reference followed by a string literal (both must match). A regex,
+  class reference followed by a string literal (both must match). chai tests `instanceof`, so a class change credits only when both sides construct distinct built-in sibling classes (`TypeError`, `RangeError`, `SyntaxError`, `EvalError`, `URIError`, `ReferenceError`) and the check names one; a subclass, alias, user class or `Error` credits only through the message. A regex,
   an instance, a lowercase or computed reference, a non-literal message and
   a third argument stay broad. (Amended 2026-10-22, #9496: the class forms.)
 - `node:assert` / `assert/strict` `match(value, regex)` whose regex is
@@ -565,7 +565,9 @@ binds `const spy = mock.method(receiver, "method", ...)` (or
 `spy.mock.calls.length` to a positive literal, and the owner has no loop and
 runs the changed line once (the `MockCallFacts` condition of RIPR-SPEC-0247
 rule 1). A spy on another method or receiver, an unbound spy and a count of
-zero leave the line unrecognised.
+zero leave the line unrecognised. The receiver and method match by
+identifier name only (an alias of `sink` is not followed), and a lower
+bound such as `callCount() >= 1` is not a pin.
 
 **Rule 17. A plain substring regex in `assert.throws` / `assert.rejects`
 pins the error only when the change separates it (2026-10-22, #9496).** A
@@ -576,7 +578,7 @@ rule 4's guard in one of two cases. When both thrown messages are readable
 When the old line only rethrows a local (`throw lastError;`), the new
 `String(err)` is readable, does not contain the text, and the changed line
 is the owner's only `throw` (no `reject`, no `new Promise`), so a test that
-passes on the old code reaches it and fails on the edit. Otherwise it reads
+passes on the old code reaches it and fails on the edit. Both cases need the changed line to be the owner's only `throw` and the owner to call nothing but its own parameters (any member call or other function may throw the pinned text); otherwise the check reads `broad_error` / weak. Otherwise it reads
 `broad_error` / weak. An anchored or wider regex follows rule 10.
 
 ### Aggregation

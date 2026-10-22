@@ -5229,7 +5229,7 @@ pub(crate) fn classify_change_with_alias_state(
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
     let error_facts = ErrorChangeFacts::read(old_line_text, line_text)
-        .with_owner_source(owner.source_text.as_deref());
+        .with_owner_source(owner.source_text.as_deref(), &owner.params);
     // RIPR-SPEC-0247 rule 1 reads the owner body only when an effect seam
     // has a related mock payload to credit.
     let reads_mock_payload = matches!(

@@ -104,8 +104,14 @@ fn observes_call_count(assertion: &TypeScriptAssertion, binding: &str) -> bool {
 /// `t.mock.method(receiver, "method", ...)` by a `const` / `let` in `body`.
 fn spy_bindings(body: &str, receiver: &str, method: &str) -> Vec<String> {
     let mut bindings = Vec::new();
+    // Find the call in code only: a string or comment that spells it binds
+    // nothing. The mask keeps offsets, so arguments are read from `body`.
+    let masked = ts_mask_literals_and_comments(body);
+    if masked.len() != body.len() {
+        return bindings;
+    }
     let mut search_from = 0;
-    while let Some(found) = body[search_from..].find("mock.method(") {
+    while let Some(found) = masked[search_from..].find("mock.method(") {
         let at = search_from + found;
         search_from = at + "mock.method(".len();
         let args = &body[search_from..];
@@ -187,5 +193,8 @@ mod tests {
         assert!(spy_bindings(body, "other", "write").is_empty());
         // An unbound spy cannot be counted.
         assert!(spy_bindings("mock.method(sink, \"write\");", "sink", "write").is_empty());
+        // A spy spelled inside a string or a comment binds nothing.
+        let phantom = "const note = 'const write = mock.method(sink, \"write\")';\n// const write = mock.method(sink, \"write\");\n";
+        assert!(spy_bindings(phantom, "sink", "write").is_empty());
     }
 }
