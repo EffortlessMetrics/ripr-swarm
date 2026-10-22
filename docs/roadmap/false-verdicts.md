@@ -38,11 +38,11 @@ spec or the analyzer. Never exclude or reclassify it.
 | TS silent enum member edit | `shape-enum-member-value-unread` | #9436 |
 | Python language shapes | nine `py-shapes-*` cases | #9412 |
 | Python idioms | `py-idioms-caplog-message`, `-caplog-level` (#9424), `-approx-constant-within-tolerance` (#9428), `-unittest-setup-sign` (#9412) | see each |
-| TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436), `hostile-minified-line-pinned` (#9435) | see each |
+| TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436) | see each |
 | TS mocha and node:test | nine false actionable rows (`mocha-*`, `node-*`) | #9496 |
 | TS skip and unexercised bound credited | `mocha-it-skip-sole-pin`, `mocha-clamp-unexercised-lower-arm`, `node-t-skip-inside-test`, `node-first-attempt-nonnegative-bound` | #9497 |
 | TS operator grid | `ts-grid-*` (eleven rows) | #9515, #9532, #9533, #9534 |
-| Python operator grid | `py-grid-*` (seven rows) | #9542 |
+| Python operator grid | `py-grid-*` (seven rows): the original three bare-boolean rows, then `-arithmetic-property`, `-arithmetic-table`, `-delete-helper`, `-returns-property` | #9542 (three), #9594 (four) |
 | Python hostile inputs | `py-hostile-*` (five rows) | #9415, #9419, #9423, #9426 |
 
 ## Gate
