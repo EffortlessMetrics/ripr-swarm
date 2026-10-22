@@ -13389,7 +13389,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13418,6 +13418,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9442: a test in an integration-test file sees the owner only as a
+        // value through the crate's public path; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/indirect_owner.rs",
     ];
 
     let files = tracked_files()?;
