@@ -2052,7 +2052,17 @@ fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String
     let finding = last_finding(
         "from src.subject import last\n\ndef test_default():\n    for iterable, default in [([], None), (iter([]), None)]:\n        assert last(iterable, default=default) == default\n",
     )?;
-    last_does_not_vary_default(&finding);
+    // `last(iterable, default=default) == default` hands the expected value to
+    // the call, so it is a property check (rule 25) and a weak oracle before
+    // the table analysis, which reads only strong oracles, runs.
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.oracle_strength == OracleStrength::Weak),
+        "{finding:?}"
+    );
     Ok(())
 }
 

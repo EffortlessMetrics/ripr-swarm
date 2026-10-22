@@ -48,7 +48,7 @@ fn given_a_loop_variable_returned_by_the_owner_then_the_identity_property_pins_n
         "    for n in range(3):\n        assert g(f(n)) == n\n",
         "    for v in (1, 2):\n        assert decode(encode(v)) == v\n",
         "    for [a, n] in [(1, 2)]:\n        assert f(a, n) == n\n",
-        "    for n in range(3):\n        if n:\n            assert f(1, n) == n\n",
+        "    for k in range(3):\n        if k > 0:\n            assert f(1, k) == k\n",
     ] {
         assert_eq!(strength_of(body), OracleStrength::Weak, "{body}");
     }
