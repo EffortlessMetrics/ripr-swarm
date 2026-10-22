@@ -881,7 +881,6 @@ code = [
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/syntax/name_scope.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
-  "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/visibility.rs",
   "crates/ripr/src/analysis/facts/member_crates.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
