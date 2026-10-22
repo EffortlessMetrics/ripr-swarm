@@ -5411,3 +5411,160 @@ fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Res
     assert!(reason.contains("not parsed"), "{reason}");
     Ok(())
 }
+
+// ---- #9599: gap-ledger path with a producer coverage disclosure ----
+
+/// Real chain for one project: full Rust inventory -> repo-exposure JSON
+/// (production writer) -> gap decision ledger (production builder/renderer).
+fn e2e_real_ledger(lib_source: &str) -> Result<String, String> {
+    use crate::output::gap_decision_ledger::{
+        GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+        render_gap_decision_ledger_json,
+    };
+    let root = temp_dir("gate-e2e-ledger-9599")?;
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    let config = crate::config::RiprConfig::default();
+    let report = crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
+    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
+        report.skipped_generated.clone(),
+        report.naming_only_skips.clone(),
+        report.declined_rust_files.clone(),
+    );
+    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+        root.clone(),
+        "draft".to_string(),
+        None,
+        &config,
+    )?
+    .with_rust_corpus_key(report.corpus_key.as_ref());
+    let mut bytes = Vec::new();
+    crate::output::repo_exposure::write_repo_exposure_json_with_context(
+        &report.classified,
+        report.limit_info.as_ref(),
+        None,
+        None,
+        generated_skip.as_ref(),
+        &context,
+        &mut bytes,
+    )?;
+    let exposure = String::from_utf8(bytes).map_err(|err| err.to_string())?;
+    let ledger = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        root: root.to_string_lossy().to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+        records_path: "repo-exposure.json".to_string(),
+        records_json: Ok(exposure),
+    });
+    let rendered = render_gap_decision_ledger_json(&ledger)?;
+    ignore_remove_dir_all(root);
+    Ok(rendered)
+}
+
+#[test]
+fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let ledger0 = e2e_real_ledger(shallow)?;
+    let ledger0_value: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    let records = ledger0_value["records"]
+        .as_array()
+        .ok_or("records missing")?;
+    assert!(!records.is_empty(), "{ledger0}");
+    assert_eq!(
+        ledger0_value["analysis_coverage"]["scope"], "rust_workspace",
+        "{ledger0}"
+    );
+
+    // Baseline entries derived from the real gate decision over this ledger
+    // (repo-scoped records are not gate candidates, so `baseline create`
+    // would skip them; the identity fields are copied, not authored).
+    let gate0 = e2e_gate_json(None, Some(&ledger0))?;
+    let gate0_value: Value = serde_json::from_str(&gate0).map_err(|err| err.to_string())?;
+    let entries = gate0_value["decisions"]
+        .as_array()
+        .ok_or("decisions missing")?
+        .iter()
+        .map(|decision| {
+            json!({
+                "identity": {"canonical_gap_id": decision["canonical_gap_id"].clone()},
+                "path": decision["placement"]["path"].clone(),
+                "line": decision["placement"]["line"].clone(),
+                "static_class": decision["static_class"].clone(),
+                "decision": "advisory",
+            })
+        })
+        .collect::<Vec<_>>();
+    let captured = entries.len();
+    assert!(captured >= 1, "{gate0}");
+    assert_eq!(entries[0]["path"], "src/lib.rs");
+    let baseline = serde_json::to_string(&json!({
+        "schema_version": "0.1",
+        "kind": "gate_baseline",
+        "entries": entries,
+    }))
+    .map_err(|err| err.to_string())?;
+
+    // Analyzed fixed gap: the file is gone from the records but the producer
+    // disclosed whole-workspace coverage, so every captured entry resolves.
+    let fixed = e2e_real_ledger("pub fn unrelated() {}\n")?;
+    let (delta, after, updated) = e2e_delta_and_update_with(None, Some(&fixed), &baseline)?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], captured as u64, "{delta}");
+    assert_eq!(after, 0, "{updated}");
+
+    // Filtered ledger, same file: the surviving record set no longer matches
+    // the coverage digest, so absence proves nothing and nothing is removed.
+    let mut filtered: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    filtered["records"] = json!([]);
+    let filtered = serde_json::to_string(&filtered).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&filtered), &baseline)?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Parser-declined file: the producer run is not complete, so there is no
+    // coverage disclosure and the same baseline stays not_evaluated.
+    let declined = format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let declined_ledger = e2e_real_ledger(&declined)?;
+    let declined_value: Value =
+        serde_json::from_str(&declined_ledger).map_err(|err| err.to_string())?;
+    assert!(declined_value.get("analysis_coverage").is_none());
+    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&declined_ledger), &baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A non-Rust baseline path is outside what the Rust workspace run read.
+    let mut python_baseline: Value =
+        serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+    if let Some(entries) = python_baseline["entries"].as_array_mut() {
+        for entry in entries {
+            entry["path"] = json!("scripts/tool.py");
+        }
+    }
+    let python_baseline = serde_json::to_string(&python_baseline).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_with(None, Some(&fixed), &python_baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+    Ok(())
+}

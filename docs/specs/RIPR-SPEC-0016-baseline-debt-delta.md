@@ -284,8 +284,16 @@ bucket:
   --remove-resolved` keeps it through the shared
   `absence_not_evaluated_reason` predicate. A `gap_ledger_artifact` scope lists
   only the surviving ledger records' anchor files, not the files analyzed, so it
-  always yields `not_evaluated` until the ledger path discloses real analyzed
-  files (limitation tracked in #9599).
+  always yields `not_evaluated`. The ledger path can instead carry a producer
+  coverage disclosure (#9599): a ledger built from a complete `ripr check
+  --format repo-exposure-json` run (`run_status: complete`, no seam limit, no
+  parse-declined or skipped generated Rust files, and a stamped Rust-workspace
+  corpus identity) records `analysis_coverage` with the digest of its exact
+  record set. `gate evaluate` emits the `rust_workspace_complete` scope only
+  while that digest still matches the ledger's records, so a filtered or edited
+  ledger falls back to `gap_ledger_artifact`. Under `rust_workspace_complete`
+  an absent entry resolves when its path is a Rust source (`.rs`); every other
+  path stays `not_evaluated`.
   Coverage is file-level by construction: the seam selector matches every seam in
   a working-set file (changed line, changed owner, related test, else same-file),
   so a seam in a covered file is either present in the decisions or counted in

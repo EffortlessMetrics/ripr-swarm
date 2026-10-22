@@ -112,6 +112,7 @@ pub(super) fn read_gap_ledger_impl(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
     consumed: &mut ConsumedInputHashes,
+    coverage: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
@@ -185,6 +186,11 @@ pub(super) fn read_gap_ledger_impl(
                     ));
                 }
                 return Some(Vec::new());
+            }
+            // #9599: a producer coverage disclosure counts only while it still
+            // describes exactly this record set.
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                *coverage = gap_decision_ledger::verified_analysis_coverage(&value, &records);
             }
             Some(records)
         }

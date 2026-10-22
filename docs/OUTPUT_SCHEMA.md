@@ -3787,6 +3787,18 @@ no seam names a file or a named file cannot be read. `content_sha256` covers it
 like any other member. The gap ledger and `actionable-gaps.json` derived from
 this snapshot copy their stamps from it.
 
+The gap decision ledger built from a snapshot of this kind
+(`ripr reports gap-ledger --repo-exposure`) additionally carries an optional
+top-level `analysis_coverage` (#9599) only when the snapshot is a complete
+whole-Rust-workspace run (`run_status: complete`, no `limitations[]` entry other
+than TypeScript/Python guidance, a `source_subject.corpus` identity, and no
+`run_limitations`/incomplete `analysis_outcome`): `scope` (`rust_workspace`),
+`basis` (`repo_exposure_complete_run`), `run_status`, `corpus`, `records_total`
+and `records_digest` (a digest of the sorted `gap_id`s of the ledger's records).
+`gate evaluate --gap-ledger` honors it only while the ledger's records still
+match the count and digest; otherwise it is ignored. The field is omitted for
+every other source or a limited run, so existing ledgers are byte-stable.
+
 ### Repo Exposure Summary JSON
 
 `ripr check --root . --format repo-exposure-summary-json` emits a bounded
@@ -10141,7 +10153,11 @@ Field contract:
   targets instead of raw PR guidance candidates.
 - `analysis_scope` - additive (#9301). The candidate source's `analysis_scope`
   copied verbatim: from the `--pr-guidance` review-comments document, or the
-  `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
+  `gap_ledger_artifact` scope for `--gap-ledger`, or `rust_workspace_complete`
+  (`run_status`, `basis = "repo_exposure_complete_run"`, the producer's `corpus`
+  identity, `records_total`, `records_digest`; #9599) when the ledger carries a
+  verified `analysis_coverage` disclosure from a complete repo-exposure run.
+  Omitted when the evaluation
   is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
   whether a baseline entry absent from `decisions` was actually analyzed. A
   review-comments scope also carries `cap_omitted_seams` (seams dropped by the
@@ -10742,7 +10758,8 @@ Field contract:
   present only on a `stale_baseline_entry` item whose baseline entry is absent
   from current evidence but whose file the current `analysis_scope` does not
   cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
-  is a `gap_ledger_artifact` scope, tracked in #9599). `evaluation` is
+  is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers Rust
+  paths only, #9599). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`

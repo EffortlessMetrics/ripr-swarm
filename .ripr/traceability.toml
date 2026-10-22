@@ -2348,6 +2348,11 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::e2e_non_rust_changed_files_are_not_covered_by_seam_analysis",
   "crates/ripr/src/output/gate/tests.rs::e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated",
   "crates/ripr/src/output/gate/tests.rs::e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt",
+  "crates/ripr/src/output/gate/tests.rs::e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::analysis_coverage_is_verified_against_the_exact_record_set",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity",
+  "crates/ripr/src/output/review_comments.rs::tests::parser_declined_files_markdown_names_the_limitation_and_stays_inert",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_production_files_partition_parsed_from_parser_declined",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

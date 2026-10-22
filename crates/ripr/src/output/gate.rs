@@ -125,7 +125,13 @@ pub(crate) fn build_gate_decision_report(
         }
         None => Value::Null,
     };
-    let gap_ledger = read_gap_ledger(input, &mut config_errors, &mut consumed);
+    let mut gap_ledger_coverage = None;
+    let gap_ledger = read_gap_ledger(
+        input,
+        &mut config_errors,
+        &mut consumed,
+        &mut gap_ledger_coverage,
+    );
     warn_for_optional_json(
         &input.root,
         input.repo_exposure.as_ref(),
@@ -225,9 +231,12 @@ pub(crate) fn build_gate_decision_report(
     // so a baseline entry elsewhere is not evidence of resolution.
     let analysis_scope = if config_errors.is_empty() {
         match gap_ledger.as_ref() {
-            Some(records) => {
-                Some(crate::output::review_comments::gap_ledger_analysis_scope_json(records))
-            }
+            Some(records) => Some(
+                crate::output::review_comments::gap_ledger_analysis_scope_json(
+                    records,
+                    gap_ledger_coverage.as_ref(),
+                ),
+            ),
             None => pr_guidance
                 .get("analysis_scope")
                 .filter(|scope| scope.is_object())
@@ -488,8 +497,9 @@ fn read_gap_ledger(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
     consumed: &mut input::ConsumedInputHashes,
+    coverage: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
-    input::read_gap_ledger_impl(input, config_errors, consumed)
+    input::read_gap_ledger_impl(input, config_errors, consumed, coverage)
 }
 
 fn read_recommendation_calibration(

@@ -1475,9 +1475,12 @@ pub(super) fn absence_not_evaluated_reason(
         .get("scope")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    if kind == "rust_workspace_complete" {
+        return workspace_scope_not_evaluated_reason(scope, entry_path);
+    }
     if kind == "gap_ledger_artifact" {
         return Some(
-            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution (a real analyzed-files disclosure for the ledger path is tracked in #9599)"
+            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution (regenerate the ledger from a complete `ripr check --format repo-exposure-json` run with `reports gap-ledger --repo-exposure` so it discloses workspace coverage, #9599)"
                 .to_string(),
         );
     }
@@ -1608,6 +1611,47 @@ pub(super) fn absence_not_evaluated_reason(
     } else {
         Some(format!(
             "`{path}` is outside the files the current analysis covered (scope `{kind}`)"
+        ))
+    }
+}
+
+/// Coverage by a producer-disclosed complete whole-Rust-workspace run (#9599,
+/// the gap-ledger path). The disclosure is independent of which records
+/// survive, and `gate evaluate` only emits it while the ledger still holds
+/// exactly the record set it was made for. Any non-Rust path (Python,
+/// TypeScript, Markdown, ...) was never read by that analysis.
+fn workspace_scope_not_evaluated_reason(scope: &Value, entry_path: Option<&str>) -> Option<String> {
+    let well_formed = scope.get("run_status").and_then(Value::as_str) == Some("complete")
+        && scope.get("basis").and_then(Value::as_str) == Some("repo_exposure_complete_run")
+        && scope.pointer("/corpus/scope").and_then(Value::as_str) == Some("rust_workspace")
+        && scope.pointer("/corpus/unavailable").is_none()
+        && scope
+            .pointer("/corpus/files_content_hash")
+            .and_then(Value::as_str)
+            .is_some()
+        && scope
+            .get("records_digest")
+            .and_then(Value::as_str)
+            .is_some();
+    if !well_formed {
+        return Some(
+            "the current gate decision's workspace coverage disclosure is malformed or incomplete, so file coverage is not established"
+                .to_string(),
+        );
+    }
+    let Some(path) = entry_path
+        .map(normalize_scope_path)
+        .filter(|p| !p.is_empty())
+    else {
+        return Some(
+            "the baseline entry has no path to join against the analyzed scope".to_string(),
+        );
+    };
+    if path.ends_with(".rs") {
+        None
+    } else {
+        Some(format!(
+            "`{path}` is not a Rust file, and the complete workspace run covered Rust sources only"
         ))
     }
 }
@@ -3993,6 +4037,35 @@ mod tests {
             object.remove("scope");
         }
         assert!(reason(&no_kind, Some("src/a.rs")).is_some_and(|r| r.contains("unknown")));
+        // Complete whole-Rust-workspace coverage from the ledger path (#9599):
+        // Rust paths are covered, non-Rust and malformed disclosures are not.
+        let workspace = json!({
+            "scope": "rust_workspace_complete",
+            "run_status": "complete",
+            "basis": "repo_exposure_complete_run",
+            "corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"},
+            "records_digest": "sha256:00",
+        });
+        assert!(reason(&workspace, Some("src/anywhere/new.rs")).is_none());
+        assert!(reason(&workspace, Some("./src\\win.rs")).is_none());
+        assert!(reason(&workspace, Some("scripts/tool.py")).is_some_and(|r| r.contains("Rust")));
+        assert!(reason(&workspace, None).is_some());
+        for broken in [
+            json!({"run_status": "limited"}),
+            json!({"basis": "other"}),
+            json!({"corpus": {"scope": "other", "files_content_hash": "x"}}),
+            json!({"corpus": {"scope": "rust_workspace"}}),
+            json!({"corpus": {"scope": "rust_workspace", "files_content_hash": "x", "unavailable": "root"}}),
+            json!({"records_digest": 7}),
+        ] {
+            let mut scope_value = workspace.clone();
+            if let (Some(target), Some(patch)) = (scope_value.as_object_mut(), broken.as_object()) {
+                for (key, value) in patch {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            assert!(reason(&scope_value, Some("src/a.rs")).is_some(), "{broken}");
+        }
         let missing = json!({"scope": "diff_scoped_changed_files"});
         assert!(reason(&missing, Some("src/a.rs")).is_some());
         // Non-object or absent scope fails closed.
