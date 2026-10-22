@@ -280,3 +280,78 @@ fn a_mocked_owner_module_withholds_the_entry() -> Result<(), String> {
     assert_ne!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+const CALL_LINE: &str = "    this.items = this._collect(value, this.items);";
+
+#[test]
+fn an_instance_field_of_the_same_name_shadows_the_method() -> Result<(), String> {
+    // `helper = () => ...` replaces the prototype method on every instance.
+    let fielded = COMMAND.replace(
+        "  add(value: string): this {",
+        "  _collect = (value: string, previous: string[]): string[] => previous;\n\n  add(value: string): this {",
+    );
+    assert!(entry_names(&fielded, "_collect").is_empty());
+    assert_no_static_path("instance-field", &fielded, ADD_TEST)?;
+    // A computed field key may define any name.
+    let computed = COMMAND.replace(
+        "  add(value: string): this {",
+        "  [Symbol.for('x')] = 1;\n\n  add(value: string): this {",
+    );
+    assert!(entry_names(&computed, "_collect").is_empty());
+    // A static field is not an instance field.
+    let static_field = COMMAND.replace(
+        "  add(value: string): this {",
+        "  static _collect = 1;\n\n  add(value: string): this {",
+    );
+    assert_eq!(entry_names(&static_field, "_collect"), ["add"]);
+    Ok(())
+}
+
+#[test]
+fn an_arrow_that_is_created_but_not_passed_to_a_call_records_no_edge() -> Result<(), String> {
+    let unused = COMMAND.replace(
+        CALL_LINE,
+        "    const later = () => this._collect(value, this.items);",
+    );
+    assert!(entry_names(&unused, "_collect").is_empty());
+    assert_no_static_path("unused-arrow", &unused, ADD_TEST)?;
+    // The same arrow handed to a call is read as invoked.
+    let passed = COMMAND.replace(
+        CALL_LINE,
+        "    [value].forEach((item) => this._collect(item, this.items));",
+    );
+    assert_eq!(entry_names(&passed, "_collect"), ["add"]);
+    // An unused arrow does not hide a real call in the same method.
+    let mixed = COMMAND.replace(
+        CALL_LINE,
+        "    const noop = () => 0;\n    this.items = this._collect(value, this.items);",
+    );
+    assert_eq!(entry_names(&mixed, "_collect"), ["add"]);
+    Ok(())
+}
+
+#[test]
+fn an_object_literal_method_binds_its_own_this() -> Result<(), String> {
+    let nested = COMMAND.replace(
+        CALL_LINE,
+        "    const worker = { _collect() { return 2; }, run() { return this._collect(); } };\n    worker.run();",
+    );
+    assert!(entry_names(&nested, "_collect").is_empty());
+    assert_no_static_path("object-method", &nested, ADD_TEST)
+}
+
+#[test]
+fn keywords_in_strings_and_comments_do_not_hide_a_real_call() -> Result<(), String> {
+    let literal = COMMAND.replace(
+        CALL_LINE,
+        "    const note = 'function class';\n    // function () {}\n    this.items = this._collect(value, this.items);",
+    );
+    assert_eq!(entry_names(&literal, "_collect"), ["add"]);
+    assert_entry_related("literal-keywords", &literal, ADD_TEST)
+}
+
+#[test]
+fn a_method_header_without_a_return_type_is_not_a_nested_method() {
+    let untyped = COMMAND.replace("  add(value: string): this {", "  add(value) {");
+    assert_eq!(entry_names(&untyped, "_collect"), ["add"]);
+}

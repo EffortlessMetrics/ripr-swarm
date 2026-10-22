@@ -580,9 +580,14 @@ Candidates come from the first non-empty tier:
    `ModuleEntryCall`, which reads `weakly_exposed` at most and discloses the
    reach as "only through same-class callers". The call graph is
    syntax-only and fail-closed: a caller whose body declares a nested
-   `function` or `class`, a name defined twice in the class, a name some
-   method assigns, deletes or defines on `this`, and static methods
-   contribute no edge.
+   `function` or `class` or an object/class method shorthand (keywords inside
+   strings, templates and comments do not count), a name defined twice in the
+   class, a name some method assigns, deletes or defines on `this`, a name an
+   instance field of the class defines (a computed field defines any name),
+   an arrow body that is not a call argument (`const later = () =>
+   this.helper()` is created, not run), and static methods contribute no
+   edge. An arrow passed to a call is read as invoked; the relation stays weak
+   and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an

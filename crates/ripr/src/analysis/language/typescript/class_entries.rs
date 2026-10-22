@@ -18,8 +18,15 @@
 //!
 //! - an edge is a `this.name(` call (plain, `?.` or `!.`) in a method,
 //!   getter or constructor body, to an ordinary sibling method;
-//! - a method body that declares a nested `function` or `class` records no
-//!   edges, because `this` may be rebound there;
+//! - a method body that declares a nested `function` or `class`, or an object
+//!   or class method shorthand (`name(...) {`), records no edges, because
+//!   `this` may be rebound there; keywords inside strings, templates and
+//!   comments are masked first and do not count;
+//! - an arrow function that is not an argument of a call (`const later = () =>
+//!   this.helper()`) is created, not run, so its body records no edges; an
+//!   arrow passed to a call is read as invoked (weak reach, never `exposed`);
+//! - a name an instance field of the class defines (`helper = () => 2`)
+//!   replaces the prototype method on every instance and is not a callee;
 //! - a name that appears twice in the file's class (overloads, getter and
 //!   setter pairs) is not a node, and a name some method assigns on `this`
 //!   (`this.name = ...`) or defines on `this` is shadowed on the instance and
@@ -43,7 +50,10 @@ const CLASS_ENTRY_MAX_PER_OWNER: usize = 64;
 
 /// Record, on each ordinary instance-method owner, the sibling methods of its
 /// class that reach it. Owners of other shapes are left untouched.
-pub(crate) fn assign_class_entries(owners: &mut [TypeScriptOwner]) {
+pub(crate) fn assign_class_entries(
+    owners: &mut [TypeScriptOwner],
+    instance_fields: &BTreeMap<String, BTreeSet<String>>,
+) {
     let mut by_class: BTreeMap<(PathBuf, String), Vec<usize>> = BTreeMap::new();
     for (index, owner) in owners.iter().enumerate() {
         if owner.owner_kind == OwnerKind::Method
@@ -58,7 +68,11 @@ pub(crate) fn assign_class_entries(owners: &mut [TypeScriptOwner]) {
     let mut assignments: Vec<(usize, Vec<TypeScriptModuleEntry>)> = Vec::new();
     for indices in by_class.values() {
         let members: Vec<&TypeScriptOwner> = indices.iter().map(|&index| &owners[index]).collect();
-        assignments.extend(class_entries_for(indices, &members));
+        let fields = members
+            .first()
+            .and_then(|member| member.class_name.as_ref())
+            .and_then(|class_name| instance_fields.get(class_name));
+        assignments.extend(class_entries_for(indices, &members, fields));
     }
     for (index, entries) in assignments {
         owners[index].module_entries = entries;
@@ -68,6 +82,7 @@ pub(crate) fn assign_class_entries(owners: &mut [TypeScriptOwner]) {
 fn class_entries_for(
     indices: &[usize],
     members: &[&TypeScriptOwner],
+    instance_fields: Option<&BTreeSet<String>>,
 ) -> Vec<(usize, Vec<TypeScriptModuleEntry>)> {
     // A name that occurs twice in the class is ambiguous, so it is no node.
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -101,6 +116,11 @@ fn class_entries_for(
         .filter(|node| node.method_kind == TypeScriptMethodKind::Ordinary)
         .map(|node| node.name.as_str())
         .filter(|name| is_safe_javascript_identifier(name))
+        // An instance field of the same name (or a computed field, `*`) replaces
+        // the prototype method on every instance.
+        .filter(|name| {
+            instance_fields.is_none_or(|fields| !fields.contains(*name) && !fields.contains("*"))
+        })
         .filter(|name| {
             !class_sources
                 .iter()
@@ -114,11 +134,11 @@ fn class_entries_for(
         let Some(source) = node.source_text.as_deref() else {
             continue;
         };
-        if declares_nested_this_scope(source) {
+        let Some(executed) = executed_this_source(source) else {
             continue;
-        }
+        };
         for &callee in &callable {
-            if callee != node.name && contains_member_call_name(source, "this", callee) {
+            if callee != node.name && contains_member_call_name(&executed, "this", callee) {
                 callers
                     .entry(callee)
                     .or_default()
@@ -167,11 +187,227 @@ fn class_entries_for(
     out
 }
 
-/// A nested `function` or `class` may rebind `this`, so the body is not read.
-fn declares_nested_this_scope(source: &str) -> bool {
-    ["function", "class"]
+/// The method source with comments, strings and templates masked and every
+/// arrow body that is not a call argument blanked, or `None` when the body
+/// declares a scope that may rebind `this` (a nested `function`, a `class`, or
+/// an object/class method shorthand such as `{ run() { ... } }`).
+fn executed_this_source(source: &str) -> Option<String> {
+    let mut code = super::tests_extract::byte_preserving_code_mask(source)?;
+    // The method's own `name(params) {` header is not a nested method.
+    let body_start = first_top_level_brace(&code)?;
+    if ["function", "class"]
         .iter()
-        .any(|keyword| contains_word(source, keyword))
+        .any(|keyword| contains_word(&code, keyword))
+        || has_method_shorthand(&code, body_start)
+    {
+        return None;
+    }
+    blank_unexecuted_arrows(&mut code);
+    Some(code)
+}
+
+/// The byte index of the first `{` outside parentheses: where the method body
+/// (or a type literal in its return type) begins.
+fn first_top_level_brace(code: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in code.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            '{' if depth == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `true` when `code` holds `name(...) {` with a name that is not a control
+/// keyword: a method shorthand (or getter, or computed method) that binds its
+/// own `this`.
+fn has_method_shorthand(code: &str, body_start: usize) -> bool {
+    const CONTROL: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
+    let bytes = code.as_bytes();
+    bytes.iter().enumerate().any(|(close, &byte)| {
+        if byte != b')' || close < body_start {
+            return false;
+        }
+        let rest = code[close + 1..].trim_start();
+        if !rest.starts_with('{') {
+            return false;
+        }
+        let Some(open) = matching_open_paren(code, close) else {
+            return true;
+        };
+        let head = code[..open].trim_end();
+        let word: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        // `foo(...) {` with a plain name, or `]` of a computed key, is a method;
+        // a control keyword is a statement block.
+        !CONTROL.contains(&word.as_str())
+    })
+}
+
+fn matching_open_paren(code: &str, close: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in code[..=close].char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Blank the body of every arrow function that is not an argument of a call.
+/// Creating such an arrow (`const later = () => this.helper()`) does not run
+/// it; an arrow in argument position (`items.forEach((x) => ...)`) is read as
+/// invoked.
+fn blank_unexecuted_arrows(code: &mut String) {
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (arrow, _) in code.match_indices("=>") {
+        let before = code[..arrow].trim_end();
+        let params_start = if before.ends_with(')') {
+            match matching_open_paren(before, before.len() - 1) {
+                Some(open) => open,
+                None => continue,
+            }
+        } else {
+            before
+                .char_indices()
+                .rev()
+                .take_while(|(_, ch)| is_javascript_identifier_char(*ch))
+                .last()
+                .map_or(before.len(), |(index, _)| index)
+        };
+        let mut head = code[..params_start].trim_end();
+        if let Some(rest) = head.strip_suffix("async")
+            && !rest.ends_with(is_javascript_identifier_char)
+        {
+            head = rest.trim_end();
+        }
+        if head.ends_with(['(', ',']) {
+            continue;
+        }
+        let after = arrow + 2;
+        let body = code[after..].trim_start();
+        let body_start = code.len() - body.len();
+        let end = if body.starts_with('{') {
+            balanced_end(code, body_start, '{', '}')
+        } else {
+            expression_end(code, body_start)
+        };
+        ranges.push(after..end);
+    }
+    let mut bytes = std::mem::take(code).into_bytes();
+    for range in ranges {
+        for byte in bytes.get_mut(range).into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    *code = String::from_utf8(bytes).unwrap_or_default();
+}
+
+fn balanced_end(code: &str, start: usize, open: char, close: char) -> usize {
+    let mut depth = 0usize;
+    for (offset, ch) in code[start..].char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return start + offset + ch.len_utf8();
+            }
+        }
+    }
+    code.len()
+}
+
+/// The end of an arrow's expression body: the first `,` `;` or closing
+/// bracket at nesting depth zero.
+fn expression_end(code: &str, start: usize) -> usize {
+    let mut depth = 0usize;
+    for (offset, ch) in code[start..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return start + offset;
+                }
+                depth -= 1;
+            }
+            ',' | ';' if depth == 0 => return start + offset,
+            _ => {}
+        }
+    }
+    code.len()
+}
+
+/// Names the instance fields of each class in `program` define, keyed by class
+/// name; `*` marks a computed field key, which may define any name.
+pub(crate) fn class_instance_field_names(
+    program: &oxc_ast::ast::Program<'_>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    use oxc_ast::ast::{Declaration, ExportDefaultDeclarationKind};
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut visit = |class: &Class<'_>| {
+        let Some(name) = class.id.as_ref().map(|id| id.name.as_str().to_string()) else {
+            return;
+        };
+        let fields = out.entry(name).or_default();
+        for element in &class.body.body {
+            let (is_static, computed, key) = match element {
+                ClassElement::PropertyDefinition(field) => {
+                    (field.r#static, field.computed, Some(&field.key))
+                }
+                ClassElement::AccessorProperty(field) => {
+                    (field.r#static, field.computed, Some(&field.key))
+                }
+                _ => continue,
+            };
+            if is_static {
+                continue;
+            }
+            match key.and_then(property_key_name) {
+                Some(name) if !computed => {
+                    fields.insert(name);
+                }
+                _ => {
+                    fields.insert("*".to_string());
+                }
+            }
+        }
+    };
+    for statement in &program.body {
+        match statement {
+            Statement::ClassDeclaration(class) => visit(class),
+            Statement::ExportNamedDeclaration(export) => {
+                if let Some(Declaration::ClassDeclaration(class)) = export.declaration.as_ref() {
+                    visit(class);
+                }
+            }
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
+                    visit(class);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
