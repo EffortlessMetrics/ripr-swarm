@@ -3138,6 +3138,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,
         })

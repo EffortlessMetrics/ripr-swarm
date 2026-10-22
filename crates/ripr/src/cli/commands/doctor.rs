@@ -2919,6 +2919,15 @@ fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String 
 /// exclusive file, so doctor never creates the cache or any layer itself. A
 /// regular file anywhere on one of those paths is reported by name.
 fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
+    cache_unwritable_reason_with(cache_dir, &|path| std::fs::create_dir(path))
+}
+
+/// The directory-creation operation the cache probes perform. Production
+/// passes `std::fs::create_dir`; tests inject a refusal so the reason and its
+/// route are exercised on hosts whose ACL deny is not enforced (#9688).
+type CreateDir<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
+
+fn cache_unwritable_reason_with(cache_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
     // Only the entry directories matter: their nearest existing ancestor is
     // the base itself whenever the base is missing, blocked or still empty,
     // and a read-only base whose entry directories already exist and accept
@@ -2943,7 +2952,7 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         if let Some(reason) = probe_writable(&probe_dir) {
             return Some(reason);
         }
-        if needs_dir && let Some(reason) = probe_creatable_dir(&probe_dir) {
+        if needs_dir && let Some(reason) = probe_creatable_dir_with(&probe_dir, create_dir) {
             return Some(reason);
         }
         // #6707: sharded publication creates a generation subdirectory
@@ -2953,7 +2962,7 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         // probe creation inside every existing key directory too.
         if *makes_subdirs
             && probe_dir == *target
-            && let Some(reason) = probe_existing_key_dirs(target)
+            && let Some(reason) = probe_existing_key_dirs(target, create_dir)
         {
             return Some(reason);
         }
@@ -2971,7 +2980,7 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
 /// files from adding subdirectories), so both are probed. The first
 /// failure is the reason; unreadable listings stay silent because the
 /// entry-directory probes above already passed.
-fn probe_existing_key_dirs(sharded_dir: &Path) -> Option<String> {
+fn probe_existing_key_dirs(sharded_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
     let entries = std::fs::read_dir(sharded_dir).ok()?;
     for entry in entries.flatten() {
         let key_dir = entry.path();
@@ -2981,7 +2990,7 @@ fn probe_existing_key_dirs(sharded_dir: &Path) -> Option<String> {
         if let Some(reason) = probe_writable(&key_dir) {
             return Some(reason);
         }
-        if let Some(reason) = probe_creatable_dir(&key_dir) {
+        if let Some(reason) = probe_creatable_dir_with(&key_dir, create_dir) {
             return Some(reason);
         }
     }
@@ -2990,9 +2999,14 @@ fn probe_existing_key_dirs(sharded_dir: &Path) -> Option<String> {
 
 /// Creates and removes a short-lived subdirectory, the operation a producer
 /// needs before it can write under a missing entry directory.
+#[cfg(test)]
 fn probe_creatable_dir(probe_dir: &Path) -> Option<String> {
+    probe_creatable_dir_with(probe_dir, &|path| std::fs::create_dir(path))
+}
+
+fn probe_creatable_dir_with(probe_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
     let probe = probe_dir.join(probe_name("dir"));
-    match std::fs::create_dir(&probe) {
+    match create_dir(&probe) {
         Ok(()) => remove_probe_dir(&probe),
         Err(error) => Some(format!(
             "cannot create a directory in {}: {error}",
@@ -4410,9 +4424,20 @@ mod tests {
     /// Denies subdirectory creation in `dir` while (on Windows) leaving
     /// file creation allowed: Windows ACL `(AD)` deny, Unix mode `0o555`.
     /// Returns `false` when the host cannot deny creation for this
-    /// process (for example a Unix root run, which bypasses mode bits).
+    /// process (for example a Unix root run, which bypasses mode bits);
+    /// on Windows an unenforced deny is a `NOT_ESTABLISHED` error (#9688).
     fn deny_subdirectory_creation(dir: &Path) -> Result<bool, String> {
         deny_creation(dir, "(AD)")
+    }
+
+    /// Removes the fixture tree unless the deny was established, so neither
+    /// an unenforced deny's `NOT_ESTABLISHED` error nor a host that cannot
+    /// deny leaves a temp tree behind.
+    fn cleaned_unless_denied(denied: Result<bool, String>, root: &Path) -> Result<bool, String> {
+        if !matches!(denied, Ok(true)) {
+            let _ = std::fs::remove_dir_all(root);
+        }
+        denied
     }
 
     /// Denies file creation in `dir` while (on Windows) leaving
@@ -4437,18 +4462,18 @@ mod tests {
             }
             // A successful icacls exit does not prove this process is denied
             // (hosted runners were observed creating through the ACE), so
-            // establish the denial the same way as the Unix root check. A
-            // skipped oracle here is a known coverage hole: #9688.
+            // establish the denial first. An unenforced deny fails closed with
+            // a named reason rather than passing: a captured early return is
+            // indistinguishable from a pass in the Windows receipts. The
+            // injected-refusal tests carry the oracle on every host (#9688).
             if creation_is_denied(dir, windows_deny == "(WD)") {
                 return Ok(true);
             }
             restore_subdirectory_creation(dir)?;
-            // Visible with --nocapture only; a captured run still reports a
-            // plain pass, so this is not Windows evidence (#9688).
-            eprintln!(
-                "skipped: icacls {windows_deny} deny is not enforced for this process (#9688)"
-            );
-            Ok(false)
+            Err(format!(
+                "NOT_ESTABLISHED: icacls {windows_deny} deny is not enforced for this process (#9688); {}",
+                privilege_diagnostic()
+            ))
         }
         #[cfg(unix)]
         {
@@ -4519,6 +4544,34 @@ mod tests {
         }
     }
 
+    /// The backup and restore privileges let a directory open with backup
+    /// intent bypass an ACL deny, which is one hypothesis for #9688. Record
+    /// their state so a hosted failure says which token it ran with.
+    #[cfg(windows)]
+    fn privilege_diagnostic() -> String {
+        let output = match std::process::Command::new("whoami")
+            .args(["/priv", "/fo", "csv", "/nh"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => return format!("whoami /priv unavailable: {error}"),
+        };
+        let rows: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|row| {
+                [
+                    "SeBackupPrivilege",
+                    "SeRestorePrivilege",
+                    "SeTakeOwnershipPrivilege",
+                ]
+                .iter()
+                .any(|name| row.contains(name))
+            })
+            .map(|row| row.replace('"', ""))
+            .collect();
+        format!("whoami /priv: [{}]", rows.join("; "))
+    }
+
     #[cfg(windows)]
     fn icacls_user() -> Result<String, String> {
         let user = std::env::var("USERNAME").map_err(|_err| "USERNAME unset".to_string())?;
@@ -4528,12 +4581,92 @@ mod tests {
         }
     }
 
+    /// A `create_dir` that refuses inside `denied` with a permission error
+    /// and otherwise creates for real, standing in for an enforced
+    /// subdirectory deny on every host (#9688).
+    fn refuse_creation_in(denied: PathBuf) -> impl Fn(&Path) -> std::io::Result<()> {
+        move |path: &Path| {
+            if path.parent() == Some(denied.as_path()) {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::create_dir(path)
+            }
+        }
+    }
+
+    #[test]
+    fn probe_creatable_dir_names_an_injected_creation_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-dir");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let reason = probe_creatable_dir_with(&root, &refuse_creation_in(root.clone()));
+        // Control: the same directory with a real create_dir is creatable
+        // and the probe leaves no residue.
+        let control = probe_creatable_dir(&root);
+        let residue = std::fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", root.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        assert_eq!(residue, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_routes_an_injected_sharded_dir_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-sharded");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        std::fs::create_dir_all(&sharded).map_err(|error| error.to_string())?;
+        let reason = cache_unwritable_reason_with(&base, &refuse_creation_in(sharded.clone()));
+        // Control: a refusal outside every probed directory changes nothing.
+        let control =
+            cache_unwritable_reason_with(&base, &refuse_creation_in(root.join("elsewhere")));
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", sharded.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_routes_an_injected_key_dir_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-key");
+        let base = root.join("cache");
+        let key_dir = first_sharded_entry_dir(&base)?.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        // Only the per-key probe (#6707) creates inside the key directory,
+        // so this reason exists only while that probe is routed.
+        let reason = cache_unwritable_reason_with(&base, &refuse_creation_in(key_dir.clone()));
+        let control = cache_unwritable_reason(&base);
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", key_dir.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        Ok(())
+    }
+
     #[test]
     fn probe_creatable_dir_reports_a_directory_that_denies_creation() -> Result<(), String> {
         let root = unique_command_test_dir("cache-probe-deny-dir");
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        if !deny_subdirectory_creation(&root)? {
-            let _ = std::fs::remove_dir_all(&root);
+        if !cleaned_unless_denied(deny_subdirectory_creation(&root), &root)? {
             return Ok(());
         }
         // On Windows the ACL denies only subdirectory creation, so the
@@ -4559,8 +4692,7 @@ mod tests {
         let base = root.join("cache");
         let sharded = first_sharded_entry_dir(&base)?;
         std::fs::create_dir_all(&sharded).map_err(|error| error.to_string())?;
-        if !deny_subdirectory_creation(&sharded)? {
-            let _ = std::fs::remove_dir_all(&root);
+        if !cleaned_unless_denied(deny_subdirectory_creation(&sharded), &root)? {
             return Ok(());
         }
         let reason = cache_unwritable_reason(&base);
@@ -4589,8 +4721,7 @@ mod tests {
         let key_dir = sharded.join("some-cache-key");
         std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
         assert_eq!(cache_unwritable_reason(&base), None);
-        if !deny_subdirectory_creation(&key_dir)? {
-            let _ = std::fs::remove_dir_all(&root);
+        if !cleaned_unless_denied(deny_subdirectory_creation(&key_dir), &root)? {
             return Ok(());
         }
         let reason = cache_unwritable_reason(&base);
@@ -4624,8 +4755,7 @@ mod tests {
         let key_dir = sharded.join("some-cache-key");
         std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
         assert_eq!(cache_unwritable_reason(&base), None);
-        if !deny_file_creation(&key_dir)? {
-            let _ = std::fs::remove_dir_all(&root);
+        if !cleaned_unless_denied(deny_file_creation(&key_dir), &root)? {
             return Ok(());
         }
         // On Windows the ACL denies only file creation, so the
