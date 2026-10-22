@@ -99,8 +99,9 @@ fn caught_rejection_assertions_cannot_confirm_the_changed_throw() -> TestResult 
     for body in [
         format!("try {{ {CHECK} }} catch {{}}"),
         format!("try {{ {{ {CHECK} }} }} catch (error) {{}}"),
-        // An always-rethrowing catch is outside the bounded proof too.
-        format!("try {{ {CHECK} }} catch (error) {{ throw error; }}"),
+        // Only the exact `catch (error) { throw error; }` passes the failure
+        // through (#9685); a catch that rethrows something else swallows it.
+        format!("try {{ {CHECK} }} catch (error) {{ throw new Error('x'); }}"),
     ] {
         Subject::new(&body)?.check("weakly_exposed", "unknown", "unknown")?;
     }
@@ -116,6 +117,7 @@ fn independently_propagating_rejection_assertions_keep_credit() -> TestResult {
         format!("try {{ throw 'setup'; }} catch {{ {CHECK} }}"),
         format!("try {{ throw 'setup'; }} catch {{}} finally {{ {CHECK} }}"),
         format!("try {{ {CHECK} }} catch {{}}\n{CHECK}"),
+        format!("try {{ {CHECK} }} catch (error) {{ throw error; }}"),
     ] {
         Subject::new(&body)?.check("exposed", "exact_error_variant", "strong")?;
     }
