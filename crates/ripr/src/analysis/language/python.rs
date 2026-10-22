@@ -973,6 +973,12 @@ impl PythonAdapter {
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
+                    // A decorator that opens a newly added function is part of
+                    // its definition; the function's own lines carry the change.
+                    // A decorator that replaces an old line is an edit and keeps
+                    // its probe (#9756).
+                    || (added.text.trim_start().starts_with('@')
+                        && !counterparts.contains_key(&added.line))
             });
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();

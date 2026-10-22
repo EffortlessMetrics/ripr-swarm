@@ -188,3 +188,29 @@ fn changed_header_paired_elsewhere_by_git_keeps_probe() -> Result<(), String> {
     assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
     Ok(())
 }
+
+/// The decorators that open a NEW function are part of its definition: the
+/// function's own lines carry the change, so they are not separate probes
+/// (#9756).
+#[test]
+fn decorators_of_a_new_function_are_not_probed() -> Result<(), String> {
+    let source = "@retry(3)\n@cache\ndef double(x):\n    return x * 2\n";
+    let findings = analyze("new-decorated", source, &[1, 2, 3, 4], Vec::new())?;
+    assert_eq!(classes_on(&findings, 1), Vec::<ExposureClass>::new());
+    assert_eq!(classes_on(&findings, 2), Vec::<ExposureClass>::new());
+    assert_eq!(
+        classes_on(&findings, 4).len(),
+        1,
+        "the body is still probed"
+    );
+    Ok(())
+}
+
+/// A decorator that replaces an old line is an edit and keeps its probe.
+#[test]
+fn an_edited_decorator_keeps_its_probe() -> Result<(), String> {
+    let source = "@retry(2)\ndef double(x):\n    return x * 2\n";
+    let findings = analyze("edited-decorator", source, &[1], vec![line(1, "@retry(3)")])?;
+    assert_eq!(classes_on(&findings, 1).len(), 1);
+    Ok(())
+}
