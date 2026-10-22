@@ -35,7 +35,6 @@ spec or the analyzer. Never exclude or reclassify it.
 | Rust generated and fn-value owners | `shape-hostile-owner-as-path-value`, `-owner-through-fn-pointer`, `-cfg-attr-test`, `-macro-defined-owner` | #9442 |
 | Rust const-generic and cast | `shape-cast-truncation-mask` | #9444 |
 | TS credit on unreached arms | `shape-nullish-middle-operand`, `-template-plural-boundary`, `-async-catch-fallback-unexercised`, `-static-factory-rounding` | #9437 |
-| TS silent enum member edit | `shape-enum-member-value-unread` | #9436 |
 | Python language shapes | nine `py-shapes-*` cases | #9412 |
 | Python idioms | `py-idioms-caplog-message`, `-caplog-level` (#9424), `-approx-constant-within-tolerance` (#9428), `-unittest-setup-sign` (#9412) | see each |
 | TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436) | see each |
