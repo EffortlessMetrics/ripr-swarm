@@ -39,15 +39,20 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     }
     // #5208: an unreleased generator cannot pin itself — that version does
     // not exist on crates.io, so the install step would fail. The workflow
-    // pins the latest release instead; say so loudly, on stderr like the
+    // pins the latest release instead; say so calmly, on stderr like the
     // root warning, in both dry-run and real runs.
     if options.ci.is_some() {
         let generator = env!("CARGO_PKG_VERSION");
         let pinned = workflow_install_version(generator);
         if pinned != generator {
             let refresh = workflow_refresh_guidance(&options.root);
+            let follow_up = if refresh.starts_with("refresh command omitted") {
+                format!("upgrade ripr and refresh the workflow ({refresh})")
+            } else {
+                format!("upgrade ripr, then {refresh}")
+            };
             eprintln!(
-                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, {refresh}"
+                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, {follow_up}"
             );
         }
     }
@@ -549,9 +554,40 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 return Ok(());
             }
         };
-        let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
-        let doctor = format!("ripr doctor --root {root_arg}");
-        let check = format!("ripr check --root {root_arg}");
+        // Init in the current directory needs no `--root`; otherwise name the
+        // directory without the `/.` that joining onto the cwd leaves behind.
+        let in_cwd = match (root.canonicalize(), std::env::current_dir()) {
+            (Ok(selected), Ok(cwd)) => {
+                cwd.canonicalize().is_ok_and(|cwd| cwd == selected)
+                    // An implicit `ripr check` widens from a workspace member
+                    // to its workspace root and would skip the config just
+                    // written here, so keep `--root` unless it resolves to cwd.
+                    && match super::check::resolve_project_root(Path::new(".")) {
+                        Ok(Some((resolved, _))) => resolved == selected,
+                        Ok(None) => true,
+                        Err(_) => false,
+                    }
+            }
+            _ => false,
+        };
+        let root_flag = if in_cwd {
+            String::new()
+        } else {
+            let trimmed = root_display
+                .strip_suffix("/.")
+                .filter(|rest| !rest.is_empty())
+                .unwrap_or(&root_display);
+            format!(
+                " --root {}",
+                crate::agent::loop_commands::shell_arg(trimmed)
+            )
+        };
+        let doctor = format!("ripr doctor{root_flag}");
+        let check = format!("ripr check{root_flag}");
+        let inside_git = matches!(
+            output::doctor::work_tree_probe(root),
+            Some(output::doctor::WorkTreeProbe::Inside)
+        );
         if plan.iter().any(|target| {
             target
                 .path
@@ -574,10 +610,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             );
         }
         println!();
-        println!(
-            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
-        );
-        for command in [&doctor, &check] {
+        if inside_git {
+            println!(
+                "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
+            );
+        } else {
+            println!(
+                "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
+            );
+        }
+        let commands: &[&String] = if inside_git {
+            &[&doctor, &check]
+        } else {
+            &[&doctor]
+        };
+        for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
                 println!("(PowerShell) {powershell}");
             }

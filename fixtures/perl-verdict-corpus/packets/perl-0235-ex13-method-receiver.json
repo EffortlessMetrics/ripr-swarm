@@ -1,19 +1,19 @@
 {
   "changes": [
     {
-      "behavior_hint": "unknown",
-      "change_id": "change:file:lib/Shop/Cart.pm:19:19",
-      "changed_observable": null,
-      "changed_text_digest": "fnv64:759e86c1ef2921ab",
-      "file_id": "file:lib/Shop/Cart.pm",
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/Shop/Pricing.pm:30:30",
+      "changed_observable": "'gold' if 1000 <= $points",
+      "changed_text_digest": "fnv64:67f366b0daa26db0",
+      "file_id": "file:lib/Shop/Pricing.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tier_label:473-612",
       "provenance_refs": [],
       "range": {
-        "end_column": 62,
-        "end_line": 19,
+        "end_column": 37,
+        "end_line": 30,
         "start_column": 0,
-        "start_line": 19
+        "start_line": 30
       }
     }
   ],
@@ -35,7 +35,7 @@
   ],
   "files": [
     {
-      "digest": "sha256:bcf4f9d45db195917ded2e0f6542e3525dbf4e5e8d0bd25d9834e9f09e97ed76",
+      "digest": "sha256:fd14c91b94e52368f9f688d68073723a92b5950aeecee789c181448dc4d4800f",
       "file_id": "file:lib/Shop/Cart.pm",
       "package_names": [
         "Shop::Cart"
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "digest": "sha256:b8e69fb8c3f602a0ea94bcce0819f706afc1090393abdfcff8cacd79699bc7d0",
+      "digest": "sha256:1c0c1357bec422ba2d9fe26afeac08d038462f2e4125428016d2981e53e9915a",
       "file_id": "file:lib/Shop/Pricing.pm",
       "package_names": [
         "Shop::Pricing"
@@ -177,7 +177,7 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     }
   ],
   "oracles": [
@@ -278,7 +278,7 @@
         "start_line": 7
       },
       "strength": "strong_exact",
-      "target_owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "target_owner_id": null,
       "test_id": "test:t/cart.t"
     },
     {
@@ -418,7 +418,7 @@
         "start_line": 7
       },
       "strength": "strong_exact",
-      "target_owner_id": null,
+      "target_owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tier_label:473-612",
       "test_id": "test:t/qualified.t"
     },
     {
@@ -505,7 +505,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Shop::Pricing::clamp_qty(150), 150, 'huge orders are clamped')",
-      "kind": "exact_return_assertion",
+      "kind": "smoke_ok",
       "observed_sink": null,
       "oracle_id": "oracle:t/qualified.t:isnt:589-656",
       "provenance_refs": [
@@ -517,7 +517,7 @@
         "start_column": 0,
         "start_line": 20
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": null,
       "test_id": "test:t/qualified.t"
     }
@@ -847,7 +847,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:e08f30074ccbaee3dbb342231e5471e453ee4f1a1734a3eb5ed2b6a35c598e6b",
+  "packet_fingerprint": "sha256:1aa4f66c44c0e5ab3d1a048173c06c84794a460abc8c7744c9a690f7606d204e",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -999,14 +999,14 @@
       "test_id": "test:t/bulk.t"
     },
     {
-      "change_id": "change:file:lib/Shop/Cart.pm:19:19",
+      "change_id": "change:unresolved",
       "confidence": "medium",
-      "oracle_id": "oracle:t/cart.t:is:117-175",
-      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Cart.pm:package:Shop::Cart:0-18",
       "provenance_refs": [],
-      "reachability_hint": "reachable",
+      "reachability_hint": "weakly_reachable",
       "relation_id": "relation:file:t/cart.t:lib/Shop/Cart.pm:owner_lib/Shop/Cart.pm_package_Shop__Cart_0-18",
-      "relation_kind": "method_receiver",
+      "relation_kind": "file_proximity",
       "test_id": "test:t/cart.t"
     },
     {
@@ -1076,14 +1076,14 @@
       "test_id": "test:t/qualified.t"
     },
     {
-      "change_id": "change:unresolved",
+      "change_id": "change:file:lib/Shop/Pricing.pm:30:30",
       "confidence": "medium",
-      "oracle_id": null,
+      "oracle_id": "oracle:t/qualified.t:is:130-198",
       "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tier_label:473-612",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__tier_label_473-612",
-      "relation_kind": "direct_owner_call",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__tier_label_473-612:change:file:lib/Shop/Pricing.pm:30:30",
+      "relation_kind": "method_receiver",
       "test_id": "test:t/qualified.t"
     }
   ],

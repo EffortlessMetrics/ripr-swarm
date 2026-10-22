@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "test_helper_value",
   "test_shape": "cfg_test_helper_feeds_assert_eq",
-  "hard_case": "The edit is inside a #[cfg(test)] helper, which RIPR-SPEC-0153 gives an evidence role: ripr seeds no production probe, so silent is the expected reading.",
+  "hard_case": "The edit is inside a #[cfg(test)] helper, which RIPR-SPEC-0153 gives an evidence role: ripr seeds no production probe, so it reads silent. The ideal stays credited because the helper's value is discriminated; silent is acceptable, not ideal.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
