@@ -193,7 +193,18 @@ struct TokenNotifications {
     /// Consecutive duplicate stage events are suppressed so repeated
     /// equivalent events stay within the declared record ceiling.
     last_stage: Option<AnalysisProgressStage>,
+    /// Stages produced while the detached announce was still waiting for the
+    /// client's `create` answer (#9362). They are queued behind `Begin` and
+    /// flushed in producer order once it is sent, never dropped. Consecutive
+    /// duplicates collapse and the queue is capped at
+    /// `MAX_PENDING_STAGE_REPORTS`; past the cap the newest repeats are
+    /// dropped, which the three-stage producer vocabulary never reaches.
+    pending_stages: Vec<AnalysisProgressStage>,
 }
+
+/// Upper bound on stage reports queued ahead of `Begin`; the producer
+/// vocabulary has three reportable stages, so this only guards repeats.
+const MAX_PENDING_STAGE_REPORTS: usize = 8;
 
 fn progress_token(generation: u64) -> String {
     format!("ripr-analysis-{generation}")
@@ -381,6 +392,37 @@ impl AnalysisProgressTracker {
         // sending. Cleanup must observe this completed Begin and send End
         // after acquiring the same token lock.
         notifications.started = true;
+        // Stages issued while `create` was pending follow Begin in producer
+        // order under the same token lock, so End still comes last (#9362).
+        let pending = std::mem::take(&mut notifications.pending_stages);
+        // Held stages are advisory and this send holds the token lock that
+        // End needs: apply the stage drain budget so a client that stops
+        // reading after Begin cannot pin cleanup.
+        let _ = tokio::time::timeout(super::progress_stages::STAGE_DRAIN_BUDGET, async {
+            for stage in pending {
+                let Some(message) = stage_report_message(stage) else {
+                    continue;
+                };
+                let live = self.tokens.lock().is_ok_and(|tokens| {
+                    tokens.get(&request.generation).is_some_and(|record| {
+                        record.terminal.is_none()
+                            && record.phase == AnalysisProgressPhase::Analyzing
+                    })
+                });
+                if !live || notifications.last_stage == Some(stage) {
+                    continue;
+                }
+                notifications.last_stage = Some(stage);
+                sink.notify(
+                    token.clone(),
+                    ProgressNotificationValue::Report {
+                        message: message.to_string(),
+                    },
+                )
+                .await;
+            }
+        })
+        .await;
     }
 
     fn notification_state(
@@ -478,8 +520,10 @@ impl AnalysisProgressTracker {
     ///
     /// Reports are message-only: no percentage is ever attached, so unknown
     /// totals stay unknown. No-ops (never an error, never analysis-relevant):
-    /// unsupported clients, unknown generations, unstarted tokens, tokens
-    /// still queued, terminal stages, and consecutive duplicate stages.
+    /// unsupported clients, unknown generations, tokens still queued,
+    /// terminal stages, and consecutive duplicate stages. A stage issued while
+    /// the detached announce is still waiting for `create` is queued behind
+    /// `Begin` (#9362); a token that never starts drops it with the record.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
         let Some(notifications) = self.notification_state(generation) else {
             return;
@@ -498,10 +542,22 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if record.terminal.is_some()
-                || !notifications.started
-                || record.phase != AnalysisProgressPhase::Analyzing
-            {
+            if record.terminal.is_some() || record.phase != AnalysisProgressPhase::Analyzing {
+                return;
+            }
+            if !notifications.started {
+                // The detached announce has not sent Begin yet: queue behind
+                // it instead of dropping the stage (#9362).
+                let last = notifications
+                    .pending_stages
+                    .last()
+                    .copied()
+                    .or(notifications.last_stage);
+                if last != Some(stage)
+                    && notifications.pending_stages.len() < MAX_PENDING_STAGE_REPORTS
+                {
+                    notifications.pending_stages.push(stage);
+                }
                 return;
             }
             if notifications.last_stage == Some(stage) {
@@ -1233,6 +1289,214 @@ mod tests {
             {
                 return Err(format!(
                     "delayed announcement used a stale phase or lost its end: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// A client that answered `create`, took `Begin`, then stopped reading:
+    /// every stage report send parks forever.
+    struct StalledReportsSink {
+        events: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl ProgressSink for StalledReportsSink {
+        fn create(&self, _token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn notify(&self, _token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                let kind = match value {
+                    ProgressNotificationValue::Begin { .. } => "begin",
+                    ProgressNotificationValue::Report { .. } => "report",
+                    ProgressNotificationValue::End { .. } => "end",
+                };
+                if let Ok(mut events) = self.events.lock() {
+                    events.push(kind);
+                }
+                if kind == "report" {
+                    std::future::pending::<()>().await;
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn stalled_held_stage_flush_cannot_pin_the_token_end() -> Result<(), String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .map_err(|err| err.to_string())?;
+        rt.block_on(async {
+            let tracker = AnalysisProgressTracker::new(test_client());
+            let sink = Arc::new(StalledReportsSink {
+                events: std::sync::Mutex::new(Vec::new()),
+            });
+            tracker.install_test_sink(sink.clone());
+            let request = test_request(1);
+            if !tracker.register(&request, AnalysisProgressPhase::Analyzing) {
+                return Err("token registration was refused".to_string());
+            }
+            tracker
+                .report_stage(1, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker.announce(&request).await;
+            tracker.end(1, AnalysisProgressEnd::Complete).await;
+            let events = sink.events.lock().map(|e| e.clone()).unwrap_or_default();
+            if events != ["begin", "report", "end"] {
+                return Err(format!(
+                    "End must follow a stalled held-stage flush: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stage_reported_before_begin_is_queued_behind_it_not_dropped() -> Result<(), String> {
+        // #9362: the detached announce leaves a window between registration
+        // and Begin; a stage issued inside it must follow Begin, once, in order.
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(14), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            for stage in [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::Analyzing,
+            ] {
+                tracker.report_stage(14, stage).await;
+            }
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            tracker
+                .report_stage(14, AnalysisProgressStage::BuildingOutput)
+                .await;
+            tracker.end(14, AnalysisProgressEnd::Complete).await;
+            let messages: Vec<String> = recorder
+                .events()
+                .into_iter()
+                .map(|event| match event {
+                    ProgressEvent::Create { .. } => "create".to_string(),
+                    ProgressEvent::Begin { .. } => "begin".to_string(),
+                    ProgressEvent::Report { message, .. } => message,
+                    ProgressEvent::End { .. } => "end".to_string(),
+                })
+                .collect();
+            let expected = [
+                "create",
+                "begin",
+                "loading input",
+                "analyzing workspace",
+                "building output",
+                "end",
+            ];
+            if messages != expected {
+                return Err(format!(
+                    "pre-Begin stage was dropped or reordered: {messages:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stages_queued_before_begin_stop_at_the_cap_in_producer_order() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(15), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            for index in 0..(MAX_PENDING_STAGE_REPORTS + 4) {
+                let stage = if index % 2 == 0 {
+                    AnalysisProgressStage::LoadingInput
+                } else {
+                    AnalysisProgressStage::Analyzing
+                };
+                tracker.report_stage(15, stage).await;
+            }
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            tracker.end(15, AnalysisProgressEnd::Complete).await;
+            let reports: Vec<String> = recorder
+                .events()
+                .into_iter()
+                .filter_map(|event| match event {
+                    ProgressEvent::Report { message, .. } => Some(message),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<String> = (0..MAX_PENDING_STAGE_REPORTS)
+                .map(|index| {
+                    if index % 2 == 0 {
+                        "loading input".to_string()
+                    } else {
+                        "analyzing workspace".to_string()
+                    }
+                })
+                .collect();
+            if reports != expected {
+                return Err(format!("queue did not stop at the cap: {reports:?}"));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stage_queued_before_begin_is_discarded_when_token_ends_first() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(15), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            tracker
+                .report_stage(15, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker.end(15, AnalysisProgressEnd::Cancelled).await;
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            if recorder.events()
+                != [ProgressEvent::Create {
+                    token: progress_token(15),
+                }]
+            {
+                return Err(format!(
+                    "ended token received queued stage or Begin: {:?}",
+                    recorder.events()
                 ));
             }
             Ok(())

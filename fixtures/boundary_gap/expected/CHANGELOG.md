@@ -1021,3 +1021,13 @@ commitments and receipt byte hashes bind those exact updated bytes. Semantic
 evidence, unchanged movement, incomplete receipt routing and all tamper
 controls remain unchanged. This is a portable negative-control input update,
 not a new execution receipt.
+
+### tokio spawned-task assertion pins classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.89 to 1.90 for joined `tokio::spawn` assertion pins (RIPR-SPEC-0197). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.

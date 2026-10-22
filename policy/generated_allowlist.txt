@@ -8,6 +8,7 @@
 # intentional generated artifacts and must stay explicitly owned.
 
 Cargo.lock|rust_lockfile|rust|Pinned Cargo dependency graph.
+.github/ovsx/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm graph for the ovsx publisher.
 editors/vscode/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm dependency graph for the VS Code extension.
 fixtures/**/expected/**|fixture_golden|analysis-fixtures|Fixture expected outputs are intentional golden artifacts.
 fixtures/**/input/package-lock.json|fixture_input_lockfile|analysis-fixtures|TypeScript adapter runner-detection fixtures: committed npm lockfile is intentional evidence input.

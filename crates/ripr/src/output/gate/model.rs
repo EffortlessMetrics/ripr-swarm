@@ -388,4 +388,11 @@ pub(super) struct CalibrationIndex {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct BaselineIndex {
     pub(super) identities: BTreeSet<String>,
+    /// Fallback `path:line:class` selectors of entries that also carry a
+    /// canonical gap id, mapped to those canonical ids (issue #1964). A
+    /// fallback join through one of these is accepted only when the shared
+    /// divergence rule (`baseline_delta::canonical_identity_divergence`)
+    /// finds no canonical disagreement. Entries without a canonical id keep
+    /// their fallback in `identities` (legacy compatibility window).
+    pub(super) fallback_canonical: BTreeMap<String, BTreeSet<String>>,
 }
