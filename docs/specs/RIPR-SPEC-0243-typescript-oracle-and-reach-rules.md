@@ -311,9 +311,15 @@ the loop and named nowhere else in the body (a `rows.push(...)` or a second
 read could change what the loop sees), and the destructuring must be plain
 `const` identifiers matching every row's length. The loop body must be a
 block with no `break`, `continue`, `return` or `throw`, which could end
-the loop before a row runs. Anything else keeps the loop's own assertions
-(a non-literal cell, a table that is a call result or a parameter, a
-`let`, a non-block body).
+the loop before a row runs, and no branch or inner loop (`if`, `else`,
+`switch`, `while`, `for`, `try`, `?:`, `&&`, `||`), which decides per row
+whether an assertion runs, so a substituted literal would credit rows it
+never reaches. Anything else keeps the loop's own assertions (a
+non-literal cell, a table that is a call result or a parameter, a `let`,
+a table declared after the loop, a row longer or shorter than the
+pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
+loop variable re-declared in the body, and every condition that already
+refuses an `.each` row).
 
 ### Recogniser order
 
@@ -1170,7 +1176,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 - #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
   pins the per-row assertions and the fail-closed fallbacks (a non-literal
-  cell, a mutated table, a `break`, a non-block body). Corpus row
+  cell, a table read elsewhere, a `let` or late table, a row of the wrong
+  length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`

@@ -12,7 +12,9 @@
 //! change what the loop sees), every row must be an array of one-line
 //! literals as long as the destructuring pattern, and the loop body must be
 //! a block with no `break`, `continue`, `return` or `throw`, which could end
-//! the loop before a row runs.
+//! the loop before a row runs, and no branch or inner loop (`if`, `switch`,
+//! `while`, `?:`, `&&`, `||`), because a substituted row would then credit an
+//! assertion that its own literals never reach.
 
 use super::*;
 
@@ -150,7 +152,28 @@ pub(crate) fn table_loop_assertions(
     if !body.is_ascii()
         || body
             .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-            .any(|word| matches!(word, "break" | "continue" | "return" | "throw"))
+            .any(|word| {
+                matches!(
+                    word,
+                    "break"
+                        | "continue"
+                        | "return"
+                        | "throw"
+                        | "if"
+                        | "else"
+                        | "switch"
+                        | "case"
+                        | "default"
+                        | "while"
+                        | "do"
+                        | "for"
+                        | "try"
+                        | "with"
+                )
+            })
+        || body.contains(['?'])
+        || body.contains("&&")
+        || body.contains("||")
         || params
             .iter()
             .any(|param| local_identifier_declared_in_test_body(body, param))
