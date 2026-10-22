@@ -360,3 +360,36 @@ fn owner_only_relation_reads_node_assert_and_object_returns() -> Result<(), Stri
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn one_hop_local_idempotence_is_read_and_its_controls_keep_credit() -> Result<(), String> {
+    let one_hop = "  const once = normalize(\"  a \");\n  expect(normalize(once)).toEqual(once);";
+    let finding = normalize_finding("onehop-idempotent", one_hop)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+
+    // An independent expected value pins the result.
+    let pinned = format!("{one_hop}\n  expect(normalize(\"  a \")).toBe(\"a\");");
+    let finding = normalize_finding("onehop-pinned", &pinned)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // The local is read again outside the relation.
+    let reused = format!("{one_hop}\n  expect(once).toBe(\"a\");");
+    let finding = normalize_finding("onehop-reused", &reused)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // A `let` can be reassigned between the call and the assertion.
+    let mutable = "  let once = normalize(\"  a \");\n  once = \"a\";\n  expect(normalize(once)).toEqual(once);";
+    let finding = normalize_finding("onehop-let", mutable)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // The local is bound to an independent value, not an owner call.
+    let literal = "  const once = \"a\";\n  expect(normalize(once)).toEqual(once);";
+    let finding = normalize_finding("onehop-literal", literal)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // The local is bound to a different function.
+    let other = "  const once = reference(\"  a \");\n  expect(normalize(once)).toEqual(once);";
+    let finding = normalize_finding("onehop-other-function", other)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
