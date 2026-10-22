@@ -150,6 +150,40 @@ jobs:
               Copy-Redacted $file.FullName (Join-Path $dest $file.FullName.Substring($logs.Length + 1))
             }
           }
+          # The pipe script is the unit under test for the fault control below, so the real
+          # iterations and the control generate it through the same function.
+          function New-PipeScript([string]$command, [string]$tee, [string]$path) {
+            "$command 2>&1 | Tee-Object -FilePath '$tee'; exit `$LASTEXITCODE" | Set-Content -Encoding utf8 $path
+          }
+          function Get-HuntExit($rows) { if (@($rows | Where-Object { $_.result -ne 0 }).Count -gt 0) { 1 } else { 0 } }
+          if ($env:RUN_MODE -eq 'pipe') {
+            # Fault-path control: a harmless child that writes to both streams and exits 7 must come
+            # back through the generated pipe script as exit 7 with both markers teed, and must make
+            # the final decision fail. Confined to its own fixture directory and process.
+            $ctl = Join-Path $env:QUAL_TEMP_ROOT 'fault-control'
+            New-Item -ItemType Directory -Force -Path $ctl | Out-Null
+            $child = Join-Path $ctl 'child.ps1'
+            "[Console]::Out.WriteLine('CONTROL-STDOUT-MARKER'); [Console]::Error.WriteLine('CONTROL-STDERR-MARKER'); exit 7" | Set-Content -Encoding utf8 $child
+            $ctlScript = Join-Path $ctl 'pipe.ps1'
+            $ctlTee = Join-Path $ctl 'tee.log'
+            New-PipeScript "pwsh -NoProfile -File '$child'" $ctlTee $ctlScript
+            $cp = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-File', $ctlScript -RedirectStandardOutput (Join-Path $ctl 'out.log') -RedirectStandardError (Join-Path $ctl 'err.log') -PassThru -NoNewWindow
+            if (-not $cp.WaitForExit(120000)) { taskkill /T /F /PID $cp.Id 2>&1 | Out-Null; throw 'fault control child did not exit' }
+            $cp.WaitForExit()
+            $teed = Get-Content -Raw $ctlTee
+            $ctlRows = @([ordered]@{ result = $cp.ExitCode })
+            $ctlProof = [ordered]@{
+              child_exit = $cp.ExitCode
+              tee_has_stdout = $teed -match 'CONTROL-STDOUT-MARKER'
+              tee_has_stderr = $teed -match 'CONTROL-STDERR-MARKER'
+              final_decision = Get-HuntExit $ctlRows
+            }
+            $ctlProof | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-fault-control.json")
+            Write-Host ($ctlProof | ConvertTo-Json -Compress)
+            if ($ctlProof.child_exit -ne 7 -or -not $ctlProof.tee_has_stdout -or -not $ctlProof.tee_has_stderr -or $ctlProof.final_decision -ne 1) {
+              throw 'fault control did not preserve the nonzero child outcome'
+            }
+          }
           $summary = @()
           for ($i = 1; $i -le [int]$env:ITERATIONS; $i++) {
             $artifactRoot = Join-Path $env:QUAL_TEMP_ROOT "trusted-editor-$i"
@@ -164,7 +198,7 @@ jobs:
             $started = Get-Date
             if ($env:RUN_MODE -eq 'pipe') {
               $inner = Join-Path $rawDir "pipe-iter$i.ps1"
-              "npm run test:e2e 2>&1 | Tee-Object -FilePath '$out.tee'; exit `$LASTEXITCODE" | Set-Content -Encoding utf8 $inner
+              New-PipeScript 'npm run test:e2e' "$out.tee" $inner
               $p = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-File', $inner -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
             } else {
               $p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'test:e2e' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
@@ -190,8 +224,7 @@ jobs:
             Write-Host ("shard {0} iteration {1}: {2} in {3}s" -f $env:SHARD, $i, $exit, [int]((Get-Date) - $started).TotalSeconds)
           }
           $summary | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-summary.json")
-          $bad = @($summary | Where-Object { $_.result -ne 0 })
-          if ($bad.Count -gt 0) { Write-Host "$($bad.Count) of $($summary.Count) iterations failed or hung"; exit 1 }
+          if ((Get-HuntExit $summary) -ne 0) { Write-Host "iterations failed or hung: $(($summary | ConvertTo-Json -Compress))"; exit 1 }
         env:
           SHARD: ${{ matrix.shard }}
 
