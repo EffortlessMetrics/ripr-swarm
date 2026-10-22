@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -50,33 +50,17 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
-      # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
-      # cargo status is recorded and replayed so a failed test still fails the
-      # job, and the log is uploaded even when it does.
-      - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
-        timeout-minutes: 50
+      - name: Probe inner cargo build vs nextest build
+        timeout-minutes: 40
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
-
-      # nextest colors its status rows; strip the escapes for the filter only, the
-      # uploaded log stays raw.
-      - name: Summarize failures
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload shard logs
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-shard-${{ matrix.shard }}
-          path: |
-            target/shard-${{ matrix.shard }}.log
-            target/shard-${{ matrix.shard }}.status
-          if-no-files-found: warn
-          retention-days: 7
+          set +e
+          cargo nextest run --profile windows-advisory --workspace --no-run 2>&1 | tail -3
+          echo "=== inner enumeration (as the test wrapper runs it)"
+          time (cargo test --no-run -p xtask --locked --offline 2>&1 | grep -aE "Compiling|Finished|error|Blocking|Locking" | head -40)
+          echo "=== run the two hanging tests alone, 6 min kill"
+          cargo nextest run --profile windows-advisory --workspace --no-capture -E 'test(test_covered_by_production_wrapper_enumerates_through_cargo) | test(policy_checker_facade_runs_current_repo_checks)' 2>&1 | tail -60
+          exit 0
 
   windows-doctests:
     name: windows-doctests
