@@ -100,6 +100,12 @@ impl AdaptorTail {
         })
     }
 
+    /// Whether the tail's `collect` targets `Result<Vec<..>, ..>`, which
+    /// stops at the first `Err`.
+    pub(in crate::analysis::classify) fn collects_result(&self) -> bool {
+        self.collects_named_result
+    }
+
     /// Whether `operand` is the closure binding read as one element of `P`:
     /// `x`, `*x` or `**x`, never more `*` than the pattern leaves.
     pub(in crate::analysis::classify) fn reads_element(&self, operand: &str) -> bool {

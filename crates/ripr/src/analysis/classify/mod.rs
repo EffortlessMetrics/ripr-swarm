@@ -86,7 +86,9 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
-pub(in crate::analysis) use pinned_shape::withhold_pinned_shape_gap;
+pub(in crate::analysis) use pinned_shape::{
+    withhold_pinned_shape_gap, withhold_result_collect_err_pin,
+};
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection_for_probe, current_path_witness_with,

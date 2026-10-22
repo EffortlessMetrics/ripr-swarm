@@ -284,3 +284,30 @@ fn map_collect_into_result_vec_keeps_its_controls() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #9490: a `Result` collect stops at the first `Err`, so an `Err(..)` pin never
+/// reaches the closure on later elements and observes no change to the `Ok`
+/// path. Only an `Ok(..)` pin credits, and a file that binds `Ok` as a value
+/// is refused.
+#[test]
+fn map_collect_into_result_vec_credits_only_an_ok_pin() -> Result<(), String> {
+    let signature = "parse_all(xs: &[&str]) -> Result<Vec<u32>, std::num::ParseIntError>";
+    let new = "xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()";
+    let old = "xs.iter().map(|s| s.parse::<u32>()).collect()";
+    let err_pin = "assert_eq!(parse_all(&[\"x\", \"2\"]), Err(\"x\".parse::<u32>().unwrap_err()));";
+    let ok_pin = "assert_eq!(parse_all(&[\"1\", \"2\"]), Ok(vec![1, 2]));";
+    let json = check_json(signature, new, old, err_pin, "")?;
+    let returned = family_finding(&json, "return_value")?;
+    assert_ne!(returned["classification"], "exposed", "err pin: {returned}");
+    let json = check_json(signature, new, old, ok_pin, "")?;
+    let returned = family_finding(&json, "return_value")?;
+    assert_eq!(returned["classification"], "exposed", "ok pin: {returned}");
+    let rebound = "\nfn Ok(values: Vec<u32>) -> Result<Vec<u32>, std::num::ParseIntError> {\n    Ok(values)\n}\n";
+    let json = check_json(signature, new, old, ok_pin, rebound)?;
+    let returned = family_finding(&json, "return_value")?;
+    assert_ne!(
+        returned["classification"], "exposed",
+        "rebound Ok: {returned}"
+    );
+    Ok(())
+}
