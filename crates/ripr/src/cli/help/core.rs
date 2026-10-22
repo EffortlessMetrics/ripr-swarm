@@ -289,7 +289,7 @@ Options:
                            badge and warns on stderr. No public ripr command
                            writes that file yet; hand-author the documented
                            minimum shape from real test measurements or wait
-                           for the portable producer tracked in issue #7221.
+                           for the portable producer (not shipped yet).
                            See docs/BADGE_ADOPTION.md.
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
