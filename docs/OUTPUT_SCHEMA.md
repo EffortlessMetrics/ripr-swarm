@@ -942,7 +942,7 @@ The same envelope covers the other `--json` commands (#7331): `ripr diff
 agent brief --json`, and `ripr agent packet --json` write this document for
 every post-argv-parse failure, keyed with the refusing command's own
 `schema_version` (`"0.1"` for diff and agent brief, `"ripr-targeted-rerun-v1"`
-for rerun, `"1.0"` for context, `"0.5"` for agent packet). `mode` appears only
+for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
 brief echoes the caller-supplied `--base` when its working set selected one.
@@ -3559,6 +3559,27 @@ value as `finding_alignment.items[].canonical_gap_id` and the finding-level
 `canonical_gap_id`, so packet consumers share one gap identity with
 `ripr receipt write --gap` and the gap ledger instead of inventing a second
 one. It is emitted between `tool` and `source_currentness`.
+
+## Check Findings Artifact
+
+`ripr check --format check-findings-json` emits the complete diff-scoped
+`check --format json` document (the Output section above, never
+findings-bounded) with one additive top-level member, `artifact`, as its
+first member (ADR 0020 amendment, #9103). The envelope is the same shared
+projection `repo-exposure-json` carries with these token differences: `kind`
+is `"check_findings"` and `analysis.format` / `analysis.command` name
+`check-findings-json` / `ripr check --format check-findings-json`. The
+`content_sha256` commitment covers the exact emitted bytes with the digest
+replaced by the fixed placeholder. The analysis format is part of
+`analysis.input_identity`, so this artifact is never comparable to a
+repo-exposure artifact.
+
+`ripr agent verify` and `ripr agent receipt` accept it as a snapshot. It is
+validated by the same identity, commitment and Git-provenance authority as
+`repo-exposure-json`, and additionally requires
+`analysis_outcome.analysis_complete: true`, no `document_complete: false`,
+and unique gap ids with a non-empty classification, file and line. Movement is
+compared per canonical gap id.
 
 ## Repo Seam Inventory
 

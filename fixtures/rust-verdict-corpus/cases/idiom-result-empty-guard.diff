@@ -1,0 +1,12 @@
+diff --git a/src/results.rs b/src/results.rs
+--- a/src/results.rs
++++ b/src/results.rs
+@@ -5,7 +5,7 @@
+ }
+ 
+ pub fn parse_sum(text: &str) -> Result<u32, ParseError> {
+-    if text.is_empty() {
++    if text.len() == 0 {
+         return Err(ParseError::Empty);
+     }
+     let mut total = 0;

@@ -263,7 +263,9 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif
+                               human, human-full, json, github, sarif,
+                               check-findings-json (identified snapshot
+                               for `agent verify`)
                              Badge (diff-scoped, for README status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
