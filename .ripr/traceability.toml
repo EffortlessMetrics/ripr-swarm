@@ -16322,6 +16322,8 @@ tests = [
   "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0265_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refuses_an_empty_literal_argument",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
