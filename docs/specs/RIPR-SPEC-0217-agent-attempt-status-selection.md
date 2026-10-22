@@ -98,12 +98,15 @@ receipt strength, and currentness as separate facts:
   receipt the attempt actually retained:
   - `finished_current` / `finished_historical` require a digest-bound
     attempt-local receipt whose reading shows the gap closed, split by
-    whether HEAD is still the head the after phase recorded. A moved HEAD
+    whether HEAD is still the head the after phase recorded and the
+    worktree still matches the after phase's edit-cage delta binding (the
+    binding `agent receipt` enforces). A moved HEAD or a drifted worktree
     downgrades to `finished_historical`; historical validity and current
     applicability are reported separately and the retained result is never
     presented as current proof.
   - `limited` covers a receipt that does not show the gap closed, a
-    finished attempt whose currentness cannot be read, and an awaiting
+    finished attempt whose currentness cannot be read (including an
+    unreadable or tampered delta baseline), and an awaiting
     attempt whose HEAD cannot be related to its prepared head.
   - `corrupt_or_unavailable` covers declared-but-missing, tampered, or
     unbound attempt-local terminal evidence. Status never falls back to
@@ -112,7 +115,9 @@ receipt strength, and currentness as separate facts:
     `terminal_artifacts`: any reading travels only through the one-slot
     compatibility projection, which is exactly the strength it earned.
 - `currentness` is `current`, `historical`, or `unknown`, derived from
-  HEAD alone and reported separately from the class.
+  HEAD and, for finished attempts, the worktree delta binding (not the
+  trusted-head-surface or packet-binding checks `agent receipt` also runs),
+  and reported separately from the class.
 - `next_action` is one exact next or recovery command: the after phase's
   retained command for `awaiting_edit`; a typed restart or head-recovery
   command for `stale`, `incomparable`, `failed`, `prepared`, gap-open

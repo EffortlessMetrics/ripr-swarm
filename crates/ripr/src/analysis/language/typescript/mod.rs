@@ -71,6 +71,7 @@ mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod field_update_guard;
 mod guard_entry_guard;
 mod instance_class_guard;
 #[cfg(test)]
@@ -92,6 +93,7 @@ mod owners;
 mod package;
 #[cfg(test)]
 mod predicate_activation_tests;
+mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
@@ -151,6 +153,7 @@ pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
@@ -179,6 +182,7 @@ pub(crate) use tsconfig::{
 };
 pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
+pub(crate) use value_hiding_guard::*;
 
 /// TypeScript / JavaScript preview adapter.
 ///
@@ -533,6 +537,17 @@ impl TypeScriptAdapter {
                     owner_extraction_gaps.push(gap);
                 }
             }
+            // The gap disclosure above is file-level; a changed enum member
+            // also earns its own limited finding so the edit is not silent
+            // (#9436).
+            let enum_member_lines = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    let changed_lines: Vec<usize> =
+                        changed.added_lines.iter().map(|added| added.line).collect();
+                    changed_enum_member_lines(&changed.path, source, &changed_lines)
+                })
+                .unwrap_or_default();
 
             // Resolve package/workspace discovery facts for this changed file.
             // Evidence lines are injected into every finding generated below
@@ -692,6 +707,11 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    findings.push(finding);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
+                    finding.evidence.extend(discovery_evidence.clone());
                     findings.push(finding);
                 }
             }

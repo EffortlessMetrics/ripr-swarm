@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A match arm fed by a bounded `for` loop inside an `Iterator::next`, checked by a test that collects the iterator and compares it whole, no longer reads as a certain `weakly_exposed` gap. It reads as `static_unknown` under the new `rust_caller_loop_selector_unresolved` limit, with the loop's selector range and file:line as evidence (RIPR-SPEC-0240, #5503). Corpus row `regex-syntax-max-scalar-two-byte` moves from `gap` to `limited`; credit stays open.
