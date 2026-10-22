@@ -753,7 +753,43 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        files_path = Path(tmp) / "files.json"
+        attrs_path = Path(tmp) / "gitattributes"
+        files_path.write_text(
+            json.dumps(
+                [
+                    {"filename": "fixtures/x/package-lock.json", "additions": 2000, "deletions": 1000},
+                    {"filename": "src/lib.rs", "additions": 10, "deletions": 0},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        attrs_path.write_text("package-lock.json linguist-generated\n", encoding="utf-8")
+        wired = fixture(body=fixture_body(), head=head, additions=3010, deletions=1000, changed_files=2)
+        assert run(wired, [wired])["reason"] == "qualification_scope_oversized"
+        wired_files, wired_lines = generated_from_files(wired, files_path, attrs_path)
+        assert (wired_files, wired_lines) == (1, 3000)
+        assert decide(wired, [wired], head, False, max_files, max_lines, wired_files, wired_lines)["status"] == "admitted"
+        assert generated_from_files(wired, files_path, Path(tmp) / "absent") == (0, 0)
+        assert generated_from_files(wired, None, attrs_path) == (0, 0)
     print("candidate-admission self-test: all controls passed")
+
+
+def generated_from_files(
+    current: dict[str, Any], pr_files: Path | None, attributes: Path | None
+) -> tuple[int, int]:
+    """(generated files, generated lines) from the fetched PR file listing and
+    the base commit's .gitattributes; (0, 0) unless both were supplied."""
+    if not pr_files or not attributes or not attributes.exists():
+        return 0, 0
+    return generated_totals(
+        load_json(pr_files) or [],
+        parse_generated_rules(attributes.read_text(encoding="utf-8")),
+        int(current.get("changed_files") or 0),
+    )
 
 
 def load_json(path: Path) -> Any:
@@ -796,13 +832,9 @@ def main() -> int:
     if args.max_changed_files < 1 or args.max_changed_lines < 1:
         parser.error("qualification limits must be positive")
     current = load_json(args.current)
-    generated_files = generated_lines = 0
-    if args.pr_files and args.generated_attributes and args.generated_attributes.exists():
-        generated_files, generated_lines = generated_totals(
-            load_json(args.pr_files) or [],
-            parse_generated_rules(args.generated_attributes.read_text(encoding="utf-8")),
-            int(current.get("changed_files") or 0),
-        )
+    generated_files, generated_lines = generated_from_files(
+        current, args.pr_files, args.generated_attributes
+    )
     result = decide(
         current,
         load_json(args.open_prs),

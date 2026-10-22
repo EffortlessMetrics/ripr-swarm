@@ -244,12 +244,13 @@ runs:
             proposed_args=(--proposed-packet "$proposed_packet")
           fi
 
-          # Generated paths come from the live base, never the candidate;
-          # an unreadable declaration exempts nothing.
+          # Generated paths: live base only; missing file exempts nothing, other failures refuse.
           attrs="$tmp/gitattributes"
           attrs_args=()
-          if gh api -H "Accept: application/vnd.github.raw" "repos/${ADMISSION_REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>/dev/null; then
+          if gh api -H "Accept: application/vnd.github.raw" "repos/${ADMISSION_REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>"$packet_err"; then
             attrs_args=(--generated-attributes "$attrs")
+          elif ! grep -q 'HTTP 404' "$packet_err"; then
+            refuse_early "generated_paths_read_failed" "the generated-path declaration could not be read from the live base; refresh the exact base evidence and retry"
           fi
 
           docs_flag=()
