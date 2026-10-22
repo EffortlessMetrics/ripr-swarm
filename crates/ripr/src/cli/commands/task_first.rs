@@ -19,6 +19,7 @@ use crate::cli::agent::{
     AgentCardOptions, AgentRepairOptions, AgentRepairPhase, AgentStatusOptions,
 };
 use crate::cli::commands_context::ensure_command_root;
+use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 
@@ -265,7 +266,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
 pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
     match parse_repair_args(args).map_err(CommandError::from)? {
         RepairFacadeCommand::Help => {
-            println!("{REPAIR_HELP}");
+            println!("{}", help::render_command_help(REPAIR_HELP, &[]));
             Ok(())
         }
         RepairFacadeCommand::Repair(options) => run_facade_repair(options),
@@ -275,7 +276,7 @@ pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
 pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandError> {
     match parse_continue_args(args).map_err(CommandError::from)? {
         ContinueFacadeCommand::Help => {
-            println!("{CONTINUE_HELP}");
+            println!("{}", help::render_command_help(CONTINUE_HELP, &[]));
             Ok(())
         }
         ContinueFacadeCommand::Continue(options) => run_facade_continue(options),
@@ -285,7 +286,7 @@ pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandErro
 pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
     match parse_status_args(args).map_err(CommandError::from)? {
         StatusFacadeCommand::Help => {
-            println!("{STATUS_HELP}");
+            println!("{}", help::render_command_help(STATUS_HELP, &[]));
             Ok(())
         }
         StatusFacadeCommand::Status(options) => run_facade_status(options),

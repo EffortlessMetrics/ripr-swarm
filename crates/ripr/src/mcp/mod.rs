@@ -126,7 +126,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => {
-                println!("{MCP_HELP}");
+                println!("{}", crate::cli::help::render_command_help(MCP_HELP, &[]));
                 return Ok(());
             }
             "--version" | "-V" => {

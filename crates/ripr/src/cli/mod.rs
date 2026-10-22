@@ -9,7 +9,7 @@ mod commands_numeric;
 mod commands_options;
 mod commands_timestamps;
 mod execute;
-mod help;
+pub(crate) mod help;
 mod help_json;
 mod interrupt;
 mod parse;
