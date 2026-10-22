@@ -105,10 +105,10 @@ fn given_a_handler_that_asserts_or_nests_a_failure_then_the_try_body_is_read() {
             1,
         ),
         ("self.assertTrue(False)", 2),
-        ("self.assertIn('x', str(e))", 2),
+        ("self.assertIn('x', str(err))", 2),
     ] {
         let body = format!(
-            "    try:\n        assert f(3) == 21\n    except AssertionError as e:\n        {handler}\n"
+            "    try:\n        assert f(3) == 21\n    except AssertionError as err:\n        {handler}\n"
         );
         assert_eq!(assertion_count(&body), expected, "handler {handler}");
     }
