@@ -255,6 +255,11 @@ pub(crate) fn render_pilot_summary_md(
             actionable_total, context.max_seams
         ));
     }
+    // #9368: the summary says how many seams were cut, but no human surface
+    // pointed at the one flag that answers "why only this many".
+    if actionable_total > context.max_seams {
+        out.push_str("- Pass `--max-seams N` to rank more seams.\n");
+    }
     let withheld = withheld_static_limitations(classified);
     if withheld > 0 {
         out.push_str(&format!(
@@ -586,6 +591,28 @@ pub(crate) fn render_pilot_terminal(
             "  seam limit: ranked {} of {} seams\n",
             limit.analyzed, limit.total
         ));
+    }
+    // #9368: the terminal shows the top 1 seam; without the total and a
+    // pointer to the ranked list, one unexplained pick out of an undisclosed
+    // count reads as arbitrariness on large repos. The lower-bound predicate
+    // mirrors the JSON summary (#6739): a seam limit cut the classified
+    // seams, and declined Rust files emitted no probe shapes, so either way
+    // the terminal total understates the repo.
+    let actionable = actionable_total(classified);
+    if actionable >= 1 {
+        let totals = if context.seam_limit.is_some() || !declined_rust_files(context).is_empty() {
+            format!("at least {actionable}")
+        } else {
+            format!("{actionable} total")
+        };
+        if actionable > 1 {
+            out.push_str(&format!(
+                "  actionable seams: {totals}, showing 1 (more ranked in {brief}; pass --max-seams N to rank more)\n",
+                brief = display_path(&context.artifacts.pilot_summary_md)
+            ));
+        } else {
+            out.push_str(&format!("  actionable seams: {totals}, showing 1\n"));
+        }
     }
     let withheld = withheld_static_limitations(classified);
     if withheld > 0 {

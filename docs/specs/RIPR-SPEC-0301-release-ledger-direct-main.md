@@ -220,7 +220,9 @@ valid-ledger control that yields no reasons.
   `unjudgeable_commits_block_instead_of_defaulting`,
   `deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row`,
   `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
-  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`.
+  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`,
+  `repeated_derive_flags_are_rejected_before_any_file_is_read`,
+  `failed_derivation_leaves_an_existing_output_untouched`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,

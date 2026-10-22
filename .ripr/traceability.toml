@@ -1696,6 +1696,7 @@ tests = [
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_awaiting_and_missing_commands_retain_literal_unix_root",
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root",
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_receipt",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_verify_packet_or_brief",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_warns_when_verify_or_receipt_look_stale",
@@ -10009,6 +10010,11 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_refuses_serialization_failure_after_partial_buffer_flush",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::real_file_facts_keep_original_cache_bytes_and_integrity",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_inputs_preserved",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_terminal_type_arguments",
@@ -14070,6 +14076,13 @@ tests = [
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::unlisted_installed_python_snapshot_file_is_rejected",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::installed_python_scenario_candidate_must_bind_the_manifest_snapshots",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::bare_historical_command_must_not_become_the_recommendation",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::committed_fixtures_reproduce_their_recorded_ids_from_the_recipe",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_recorded_commit_id_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_snapshot_byte_is_refused_by_the_rebuilt_tree",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_without_the_base_and_head_steps_fails_closed",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::inherited_repository_selectors_do_not_redirect_the_rebuild",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::snapshot_git_metadata_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_that_drops_the_variant_derivation_is_refused",
   "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
   "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason",
@@ -14090,6 +14103,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs",
 ]
 outputs = []
 metrics = [
@@ -14150,6 +14164,13 @@ tests = [
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::scenario_candidate_must_bind_the_manifest_snapshots",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::scenario_must_bind_its_designated_snapshot",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::git_identity_binding_accepts_only_lowercase_hex",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::committed_fixtures_reproduce_their_recorded_ids_from_the_recipe",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_recorded_commit_id_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_snapshot_byte_is_refused_by_the_rebuilt_tree",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_without_the_base_and_head_steps_fails_closed",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::inherited_repository_selectors_do_not_redirect_the_rebuild",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::snapshot_git_metadata_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_that_drops_the_variant_derivation_is_refused",
   "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
   "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
 ]
@@ -14163,6 +14184,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs",
 ]
 outputs = []
 metrics = [
@@ -14924,6 +14946,7 @@ tests = [
   "xtask/src/reports/issue_lifecycle.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
   "xtask/src/reports/issue_lifecycle.rs::tests::parse_captured_accepts_at_most_one_path",
   "xtask/src/reports/issue_lifecycle.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
+  "xtask/src/reports/issue_lifecycle.rs::tests::rejected_duplicate_digest_ties_preserve_json_and_markdown",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_attempts",
@@ -15041,6 +15064,9 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_writes_the_serial_bytes",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_stops_on_cancellation_without_a_manifest",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_falls_back_to_the_caller_when_no_worker_spawns",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_matches_the_serial_plan",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_replans_a_shard_the_encode_rejects",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::concurrent_single_entry_probe_agrees_with_the_serial_decision",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded",
@@ -16299,6 +16325,8 @@ tests = [
   "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0265_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refuses_an_empty_literal_argument",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
@@ -16777,7 +16805,9 @@ metrics = [
 id = "RIPR-SPEC-0237"
 name = "Pilot seam ranking"
 spec = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
-tests = []
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_discloses_actionable_total_and_max_seams_escape",
+]
 fixtures = []
 code = [
   "crates/ripr/src/output/pilot/ranking.rs",
@@ -16871,6 +16901,7 @@ tests = [
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_twice_adds_one_stop_reason",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_panic_macro_is_read_by_its_own_name",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it",
   "crates/ripr/tests/should_panic_limit.rs::a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown",
   "crates/ripr/tests/should_panic_limit.rs::a_panic_outcome_the_rule_does_not_cover_keeps_the_gap",
   "crates/ripr/tests/debug_assertion_limit.rs::a_debug_assert_eq_owner_pin_reads_as_a_profile_limit",
