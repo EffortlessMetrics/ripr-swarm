@@ -314,9 +314,9 @@ with no `static_limit_kind` under `rust_caller_loop_selector_unresolved` when:
   `continue`, `break`, `return` or `?` precedes it and `VAR` is not rebound;
 - the arm's selector is in that range (the range and its file:line are
   recorded as `caller_loop_selector_domain` evidence);
-- a non-ignored related test with a strong assertion binds
+- a non-ignored related test binds
   `let x = TYPE::ctor(..).collect()` directly and uses `x` only as a whole
-  operand of `assert_eq!`/`assert_ne!`.
+  operand of `assert_eq!`, with the constructor defined once in the file and returning `Self` or the iterator type.
 
 An arm outside the range, an unresolved, empty or oversized range, an
 unreadable loop, a caller that is not `Iterator::next`, a second loop caller,

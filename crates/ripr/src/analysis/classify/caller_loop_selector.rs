@@ -147,6 +147,10 @@ pub(in crate::analysis) fn withhold_caller_loop_selector_gap(
     let [(domain, iterator, caller)] = loops.as_slice() else {
         return false;
     };
+    let Some(facts) = find_file_facts(index, &caller.file) else {
+        return false;
+    };
+    let impl_source = masked(&facts.source);
     if !domain.contains(selector) {
         return false;
     }
@@ -160,14 +164,7 @@ pub(in crate::analysis) fn withhold_caller_loop_selector_gap(
         }) else {
             continue;
         };
-        if is_ignored(test) || !collects_and_compares(&masked(&test.body), iterator) {
-            continue;
-        }
-        if !test
-            .assertions
-            .iter()
-            .any(|assertion| assertion.strength == OracleStrength::Strong)
-        {
+        if is_ignored(test) || !collects_and_compares(&masked(&test.body), iterator, &impl_source) {
             continue;
         }
         labels.push(format!(
@@ -225,6 +222,20 @@ fn word_offsets(text: &str, name: &str) -> Vec<usize> {
                 && text[at + name.len()..].chars().next().is_none_or(boundary)
         })
         .collect()
+}
+
+/// Whether `text` binds `name` as a local, loop variable, parameter or
+/// closure parameter (`let name`, `let mut name`, `for name`, `name:`, `|name|`).
+fn binds(text: &str, name: &str) -> bool {
+    word_offsets(text, name).into_iter().any(|at| {
+        let before = text[..at].trim_end();
+        let after = text[at + name.len()..].trim_start();
+        ["let", "mut", "for", "|", ","]
+            .iter()
+            .any(|k| before.ends_with(k))
+            || (after.starts_with(':') && !after.starts_with("::"))
+            || after.starts_with("= ")
+    })
 }
 
 /// Offsets of free-function calls `name(`: a whole identifier that is not a
@@ -351,6 +362,14 @@ fn caller_loop(code: &str, owner: &str, file_source: &str, start_line: usize) ->
         if calls != 1 || depth_at(body, call_at) != 0 || exits_first || rebound {
             return CallerLoop::Refused;
         }
+        // A caller-local binding of a bound's name shadows the file-level const.
+        let shadowed = range
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|name| is_ident(name))
+            .any(|name| binds(code, name));
+        if shadowed {
+            return CallerLoop::Refused;
+        }
         let Some((start, end)) = range_bounds(range.trim(), file_source) else {
             return CallerLoop::Refused;
         };
@@ -469,9 +488,9 @@ fn iterator_type(
 }
 
 /// A test that builds `ITERATOR::ctor(..)`, collects it directly and compares
-/// the collection, as one whole operand, in an `assert_eq!`/`assert_ne!`.
-fn collects_and_compares(test_code: &str, iterator: &str) -> bool {
-    let Some(binding) = collected_binding(test_code, iterator) else {
+/// the collection, as one whole operand, in an `assert_eq!`.
+fn collects_and_compares(test_code: &str, iterator: &str, impl_source: &str) -> bool {
+    let Some(binding) = collected_binding(test_code, iterator, impl_source) else {
         return false;
     };
     let uses = word_offsets(test_code, &binding);
@@ -482,7 +501,7 @@ fn collects_and_compares(test_code: &str, iterator: &str) -> bool {
 }
 
 /// `let [mut] NAME = ITERATOR::ctor(..).collect()` (turbofish allowed).
-fn collected_binding(test_code: &str, iterator: &str) -> Option<String> {
+fn collected_binding(test_code: &str, iterator: &str, impl_source: &str) -> Option<String> {
     let needle = format!("{iterator}::");
     let mut bindings = Vec::new();
     for statement in test_code.split(';') {
@@ -501,16 +520,24 @@ fn collected_binding(test_code: &str, iterator: &str) -> Option<String> {
         if !is_ident(name) || !rhs.starts_with(&needle) {
             continue;
         }
+        let ctor = rhs[needle.len()..].split('(').next().unwrap_or("").trim();
         let Some(tail) = after_call(&rhs[needle.len()..]) else {
             continue;
         };
-        let tail = tail.trim_start();
-        let collect = tail.strip_prefix(".collect")?;
-        let collect = match collect.strip_prefix("::<") {
-            Some(generic) => generic.split_once(">()")?.1,
-            None => collect.strip_prefix("()")?,
+        let Some(collect) = tail.trim_start().strip_prefix(".collect") else {
+            continue;
         };
-        if collect.trim().is_empty() && !NON_EXHAUSTING.iter().any(|op| rhs.contains(op)) {
+        let collect = match collect.strip_prefix("::<") {
+            Some(generic) => generic.split_once(">()").map(|(_, after)| after),
+            None => collect.strip_prefix("()"),
+        };
+        let Some(collect) = collect else {
+            continue;
+        };
+        if collect.trim().is_empty()
+            && !NON_EXHAUSTING.iter().any(|op| rhs.contains(op))
+            && ctor_builds_iterator(impl_source, iterator, ctor)
+        {
             bindings.push(name.to_string());
         }
     }
@@ -518,6 +545,38 @@ fn collected_binding(test_code: &str, iterator: &str) -> Option<String> {
         return None;
     };
     Some(only.clone())
+}
+
+/// `fn ctor` is defined once in the impl blocks of `iterator` and returns
+/// `Self` or the iterator type, so the collected value is the iterator whose
+/// `next` the loop is in.
+fn ctor_builds_iterator(impl_source: &str, iterator: &str, ctor: &str) -> bool {
+    let declaration = format!("fn {ctor}");
+    let mut signatures = Vec::new();
+    for at in word_offsets(impl_source, "impl") {
+        let Some((header, rest)) = impl_source[at..].split_once('{') else {
+            continue;
+        };
+        let target = header.rsplit(" for ").next().unwrap_or(header).trim();
+        let target = target.split('<').next().unwrap_or(target).trim();
+        if !header.contains(iterator) || target.split_whitespace().last() != Some(iterator) {
+            continue;
+        }
+        let Some(block) = block(rest) else {
+            continue;
+        };
+        for at in word_offsets(block, &declaration) {
+            signatures.push(block[at..].split(['{', ';']).next().unwrap_or(""));
+        }
+    }
+    let [signature] = signatures.as_slice() else {
+        return false;
+    };
+    let Some((_, ret)) = signature.split_once("->") else {
+        return false;
+    };
+    let ret = ret.trim();
+    ret == "Self" || ret == iterator
 }
 
 /// The text after `ident(..)`, with the call's parentheses balanced.
@@ -542,11 +601,12 @@ fn after_call(text: &str) -> Option<&str> {
     None
 }
 
-/// How many of the first two arguments of `assert_eq!`/`assert_ne!` calls are
+/// How many `assert_eq!` calls have exactly one of their first two arguments
 /// exactly `name` (optionally borrowed).
 fn assert_operand_hits(test_code: &str, name: &str) -> usize {
     let mut hits = 0;
-    for macro_name in ["assert_eq!", "assert_ne!"] {
+    // Only equality is an exact comparison; `assert_ne!` rules out one value.
+    for macro_name in ["assert_eq!"] {
         for at in word_offsets(test_code, macro_name.trim_end_matches('!'))
             .into_iter()
             .filter(|&at| test_code[at + macro_name.len() - 1..].starts_with('!'))
@@ -700,6 +760,22 @@ mod tests {
     }
 
     #[test]
+    fn a_named_bound_the_caller_rebinds_is_refused() {
+        for body in [
+            "{ let MAX_BYTES = 2; for i in 1..MAX_BYTES { let x = m(i); } }",
+            "{ let mut MAX_BYTES = 2; for i in 1..MAX_BYTES { let x = m(i); } }",
+        ] {
+            assert!(matches!(
+                caller_loop(body, "m", CONSTS, 1),
+                CallerLoop::Refused
+            ));
+        }
+        // Plain uses of the const elsewhere in the caller are not bindings.
+        let used = "{ for i in 1..MAX_BYTES { let x = m(i); } let a = [0; MAX_BYTES]; }";
+        assert_eq!(domain_of(used), Some((1, 4)));
+    }
+
+    #[test]
     fn a_second_const_definition_is_ambiguous() {
         let source = "const MAX_BYTES: usize = 4;\nmod other { const MAX_BYTES: usize = 9; }\n";
         assert_eq!(bound("MAX_BYTES", source), None);
@@ -708,12 +784,17 @@ mod tests {
 
     #[test]
     fn only_a_direct_collect_compared_whole_is_a_consumer() {
+        let imp: &str = "impl Seq { fn new(a: u32, b: u32) -> Self { Seq } }\nimpl Other { fn new(a: u32) -> Vec<u32> { vec![] } }";
         let good = "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);";
-        assert!(collects_and_compares(good, "Seq"));
+        assert!(collects_and_compares(good, "Seq", imp));
         let plain = "let seqs = Seq::new(1, 2).collect(); assert_eq!(vec![1], seqs);";
-        assert!(collects_and_compares(plain, "Seq"));
+        assert!(collects_and_compares(plain, "Seq", imp));
+        // An earlier unrelated constructor call does not hide the later one.
+        let earlier = "let first = Seq::new(1, 2).next(); let seqs = Seq::new(1, 2).collect(); assert_eq!(seqs, vec![1]);";
+        assert!(collects_and_compares(earlier, "Seq", imp));
         for bad in [
             "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs, seqs);",
+            "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_ne!(seqs, vec![]);",
             "let seqs = Seq::new(1, 2).take(1).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);",
             "let seqs = Seq::new(1, 2).map(f).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);",
             "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs.len(), 1);",
@@ -722,7 +803,14 @@ mod tests {
             "let seqs = Other::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);",
             "let seqs = Seq::new(1, 2).next(); assert_eq!(seqs, Some(1));",
         ] {
-            assert!(!collects_and_compares(bad, "Seq"), "{bad}");
+            assert!(!collects_and_compares(bad, "Seq", imp), "{bad}");
         }
+        // A constructor that returns another type is not the iterator.
+        let other =
+            "impl Seq { fn new(a: u32, b: u32) -> std::iter::Empty<u32> { std::iter::empty() } }";
+        assert!(!collects_and_compares(good, "Seq", other));
+        // Two definitions of the constructor are ambiguous.
+        let twice = "impl Seq { fn new() -> Self { Seq } fn new() -> Self { Seq } }";
+        assert!(!collects_and_compares(good, "Seq", twice));
     }
 }

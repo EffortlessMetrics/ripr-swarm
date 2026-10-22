@@ -320,6 +320,17 @@ fn a_loop_shape_ripr_cannot_read_keeps_the_gap() -> Result<(), String> {
         "2",
         "rebound loop variable",
     )?;
+    // A local named like the file-level bound may shadow it.
+    keeps_gap(
+        &Shape {
+            consts: "const END: usize = 4;",
+            range: "1..END",
+            loop_prefix: "let END = 2;",
+            ..SHAPE
+        },
+        "2",
+        "shadowed named bound",
+    )?;
     keeps_gap(
         &Shape {
             impl_header: "impl Seqs {\n    fn step(&mut self) -> Option<u32> { None }\n}\nimpl Other for Seqs {",
@@ -344,6 +355,10 @@ fn a_consumer_that_is_not_an_exhausting_exact_collect_keeps_the_gap() -> Result<
         (
             "mutated collection",
             "let mut seqs = Seqs::new(2).collect::<Vec<_>>();\n        seqs.pop();\n        assert_eq!(seqs, vec![]);",
+        ),
+        (
+            "inequality only",
+            "let seqs = Seqs::new(2).collect::<Vec<_>>();\n        assert_ne!(seqs, vec![]);\n        assert_eq!(1, 1);",
         ),
         ("no assertion", "let _ = Seqs::new(2).collect::<Vec<_>>();"),
     ] {
