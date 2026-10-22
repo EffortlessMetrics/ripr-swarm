@@ -1358,6 +1358,62 @@ pub(crate) fn ts_arm_change_witnessed(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    ts_conditional_call_witnessed(
+        &ConditionalCallWitness {
+            param_index: change.param_index,
+            member_root: change.member_root(),
+            expected_is_dead: &|expected| change.expected_is_dead(expected),
+            selects: &|argument| change.selects_changed_arm(argument),
+        },
+        owner,
+        candidates,
+        alias_map,
+        workspace_root,
+    )
+}
+
+/// RIPR-SPEC-0243 rule 15: whether some strong, pinned, exact-value assertion
+/// of an oracle relation calls the owner with a literal argument that lies
+/// between the old and new threshold of the returned conditional, so the
+/// call returns a different arm on each version.
+pub(crate) fn ts_threshold_move_witnessed(
+    change: &TernaryThresholdMove,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    ts_conditional_call_witnessed(
+        &ConditionalCallWitness {
+            param_index: change.param_index,
+            member_root: None,
+            expected_is_dead: &|expected| change.expected_is_dead(expected),
+            selects: &|argument| change.flips(argument),
+        },
+        owner,
+        candidates,
+        alias_map,
+        workspace_root,
+    )
+}
+
+/// What a returned-conditional edit needs from an assertion: the owner
+/// parameter its call must set, and how a literal argument is judged.
+struct ConditionalCallWitness<'a> {
+    param_index: usize,
+    /// The enum root of a member-path operand, which a test may rebind.
+    member_root: Option<&'a str>,
+    expected_is_dead: &'a dyn Fn(&str) -> bool,
+    selects: &'a dyn Fn(&str) -> bool,
+}
+
+fn ts_conditional_call_witnessed(
+    witness: &ConditionalCallWitness<'_>,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
     candidates.iter().any(|candidate| {
         let test = candidate.test;
         // A test body that declares its own owner executes that, not the owner.
@@ -1368,8 +1424,8 @@ pub(crate) fn ts_arm_change_witnessed(
         }
         // A test that rebinds the enum root compares its own constants, not
         // the owner module's.
-        if change
-            .member_root()
+        if witness
+            .member_root
             .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
         {
             return false;
@@ -1391,7 +1447,7 @@ pub(crate) fn ts_arm_change_witnessed(
                 || assertion
                     .expected_value_or_variant
                     .as_deref()
-                    .is_some_and(|expected| change.expected_is_dead(expected))
+                    .is_some_and(|expected| (witness.expected_is_dead)(expected))
             {
                 return false;
             }
@@ -1405,8 +1461,8 @@ pub(crate) fn ts_arm_change_witnessed(
             let arguments =
                 substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
             arguments
-                .get(change.param_index)
-                .is_some_and(|argument| change.selects_changed_arm(argument))
+                .get(witness.param_index)
+                .is_some_and(|argument| (witness.selects)(argument))
         })
     })
 }
@@ -5175,9 +5231,23 @@ pub(crate) fn classify_change_with_alias_state(
                 workspace_root,
             )
         });
+    // RIPR-SPEC-0243 rule 15: a moved threshold of an unchanged returned
+    // conditional is a return-value change when a strong exact assertion
+    // calls the owner with an argument between the old and new threshold.
+    let threshold_move_witnessed = probe_shape.family == ProbeFamily::Predicate
+        && ts_ternary_threshold_move(owner, line_text, old_line_text).is_some_and(|change| {
+            ts_threshold_move_witnessed(
+                &change,
+                owner,
+                &related_candidates,
+                alias_map,
+                workspace_root,
+            )
+        });
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
+        || threshold_move_witnessed
         || loop_bound_witnessed
     {
         TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value)

@@ -120,6 +120,92 @@ pub(crate) fn ts_ternary_arm_change(
     })
 }
 
+/// A moved threshold of a returned conditional: `weightKg > 5 ? 900 : 400`
+/// becoming `weightKg > 25 ? 900 : 400`. Same parameter, same comparison,
+/// two different number thresholds and arms that are distinct constants.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TernaryThresholdMove {
+    pub(crate) param_index: usize,
+    comparison: ArmComparison,
+    old: ArmConstant,
+    new: ArmConstant,
+    when_true: ArmConstant,
+    when_false: ArmConstant,
+}
+
+impl TernaryThresholdMove {
+    /// Whether a call passing `argument` takes a different arm on the two
+    /// versions: the argument is a number the old and new threshold put on
+    /// opposite sides of the comparison.
+    pub(crate) fn flips(&self, argument: &str) -> bool {
+        let Some(argument @ ArmConstant::Number(_)) = parse_arm_constant(argument) else {
+            return false;
+        };
+        let (before, after) = (
+            evaluate(self.comparison, &argument, &self.old),
+            evaluate(self.comparison, &argument, &self.new),
+        );
+        matches!((before, after), (Some(before), Some(after)) if before != after)
+    }
+
+    /// Whether `expected` provably equals neither arm, so an assertion on it
+    /// fails on both versions.
+    pub(crate) fn expected_is_dead(&self, expected: &str) -> bool {
+        let Some(expected) = parse_arm_constant(expected) else {
+            return false;
+        };
+        evaluate(ArmComparison::Equal, &expected, &self.when_true) == Some(false)
+            && evaluate(ArmComparison::Equal, &expected, &self.when_false) == Some(false)
+    }
+}
+
+/// The `TernaryThresholdMove` when both lines are `return <cond> ? <a> : <b>;`
+/// with identical arms that are distinct constants, and a condition that
+/// compares one stable owner parameter with a number that is the only change.
+pub(crate) fn ts_ternary_threshold_move(
+    owner: &TypeScriptOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<TernaryThresholdMove> {
+    let new = conditional_parts(line_text)?;
+    let old = conditional_parts(old_line_text?)?;
+    if new.condition == old.condition
+        || new.when_true != old.when_true
+        || new.when_false != old.when_false
+    {
+        return None;
+    }
+    let (parameter, comparison, new_operand) = parameter_comparison(&new.condition_text, owner)?;
+    let (old_parameter, old_comparison, old_operand) =
+        parameter_comparison(&old.condition_text, owner)?;
+    if parameter != old_parameter
+        || comparison != old_comparison
+        || !matches!(
+            (&new_operand, &old_operand),
+            (ArmConstant::Number(new), ArmConstant::Number(old)) if new != old
+        )
+    {
+        return None;
+    }
+    let when_true = parse_arm_constant(&new.when_true_text)?;
+    let when_false = parse_arm_constant(&new.when_false_text)?;
+    if evaluate(ArmComparison::Equal, &when_true, &when_false) != Some(false) {
+        return None;
+    }
+    let param_index = owner.params.iter().position(|param| *param == parameter)?;
+    if !ts_parameter_is_stable(owner.source_text.as_deref()?, &parameter) {
+        return None;
+    }
+    Some(TernaryThresholdMove {
+        param_index,
+        comparison,
+        old: old_operand,
+        new: new_operand,
+        when_true,
+        when_false,
+    })
+}
+
 struct ConditionalParts {
     /// The condition as written, for operand parsing.
     condition_text: String,

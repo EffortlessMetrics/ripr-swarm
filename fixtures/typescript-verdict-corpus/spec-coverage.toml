@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 121
+floor = 122
 
 # LSP Repair Packet Command
 [[spec]]
@@ -679,23 +679,18 @@ reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
 
 [[known_false]]
 case = "pw-expect-soft-second-term"
-issue = 9434
-reason = "Playwright expect.soft read as no oracle (#9434)."
-
-[[known_false]]
-case = "pw-step-heavy-parcel-threshold"
-issue = 9434
-reason = "Playwright test.step body read as no oracle (#9434)."
+issue = 9651
+reason = "Changed field of a multi-field object literal is judged by the first field (#9651)."
 
 [[known_false]]
 case = "pw-tothrow-anchored-regex"
-issue = 9434
-reason = "Anchored regex in toThrow read as no oracle (#9434)."
+issue = 9652
+reason = "Thrown template message with a parameter interpolation is never compared with the test message (#9652)."
 
 [[known_false]]
 case = "pw-loop-registered-rounding-mode"
-issue = 9434
-reason = "Playwright loop-registered test read as a gap (#9434)."
+issue = 9653
+reason = "Exact-oracle credit for a rounding swap the test rows cannot tell apart (#9653)."
 
 [[known_false]]
 case = "pw-fixme-clamp-upper-bound"

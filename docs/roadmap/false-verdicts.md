@@ -6,7 +6,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 | Language | False | Cases |
 | --- | --- | --- |
 | Rust | 13 | 558 |
-| TypeScript | 33 | 309 |
+| TypeScript | 31 | 309 |
 | Python | 25 | 191 |
 | Perl | 1 | 60 |
 
@@ -36,7 +36,7 @@ spec or the analyzer. Never exclude or reclassify it.
 | TS credit on unreached arms | `shape-nullish-middle-operand`, `-template-plural-boundary`, `-async-catch-fallback-unexercised`, `-static-factory-rounding` | #9437 |
 | Python language shapes | nine `py-shapes-*` cases | #9412 |
 | Python idioms | `py-idioms-caplog-message`, `-caplog-level` (#9424), `-approx-constant-within-tolerance` (#9428), `-unittest-setup-sign` (#9412) | see each |
-| TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436) | see each |
+| TS Playwright and hostile | `pw-expect-soft-second-term` (#9651), `pw-tothrow-anchored-regex` (#9652), `pw-loop-registered-rounding-mode` (#9653), `pw-fixme-clamp-upper-bound` (#9436) | see each |
 | TS mocha and node:test | nine false actionable rows (`mocha-*`, `node-*`) | #9496 |
 | TS skip and unexercised bound credited | `mocha-it-skip-sole-pin`, `mocha-clamp-unexercised-lower-arm`, `node-t-skip-inside-test`, `node-first-attempt-nonnegative-bound` | #9497 |
 | TS operator grid | `ts-grid-*` (eleven rows) | #9515, #9532, #9533, #9534 |
