@@ -78,6 +78,29 @@ pub(crate) const RESOURCE_COST_SCHEMA_VERSION: &str = "0.1";
 /// analyzed `ripr` process; no harness measures them on this process's behalf.
 pub(crate) const RESOURCE_COST_OBSERVER_SCOPE: &str = "ripr_process_self";
 
+/// Optional receipt-authentication token. A harness that scrapes receipts from
+/// stderr sets this to a fresh random value per child; the receipt lines then
+/// carry `token=<value>` after the receipt prefix, so a line that merely starts
+/// with the receipt prefix (for example one injected through a hostile file
+/// name in a diagnostic) is not trusted as machine data. Unset, or not 1-64
+/// ASCII alphanumerics, the receipt keeps its original unauthenticated shape.
+pub(crate) const RECEIPT_TOKEN_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN";
+
+/// The receipt line prefix for `prefix` (which ends in a space), carrying the
+/// harness token when one was supplied.
+pub(crate) fn authenticated_receipt_prefix(prefix: &str) -> String {
+    receipt_prefix_with_token(prefix, std::env::var(RECEIPT_TOKEN_ENV).ok().as_deref())
+}
+
+fn receipt_prefix_with_token(prefix: &str, token: Option<&str>) -> String {
+    match token.filter(|token| {
+        (1..=64).contains(&token.len()) && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    }) {
+        Some(token) => format!("{prefix}token={token} "),
+        None => prefix.to_string(),
+    }
+}
+
 /// Whether the opt-in trace family is enabled for this process.
 pub(crate) fn latency_trace_enabled() -> bool {
     std::env::var_os(LATENCY_TRACE_ENV).is_some()
@@ -463,12 +486,16 @@ pub(crate) fn emit_run_resource_cost() {
     }
     let observation = ResourceCostObservation::observe();
     match observation.to_receipt_json() {
-        Ok(body) => eprintln!("{RESOURCE_COST_RECEIPT_PREFIX}{body}"),
+        Ok(body) => eprintln!(
+            "{}{body}",
+            authenticated_receipt_prefix(RESOURCE_COST_RECEIPT_PREFIX)
+        ),
         // The observation cannot be serialized. Emit a hand-built body that
         // names why, so the line still parses and still reports no number
         // rather than disappearing.
         Err(_) => eprintln!(
-            "{RESOURCE_COST_RECEIPT_PREFIX}{}",
+            "{}{}",
+            authenticated_receipt_prefix(RESOURCE_COST_RECEIPT_PREFIX),
             receipt_serialization_failed_body(
                 std::process::id(),
                 std::env::consts::OS,

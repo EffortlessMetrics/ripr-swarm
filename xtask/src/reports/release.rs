@@ -2442,6 +2442,16 @@ fn repo_exposure_latency_status_reasons(artifact: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The latency report's `output_parity` (`pass`, `mismatch`, `not_checked`),
+/// or `None` when the report is unreadable or predates the field.
+fn repo_exposure_latency_output_parity(artifact: &Path) -> Option<String> {
+    read_json_value(artifact)
+        .ok()?
+        .get("output_parity")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
     let command = "cargo xtask repo-exposure-latency-report";
     let artifact = "target/ripr/reports/repo-exposure-latency.json";
@@ -2460,17 +2470,29 @@ fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
                 Vec::new(),
             ),
             Ok(status) => {
-                // The report cannot say `pass` while output parity is unchecked
-                // (#9503), so release-readiness carries a non-required `warn`
-                // and names the report's own status reasons.
+                // `pass` is reachable now that output parity is a real
+                // comparison (#9633). A cache-served output that differs from
+                // a cold recomputation is a correctness failure of the cache
+                // path and blocks readiness; every other non-pass state
+                // (unchecked parity, cache store errors, timeouts) stays a
+                // non-required `warn` naming the report's own reasons.
+                let parity = repo_exposure_latency_output_parity(Path::new(artifact));
                 let mut details = vec![format!("report status: {status}")];
+                if let Some(parity) = &parity {
+                    details.push(format!("output parity: {parity}"));
+                }
                 details.extend(repo_exposure_latency_status_reasons(Path::new(artifact)));
+                let mismatch = parity.as_deref() == Some("mismatch");
                 readiness_check(
                     "repo-exposure-latency",
-                    "warn",
-                    false,
+                    if mismatch { "fail" } else { "warn" },
+                    mismatch,
                     command,
-                    "repo-exposure latency report exists but is not passing",
+                    if mismatch {
+                        "repo-exposure latency report found cache-served output that differs from a cold recomputation"
+                    } else {
+                        "repo-exposure latency report exists but is not passing"
+                    },
                     vec![
                         artifact.to_string(),
                         "target/ripr/reports/repo-exposure-latency.md".to_string(),
@@ -3506,9 +3528,10 @@ mod tests {
         init_pin_version_check_from, latest_released_version_in, missing_required_needles,
         package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
         readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_status_reasons, validate_binary_identity,
-        validate_doctor_result, validate_installed_version, validate_installed_version_result,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        release_readiness_status, repo_exposure_latency_output_parity,
+        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
+        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
@@ -3530,6 +3553,26 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(reasons, vec!["status reason: output_parity_not_checked"]);
         assert!(missing.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn latency_output_parity_is_read_from_the_report() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-9633-parity-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let report = dir.join("latency.json");
+        fs::write(&report, r#"{"status":"fail","output_parity":"mismatch"}"#)
+            .map_err(|err| err.to_string())?;
+        let mismatch = repo_exposure_latency_output_parity(&report);
+        fs::write(&report, r#"{"status":"pass","output_parity":"pass"}"#)
+            .map_err(|err| err.to_string())?;
+        let pass = repo_exposure_latency_output_parity(&report);
+        fs::write(&report, r#"{"status":"warn"}"#).map_err(|err| err.to_string())?;
+        let absent = repo_exposure_latency_output_parity(&report);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(mismatch.as_deref(), Some("mismatch"));
+        assert_eq!(pass.as_deref(), Some("pass"));
+        assert_eq!(absent, None);
         Ok(())
     }
 
