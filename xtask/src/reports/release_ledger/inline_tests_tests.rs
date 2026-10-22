@@ -23,7 +23,7 @@ fn more() {}
 #[cfg(test)]
 use std::fmt;
 #[cfg( test )]
-#[allow(dead_code)]
+#[inline]
 fn helper() -> [u8; 2] {
     [0; 2]
 }

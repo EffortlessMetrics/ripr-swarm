@@ -149,10 +149,6 @@ pub(super) fn classify_path(path: &str) -> PathClass {
     PathClass::Other
 }
 
-pub(super) fn strongest_class(paths: &[String]) -> Option<PathClass> {
-    paths.iter().map(|path| classify_path(path)).max()
-}
-
 /// The strongest class of a commit's paths, counting a product path the commit
 /// edited only inside `#[cfg(test)]` items as evidence.
 fn commit_class(commit: &CommitFacts) -> Option<PathClass> {

@@ -4,7 +4,6 @@ use super::capture::{CommitFacts, FACTS_KIND, GitFacts};
 use super::dto::{EffectBasis, Range, SCHEMA_VERSION, Source};
 use super::rule::{
     DeriveInput, OVERRIDES_KIND, Override, Overrides, PathClass, classify_path, derive,
-    strongest_class,
 };
 use super::validate::{
     Context, PacketClaim, PacketOpenPr, PacketOpenPrs, SelectionPacket, validate,
@@ -160,7 +159,7 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         "xtask/src/main.rs".to_string(),
     ];
     require(
-        strongest_class(&mixed) == Some(PathClass::Control),
+        mixed.iter().map(|path| classify_path(path)).max() == Some(PathClass::Control),
         "the strongest class wins",
     )
 }
