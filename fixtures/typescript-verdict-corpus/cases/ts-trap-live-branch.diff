@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function liveBranch(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function skippedTest(a: number, b: number): number {

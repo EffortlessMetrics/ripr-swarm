@@ -55,7 +55,9 @@ struct ModuleDeclarationAdmission {
 
 #[derive(Clone, Debug, Default)]
 struct FunctionAssertions {
-    body: String,
+    /// The parsed function text, kept as a fingerprint: a copy of every test
+    /// body stayed live for the whole run just to answer `StaleSource`.
+    body: BodyFingerprint,
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
@@ -64,6 +66,32 @@ struct FunctionAssertions {
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
+}
+
+/// Length plus two 64-bit SipHash values (distinct prefix byte) of a function's text.
+/// Equal text always matches; differing text matching would need a collision
+/// in both hashes, and the compared texts are two reads of the same source
+/// span, not attacker-chosen pairs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BodyFingerprint {
+    len: usize,
+    hashes: [u64; 2],
+}
+
+impl BodyFingerprint {
+    fn of(text: &str) -> Self {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |key: u8| {
+            let mut hasher = DefaultHasher::new();
+            key.hash(&mut hasher);
+            text.hash(&mut hasher);
+            hasher.finish()
+        };
+        Self {
+            len: text.len(),
+            hashes: [hash(0), hash(1)],
+        }
+    }
 }
 
 /// One assertion a test borrows from a check helper it calls.
@@ -185,7 +213,7 @@ impl OwnerPinAssertions {
         if let Some(refusal) = &facts.refusal {
             return Some(refusal.clone());
         }
-        if facts.body != body {
+        if facts.body != BodyFingerprint::of(body) {
             return Some(AssertionContextRefusal::StaleSource);
         }
         if let Some(name) = facts.macros.intersection(ambiguous_macros).next() {
@@ -749,6 +777,33 @@ fn macro_binding_sites_in_tree(
                             .is_some_and(named)
             })
     };
+    // The names a plain import (no glob, or a list naming `self`) binds
+    // anywhere in the file. Every `use std::..` item asks whether its root is
+    // among them, so the one tree walk is shared instead of repeated per item.
+    let plain_imports = std::cell::OnceCell::new();
+    let plain_import_names = || -> &BTreeSet<String> {
+        plain_imports.get_or_init(|| {
+            file_tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|item| {
+                    item.star_token().is_none()
+                        && item.use_tree_list().is_none_or(|list| {
+                            // `use other::std::{self}` binds `std` too.
+                            list.use_trees()
+                                .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                        })
+                })
+                .filter_map(|item| {
+                    item.path()
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .map(|name| name.text().trim_start_matches("r#").to_string())
+                })
+                .collect()
+        })
+    };
     for node in file_tree.syntax().descendants() {
         // `extern crate other as std;` at a crate root rebinds the name for
         // every file, so a standard-root glob elsewhere cannot be trusted.
@@ -988,26 +1043,7 @@ fn macro_binding_sites_in_tree(
             // A plain import that binds the root name (`use crate::other::std;`)
             // also takes it over for the module; `use x as std` is a rename
             // and is caught by `drop_in_shadowed`.
-            let root_imported = || {
-                file_tree
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::UseTree::cast)
-                    .filter(|item| {
-                        item.star_token().is_none()
-                            && item.use_tree_list().is_none_or(|list| {
-                                // `use other::std::{self}` binds `std` too.
-                                list.use_trees()
-                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
-                            })
-                    })
-                    .any(|item| {
-                        item.path()
-                            .and_then(|path| path.segment())
-                            .and_then(|segment| segment.name_ref())
-                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
-                    })
-            };
+            let root_imported = || plain_import_names().contains(root);
             let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some()
@@ -2242,7 +2278,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             &mut result.functions,
             key,
             FunctionAssertions {
-                body: body_source,
+                body: BodyFingerprint::of(&body_source),
                 refusal: None,
                 assertions,
                 macros,
@@ -5342,5 +5378,19 @@ mod skipping_table_tests {
     fn a_column_is_never_read_for_a_loop_that_skips_for_another_reason() {
         let extra = inline("if want.is_none() { continue; }");
         assert_eq!(skipping_table_column(&extra, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn a_body_fingerprint_follows_the_text_exactly() {
+        assert_eq!(BodyFingerprint::of(""), BodyFingerprint::of(""));
+        assert_eq!(BodyFingerprint::of("é = 1;"), BodyFingerprint::of("é = 1;"));
+        assert_ne!(BodyFingerprint::of(""), BodyFingerprint::of(" "));
+        // Same length, one differing byte, and a multibyte character in place
+        // of two ASCII bytes.
+        assert_ne!(
+            BodyFingerprint::of("n = 12;"),
+            BodyFingerprint::of("n = 13;")
+        );
+        assert_ne!(BodyFingerprint::of("é"), BodyFingerprint::of("ab"));
     }
 }

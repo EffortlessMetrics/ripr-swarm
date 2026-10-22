@@ -62,6 +62,14 @@ its own contradiction counts, so the aggregate rates are derived from the
 rows when they are read; no summary file is committed. Adding a case
 therefore adds files and changes no line another case PR changes.
 
+`authored-grid-constants` fills the constant row of the operator grid (exact,
+table, property, helper and no-assertion styles; the property case is the
+partially discriminated cell).
+
+The `[grid]` table of `spec-coverage.toml` gates the operator grid (seven
+operator classes by credited, gap and partial truth) and the false-credit trap
+table; `check` prints and reports both (`verdict_corpus_grid.rs`).
+
 ## When
 
 `cargo xtask verdict-corpus check` applies each edit to a run-owned copy of

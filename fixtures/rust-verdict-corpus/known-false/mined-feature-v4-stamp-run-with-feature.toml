@@ -1,0 +1,3 @@
+case = "mined-feature-v4-stamp-run-with-feature"
+issue = 9643
+reason = "Exact pin in a nested cfg(feature) module's tests read as gap though the feature-on run catches the edit (#9643)."

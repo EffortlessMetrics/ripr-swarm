@@ -1212,6 +1212,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -1653,6 +1654,50 @@ fn static_limit_picks_first_non_transparent_decorator() -> Result<(), String> {
 }
 
 #[test]
+fn decorator_argument_line_belongs_to_the_decorated_function() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/svc.py"),
+        "import functools\n\n@retry(3)\n@functools.cache\ndef flaky():\n    return 1\n\nVALUE = 2\n",
+    );
+    for line in [3, 4, 5] {
+        let owner =
+            super::workspace::owner_for_changed_line(Path::new("src/svc.py"), line, &owners)
+                .ok_or_else(|| format!("no owner for line {line}"))?;
+        if owner.name != "flaky" {
+            return Err(format!(
+                "line {line} owned by `{}`, expected flaky",
+                owner.name
+            ));
+        }
+    }
+    let after = super::workspace::owner_for_changed_line(Path::new("src/svc.py"), 8, &owners)
+        .ok_or_else(|| "no owner for module line".to_string())?;
+    if after.name == "flaky" {
+        return Err("a line after the function must not belong to it".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn decorator_argument_edit_raises_decorator_indirection() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/svc.py"),
+        "@retry(3)\ndef flaky():\n    return 1\n",
+    );
+    let owner = super::workspace::owner_for_changed_line(Path::new("src/svc.py"), 1, &owners)
+        .ok_or_else(|| "no owner for decorator line".to_string())?;
+    let limit = static_limit_for_change("@retry(3)", owner, &[])
+        .ok_or_else(|| "expected DecoratorIndirection limit".to_string())?;
+    if limit.kind != StaticLimitKind::DecoratorIndirection {
+        return Err(format!(
+            "expected DecoratorIndirection, got {:?}",
+            limit.kind
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
     let owner = PythonOwner {
         name: "apply_discount".to_string(),
@@ -1667,6 +1712,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -1727,6 +1773,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -1809,6 +1856,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -1858,6 +1906,7 @@ fn same_stem_related_handles_missing_stems() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -1870,6 +1919,7 @@ fn same_stem_related_handles_missing_stems() {
         term_facts: Default::default(),
     };
     let test = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3392,6 +3442,7 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3415,6 +3466,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3436,6 +3488,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3851,6 +3904,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -3926,6 +3980,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -3954,6 +4009,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -4000,6 +4056,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -4034,6 +4091,7 @@ fn align_strong(oracle: &str) -> RelatedTest {
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
         activation_controls: Vec::new(),
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -4080,6 +4138,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
+        setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),

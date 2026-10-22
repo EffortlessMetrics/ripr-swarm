@@ -1,0 +1,3 @@
+case = "shape-hostile-cfg-attr-test"
+issue = 9442
+reason = "cfg_attr-wrapped test is not recognized (#9442)."

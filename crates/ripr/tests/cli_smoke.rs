@@ -792,7 +792,7 @@ fn write_bound_repo_exposure_fixture(
     "kind": "repo_exposure",
     "schema_version": "1",
     "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.11.0"}},
+    "producer": {{"tool": "ripr", "version": "{producer_version}"}},
     "repository": {{"root": "{root_identity}", "head": "{head}"}},
     "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
     "snapshot_identity": "snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}",
@@ -801,7 +801,8 @@ fn write_bound_repo_exposure_fixture(
   "scope": "repo",
   "run_status": "complete",
   "seams": [{seam_json}]
-}}"#
+}}"#,
+        producer_version = env!("CARGO_PKG_VERSION"),
     );
     let mut hasher = Sha256::new();
     hasher.update(raw.as_bytes());
@@ -1015,7 +1016,7 @@ fn bind_repo_exposure_fixture_with_worktree(
         "kind": "repo_exposure",
         "schema_version": "1",
         "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.11.0"},
+        "producer": {"tool": "ripr", "version": env!("CARGO_PKG_VERSION")},
         "repository": {"root": root_identity, "head": head},
         "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
         "snapshot_identity": format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}"),
@@ -2700,8 +2701,8 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
     // #6762: split as the shell would, so a checkout path that needs
     // quoting (a space, an apostrophe) replays as one argument.
-    let explain_words = shell_words::posix_words(explain_line)?;
-    let context_words = shell_words::posix_words(context_line)?;
+    let explain_words = shell_words::printed_words(explain_line)?;
+    let context_words = shell_words::printed_words(context_line)?;
     let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
     let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
@@ -2753,7 +2754,7 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
         .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
-    let next_args = shell_words::posix_words(next_line)?;
+    let next_args = shell_words::printed_words(next_line)?;
     if next_args
         != [
             "--root",
@@ -2777,6 +2778,26 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     Ok(())
 }
 
+/// The printed spelling of a value that needs quoting but carries no quote,
+/// `$` or backtick: `shell_arg`'s host form (#7729), single quotes on Unix
+/// and the Windows console double-quote form on Windows.
+fn host_quoted(value: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{value}\"")
+    } else {
+        format!("'{value}'")
+    }
+}
+
+/// How the printed form spells the apostrophe in `ripr it's a repo`: the
+/// POSIX close-escape-reopen run, or the end of the Windows console
+/// double-quoted root token (#7729).
+const QUOTED_APOSTROPHE: &str = if cfg!(windows) {
+    "it's a repo\""
+} else {
+    r"'\''"
+};
+
 fn posix_flag_value<'a>(words: &'a [String], flag: &str) -> Result<&'a str, String> {
     words
         .iter()
@@ -2798,7 +2819,7 @@ fn path_matches_printed(printed: &str, expected: &Path) -> bool {
 }
 
 fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
-    let words = shell_words::posix_words(command.trim())?;
+    let words = shell_words::printed_words(command.trim())?;
     let args: Vec<&str> = words.iter().map(String::as_str).collect();
     if args.first() != Some(&"ripr") {
         return Err(format!("printed command is not a ripr command: {command}"));
@@ -2808,7 +2829,7 @@ fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
 }
 
 /// #6942: `check_human_navigation_commands_replay_custom_scope` and the other
-/// posix_words replay sites run on roots with no space or apostrophe, so they
+/// printed_words replay sites run on roots with no space or apostrophe, so they
 /// still pass if reverted to `split_whitespace`. This copies a small fixture
 /// under `ripr it's a repo/` and replays the printed explain, context, and
 /// agent-stub lines from a foreign directory.
@@ -2854,13 +2875,13 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
             .lines()
             .find(|line| line.trim_start().starts_with("ripr context "))
             .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-        if !explain_line.contains(r"'\''") || !context_line.contains(r"'\''") {
+        if !explain_line.contains(QUOTED_APOSTROPHE) || !context_line.contains(QUOTED_APOSTROPHE) {
             return Err(format!(
-                "printed commands must POSIX-quote the apostrophe in the checkout path:\n{explain_line}\n{context_line}"
+                "printed commands must host-quote the apostrophe in the checkout path:\n{explain_line}\n{context_line}"
             ));
         }
-        let explain_words = shell_words::posix_words(explain_line)?;
-        let context_words = shell_words::posix_words(context_line)?;
+        let explain_words = shell_words::printed_words(explain_line)?;
+        let context_words = shell_words::printed_words(context_line)?;
         let printed_root = posix_flag_value(&explain_words, "--root")?;
         if !printed_root.contains(' ') || !printed_root.contains('\'') {
             return Err(format!(
@@ -2897,7 +2918,7 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
                     "explain output omitted its scope-preserving context command:\n{explain_stdout}"
                 )
             })?;
-        let next_words = shell_words::posix_words(next_line)?;
+        let next_words = shell_words::printed_words(next_line)?;
         if posix_flag_value(&next_words, "--root")? != printed_root {
             return Err(format!(
                 "explain Next: command lost the quoted root: {next_line}"
@@ -2907,12 +2928,12 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
             .lines()
             .find(|line| line.trim_start().starts_with("ripr agent stub "))
         {
-            if !stub_line.contains(r"'\''") {
+            if !stub_line.contains(QUOTED_APOSTROPHE) {
                 return Err(format!(
-                    "agent stub command must POSIX-quote the apostrophe:\n{stub_line}"
+                    "agent stub command must host-quote the apostrophe:\n{stub_line}"
                 ));
             }
-            let stub_words = shell_words::posix_words(stub_line)?;
+            let stub_words = shell_words::printed_words(stub_line)?;
             if posix_flag_value(&stub_words, "--root")? != printed_root {
                 return Err(format!(
                     "agent stub command lost the quoted root: {stub_line}"
@@ -5513,7 +5534,7 @@ fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = shell_words::posix_words(line)?;
+    let mut args = shell_words::printed_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -7963,7 +7984,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let next_words = shell_words::posix_words(
+    let next_words = shell_words::printed_words(
         next_command
             .strip_prefix("ripr ")
             .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
@@ -10394,9 +10415,9 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
-            "producer versions differ",
+            "produced by RIPR 0.10.0",
         ),
         (
             "analysis mode",
@@ -11293,7 +11314,7 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
         ),
         (
@@ -11338,6 +11359,10 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
         let stderr = String::from_utf8_lossy(&output.stderr);
         let expected = if label == "analysis profile" {
             "invalid or unknown producer identity"
+        } else if label == "producer version" {
+            // #9500: a version other than the consumer's is refused at
+            // artifact validation, before pair comparability is reached.
+            "produced by RIPR 0.10.0"
         } else {
             "[incomparable_analysis_inputs]"
         };
@@ -15990,7 +16015,7 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     let retry_args = if cfg!(windows) {
         printed_ripr_args(retry)?
     } else {
-        let words = shell_words::posix_words(retry)?;
+        let words = shell_words::printed_words(retry)?;
         if words.first().map(String::as_str) != Some("ripr") {
             return Err(format!("unexpected recovery program: {retry}"));
         }
@@ -16394,7 +16419,7 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     // a drift between pilot's identity and the command it prints is the bug.
     // Split the redirect after POSIX words so a quoted root that contains
     // ` > ` stays one argument (#6942).
-    let (after_words, redirect_word) = shell_words::posix_words_with_redirect(after_command)?;
+    let (after_words, redirect_word) = shell_words::printed_words_with_redirect(after_command)?;
     let check_args: Vec<&str> = after_words
         .iter()
         .map(String::as_str)
@@ -17492,7 +17517,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let repair_words = shell_words::posix_words(repair_line)?;
+    let repair_words = shell_words::printed_words(repair_line)?;
     let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
@@ -25973,7 +25998,11 @@ fn agent_status_routes_a_fresh_workspace_to_pilot() -> Result<(), Box<dyn std::e
     // directory, so the route names the pilot directory under the root.
     assert_eq!(
         command,
-        format!("ripr pilot --root '{root_display}' --out '{root_display}/target/ripr/pilot'")
+        format!(
+            "ripr pilot --root {} --out {}",
+            host_quoted(&root_display),
+            host_quoted(&format!("{root_display}/target/ripr/pilot"))
+        )
     );
     assert!(!command.contains('>'), "no redirect expected: {command}");
     assert!(!root.join("target/ripr/workflow").exists());
@@ -26241,7 +26270,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
 
 /// The attempt ID inside a printed `--attempt <id> --phase after` command.
 fn repair_route_attempt_id(command: &str) -> Result<String, String> {
-    let words = shell_words::posix_words(command)?;
+    let words = shell_words::printed_words(command)?;
     words
         .iter()
         .position(|word| word == "--attempt")
@@ -29178,6 +29207,168 @@ fn verify_execute_disposition(
     Ok((parsed, output.status.code()))
 }
 
+/// Checks one committed `--result-json` result against the published
+/// `repair-assurance.schema.json#/$defs/execution_result`.
+///
+/// This is the narrower authority named for that row in
+/// `docs/verification/schema-producer-audit.md` (#9561): the result is a
+/// per-execution runtime artifact, so no committed fixture carries producer
+/// bytes. It reads the published schema and checks bytes the real CLI wrote:
+/// closed property set, required fields, `const`/`enum` pins, scalar types and
+/// the `sha256:` digest pattern.
+fn assert_result_matches_published_schema(
+    result: &serde_json::Value,
+    schema: &serde_json::Value,
+) -> Result<(), String> {
+    let definition = schema
+        .pointer("/$defs/execution_result")
+        .ok_or("schema defines no /$defs/execution_result")?;
+    let object = result
+        .as_object()
+        .ok_or_else(|| format!("result is not an object: {result}"))?;
+    let properties = definition["properties"]
+        .as_object()
+        .ok_or("execution_result declares no properties")?;
+    for field in object.keys() {
+        if !properties.contains_key(field) {
+            return Err(format!("result emitted undeclared field `{field}`"));
+        }
+    }
+    for required in definition["required"]
+        .as_array()
+        .ok_or("execution_result declares no required list")?
+    {
+        let name = required.as_str().ok_or("required entry is not a string")?;
+        if !object.contains_key(name) {
+            return Err(format!("schema requires `{name}` but the result omits it"));
+        }
+    }
+    for (field, declared) in properties {
+        let Some(emitted) = object.get(field) else {
+            continue;
+        };
+        if let Some(pinned) = declared.get("const")
+            && emitted != pinned
+        {
+            return Err(format!("`{field}` is {emitted}, not the pinned {pinned}"));
+        }
+        if let Some(members) = declared.get("enum").and_then(|e| e.as_array())
+            && !members.contains(emitted)
+        {
+            return Err(format!(
+                "`{field}` is {emitted}, outside the published enum"
+            ));
+        }
+        if declared
+            .get("pattern")
+            .and_then(|p| p.as_str())
+            .is_some_and(|p| p == "^sha256:[0-9a-f]{64}$")
+        {
+            let digest = emitted.as_str().unwrap_or_default();
+            let hex = digest.strip_prefix("sha256:").unwrap_or_default();
+            if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Err(format!("`{field}` is not a sha256 digest: {emitted}"));
+            }
+        }
+        if let Some(min) = declared.get("minLength").and_then(|m| m.as_u64())
+            && (emitted.as_str().map(|text| text.chars().count() as u64)).is_some_and(|n| n < min)
+        {
+            return Err(format!("`{field}` is {emitted}, shorter than {min}"));
+        }
+        if let Some(min) = declared.get("minimum").and_then(|m| m.as_i64())
+            && emitted.as_i64().is_some_and(|n| n < min)
+        {
+            return Err(format!("`{field}` is {emitted}, below the minimum {min}"));
+        }
+        let kinds: Vec<&str> = match declared.get("type") {
+            Some(serde_json::Value::String(kind)) => vec![kind.as_str()],
+            Some(serde_json::Value::Array(kinds)) => {
+                kinds.iter().filter_map(|k| k.as_str()).collect()
+            }
+            _ => continue,
+        };
+        let fits = kinds.iter().any(|kind| match *kind {
+            "string" => emitted.is_string(),
+            "integer" => emitted.is_i64() || emitted.is_u64(),
+            "boolean" => emitted.is_boolean(),
+            "null" => emitted.is_null(),
+            _ => true,
+        });
+        if !fits {
+            return Err(format!("`{field}` is {emitted}, not of type {kinds:?}"));
+        }
+    }
+    Ok(())
+}
+
+fn published_repair_assurance_schema() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas/ripr/repair-assurance.schema.json");
+    Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+}
+
+/// Negative experiment for the helper: a result the schema forbids must fail,
+/// so a helper that accepted everything cannot keep the row green.
+#[test]
+fn published_schema_helper_rejects_results_the_schema_forbids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let schema = published_repair_assurance_schema()?;
+    let good = serde_json::json!({
+        "schema_version": "1", "root_identity": "r", "head_before": "h", "head_after": "h",
+        "command_spec_sha256": format!("sha256:{}", "a".repeat(64)),
+        "process_disposition": "completed", "exit_status": 0,
+        "stdout_sha256": format!("sha256:{}", "b".repeat(64)),
+        "stderr_sha256": format!("sha256:{}", "c".repeat(64)),
+        "currentness": "current",
+    });
+    assert_result_matches_published_schema(&good, &schema)?;
+    for (label, mutate) in [
+        ("missing required", ("exit_status", None)),
+        ("undeclared field", ("surprise", Some(serde_json::json!(1)))),
+        (
+            "enum outside",
+            ("currentness", Some(serde_json::json!("unavailable"))),
+        ),
+        (
+            "bad digest",
+            ("stdout_sha256", Some(serde_json::json!("sha256:xyz"))),
+        ),
+        (
+            "type mismatch",
+            ("exit_status", Some(serde_json::json!("0"))),
+        ),
+        (
+            "empty string",
+            ("root_identity", Some(serde_json::json!(""))),
+        ),
+        (
+            "below minimum",
+            ("duration_ms", Some(serde_json::json!(-1))),
+        ),
+        (
+            "bool as integer",
+            ("stdout_bytes", Some(serde_json::json!(true))),
+        ),
+        (
+            "wrong version",
+            ("schema_version", Some(serde_json::json!("2"))),
+        ),
+    ] {
+        let mut bad = good.clone();
+        match mutate.1 {
+            Some(value) => bad[mutate.0] = value,
+            None => {
+                bad.as_object_mut().ok_or("object")?.remove(mutate.0);
+            }
+        }
+        assert!(
+            assert_result_matches_published_schema(&bad, &schema).is_err(),
+            "{label} must be rejected"
+        );
+    }
+    Ok(())
+}
+
 /// The end-to-end contract: a producer-generated packet executes through the
 /// public CLI, commits a schema-shaped result, and never carries an ambient
 /// secret into its output.
@@ -29232,6 +29423,11 @@ fn agent_verify_execute_runs_a_producer_owned_route_and_commits_a_result()
     let committed = std::fs::read_to_string(root.join("result.json"))?;
     let committed: serde_json::Value = serde_json::from_str(&committed)?;
     assert_eq!(committed["result"], parsed["result"]);
+    // Real producer bytes against the published schema row (#9561).
+    assert_result_matches_published_schema(
+        &committed["result"],
+        &published_repair_assurance_schema()?,
+    )?;
 
     // No ambient secret reaches stdout, stderr, or the committed artifact.
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
