@@ -444,7 +444,12 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -521,7 +526,12 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),

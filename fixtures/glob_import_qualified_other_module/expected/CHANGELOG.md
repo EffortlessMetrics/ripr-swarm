@@ -48,3 +48,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — glob_import_qualified_other_module (5)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless glob_import_qualified_other_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
