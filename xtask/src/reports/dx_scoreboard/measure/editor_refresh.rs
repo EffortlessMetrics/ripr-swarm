@@ -189,15 +189,20 @@ fn file_uri(path: &Path) -> String {
 /// phase's own event counts (`reason`; `None` takes any), so an earlier request
 /// still in flight cannot stand in for it, and only a terminal status naming
 /// the adopted attempt ends the wait. An attempt that ends `superseded` hands
-/// over to the next one, whatever started it.
+/// over to the attempt that started after it, whatever started that one.
 struct AttemptTracker<'a> {
     reason: Option<&'a str>,
     current: Option<String>,
     handed_over: bool,
     seen_status: bool,
-    /// Every attempt id seen so far: a handover takes only a new attempt, so
-    /// a stale status re-published for an older one cannot stand in.
+    /// Every attempt id seen so far: a handover takes only an attempt first
+    /// seen after the adopted one, so a stale status re-published for an
+    /// older attempt cannot stand in.
     seen_attempts: Vec<String>,
+    /// Attempts that started while another was adopted, with their terminal
+    /// state if it already arrived: the replacement can start before the
+    /// superseded attempt reports.
+    successors: Vec<(String, Option<String>)>,
 }
 
 impl<'a> AttemptTracker<'a> {
@@ -208,6 +213,7 @@ impl<'a> AttemptTracker<'a> {
             handed_over: false,
             seen_status: false,
             seen_attempts: Vec::new(),
+            successors: Vec::new(),
         }
     }
 
@@ -229,28 +235,45 @@ impl<'a> AttemptTracker<'a> {
             let is_new = attempt
                 .as_ref()
                 .is_some_and(|id| !self.seen_attempts.contains(id));
-            let wanted = if self.handed_over {
-                is_new
+            let adopt = if self.handed_over {
+                is_new && self.current.is_none()
             } else {
                 self.reason.is_none() || reason.as_deref() == self.reason
             };
             if let (true, Some(id)) = (is_new, &attempt) {
                 self.seen_attempts.push(id.clone());
+                if !adopt && self.current.is_some() {
+                    self.successors.push((id.clone(), None));
+                }
             }
-            if wanted {
+            if adopt {
                 self.current = attempt;
             }
             return None;
         }
-        if attempt.is_none() || attempt != self.current {
+        let id = attempt?;
+        if Some(&id) != self.current.as_ref() {
+            if let Some(entry) = self.successors.iter_mut().find(|(seen, _)| *seen == id) {
+                entry.1 = Some(state);
+            }
             return None;
         }
-        if state == "superseded" {
-            self.current = None;
-            self.handed_over = true;
-            return None;
+        if state != "superseded" {
+            return Some(state);
         }
-        Some(state)
+        self.current = None;
+        self.handed_over = true;
+        for (successor, ended) in std::mem::take(&mut self.successors) {
+            match ended {
+                Some(state) if state == "superseded" => {}
+                Some(state) => return Some(state),
+                None => {
+                    self.current = Some(successor);
+                    break;
+                }
+            }
+        }
+        None
     }
 }
 
@@ -603,6 +626,39 @@ mod tests {
         let mut tracker = AttemptTracker::new(None);
         assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
         assert!(!tracker.seen_status());
+    }
+
+    #[test]
+    fn a_replacement_started_before_the_save_reports_superseded_is_adopted() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "config_reload")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_replacement_that_ended_before_the_supersession_report_counts() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("superseded", "2", "did_save")),
+            Some("succeeded".to_string())
+        );
     }
 
     #[test]
