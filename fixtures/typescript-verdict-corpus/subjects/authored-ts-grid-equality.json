@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-equality",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "46eb96a489d3c8abcb732734eb8db60bbb68796e75bd9c0d56afb88c69fabd21"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/equality.ts",
+      "sha256": "247c44c1130a7d1e5cf9ba8d77155e23af3d660bd46e03780e2579eaeaaa2809"
+    },
+    {
+      "path": "test/equality.test.ts",
+      "sha256": "0aba3bce61a538f5204edba7c141e8efcf1896d47a86d11f2f5a29242583b938"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

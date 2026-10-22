@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/session.py:Session.refresh:field_value:field_construction:self.status=active
   Changed behavior: self.status = "active"
   Missing discriminator (1 of 2): A strong Python oracle reaches `refresh`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_session.py:5 test_session_refresh
+  Related test: tests/test_session.py:5 test_session_refresh (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_session.py
   Suggested test: test_session_refresh
   Test node: tests/test_session.py::test_session_refresh
