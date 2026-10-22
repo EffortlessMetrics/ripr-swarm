@@ -385,7 +385,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.strictEqual(editor!.document.lineAt(editor!.selection.active.line).text,
         `fn ${relatedTarget.test_name}() {`, 'navigation must land on the actual expected declaration');
       await vscode.commands.executeCommand(context.command, ...(context.arguments ?? []));
-      const packet = await readObservedClipboard();
+      const packet = await vscode.env.clipboard.readText();
       let parsedPacket: unknown;
       try {
         parsedPacket = JSON.parse(packet);
@@ -401,7 +401,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         && typeof c.arguments?.[0]?.command === 'string');
       for (const command of rootedCommands) {
         await vscode.commands.executeCommand(command.command, ...(command.arguments ?? []));
-        assert.strictEqual(await readObservedClipboard(), command.arguments![0].command,
+        assert.strictEqual(await vscode.env.clipboard.readText(), command.arguments![0].command,
           'real command handler must copy the root-contained command unchanged');
       }
       await assertNoRootActions(other);
@@ -410,44 +410,16 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
     }
 
     async function assertCachedActionsBlocked(commands: vscode.Command[]): Promise<void> {
-      await writeObservedClipboard('multi-root stale-action sentinel');
+      await vscode.env.clipboard.writeText('multi-root stale-action sentinel');
       const before = vscode.window.activeTextEditor?.document.uri.toString();
       for (const command of commands) {
         await vscode.commands.executeCommand(command.command, ...(command.arguments ?? []));
       }
-      assert.strictEqual(await readObservedClipboard(), 'multi-root stale-action sentinel');
+      assert.strictEqual(await vscode.env.clipboard.readText(), 'multi-root stale-action sentinel');
       assert.strictEqual(vscode.window.activeTextEditor?.document.uri.toString(), before,
         'cached navigation must not open a stale root target');
     }
   });
-}
-
-// The extension writes every copied text to the real clipboard and then to
-// RIPR_TEST_CLIPBOARD_CAPTURE_PATH. The Windows hosted runner's clipboard can
-// still show the previous copy when read straight back (rehearsal run
-// 39705039321), so the matrix reads the capture file when the runner sets it,
-// as extension.test.ts does.
-async function readObservedClipboard(): Promise<string> {
-  const capturePath = process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH;
-  if (!capturePath) {
-    return vscode.env.clipboard.readText();
-  }
-  try {
-    return await fs.promises.readFile(capturePath, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return '';
-    }
-    throw error;
-  }
-}
-
-async function writeObservedClipboard(text: string): Promise<void> {
-  await vscode.env.clipboard.writeText(text);
-  const capturePath = process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH;
-  if (capturePath) {
-    await fs.promises.writeFile(capturePath, text, 'utf8');
-  }
 }
 
 function requireExtensionModule(extensionPath: string, relative: string): unknown {
