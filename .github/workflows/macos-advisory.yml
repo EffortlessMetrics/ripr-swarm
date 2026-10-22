@@ -91,6 +91,9 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
           exit 0
 
+      - name: Prepare locked JSON owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
       - name: Library tests (advisory outcome)
         shell: bash
         run: |

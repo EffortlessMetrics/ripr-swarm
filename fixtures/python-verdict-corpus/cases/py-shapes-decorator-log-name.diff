@@ -1,0 +1,12 @@
+diff --git a/shapes/decorators.py b/shapes/decorators.py
+--- a/shapes/decorators.py
++++ b/shapes/decorators.py
+@@ -26,7 +26,7 @@
+ def logged(fn):
+     @functools.wraps(fn)
+     def inner(*args):
+-        CALL_LOG.append(fn.__name__)
++        CALL_LOG.append("call")
+         return fn(*args)
+ 
+     return inner

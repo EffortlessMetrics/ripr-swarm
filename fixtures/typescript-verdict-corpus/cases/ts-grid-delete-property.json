@@ -1,0 +1,58 @@
+{
+  "case_id": "ts-grid-delete-property",
+  "subject_id": "authored-ts-grid-delete",
+  "diff": "cases/ts-grid-delete-property.diff",
+  "anchor": {
+    "file": "src/delete.ts",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "nodetest_property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the counter is never updated"
+      },
+      {
+        "replacement": "this.reads -= 1;",
+        "mutated_line": "this.reads -= 1;",
+        "outcome": "tests_failed",
+        "failing_test": "reads never go negative",
+        "equivalence_review": "not equivalent: the counter moves the wrong way"
+      },
+      {
+        "replacement": "this.reads *= 1;",
+        "mutated_line": "this.reads *= 1;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the counter stays at zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: deletion x property. A non-negative check catches the decrement but not a missing or no-op update.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

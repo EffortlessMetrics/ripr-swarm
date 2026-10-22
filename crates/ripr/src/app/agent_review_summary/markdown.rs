@@ -32,7 +32,22 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
                 "incomplete"
             }
         )),
-        None => rendered.push_str("Analysis outcome: unavailable (incomplete)\n"),
+        None => {
+            rendered.push_str("Analysis outcome: unavailable (incomplete)\n");
+            // Carry the producer-artifact reason (for example a findings-bounded
+            // check document and its RIPR_CHECK_FINDINGS_BYTES recovery) as
+            // an escaped code span instead of dropping it (#9010).
+            if let Some(surface) = report
+                .surfaces
+                .iter()
+                .find(|surface| surface.name == "analysis_outcome")
+            {
+                rendered.push_str(&format!(
+                    "Analysis outcome reason: {}\n",
+                    crate::output::markdown::code_span(&surface.summary)
+                ));
+            }
+        }
     }
     if let Some(before) = &report.static_movement.before_class {
         let after = report

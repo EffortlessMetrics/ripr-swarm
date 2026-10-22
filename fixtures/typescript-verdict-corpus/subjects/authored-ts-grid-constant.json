@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-constant",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "516704e90a2732f619bc7006a49e27240f56d69856f938010979feaa4ec81e5e"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/constant.ts",
+      "sha256": "accef85c1ccd35cbb6cdc73ec21fd634efc86ef48fc1cd968d611f9e2ed16dcd"
+    },
+    {
+      "path": "test/constant.test.ts",
+      "sha256": "e09a002c8d16fccdb5f139a891eb955e27d0a9b2b892c804e812adffd12bc988"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

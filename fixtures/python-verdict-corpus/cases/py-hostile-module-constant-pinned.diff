@@ -1,0 +1,9 @@
+diff --git a/hostile/settings.py b/hostile/settings.py
+--- a/hostile/settings.py
++++ b/hostile/settings.py
+@@ -1,4 +1,4 @@
+-LIMIT = 10
++LIMIT = 12
+ 
+ 
+ def over_limit(n):

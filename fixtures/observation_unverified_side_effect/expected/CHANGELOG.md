@@ -320,3 +320,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_side_effect (28)
+
+Reason:
+RIPR-SPEC-0094: the let-bound bool owner pin (#9090) now reads let result = process_order(..); assert!(result) like assert!(process_order(..)), so the return_value probe of process_order is exposed (1 exposed/1 weak); the SideEffect probe on notifier.send(order_id) stays weakly_exposed/observation_unverified
+
+Command:
+`cargo xtask goldens bless observation_unverified_side_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
