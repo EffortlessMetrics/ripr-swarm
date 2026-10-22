@@ -22,9 +22,10 @@ therefore cannot stand in for receiver identity in this fixture.
 The finding is never promoted to `exposed` and the test relation stays
 `weak_token_substring`. Dropping the `foreign::` prefix cannot establish a
 direct call to the local owner's type. Since gap withholding landed on main
-the unresolved qualified receivers are reported as `static_unknown` with
-stop reason `gap_evidence_unresolved` rather than `weakly_exposed`; either
-is a non-promotion. The honesty corpus independently pins
+the finding is reported as `static_unknown` with stop reason
+`gap_evidence_unresolved` (the implicit iterator-call gap) rather than
+`weakly_exposed`. The class pin holds only non-promotion; the
+`weak_token_substring` relation pins are what reject the old reach claim. The honesty corpus independently pins
 the nonempty finding, non-promotion and exact related-test identity.
 
 The existing `rust_same_method_owner_type_positive` fixture retains the
