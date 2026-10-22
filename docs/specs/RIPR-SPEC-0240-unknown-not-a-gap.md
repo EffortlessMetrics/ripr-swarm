@@ -302,6 +302,7 @@ the typed reason. Crediting the assertion would be a new table-family rule
 that also changes unsaturated inputs, and it would move a finding toward
 `exposed` (a clean claim), not toward a repair signal, so it needs its own
 corpus and decision. `call_budget_slice_positive.rs` pins the three readings.
+
 ### Caller-loop selector domains (#5503)
 
 A table-like owner (`fn max_scalar_value(n: usize) -> u32 { match n { 1 =>
@@ -460,16 +461,20 @@ use does not run the method, so these keep the gap:
 
 - the `Self` operand is positively not the impl's type: a numeric or boolean
   literal (`assert_eq!(1 + 2, 3)` beside an unused `Money(0)`), or an
-  identifier whose `let` annotation or initializer names another type (an
-  uppercase head, so a helper `money(2)` is not mistaken for one);
+  identifier whose `let` has a type annotation or a constructor or
+  struct-literal initializer (`Tile(1)`, `Tile { .. }`) naming another type.
+  A path call such as `Factory::new()` or a helper `money(2)` stays unknown,
+  and a literal is not another type when `Self` is a primitive;
 - the result is thrown away: `let _ = a + b;`, or a `let` whose name nothing
   reads again, beside an unrelated assertion;
 - a dispatch call whose receiver is a binding of another type
   (`let tile = Tile(3); tile.area()`), or whose result is thrown away.
 
 An operand ripr cannot type (a helper's return value, an associated constant,
-a field, a destructured tuple, a name with no `let`) might be the impl's, so
-the withholding stands: a wrong actionable signal is worse than a missed
+a field, a destructured tuple, a name with no `let`, a name bound more than
+once by a shadowing `let`, `for`, closure parameter or match arm, an operand
+that a tighter operator or a postfix `.`, `?` or `[` takes first, as in
+`Money(2) * 3 + a` or `-t[0]`) might be the impl's, so the withholding stands: a wrong actionable signal is worse than a missed
 advisory. A reassignment (`acc = acc + x`), a destructuring `let` (`let Money(v) = ..`),
 a compound assignment or `IndexMut` write (it changes its operand even when
 the unit result is discarded) and an assertion statement count as using the

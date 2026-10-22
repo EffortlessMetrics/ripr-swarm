@@ -224,6 +224,14 @@ fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
             "let mut acc = Money(0);\n        acc = acc + Money(1);\n        assert_eq!(acc, Money(1));",
         ),
         (
+            "operand rebound by a for loop",
+            "let t = Tile(1);\n        let _ = t;\n        for t in [Money(1)] {\n            assert_eq!(t + Money(2), Money(3));\n        }",
+        ),
+        (
+            "operand rebound by a match arm",
+            "let t = Tile(1);\n        let _ = t;\n        match Some(Money(1)) {\n            Some(t) if true => assert_eq!(t + Money(2), Money(3)),\n            _ => {}\n        }",
+        ),
+        (
             "operands bound",
             "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
         ),

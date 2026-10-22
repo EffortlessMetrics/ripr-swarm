@@ -590,7 +590,9 @@ fn operand_before(code: &str, end: usize, ty: &str) -> Operand {
     // makes the real `Self` operand the whole product, which is not typed here.
     let alone = stands_alone(&head[..token_start]);
     if is_literal_token(&head[token_start..]) {
-        return if alone {
+        // A literal is another type only when `Self` is not a primitive
+        // (`impl Mul<Money> for f64` is called with `2.0 * Money(1)`).
+        return if alone && !is_primitive_head(ty) {
             Operand::Other
         } else {
             Operand::Unknown
@@ -634,14 +636,21 @@ fn operand_after(code: &str, start: usize, ty: &str) -> Operand {
         .unwrap_or(rest.len());
     let path = &rest[..path_len];
     if is_literal_token(path) {
-        return Operand::Other;
+        return if is_primitive_head(ty) {
+            Operand::Unknown
+        } else {
+            Operand::Other
+        };
     }
     if path.is_empty() || path.contains('.') || rest[path_len..].trim_start().starts_with('.') {
         return Operand::Unknown;
     }
     // `-Money(1).0` negates the field, not the `Money`: a postfix `.`, `?` or
     // `[` after the constructor's arguments binds tighter than the operator.
-    if postfix_follows_group(&rest[path_len..]) {
+    // The same holds for `-t[0]` and `!t?` on a bare name.
+    if postfix_follows_group(&rest[path_len..])
+        || rest[path_len..].trim_start().starts_with(['[', '?'])
+    {
         return Operand::Unknown;
     }
     if path.split("::").next() == Some(ty) {
@@ -728,10 +737,17 @@ fn name_is_rebound(lets: &str, name: &str) -> bool {
         .iter()
         .take(parts.len().saturating_sub(1))
         .any(|before| {
-            let before = before.trim_end().trim_end_matches([')', ']', '}']);
-            before.ends_with(name)
+            // Any mention in the arm's pattern (`Foo { a: t } =>`, a guard,
+            // an `@` binding) may bind the name; over-matching only withholds.
+            let pattern = before.rsplit(';').next().unwrap_or(before);
+            contains_as_whole_word(pattern, name)
         });
     binders != 1 || closure_param || arm
+}
+
+/// Whether `ty` names a primitive (`f64`, `u8`), which a literal can be.
+fn is_primitive_head(ty: &str) -> bool {
+    ty.starts_with(|ch: char| ch.is_lowercase())
 }
 
 /// A numeric literal (`1`, `2.5`, `1u8`, `0xff`) or a boolean.
@@ -986,6 +1002,18 @@ mod tests {
         assert!(before("let a = Tile(1); Money(2) * 3 + a") == Operand::Unknown);
         assert!(before("let t = Tile(1); x * t + 1") == Operand::Unknown);
         assert!(before("assert_eq!(1 + 2, 3)") == Operand::Other);
+        // A postfix `[` or `?` on a bare name takes the operand first.
+        assert!(after("-t[0]") == Operand::Unknown);
+        assert!(after("!t?") == Operand::Unknown);
+        // A literal can be the primitive `Self` of `impl Mul<Money> for f64`.
+        assert!(operand_before("2.0 * x", 3, "f64") == Operand::Unknown);
+        assert!(operand_after("-2.0", 1, "f64") == Operand::Unknown);
+        // A match arm that destructures the name rebinds it.
+        assert!(before("let t = Tile(1); match p { Foo { a: t } => t + t }") == Operand::Unknown);
+        assert!(
+            before("let t = Tile(1); match p { Some(t) if c => t + t, _ => 0 }")
+                == Operand::Unknown
+        );
     }
 
     #[test]
