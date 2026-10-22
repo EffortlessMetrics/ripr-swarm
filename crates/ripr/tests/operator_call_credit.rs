@@ -337,3 +337,55 @@ fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
         Err(format!("a real `>>` was not credited: {direct:?}"))
     }
 }
+
+#[test]
+fn a_binary_minus_after_a_block_is_not_negation() -> Result<(), String> {
+    // `Money { 0: 5 } - n` runs `Sub`, not `Neg::neg` of `n`.
+    let case = Case {
+        label: "binary minus after a block",
+        trait_name: "Neg",
+        method: "neg",
+        signature: "type Output = Money;\n    fn neg(self) -> Money",
+        old_line: "        Money(-self.0)",
+        new_line: "        Money(0 - self.0)",
+        extra_items: "",
+        test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_macro_that_may_generate_a_second_impl_is_not_attributed() -> Result<(), String> {
+    // The macro expands to `Add<i32> for Money`, which the index never sees.
+    let case = Case {
+        extra_items: "
+macro_rules! add_for {
+    ($t:ty) => {
+        impl Add<$t> for Money {
+            type Output = Money;
+            fn add(self, other: $t) -> Money {
+                Money(self.0 + other as i64)
+            }
+        }
+    };
+}
+add_for!(i32);
+",
+        ..with_body(
+            ADD,
+            "macro-generated impl",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}

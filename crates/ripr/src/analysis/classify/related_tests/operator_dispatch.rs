@@ -201,7 +201,10 @@ pub(super) fn test_applies_operator_to_owner(
         return false;
     }
     *operator.file_level_clear.get_or_init(|| {
-        !imports_other_type(&mask_comments_and_strings(source), impl_type, &owner.file)
+        let masked = mask_comments_and_strings(source);
+        // A `macro_rules!` may expand to a second impl of the operator trait
+        // that the index never sees, so the unique-impl count proves nothing.
+        !masked.contains("macro_rules!") && !imports_other_type(&masked, impl_type, &owner.file)
     })
 }
 

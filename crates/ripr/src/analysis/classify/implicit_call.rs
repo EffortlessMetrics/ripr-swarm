@@ -576,7 +576,7 @@ fn operand_char_before(code: &str, at: usize) -> bool {
         .trim_end()
         .chars()
         .next_back()
-        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']'))
+        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}'))
 }
 
 /// The `Self` operand ending just before byte `end`.

@@ -17029,6 +17029,8 @@ tests = [
   "crates/ripr/tests/operator_call_credit.rs::a_second_impl_of_the_trait_for_the_type_is_not_attributed",
   "crates/ripr/tests/operator_call_credit.rs::a_type_the_test_redeclares_is_not_the_impl_type",
   "crates/ripr/tests/operator_call_credit.rs::generic_arguments_are_not_shift_operators",
+  "crates/ripr/tests/operator_call_credit.rs::a_binary_minus_after_a_block_is_not_negation",
+  "crates/ripr/tests/operator_call_credit.rs::a_macro_that_may_generate_a_second_impl_is_not_attributed",
   "crates/ripr/tests/implicit_call_limit.rs::a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_controls_keep_the_gap",
   "crates/ripr/tests/implicit_call_limit.rs::a_dispatch_shape_that_differs_keeps_its_class",

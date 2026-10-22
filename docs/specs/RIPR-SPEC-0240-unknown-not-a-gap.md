@@ -514,7 +514,8 @@ hold, or the test is not related and the abstention above applies:
   that name and the owner's file imports none by a non-standard path or glob;
 - it is the only impl of that method for `T`, because `impl Add<i64> for T`
   beside `impl Add<T> for T` is chosen by the right-hand side, which ripr
-  does not type;
+  does not type, and the owner's file declares no `macro_rules!`, whose
+  expansion could add an impl the index never sees;
 - the test is in the owner's file, outside property-test macros, and no scope
   between the test and the file declares or renames another `T`;
 - the `Self` operand is a whole operand whose type is syntactically `T`: a
@@ -522,7 +523,8 @@ hold, or the test is not related and the abstention above applies:
   declared return is `Self`, or a `let` annotated `: T` or built by one of
   those, bound once. A reference (`&a + &b` runs the impl for `&T`), a method
   chain, a field, a call result, the tail of a longer expression (`a * b + c`)
-  and an operand after a comparison are not resolved;
+  and an operand after a comparison or a block (`T { .. } - n` is a
+  subtraction, not `-n`) are not resolved;
 - the operand is not also a parameter, closure parameter or pattern binding
   elsewhere in the body, and a `>>`/`<<` is not inside an unclosed `<` of its
   statement (generic arguments);
@@ -640,7 +642,7 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
   another type, a discarded result) and
   `a_dispatch_shape_that_differs_keeps_its_class` the receiver of another
   type; `an_operator_bound_through_lets_is_credited_when_typed` pins the forms that
-  are credited (a bound result, bound operands, a reassigned accumulator) and
+  are credited (a bound result, a destructured result, bound operands, a reassigned accumulator) and
   the one that stays withheld (a helper's value) (#9540). The `rust_trait_impl_shadow` and
   `rust_trait_parent_shadow` goldens pin the same shadow rule.
 
@@ -655,7 +657,9 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
   binding of another type, a discarded result, a parameter, a shadowing
   `let`), `a_second_impl_of_the_trait_for_the_type_is_not_attributed` and
   `a_type_the_test_redeclares_is_not_the_impl_type` and
-  `generic_arguments_are_not_shift_operators`
+  `generic_arguments_are_not_shift_operators`,
+  `a_binary_minus_after_a_block_is_not_negation` and
+  `a_macro_that_may_generate_a_second_impl_is_not_attributed`
 - `the_left_operand_is_a_whole_path_with_one_group`,
   `a_left_operand_that_is_only_a_tail_is_refused` and
   `the_unary_operand_is_a_whole_path`
