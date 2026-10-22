@@ -941,7 +941,10 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
 impl OwnerReach<'_, '_> {
     /// An inherent method of the same name on the same type takes precedence
     /// over the trait method in `value.method()` syntax, so that call syntax
-    /// cannot witness the trait impl. Withhold the witness (fail closed).
+    /// cannot witness the trait impl as an observer. Only the observer
+    /// authority is withheld: refusing the dispatch witness itself would turn
+    /// the callback's `Some(false)` into `None`, which reads as no implicit
+    /// information and restores kind-only confirmation.
     fn inherent_method_shadows(&self, function: &FunctionSummary) -> bool {
         let FunctionContainer::TraitImpl { self_ty, .. } = &function.item.container else {
             return false;
@@ -969,7 +972,6 @@ impl OwnerReach<'_, '_> {
     ) -> bool {
         let dispatches = |function: &FunctionSummary| {
             IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
-                && !self.inherent_method_shadows(function)
                 && super::related_tests::test_dispatches_trait_impl(test, function)
         };
         dispatches(owner)

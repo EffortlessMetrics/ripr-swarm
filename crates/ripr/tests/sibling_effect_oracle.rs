@@ -318,6 +318,37 @@ fn inherent_method_shadowing_the_trait_method_does_not_witness_dispatch() -> Res
 }
 
 #[test]
+fn inherent_add_shadowing_the_trait_method_does_not_witness_dispatch() -> Result<(), String> {
+    // Reach comes from the operator in the smoke test; the observer calls the
+    // inherent `add`, which takes precedence in method syntax.
+    let source = format!(
+        "{}\nimpl Counter {{ fn add(self, _: ()) {{ self.sink.set(1); }} }}\n",
+        ADD_OBSERVER
+    )
+    .replace_checked("let _ = counter.add(());", "let _ = counter + ();")
+    .replace_checked(
+        "let _ = counter + ();\n    assert_eq!",
+        "counter.add(());\n    assert_eq!",
+    );
+    let finding = finding(
+        &source,
+        &changed_effect(&source, "self.sink.set(1)"),
+        "self.sink.set(1)",
+        "call_deletion",
+    )?;
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert!(
+        finding["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?
+            .iter()
+            .any(|r| r["name"] == "implicit_observer" && r["miss"] == "observation_unconfirmed"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
 fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String> {
     let source = ITERATOR_OBSERVER.replace_checked("#[test]\nfn direct_smoke() {\n    let mut counter = Counter { sink: Rc::new(Cell::new(0)), finished: false };\n    let _ = counter.next();\n}\n", "");
     assert!(!source.contains("fn direct_smoke"));
