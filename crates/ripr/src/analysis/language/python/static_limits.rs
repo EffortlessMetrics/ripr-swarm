@@ -967,11 +967,60 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
 
 /// `print(..., file=sys.stderr)` names a standard stream, not an imported
 /// implementation: a test reads it back through `capsys` without resolving `sys`.
+///
+/// The whole changed line must be that one `print` call, with `sys.stderr` or
+/// `sys.stdout` as its `file=` argument and no other use of `sys` anywhere on
+/// the line (`print(sys.argv[0], file=sys.stderr)` still reads an unresolved
+/// attribute, and a conditional or second call may print elsewhere).
 fn prints_to_standard_stream(text: &str) -> bool {
-    contains_python_call_shape(text, "print")
-        && ["file=sys.stderr", "file=sys.stdout"]
-            .iter()
-            .any(|argument| text.replace(' ', "").contains(argument))
+    // Offset of the parsed text inside `parse_expression`'s wrapper source.
+    const WRAPPER_PREFIX: usize = "_ = (\n".len();
+    let trimmed = text.trim();
+    let Some(Expr::Call(call)) = parse_expression(trimmed) else {
+        return false;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "print") {
+        return false;
+    }
+    let file_keywords: Vec<_> = call
+        .keywords
+        .iter()
+        .filter(|keyword| {
+            keyword
+                .arg
+                .as_ref()
+                .is_some_and(|arg| arg.as_str() == "file")
+        })
+        .collect();
+    let [file_keyword] = file_keywords.as_slice() else {
+        return false;
+    };
+    if !matches!(
+        expr_full_name(&file_keyword.value).as_deref(),
+        Some("sys.stderr" | "sys.stdout")
+    ) {
+        return false;
+    }
+    let start = usize::try_from(u32::from(file_keyword.range.start())).ok();
+    let end = usize::try_from(u32::from(file_keyword.range.end())).ok();
+    let (Some(start), Some(end)) = (start, end) else {
+        return false;
+    };
+    let (Some(start), Some(end)) = (
+        start.checked_sub(WRAPPER_PREFIX),
+        end.checked_sub(WRAPPER_PREFIX),
+    ) else {
+        return false;
+    };
+    let (Some(before), Some(after)) = (trimmed.get(..start), trimmed.get(end..)) else {
+        return false;
+    };
+    !contains_identifier(before, "sys") && !contains_identifier(after, "sys")
+}
+
+fn contains_identifier(text: &str, identifier: &str) -> bool {
+    text.match_indices(identifier)
+        .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).

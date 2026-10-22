@@ -3807,11 +3807,20 @@ fn print_to_a_standard_stream_is_not_an_unresolved_import() {
     for line in [
         "    print(f\"warning: {message}\", file=sys.stderr)",
         "    print(message, file = sys.stdout)",
+        "    print(message, flush=True, file=sys.stderr)",
     ] {
         assert!(!line_uses_imported_symbol(line, &sys), "{line}");
     }
     for line in [
         "    print(message, file=sys.argv)",
+        "    print(sys.argv[0], file=sys.stderr)",
+        "    print(f\"warning: {message}\", sys.platform, file=sys.stderr)",
+        "    print(\"a\", file=sys.stderr) if sys.argv else print(\"b\", file=open(\"f\", \"w\"))",
+        "    log(sys.argv, file=sys.stderr); print(\"x\")",
+        "    x = fmt(sys.argv, \"file=sys.stderr\"); print(x)",
+        "    print(message, file=sys.stderr if flag else other)",
+        "    print(message, file=sys.stderr_alt())",
+        "    print(message, file=sys.stderr, flush=sys.flags)",
         "    log(message, file=sys.stderr)",
         "    return sys.platform",
         "    print(sys.modules)",
