@@ -112,6 +112,23 @@ type Extraction = (
 /// `expand` is off for the rerun on an already-expanded source, whose
 /// factory calls are still present.
 fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bool) -> Extraction {
+    // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
+    // replaced by its assertion, on the same line, before extraction.
+    if expand
+        && source.contains("function ")
+        && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
+            let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+            if !ret.errors.is_empty() {
+                return None;
+            }
+            super::assertion_helper::expand_assertion_helpers(&ret.program.body, source)
+        })
+    {
+        let extraction = extract_tests_expanding_suite_factories(file, &expanded, true);
+        if !extraction.0.is_empty() {
+            return extraction;
+        }
+    }
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.

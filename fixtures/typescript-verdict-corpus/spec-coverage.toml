@@ -792,13 +792,3 @@ reason = "False actionable: bare boolean assert on a predicate owner reads as sm
 case = "ts-grid-boundary-table"
 issue = 9533
 reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
-
-[[known_false]]
-case = "ts-grid-delete-helper"
-issue = 9534
-reason = "False actionable: field update read through a same-file helper is not credited (#9534)."
-
-[[known_false]]
-case = "ts-grid-delete-table"
-issue = 9534
-reason = "False actionable: field update read through a literal table is not credited (#9534)."
