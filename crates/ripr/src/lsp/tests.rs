@@ -2430,7 +2430,7 @@ fn hover_for_position_uses_latest_matching_diagnostic() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("* reach yes: related tests found"));
@@ -3000,7 +3000,7 @@ fn hover_fallback_to_diagnostic_without_matching_finding() -> Result<(), String>
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(
                 markup
@@ -15367,7 +15367,7 @@ fn finding_hover_response_includes_ripr_evidence_path() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("reach yes:"));
             assert!(markup.value.contains("infection yes:"));
@@ -16123,7 +16123,7 @@ fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("reach yes:"));
@@ -16179,7 +16179,7 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
             let HoverContents::Markup(markup) = hover.contents else {
                 return Err("expected markup hover".to_string());
             };
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("## RIPR Evidence"));
             // The hover highlights the line the cursor is on, not an empty span.
             assert_eq!(
@@ -16241,7 +16241,7 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
             return Err("expected refresh plan".to_string());
         };
 
-        for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+        for (character, expected) in [(inside, "weak"), (past_end, "no path")] {
             let Some(hover) =
                 backend.hover_for_position(&hover_params(uri.clone(), line, character))
             else {
@@ -16251,7 +16251,9 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
                 return Err("expected markup hover".to_string());
             };
             assert!(
-                markup.value.contains(&format!("**ripr** `{expected}`")),
+                markup
+                    .value
+                    .contains(&format!("**ripr** finding: {expected}")),
                 "hover at {line}:{character} with coarse {coarse_range:?} should describe {expected}: {}",
                 markup.value
             );
@@ -27239,10 +27241,7 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(
-        lens.contains("no static discriminator (weakly_exposed)"),
-        "{lens}"
-    );
+    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"
