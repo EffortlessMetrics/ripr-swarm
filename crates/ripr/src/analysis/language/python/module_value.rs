@@ -149,12 +149,10 @@ fn credits<'a>(
     };
     literal_constant(new_source, &new_module.body, &name, line)?;
     // Another test file writing the attribute can rebind it for every test.
-    if all_tests.iter().any(|test| {
-        test.constant_rebinding
-            .attributes
-            .iter()
-            .any(|attribute| *attribute == name)
-    }) {
+    if all_tests
+        .iter()
+        .any(|test| test.constant_rebinding.attributes.contains(&name))
+    {
         return None;
     }
     // The old module: the new one with the one changed line put back.
@@ -604,8 +602,7 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
             let full = expr_full_name(expr)?;
             scope
                 .constant_spellings
-                .iter()
-                .any(|spelling| *spelling == full)
+                .contains(&full)
                 .then(|| scope.value.clone())
         }
         Expr::UnaryOp(unary) => {
@@ -657,12 +654,7 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
         }
         Expr::Call(call) if scope.parameters.is_none() => {
             let callee = expr_full_name(&call.func)?;
-            if !call.keywords.is_empty()
-                || !scope
-                    .reader_spellings
-                    .iter()
-                    .any(|spelling| *spelling == callee)
-            {
+            if !call.keywords.is_empty() || !scope.reader_spellings.contains(&callee) {
                 return None;
             }
             let reader = scope.reader?;
