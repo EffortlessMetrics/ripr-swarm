@@ -507,9 +507,11 @@ impl AnalysisProgressTracker {
     /// honesty and can never publish a fake completed stage.
     ///
     /// Reports are message-only: no percentage is ever attached, so unknown
-    /// totals stay unknown. No-ops (never an error, never analysis-relevant):
-    /// unsupported clients, unknown generations, unstarted tokens, tokens
-    /// still queued, terminal stages, and consecutive duplicate stages.
+    /// totals stay unknown. A report for a token whose begin is still in
+    /// flight is held and sent right after it (#9362). No-ops (never an
+    /// error, never analysis-relevant): unsupported clients, unknown
+    /// generations, tokens still queued, terminal stages, and consecutive
+    /// duplicate stages.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
         let Some(notifications) = self.notification_state(generation) else {
             return;
