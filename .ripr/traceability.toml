@@ -11377,6 +11377,8 @@ spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
