@@ -623,7 +623,14 @@ fn unresolved_assertion_macro_invocations_among(
             let Some(macro_name) = macro_name_before_bang(line, bang) else {
                 continue;
             };
-            if !is_unresolved_assertion_like_macro(&macro_name) && !credited.contains(&macro_name) {
+            // With credited macros the witness is the credited spelling, not
+            // another assertion-like macro in the same test (#7089).
+            let named = if credited.is_empty() {
+                is_unresolved_assertion_like_macro(&macro_name)
+            } else {
+                credited.contains(&macro_name)
+            };
+            if !named {
                 continue;
             }
             if let Some(owner_name) = owner_in_arguments {
@@ -1217,6 +1224,7 @@ mod tests {
             );
             finding.class = ExposureClass::WeaklyExposed;
             for related in &mut finding.related_tests {
+                related.relation_reason = Some(crate::domain::RelationReason::DirectOwnerCall);
                 related.oracle = Some(oracle.to_string());
                 related.oracle_kind = kind.clone();
                 related.oracle_strength = strength.clone();
