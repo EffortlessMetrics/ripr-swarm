@@ -700,13 +700,16 @@ case "$url" in
     mode="$(cat "$CONTROL_TMP/blobs")"
     case "$mode" in
       error) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;;
-      huge) if [ "$jq_arg" = ".size" ]; then echo 5000000; else echo "downloaded an oversized blob" >&2; exit 1; fi ;;
-      *) if [ "$jq_arg" = ".size" ]; then echo 120; else printf 'a\nb\nc\nd\ne\n'; fi ;;
+      size_error) if [ "$jq_arg" = ".size" ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; else echo raw >> "$CONTROL_TMP/raw_reads"; printf 'a\nb\n'; fi ;;
+      contents_error) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi ;;
+      binary) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; printf '\377\376\000binary\n'; fi ;;
+      huge) if [ "$jq_arg" = ".size" ]; then echo 5000000; else echo raw >> "$CONTROL_TMP/raw_reads"; echo "downloaded an oversized blob" >&2; exit 1; fi ;;
+      *) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; printf 'a\nb\nc\nd\ne\n'; fi ;;
     esac ;;
   */contents/*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   */files?*) cat "$CONTROL_TMP/files.json" ;;
   */pulls\?state*) echo '[]' ;;
-  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":5003,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
+  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then if [ "$(cat "$CONTROL_TMP/head_after")" = unreadable ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi; cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":5003,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
   *) echo '{}' ;;
 esac
 "#;
@@ -737,7 +740,10 @@ esac
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
-    let outputs = std::fs::read_to_string(tmp.join("outputs")).unwrap_or_default();
+    let mut outputs = std::fs::read_to_string(tmp.join("outputs")).unwrap_or_default();
+    let raw_reads =
+        std::fs::read_to_string(tmp.join("raw_reads")).map_or(0, |reads| reads.lines().count());
+    outputs.push_str(&format!("\nraw_reads={raw_reads}\n"));
     let _ = std::fs::remove_dir_all(&tmp);
     let code = status
         .code()
@@ -755,6 +761,15 @@ fn size_outcome(case: &SizeCase) -> Result<(i32, String, String), String> {
             .to_string()
     };
     Ok((code, field("reason="), field("changed_lines=")))
+}
+
+fn raw_reads(case: &SizeCase) -> Result<usize, String> {
+    let (_, outputs) = run_size_wrapper(case)?;
+    outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("raw_reads="))
+        .and_then(|count| count.parse().ok())
+        .ok_or_else(|| "raw read count missing".to_string())
 }
 
 const STABLE_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -780,22 +795,31 @@ fn wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts() -> Result<(), Strin
 #[test]
 fn wrapper_counts_everything_when_the_head_moves_after_the_file_listing() -> Result<(), String> {
     let moved = "b".repeat(40);
-    let (code, reason, lines) = size_outcome(&SizeCase {
-        head_after: &moved,
-        blobs: "ok",
-        compare: "ok",
-    })?;
-    if code != 1 || reason != "qualification_scope_oversized" || lines != "5003" {
-        return Err(format!(
-            "a moved head discounts nothing, got {code} {reason} {lines}"
-        ));
+    for head_after in [moved.as_str(), "unreadable"] {
+        let (code, reason, lines) = size_outcome(&SizeCase {
+            head_after,
+            blobs: "ok",
+            compare: "ok",
+        })?;
+        if code != 1 || reason != "qualification_scope_oversized" || lines != "5003" {
+            return Err(format!(
+                "head_after={head_after} discounts nothing, got {code} {reason} {lines}"
+            ));
+        }
     }
     Ok(())
 }
 
 #[test]
 fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<(), String> {
-    for (blobs, compare) in [("error", "ok"), ("huge", "ok"), ("ok", "error")] {
+    for (blobs, compare) in [
+        ("error", "ok"),
+        ("size_error", "ok"),
+        ("contents_error", "ok"),
+        ("binary", "ok"),
+        ("huge", "ok"),
+        ("ok", "error"),
+    ] {
         let (code, reason, lines) = size_outcome(&SizeCase {
             head_after: STABLE_HEAD,
             blobs,
@@ -807,6 +831,20 @@ fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<()
                 "blobs={blobs} compare={compare} must keep the residual counted, got {code} {reason} {lines}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_rejects_an_oversized_blob_before_downloading_it() -> Result<(), String> {
+    // The size read alone refuses the blob; the stub records every raw fetch.
+    let reads = raw_reads(&SizeCase {
+        head_after: STABLE_HEAD,
+        blobs: "huge",
+        compare: "ok",
+    })?;
+    if reads != 0 {
+        return Err(format!("an oversized blob was downloaded {reads} time(s)"));
     }
     Ok(())
 }
