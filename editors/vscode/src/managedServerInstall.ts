@@ -204,7 +204,12 @@ async function sweepReplacedOnCacheHit(
     const token = `${process.pid}:${crypto.randomUUID()}`;
     await fs.promises.mkdir(lockPath);
     try {
-      await fs.promises.writeFile(path.join(lockPath, 'owner'), `${token}\n`, { flag: 'wx' });
+      try {
+        await fs.promises.writeFile(path.join(lockPath, 'owner'), `${token}\n`, { flag: 'wx' });
+      } catch (error) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+        throw error;
+      }
       if (await readManagedServerInstallation(request)) {
         await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
       }
@@ -487,10 +492,8 @@ async function stageAndPromote(
       // Without the lock, leave the displaced copy for a later holder's sweep.
       if (await holdsLock()) {
         await fs.promises.rm(displacedDir, { recursive: true, force: true });
-        displaced = false;
-      } else {
-        displaced = false;
       }
+      displaced = false;
     }
 
     const promoted = await readManagedServerInstallation(request);

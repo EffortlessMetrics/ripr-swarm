@@ -354,6 +354,35 @@ suite('Managed Server Installation', () => {
     assert.ok(await readManagedServerInstallation(request));
   });
 
+  test('lock lost after displace and before promote restores the displaced install and promotes nothing (#9304)', async () => {
+    const digestA = 'a'.repeat(64);
+    const digestB = 'b'.repeat(64);
+    const plain = { ...installRequest(root, '8.9.0'), admittedManifestSha256: digestA };
+    const first = await installManagedServer(plain, operations('old', '8.9.0', undefined, 'ripr 1.2.3', digestA));
+    const finalDir = path.dirname(first.executablePath);
+    const lockPath = `${finalDir}.install.lock`;
+    const rotated = { ...plain, admittedManifestSha256: digestB };
+    const realRename = fs.promises.rename;
+    fs.promises.rename = (async (from: fs.PathLike, to: fs.PathLike) => {
+      await realRename(from, to);
+      if (String(from) === finalDir) {
+        await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:other\n`);
+      }
+    }) as typeof fs.promises.rename;
+    try {
+      await assert.rejects(
+        installManagedServer(rotated, operations('new', '8.9.0', undefined, 'ripr 1.2.3', digestB)),
+        /lock was lost/
+      );
+    } finally {
+      fs.promises.rename = realRename;
+    }
+    const restored = await readManagedServerInstallation(plain);
+    assert.ok(restored, 'the displaced old install is restored');
+    assert.strictEqual(restored.receipt.manifestSha256, digestA);
+    assert.strictEqual(await readManagedServerInstallation(rotated), undefined, 'nothing was promoted');
+  });
+
   test('prerelease requests admit the generation-keyed manifest version through staging and cache read-back', async () => {
     const request = installRequest(root, '2.1.0-rc.1');
     const installed = await installManagedServer(request, operations('rc-generation-binary', '2.1.0'));
