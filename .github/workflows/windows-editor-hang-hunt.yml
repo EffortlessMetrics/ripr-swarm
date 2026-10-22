@@ -84,10 +84,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $target = Join-Path $env:QUAL_TEMP_ROOT 'cargo-target'
-          cargo build --locked -p ripr --target-dir $target
+          # The repository cargo config points compiler/linker temporaries at the checkout's
+          # relative target directory, so build into it rather than an external target-dir.
+          cargo build --locked -p ripr
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit $LASTEXITCODE" }
-          $server = Join-Path $target 'debug\ripr.exe'
+          $server = Join-Path (Get-Location) 'target\debug\ripr.exe'
           if (-not (Test-Path $server)) { throw "server binary missing: $server" }
           "RIPR_SERVER=$server" >> $env:GITHUB_ENV
           Push-Location editors/vscode
