@@ -23,6 +23,7 @@ use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+    unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -308,7 +309,14 @@ pub(super) fn classify_change_for_owner(
     let static_limit =
         static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
-            .or_else(|| heuristic_only_relation_limit(owner, &related_candidates));
+            .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
+            .or_else(|| {
+                unpinned_equality_dunder_limit(
+                    owner,
+                    &related_candidates,
+                    alignment.credited.is_some(),
+                )
+            });
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());

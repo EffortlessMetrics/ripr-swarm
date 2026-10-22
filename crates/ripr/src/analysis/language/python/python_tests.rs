@@ -1222,6 +1222,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1677,6 +1678,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1737,6 +1739,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1819,6 +1822,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1868,6 +1872,7 @@ fn same_stem_related_handles_missing_stems() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -3865,6 +3870,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3940,6 +3946,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4015,6 +4022,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 

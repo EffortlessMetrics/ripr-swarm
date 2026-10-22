@@ -209,6 +209,7 @@ fn owner_from_function(
         module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
+        class_facts: Default::default(),
     }
 }
 
@@ -270,6 +271,7 @@ fn owner_from_class(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -302,6 +304,7 @@ pub(super) fn module_owner(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
