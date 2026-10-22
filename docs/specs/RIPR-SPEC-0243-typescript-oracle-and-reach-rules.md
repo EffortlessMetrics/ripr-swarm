@@ -1163,6 +1163,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `a_braceless_arm_no_test_input_enters_withdraws_exposed` and
   `a_braceless_arm_some_test_input_can_enter_keeps_exposed` are the
   production-path positive and negative.
+- #8569: a line inside a lone `case <literal>:` clause of `switch (identifier)`
+  reads `identifier === literal` when the clause above ends in `break`,
+  `return`, `throw` or `continue`, so only dispatch can enter it. Stacked
+  labels, `default`, a clause reachable by fall-through (including after a
+  braced clause), a computed discriminant, a non-literal label, and a label on
+  the changed line itself read no condition.
+  `switch_clauses_read_a_lone_case_label_and_nothing_else` pins the reader,
+  and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
+  `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
+  production-path positive and negative.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
