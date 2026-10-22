@@ -823,6 +823,15 @@ classification = "config"
 reason = "Base-owned 0.11 hard-cut admission packet read by the pre-allocation admission action; inactive by default, changed only by packet-only control PRs (#5391, #5114)."
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo xtask check-file-policy"]
 
+[[allow]]
+glob = "policy/release-selection.json"
+kind = "release_selection_packet"
+owner = "release/control"
+surface = "ci"
+classification = "config"
+reason = "Selected-claim packet for the 0.11 hard cut: one resolution per claim, the open release-check issue census and the open-PR roster at the cut (#2766)."
+covered_by = ["cargo xtask check-release-targets", "cargo test -p xtask --bin xtask release_selection"]
+
 # ---------------------------------------------------------------------------
 # Brand / assets
 # ---------------------------------------------------------------------------

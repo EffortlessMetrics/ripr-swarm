@@ -491,7 +491,7 @@ Updated:
 ## Pending — python_adversarial_free_function_module_collision (23)
 
 Reason:
-RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+RIPR-SPEC-0028: #8759 a test importing validate from src.checker is no longer related to the same-named src.handler.validate; false weakly_exposed reach becomes no_static_path
 
 Command:
 `cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`

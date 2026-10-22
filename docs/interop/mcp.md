@@ -260,9 +260,10 @@ ignoring one leading `./` on both sides, `class` takes an exposure-class wire
 token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
-count while `filtered` counts the narrowed set the page walks; an unknown
-filter value is an empty disclosed page, not an error. Empty filter strings
-and non-boolean `repair_ready` values are Invalid Params.
+count while `filtered` counts the narrowed set the page walks. An unknown
+`file` or `language` value is an empty disclosed page; an unknown `class` is
+Invalid Params (`-32602`) naming the seven exposure-class tokens (the echoed
+token is truncated to stay bounded). Empty filter strings and non-boolean `repair_ready` values are Invalid Params.
 
 Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
 narrowed items in snapshot order, disclosed through the `page` window
@@ -531,7 +532,9 @@ so an id can never grow a reply past the response cap. The terminal
 response that still cannot be encoded.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
-Stdout carries only protocol messages; operational errors go to stderr, and
+Stdout carries only protocol messages; operational errors go to stderr (an
+unusable `--root` additionally prints one startup warning line on stderr; tools
+still fail closed with `workspace_unavailable`), and
 invalid command-line arguments exit with status 2.
 
 Supported protocol versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,

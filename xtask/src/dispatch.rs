@@ -134,6 +134,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::BumpVersion(args) => super::version::bump_version(&args),
         XtaskCommand::ReleaseControl(args) => super::reports::release_control(&args),
         XtaskCommand::ReleaseDenominator(args) => super::reports::release_denominator(&args),
+        XtaskCommand::ReleaseLedger(args) => super::reports::release_ledger(&args),
         XtaskCommand::SourcePromotion(args) => super::reports::source_promotion(&args),
         XtaskCommand::BackSync(args) => super::reports::back_sync(&args),
         XtaskCommand::ReleaseScope(args) => super::reports::release_scope(&args),
@@ -219,7 +220,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
-        XtaskCommand::CheckPrShape => super::check_pr_shape(),
+        XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),
         XtaskCommand::CheckGenerated => super::check_generated(),
         XtaskCommand::CheckCommandCatalog => super::check_command_catalog(),
         XtaskCommand::CheckBadgeDiffPolicy => super::check_badge_diff_policy(),

@@ -73,7 +73,8 @@ required `Ripr Rust Small Result` exists only for that request). ub-review, the
 Python wheel workflow and source-of-truth still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
 starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
@@ -2261,6 +2262,32 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
+
+The ordinary size envelope (files and changed lines) counts only what a human
+has to review. Generated files are declared once, with `linguist-generated` in
+`.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
+public-proof metrics), and their lines and files are not counted. The
+declaration is read from the PR's base commit, so a PR cannot label its own
+files; a `.gitattributes` edit is itself counted in full. Three guards keep the
+label from hiding hand-written code: only declarable shapes count (lockfiles,
+`fixtures/**/expected/**`, `metrics/public-proof/**`; a new family is added to
+`GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
+ignored and fails admission with `generated_declaration_invalid`); only data
+file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
+exempt, and a file must change at least one line; and the exempt lines have their
+own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
+from the hand-written change. A truncated file listing exempts nothing.
+
+Past its diff budget (roughly 700 KB of patch text) GitHub lists the remaining
+files with no line counts while the PR totals still include them. Their lines are
+the PR total minus the listed lines. The generated files among them are exempt
+only after each hand-written file in that group, of any status, is bounded by its
+own line count at the merge base (under its previous name for a rename) plus the
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
