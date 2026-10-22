@@ -2877,6 +2877,22 @@ fn test_name_and_assertions_from_registration(
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
+    // `node:test` / AVA-style contexts end a running test as skipped or todo
+    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
+    // the run passes however the later assertions would have gone, so the
+    // test registers no discriminator. Textual and fail-closed: any call of
+    // those methods on the callback's first parameter withdraws the test,
+    // exactly like a `.skip` registration.
+    if let Some(context) = test_callback_receiver_name(callback)
+        && body_calls_context_skip(
+            source
+                .get(call.span.start as usize..call.span.end as usize)
+                .unwrap_or_default(),
+            &context,
+        )
+    {
+        return None;
+    }
     // A first parameter named like an imported assertion binding
     // (`const assert = require('node:assert')` + `it('x', function (assert)
     // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
@@ -2962,6 +2978,194 @@ fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
         Expression::CallExpression(call) => callee_root_name(&call.callee),
         _ => None,
     }
+}
+
+/// Whether `text` calls `<context>.skip(` or `<context>.todo(` (a whole
+/// identifier before the dot, optional whitespace before the paren) on the
+/// test's own context. Comments and string literals are masked first, and a
+/// call inside a nested callback that rebinds the same name (a subtest
+/// `t.test("sub", (t) => { t.skip(); })`) belongs to that subtest, not here.
+fn body_calls_context_skip(text: &str, context: &str) -> bool {
+    let masked = mask_comments_and_strings_text(text);
+    let shadowed = nested_rebinding_bodies(&masked, context);
+    ["skip", "todo"].into_iter().any(|method| {
+        let needle = format!("{context}.{method}");
+        masked.match_indices(&needle).any(|(at, _)| {
+            let before_ok = masked
+                .get(..at)
+                .and_then(|head| head.chars().next_back())
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+            let after = masked.get(at + needle.len()..).unwrap_or_default();
+            before_ok
+                && after.trim_start().starts_with('(')
+                && !shadowed.iter().any(|range| range.contains(&at))
+        })
+    })
+}
+
+/// Replace comments and string / template literal contents with spaces,
+/// keeping byte offsets and newlines.
+fn mask_comments_and_strings_text(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                for k in [i, i + 1] {
+                    if k < out.len() {
+                        out[k] = b' ';
+                    }
+                }
+                i += 2;
+            }
+            quote @ (b'"' | b'\'' | b'`') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Byte ranges of function bodies, other than the test's own callback, whose
+/// parameter list rebinds `context`.
+fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut ranges = Vec::new();
+    let mut first = true;
+    for (at, _) in masked.match_indices(context) {
+        if at > 0 && is_ident(bytes[at - 1])
+            || bytes.get(at + context.len()).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let mut end = at + context.len();
+        while bytes.get(end).is_some_and(|b| b.is_ascii_whitespace()) {
+            end += 1;
+        }
+        let mut head = at;
+        while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+            head -= 1;
+        }
+        // A bare single parameter may follow `async` (`async t => {...}`).
+        if masked[..head].ends_with("async")
+            && !masked[..head - 5]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        {
+            head -= 5;
+            while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+                head -= 1;
+            }
+        }
+        let prev = if head > 0 { bytes[head - 1] } else { 0 };
+        let body_from = if masked[end..].starts_with("=>") && (prev == b'(' || prev == b',') {
+            // `t => { ... }` (bare single parameter)
+            end + 2
+        } else if prev == b'(' || prev == b',' {
+            // Walk back to the list's `(` and forward to its `)`.
+            let mut depth = 0i32;
+            let mut open = None;
+            for k in (0..at).rev() {
+                match bytes[k] {
+                    b')' => depth += 1,
+                    b'(' if depth == 0 => {
+                        open = Some(k);
+                        break;
+                    }
+                    b'(' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let Some(open) = open else { continue };
+            let word_end = masked[..open].trim_end().len();
+            let word_start = masked[..word_end]
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .map_or(0, |k| k + 1);
+            if matches!(
+                &masked[word_start..word_end],
+                "if" | "while" | "for" | "switch" | "with"
+            ) {
+                continue;
+            }
+            let mut depth = 0i32;
+            let mut close = None;
+            for (k, b) in bytes.iter().enumerate().skip(open) {
+                match b {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(k);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else { continue };
+            let rest = masked[close + 1..].trim_start();
+            let skipped = masked.len() - rest.len();
+            if rest.starts_with("=>") {
+                skipped + 2
+            } else if rest.starts_with('{') {
+                skipped
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        if first {
+            // The test's own callback parameter.
+            first = false;
+            continue;
+        }
+        let Some(open) = masked[body_from..].find('{').map(|k| body_from + k) else {
+            continue;
+        };
+        let mut depth = 0i32;
+        for (k, b) in bytes.iter().enumerate().skip(open) {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        ranges.push(open..k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    ranges
 }
 
 /// Extract the name bound to the test callback's first parameter.

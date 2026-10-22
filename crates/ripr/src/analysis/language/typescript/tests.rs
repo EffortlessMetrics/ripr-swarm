@@ -17510,6 +17510,7 @@ mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod returned_dataflow_tests;
+mod returned_expression_tests;
 mod rounding_mode_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
