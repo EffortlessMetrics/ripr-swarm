@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr gate` now refuses a baseline that records an unsupported `schema_version` (for example `99.0`) or a top-level or per-entry `root` naming another repository, matching `ripr baseline diff`, instead of silently accepting it. Baselines that omit these fields stay accepted (#9301).
+- `ripr gate` now refuses a baseline that records an unsupported `schema_version` (for example `99.0`, the same refusal `ripr baseline diff` applies) or a `root` (top-level or on any indexed item) that is a non-string value or an absolute path differing from the gate's absolute root (a gate-only refusal). Absent, `null`, blank and relative roots and an absent `schema_version` stay accepted (#9301).

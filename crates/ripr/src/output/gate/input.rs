@@ -457,6 +457,34 @@ fn is_runtime_gap_outcome(outcome: &str) -> bool {
 /// Kind marker `ripr baseline create` writes on a gate baseline ledger.
 const GATE_BASELINE_KIND: &str = "gate_baseline";
 
+/// True only when `recorded` is positively identifiable as another
+/// repository: both it and the gate root are absolute (after normalization)
+/// and differ, or it is a non-string, non-null value. JSON null, blank and
+/// relative spellings are "unknown" and accepted: relative and absolute forms
+/// of one checkout are not comparable, and a hard failure needs positive
+/// evidence (`baseline create` writes `"root": null` for rootless decisions).
+fn foreign_absolute_root(recorded: &Value, current_root: &str) -> bool {
+    use crate::output::baseline_delta::normalize_root_for_comparison as normalize;
+    match recorded {
+        Value::Null => false,
+        Value::String(text) => {
+            let recorded = normalize(text);
+            let current = normalize(current_root);
+            is_absolute_spelling(&recorded) && is_absolute_spelling(&current) && recorded != current
+        }
+        _ => true,
+    }
+}
+
+fn is_absolute_spelling(normalized: &str) -> bool {
+    let bytes = normalized.as_bytes();
+    normalized.starts_with('/')
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'/')
+}
+
 /// Identity-bearing arrays the gate indexes from a baseline file. `entries`
 /// is the `ripr baseline create` ledger shape; `decisions`, `comments`,
 /// `summary_only`, and `suppressed` are the documented compatibility shapes
@@ -480,9 +508,10 @@ fn baseline_document_defect(value: &Value, current_root: &str) -> Option<String>
     let Some(object) = value.as_object() else {
         return Some("expected a JSON object".to_string());
     };
-    // Same contract as `ripr baseline diff` (#9301): a recorded schema_version
-    // must be the supported one, and a recorded root (top-level or per entry)
-    // must name this repository. Absent values stay accepted (compat window).
+    // #9301: a recorded `schema_version` must be the supported one (the same
+    // refusal `ripr baseline diff` applies; unlike diff, an absent value stays
+    // accepted for hand-built compatibility baselines). The root refusal is a
+    // gate-only contract: see `foreign_absolute_root`.
     if let Some(version) = object.get("schema_version")
         && version.as_str() != Some(crate::output::baseline_delta::BASELINE_SCHEMA_VERSION)
     {
@@ -491,28 +520,16 @@ fn baseline_document_defect(value: &Value, current_root: &str) -> Option<String>
             crate::output::baseline_delta::BASELINE_SCHEMA_VERSION
         ));
     }
-    // JSON null is absent: `ripr baseline create` writes `"root": null` when
-    // the source gate decision recorded no root. Any other non-string value
-    // (number, bool, object) is refused. Every array the gate indexes is
-    // checked, not only `entries`.
+    // Every array the gate indexes is checked, not only `entries`.
     let item_roots = BASELINE_IDENTITY_ARRAYS
         .iter()
         .filter_map(|field| object.get(*field).and_then(Value::as_array))
         .flatten()
         .filter_map(|item| item.get("root"));
-    for root in object
-        .get("root")
-        .into_iter()
-        .chain(item_roots)
-        .filter(|root| !root.is_null())
-    {
-        let matches_own_root = root.as_str().is_some_and(|recorded| {
-            crate::output::baseline_delta::normalize_root_for_comparison(recorded)
-                == crate::output::baseline_delta::normalize_root_for_comparison(current_root)
-        });
-        if !matches_own_root {
+    for root in object.get("root").into_iter().chain(item_roots) {
+        if foreign_absolute_root(root, current_root) {
             return Some(format!(
-                "baseline root {root} does not match the gate root \"{current_root}\" (foreign repository baseline)"
+                "baseline root {root} names a different repository than the gate root \"{current_root}\""
             ));
         }
     }
