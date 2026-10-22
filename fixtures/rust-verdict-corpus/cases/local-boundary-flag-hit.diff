@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index c1c7814..e34b668 100644
+index 7642ecc..eacea59 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -5,7 +5,7 @@ pub const KIB: u64 = 1_024;

@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index c1c7814..b2ef41a 100644
+index 7642ecc..e5b6817 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -15,7 +15,7 @@ pub fn tier_trap(bytes: u64, si: bool) -> &'static str {

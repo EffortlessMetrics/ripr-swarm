@@ -24,6 +24,16 @@ pub fn tier_shadowed(bytes: u64, si: bool) -> &'static str {
     if bytes >= unit { "unit" } else { "byte" }
 }
 
+pub fn tier_loop(bytes: u64, si: bool) -> &'static str {
+    for si in [false] {
+        let unit = if si { KIB } else { KB };
+        if bytes >= unit {
+            return "unit";
+        }
+    }
+    "byte"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +61,11 @@ mod tests {
         assert_eq!(tier_shadowed(1_024, true), "unit");
         assert_eq!(tier_shadowed(1_023, true), "unit");
         assert_eq!(tier_shadowed(999, true), "byte");
+    }
+
+    #[test]
+    fn the_loop_binding_picks_the_decimal_unit() {
+        assert_eq!(tier_loop(1_024, true), "unit");
+        assert_eq!(tier_loop(999, true), "byte");
     }
 }

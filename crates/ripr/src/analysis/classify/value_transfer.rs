@@ -360,7 +360,11 @@ fn take_braced(text: &str) -> Option<(&str, &str)> {
     let mut depth = 1usize;
     let mut in_string = false;
     let mut escaped = false;
+    let mut skip_to = 0usize;
     for (at, character) in body.char_indices() {
+        if at < skip_to {
+            continue;
+        }
         if in_string {
             if escaped {
                 escaped = false;
@@ -372,6 +376,25 @@ fn take_braced(text: &str) -> Option<(&str, &str)> {
             continue;
         }
         match character {
+            // A char literal (`'}'`, `'{'`, `'\''`) is skipped whole; a
+            // lifetime has no closing quote two characters on.
+            '\'' => {
+                let rest = &body[at + 1..];
+                let width = if rest.starts_with('\\') {
+                    rest.get(2..)
+                        .and_then(|tail| tail.find('\''))
+                        .map(|n| n + 3)
+                } else {
+                    let mut chars = rest.chars();
+                    chars
+                        .next()
+                        .filter(|_| chars.next() == Some('\''))
+                        .map(|first| first.len_utf8() + 1)
+                };
+                if let Some(width) = width {
+                    skip_to = at + 1 + width;
+                }
+            }
             '"' => in_string = true,
             '{' => depth += 1,
             '}' => {
@@ -753,6 +776,27 @@ mod tests {
         assert_eq!(
             exact("if si { 7 } else { 9 }", &with("false")),
             TypedValue::Index(9)
+        );
+    }
+
+    #[test]
+    fn if_else_arms_may_hold_braces_in_char_and_string_literals() {
+        let table = [("flag", "true")];
+        assert_eq!(
+            exact("if flag { '}' } else { 'x' }", &table),
+            TypedValue::Char('}')
+        );
+        assert_eq!(
+            exact("if flag { '{' } else { 'x' }", &table),
+            TypedValue::Char('{')
+        );
+        assert_eq!(
+            exact("if flag { \"}\" } else { \"x\" }", &table),
+            TypedValue::Str("}".into())
+        );
+        assert_eq!(
+            exact("if !flag { '{' } else { 'x' }", &table),
+            TypedValue::Char('x')
         );
     }
 

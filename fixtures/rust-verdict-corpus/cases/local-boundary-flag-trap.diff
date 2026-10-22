@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index c1c7814..0129421 100644
+index 7642ecc..51973b4 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -10,7 +10,7 @@ pub fn tier_hit(bytes: u64, si: bool) -> &'static str {

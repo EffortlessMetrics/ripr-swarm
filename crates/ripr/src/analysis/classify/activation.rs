@@ -540,7 +540,10 @@ fn resolve_boundary_operand(
             && free_identifiers(&initializer)
                 .iter()
                 .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
-                .any(|name| name_rebound_in_owner(owner, name))
+                .any(|name| {
+                    name_rebound_in_owner(owner, name)
+                        || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
+                })
         {
             return None;
         }
@@ -579,6 +582,8 @@ fn initializer_constants(
             is_constant_like(name)
                 && !matches!(name.as_str(), "true" | "false")
                 && !parameters.contains(name)
+                && !name_rebound_in_owner(owner, name)
+                && !name_imported_in_file(&facts.source, name)
         })
         .filter_map(|name| {
             let constant = crate::analysis::value_resolution::named_constant(&facts.source, &name);
@@ -1076,6 +1081,50 @@ fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
             .iter()
             .any(|operator| after.starts_with(operator));
     assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether the owner's body mentions `name` anywhere before the line that
+/// holds `initializer`. A flag the initializer reads must still be the
+/// caller's parameter there; any earlier mention (a `for si in ..`, an
+/// `if let Some(si)`, a closure or match-arm binding, or a use that feeds
+/// a rebinding) declines the read, as the scope is not tracked.
+fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    let Some(at) = owner.body.find(initializer.trim()) else {
+        return true;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let before = &masked[open + 1..at.max(open + 1)];
+    before.match_indices(name).any(|(start, _)| {
+        !before[..start].chars().next_back().is_some_and(is_word)
+            && !before[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// Whether the file brings `name` in with a `use` line, so a constant of
+/// that name declared elsewhere in the file is not the one the owner reads.
+fn name_imported_in_file(source: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .any(|line| {
+            line.match_indices(name).any(|(start, _)| {
+                !line[..start].chars().next_back().is_some_and(is_word)
+                    && !line[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        })
 }
 
 /// Whether the owner rebinds `name` anywhere in its body: a `let`, or an
@@ -5026,6 +5075,17 @@ fn looks_like_builder_method(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_constant_the_file_imports_is_not_read_from_a_same_named_declaration() {
+        let source = "mod a { pub const KB: u64 = 1000; }\nmod b {\n    use external::KB;\n}\n";
+        assert!(name_imported_in_file(source, "KB"));
+        assert!(name_imported_in_file("pub use other::{KB, KIB};", "KIB"));
+        assert!(!name_imported_in_file(source, "KIB"));
+        // A longer name that merely contains it, and a comment, are not imports.
+        assert!(!name_imported_in_file("use external::KBPS;\n", "KB"));
+        assert!(!name_imported_in_file("// use external::KB;\n", "KB"));
+    }
+
     #[test]
     fn exact_values_compare_plain_decimals_by_digits_only() {
         assert!(exact_values_equal("1024", "1_024"));

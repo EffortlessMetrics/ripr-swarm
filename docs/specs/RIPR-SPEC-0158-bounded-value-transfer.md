@@ -58,7 +58,12 @@ exercised boundary from a missing one.
   compare by digits, so a test's `1_024` meets the evaluated `1024`. The
   flag and every constant the initializer names must not be rebound in
   the owner (`let si = !si;`, a local `KB`, an assignment or `mut`
-  binding); a rebound name leaves the local unresolved.
+  binding); a rebound name leaves the local unresolved. A flag the
+  owner mentions anywhere before the initializer (a `for si in ..`, an
+  `if let Some(si)`, a closure or match-arm binding) is declined too, as
+  scope is not tracked, and a constant the file also imports with `use`
+  is never read from a same-named declaration. Braces inside char and
+  string literals do not end an arm.
 
 ## Required Evidence
 
@@ -121,6 +126,10 @@ exercised boundary from a missing one.
   `(1_024, true)`: the flag the local reads is the opposite of the
   caller's literal, so the pinned 1_024 is not the boundary and the
   verdict stays unresolved (`local-boundary-flag-shadowed`).
+- Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
+  with tests at `(1_024, true)` (`local-boundary-flag-loop`), and a
+  function-local `const KB: u64 = 2_000;` shadowing the file's `KB`
+  (`local-boundary-flag-alias`).
 - Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
   whose only direct row binds `bytes` to a string literal: the verdict
   stays `infection_unknown` (`bytesize-format-unit-first-run`).
@@ -133,8 +142,9 @@ exercised boundary from a missing one.
 `exact_values_compare_plain_decimals_by_digits_only` and
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
-`local-boundary-flag-trap`, `local-boundary-flag-negated` and
-`local-boundary-flag-shadowed`;
+`local-boundary-flag-trap`, `local-boundary-flag-negated`,
+`local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
+`local-boundary-flag-alias`;
 `analysis/language/rust/mod.rs` end-to-end retarget+evaluation tests;
 fixtures `binding_predicate_equality_boundary` (re-blessed flip) and
 the #3295 family fixtures.

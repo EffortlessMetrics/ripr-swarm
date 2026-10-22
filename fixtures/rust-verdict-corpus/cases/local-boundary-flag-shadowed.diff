@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index c1c7814..cec9e8d 100644
+index 7642ecc..c2bbebe 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -21,7 +21,7 @@ pub fn tier_negated(bytes: u64, binary: bool) -> &'static str {
@@ -10,4 +10,4 @@ index c1c7814..cec9e8d 100644
 +    if unit <= bytes { "unit" } else { "byte" }
  }
  
- #[cfg(test)]
+ pub fn tier_loop(bytes: u64, si: bool) -> &'static str {
