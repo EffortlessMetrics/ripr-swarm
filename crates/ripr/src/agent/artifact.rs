@@ -395,14 +395,27 @@ fn is_windows_console_form(command: &str) -> bool {
 fn running_executable() -> Option<String> {
     std::env::current_exe()
         .ok()
-        .and_then(|path| path.to_str().map(ToString::to_string))
+        .and_then(|path| existing_executable_path(&path))
+}
+
+/// The path as text only while it still names a file. Linux reports a binary
+/// replaced under a long-lived process (LSP, MCP) as `/path/ripr (deleted)`,
+/// which a recovery command must not name (#9665 item 1).
+fn existing_executable_path(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    path.to_str().map(ToString::to_string)
 }
 
 /// Rendered regeneration guidance shared by every refusal that tells the
 /// caller to regenerate a repo-exposure artifact (#9500): the legacy
 /// no-envelope diagnosis and the foreign-producer-version diagnosis.
 fn repo_exposure_regeneration_guidance(root: &Path) -> String {
-    let program = running_executable();
+    regeneration_guidance_for(root, running_executable())
+}
+
+fn regeneration_guidance_for(root: &Path, program: Option<String>) -> String {
     let bash_recovery = super::loop_commands::check_repo_exposure_command_with_program_and_base(
         program.as_deref().unwrap_or("ripr"),
         &super::loop_commands::bound_root(&root.to_string_lossy()),
@@ -1873,6 +1886,27 @@ mod tests {
         }
         if !error.contains(&crate::build_identity::version_line()) {
             return Err(format!("recovery omitted the executable identity: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_or_missing_executable_path_is_never_named_in_recovery() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        if existing_executable_path(&exe).is_none() {
+            return Err("the running test binary was not reported as an existing file".to_string());
+        }
+        let mut deleted = exe.clone().into_os_string();
+        deleted.push(" (deleted)");
+        let deleted = PathBuf::from(deleted);
+        if existing_executable_path(&deleted).is_some() {
+            return Err("a `(deleted)` executable path was accepted".to_string());
+        }
+        let guidance = regeneration_guidance_for(Path::new("."), None);
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "fallback is not bare `ripr` with the version check: {guidance}"
+            ));
         }
         Ok(())
     }
