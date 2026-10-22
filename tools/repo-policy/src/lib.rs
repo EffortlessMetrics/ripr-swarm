@@ -468,6 +468,11 @@ pub fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    let workflow_paths: BTreeSet<String> = workflows.iter().map(|(path, _)| path.clone()).collect();
+    violations.extend(unpinned_allowlist_missing_file_violations(
+        &unpinned_allowlist,
+        &workflow_paths,
+    ));
     violations.extend(composite_action_run_block_violations(&budgets)?);
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
@@ -785,21 +790,52 @@ pub fn workflow_unpinned_action_violations(
     violations
 }
 
-/// Fail a workflow whose top-level `permissions:` grants `contents: write`.
+/// Drop a YAML trailing comment: ` #` or a tab-then-`#` starts one.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'#' && (index == 0 || matches!(bytes[index - 1], b' ' | b'\t')) {
+            return &line[..index];
+        }
+    }
+    line
+}
+
+fn yaml_scalar(value: &str) -> &str {
+    value.trim().trim_matches(|c| c == '"' || c == '\'')
+}
+
+/// Fail a workflow whose top-level `permissions:` grants `contents: write`
+/// (block or flow style) or `write-all`.
 ///
 /// A workflow-wide write token reaches every job, including secret-holding
 /// ones (#9303). Grant write at job level, on the job that needs it.
 pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec<String> {
     let mut violations = Vec::new();
     let mut in_block = false;
-    for (index, line) in text.lines().enumerate() {
-        if line.starts_with("permissions:") {
+    for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_yaml_comment(raw).trim_end();
+        if let Some(value) = line.strip_prefix("permissions:") {
             in_block = true;
-            if line.trim_end() == "permissions: write-all" {
+            let value = yaml_scalar(value);
+            if value == "write-all" {
                 violations.push(format!(
-                    "{path}:{} workflow-level `permissions: write-all`; grant scopes per job",
-                    index + 1
+                    "{path}:{line_number} workflow-level `permissions: write-all`; grant scopes per job"
                 ));
+            }
+            if let Some(flow) = value.strip_prefix('{') {
+                let flow = flow.trim_end_matches('}');
+                let grants_write = flow.split(',').any(|entry| {
+                    entry
+                        .split_once(':')
+                        .is_some_and(|(key, v)| yaml_scalar(key) == "contents" && yaml_scalar(v) == "write")
+                });
+                if grants_write {
+                    violations.push(format!(
+                        "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
+                    ));
+                }
             }
             continue;
         }
@@ -807,21 +843,40 @@ pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec
             continue;
         }
         let body = line.trim();
-        if body.is_empty() || body.starts_with('#') {
+        if body.is_empty() {
             continue;
         }
         if !line.starts_with(' ') {
             in_block = false;
             continue;
         }
-        if body.starts_with("contents:") && body.trim_start_matches("contents:").trim() == "write" {
+        if let Some((key, value)) = body.split_once(':')
+            && yaml_scalar(key) == "contents"
+            && yaml_scalar(value) == "write"
+        {
             violations.push(format!(
-                "{path}:{} workflow-level `contents: write` reaches every job; declare it on the job that needs it",
-                index + 1
+                "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
             ));
         }
     }
     violations
+}
+
+/// Allowlist rows naming a workflow file that no longer exists would silently
+/// keep their exception; the per-file ratchet never sees them.
+pub fn unpinned_allowlist_missing_file_violations(
+    allowlist: &BTreeMap<(String, String), usize>,
+    existing_paths: &BTreeSet<String>,
+) -> Vec<String> {
+    allowlist
+        .keys()
+        .filter(|(path, _)| !existing_paths.contains(path))
+        .map(|(path, reference)| {
+            format!(
+                "{UNPINNED_ACTION_ALLOWLIST} has a row for `{reference}` in {path}, which is not a checked-in workflow; remove the row"
+            )
+        })
+        .collect()
 }
 
 pub fn workflow_bare_self_hosted_violations(path: &str, text: &str) -> Vec<String> {

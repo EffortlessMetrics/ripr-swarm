@@ -1612,6 +1612,53 @@ fn workflow_level_contents_write_is_rejected_but_job_level_is_allowed() -> Resul
 }
 
 #[test]
+fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
+    for (label, text) in [
+        ("trailing comment", "permissions:\n  contents: write # release\n"),
+        ("tab comment", "permissions:\n  contents: write\t# release\n"),
+        ("quoted value", "permissions:\n  contents: \"write\"\n"),
+        ("flow style", "permissions: { contents: write }\n"),
+        ("flow style with others", "permissions: { issues: read, contents: write }  # x\n"),
+        ("write-all", "permissions: write-all\n"),
+        ("write-all with comment", "permissions: write-all # note\n"),
+    ] {
+        assert_eq!(
+            workflow_level_write_permission_violations("w.yml", text).len(),
+            1,
+            "{label} must be rejected"
+        );
+    }
+    for (label, text) in [
+        ("read", "permissions:\n  contents: read # no write here\n"),
+        ("flow read", "permissions: { contents: read }\n"),
+        ("job level", "permissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: write\n"),
+        ("other scope", "permissions:\n  pull-requests: write\n"),
+    ] {
+        assert!(
+            workflow_level_write_permission_violations("w.yml", text).is_empty(),
+            "{label} must pass"
+        );
+    }
+}
+
+#[test]
+fn unpinned_allowlist_row_for_a_missing_workflow_is_rejected() {
+    let allowlist = BTreeMap::from([(
+        (
+            ".github/workflows/deleted.yml".to_string(),
+            "Swatinem/rust-cache@v2".to_string(),
+        ),
+        1,
+    )]);
+    let existing = BTreeSet::from([".github/workflows/kept.yml".to_string()]);
+    let violations = unpinned_allowlist_missing_file_violations(&allowlist, &existing);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("deleted.yml"));
+    let present = BTreeSet::from([".github/workflows/deleted.yml".to_string()]);
+    assert!(unpinned_allowlist_missing_file_violations(&allowlist, &present).is_empty());
+}
+
+#[test]
 fn publish_jobs_run_locked_tools_without_the_registry_latest() -> Result<(), String> {
     let text = repo_workflow("publish-extension.yml")?;
     for job in ["publish-vs-marketplace", "publish-open-vsx"] {

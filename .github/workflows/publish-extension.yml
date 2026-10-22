@@ -123,7 +123,6 @@ jobs:
         working-directory: editors/vscode
     env:
       RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -145,15 +144,17 @@ jobs:
           name: ripr-vsix
           path: editors/vscode/dist
 
-      - name: Require VSCE_PAT
-        if: ${{ env.VSCE_PAT == '' }}
-        run: |
-          echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
-          exit 1
-
+      # The PAT is visible to this one step only (not checkout, setup-node or
+      # npm ci). The secrets context is unavailable in `if:`, so a missing
+      # token is checked inside the step.
       - name: Publish to VS Marketplace
-        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
+            exit 1
+          fi
           version="${RAW_VERSION#v}"
           vsix_file="dist/ripr-${version}.vsix"
           PUBLISHED_VERSION="$(
@@ -181,7 +182,6 @@ jobs:
         working-directory: .github/ovsx
     env:
       RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -203,15 +203,15 @@ jobs:
           name: ripr-vsix
           path: .github/ovsx/dist
 
-      - name: Require OVSX_PAT
-        if: ${{ env.OVSX_PAT == '' }}
-        run: |
-          echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
-          exit 1
-
+      # The PAT is visible to this one step only; see publish-vs-marketplace.
       - name: Publish to Open VSX
-        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
+            exit 1
+          fi
           version="${RAW_VERSION#v}"
           npx --no-install ovsx publish "dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
 
