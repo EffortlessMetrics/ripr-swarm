@@ -123,14 +123,14 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending #5491 | pending #5495 | no |
-| `no_assertion` | yes | pending #5491 | pending #5495 | no |
-| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | pending #5495 | no |
+| `no_assertion` | yes | no (#6657) | pending #5495 | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
-| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
-| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
-| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+| `weak_assertion` | yes | yes (weak and smoke only) | pending #5495 | no |
+| `missing_input` | yes | pending follow-up (#5491) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | no (no row-owned fact) | pending #5495 | no |
+| `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | pending #5495 | yes |
 
 Rust "yes" means the reason is emitted; it does not claim conformance with every
 law above (see Current Rust conformance gaps).
@@ -138,6 +138,46 @@ law above (see Current Rust conformance gaps).
 "Pending" means the producer has not mapped that reason yet; the row-evidence
 prerequisites for it are specified in this document. Perl's narrower coverage is
 a capability difference, not a parity failure.
+
+Python (#5491) writes a miss only on a `weakly_exposed` finding without a
+static limit, one row at a time, in `python/row_miss.rs`:
+
+- `weak_assertion`: the family-selected assertion is weak or smoke. A medium
+  assertion (a mock that may pin the changed call) keeps no miss.
+- `observation_unconfirmed`: a strong family-selected assertion that the row,
+  evaluated alone, does not credit as observing the changed sink. Python's
+  alignment only credits; no credit never becomes an affirmative mismatch.
+  A row whose callee is a local stand-in of the owner stays here: stand-in
+  detection is textual and errs toward withholding credit, so it cannot
+  support an affirmative no-call claim.
+
+Python does not yet write:
+
+- `no_call_path`: pending, blocked on the same cross-file blind spots as
+  `no_assertion` (#6657). A `same_stem`, `test_name_similarity` or
+  `fixture_name` row is related by name or location only, and the absence of
+  a call cannot be established while a callback or alias (`map(owner, ...)`,
+  `f = owner`), a `parametrize` or fixture `params` list, `usefixtures`, a
+  module-level `pytestmark`, a conftest or a plugin may still reach the owner.
+  Those rows keep no miss; `dunder_protocol`, fixture-owner, helper-owner and
+  activation-limited rows never carried the claim.
+- `missing_input`: pending follow-up (#5491). It needs a row-owned
+  boundary omission over import-resolved owner calls; until then a strong
+  row that observes nothing keeps only `observation_unconfirmed`, which
+  claims less.
+- `no_assertion`: `extraction_complete_no_assertion` is not an established
+  absence while the cross-file blind spots of #6657 (conftest autouse
+  fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
+  unaccounted for.
+- `assertion_not_observing`: alignment cannot separate an affirmative sibling
+  sink from an unresolved one, and the value marks a row examined-only
+  (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
+  decisional consumers read; emitting it would move ordering and witnesses.
+- `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
+  row-owned observed-surface fact exists.
+- `assertion_not_credited`: no typed refusal (#5446). Skipped, xfail and
+  expected-failure tests keep the classifier's `static_unknown` and no oracle
+  credit.
 
 ### Projection law
 
