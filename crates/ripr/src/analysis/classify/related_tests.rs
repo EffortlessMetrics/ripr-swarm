@@ -895,6 +895,16 @@ fn find_related_tests_with_candidates<'a>(
         .collect();
     let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
         std::cell::OnceCell::new();
+    // #9329: a free-function owner reached through a method-hop chain cannot be
+    // the target of a receiver call. A call fact whose only mention of the
+    // owner's name is `x.name(..)` (a std `expected.to_string()` inside a test
+    // helper) is not a call of the owner, so it neither relates a test by name
+    // nor hides the chain entry's `helper_owner_call` relation.
+    let receiver_calls_cannot_reach_owner = helper_chain
+        .is_some_and(super::helper_transfer::chain_has_method_hop)
+        && owner_fn.is_some_and(|owner| {
+            owner.item.container == crate::analysis::facts::FunctionContainer::Free
+        });
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -913,8 +923,13 @@ fn find_related_tests_with_candidates<'a>(
         };
         let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| call.name == owner_name)
-                || body_contains_owner_call(&test.body, owner_name));
+            && (test.calls.iter().any(|call| {
+                call.name == owner_name
+                    && !(receiver_calls_cannot_reach_owner
+                        && super::helper_transfer::mentions_only_as_receiver_call(
+                            &call.text, owner_name,
+                        ))
+            }) || body_contains_owner_call(&test.body, owner_name));
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
