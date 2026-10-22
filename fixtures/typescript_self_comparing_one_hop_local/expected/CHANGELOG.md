@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_self_comparing_one_hop_local (5)
+
+Reason:
+RIPR-SPEC-0224: TypeScript row-miss narrowed to proven paths (#5495)
+
+Command:
+`cargo xtask goldens bless typescript_self_comparing_one_hop_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

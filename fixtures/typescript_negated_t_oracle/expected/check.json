@@ -66,9 +66,7 @@
           "line": 1,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
-          "oracle": "t.not(...)",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "t.not(...)"
         },
         {
           "name": "discounted value is not deeply equal to the full amount",
@@ -76,9 +74,7 @@
           "line": 5,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
-          "oracle": "t.notDeepEqual(...)",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "t.notDeepEqual(...)"
         }
       ],
       "typescript_preview_card": {

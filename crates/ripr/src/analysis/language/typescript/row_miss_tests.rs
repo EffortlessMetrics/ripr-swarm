@@ -172,7 +172,11 @@ fn heuristic_reference_rows_keep_no_miss() -> Result<(), String> {
         let source = format!("{IMPORT}{body}");
         let finding = classify(&RETURN_CHANGE, &source)?;
         let miss = miss_of(&finding, "works")?;
-        assert_ne!(miss, Some(RelatedTestMiss::NoCallPath), "{label}: {finding:?}");
+        assert_ne!(
+            miss,
+            Some(RelatedTestMiss::NoCallPath),
+            "{label}: {finding:?}"
+        );
     }
     let source = format!(
         "{IMPORT}test('works', () => {{\n  const fn = applyDiscount;\n  expect(typeof fn).toBe('function');\n}});\n"
@@ -438,10 +442,7 @@ fn local_shadow_row_keeps_no_miss() -> Result<(), String> {
     let source = "import { applyDiscount as ad } from '../src/pricing';\ntest('discounts', () => {\n  function applyDiscount(x: number) { return 42; }\n  expect(ad).toBeDefined();\n  expect(applyDiscount(100)).toBe(42);\n});\n";
     let finding = classify(&RETURN_CHANGE, source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "discounts")?,
-        None
-    );
+    assert_eq!(miss_of(&finding, "discounts")?, None);
     Ok(())
 }
 
@@ -452,10 +453,7 @@ fn unrelated_destructure_row_keeps_no_miss() -> Result<(), String> {
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "discounts")?,
-        None
-    );
+    assert_eq!(miss_of(&finding, "discounts")?, None);
     Ok(())
 }
 
@@ -483,29 +481,26 @@ fn mock_and_spy_rows_are_never_no_call_path_or_not_observing() -> Result<(), Str
 }
 
 /// A bare owner-name call with no declaration anchor: identity is possible
-/// but unconfirmed.
+/// but unproved (the name may be a same-named function in an enclosing
+/// scope), so no relationship is claimed and the row keeps no miss.
 #[test]
-fn unanchored_owner_name_row_is_observation_unconfirmed() -> Result<(), String> {
+fn unanchored_owner_name_row_keeps_no_miss() -> Result<(), String> {
     let source =
         "test('applyDiscount works', () => {\n  expect(applyDiscount(100)).toBe(90);\n});\n";
     let finding = classify_file(&RETURN_CHANGE, "tests/helper.test.ts", source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "applyDiscount works")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "applyDiscount works")?, None);
     Ok(())
 }
 
+/// An import the resolver cannot place may bind a different module, so no
+/// relationship to the changed owner is claimed.
 #[test]
-fn unresolved_alias_row_is_observation_unconfirmed() -> Result<(), String> {
+fn unresolved_alias_row_keeps_no_miss() -> Result<(), String> {
     let source = "test('discounts', () => {\n  const { applyDiscount } = require('@app/pricing');\n  expect(applyDiscount(100)).toBe(90);\n});\n";
     let finding = classify(&RETURN_CHANGE, source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "discounts")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "discounts")?, None);
     Ok(())
 }
 
@@ -592,8 +587,8 @@ fn stripping_the_miss_changes_no_decision_surface() -> Result<(), String> {
 }
 
 /// Pins the blessed `typescript_negated_t_oracle` rows: both negated-`t`
-/// assertion rows carry `observation_unconfirmed`, never a decision-bearing
-/// reason.
+/// rows call an unanchored owner name, so their identity is unproved and
+/// neither carries a miss (never a decision-bearing reason).
 #[test]
 fn negated_t_oracle_fixture_pins_row_misses() -> Result<(), String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -605,6 +600,6 @@ fn negated_t_oracle_fixture_pins_row_misses() -> Result<(), String> {
         .filter_map(|line| line.trim().strip_prefix("\"miss\": \""))
         .filter_map(|rest| rest.split('"').next())
         .collect();
-    assert_eq!(misses, vec!["observation_unconfirmed"; 2], "{text}");
+    assert!(misses.is_empty(), "{text}");
     Ok(())
 }

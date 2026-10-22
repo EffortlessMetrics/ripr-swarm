@@ -137,22 +137,22 @@ law above (see Current Rust conformance gaps).
 
 TypeScript (#5495) maps only row-local merged evidence: the owner-path
 disposition (#5523), assertion admission, the family-relevant assertion (#5525)
-and per-row predicate activation (#5527). `weak_assertion` is a row whose own selected oracle is
-below strong. `observation_unconfirmed` covers a module-entry path, a mocked,
-spied, unanchored or unresolved-alias owner call with an admitted assertion,
-a strong assertion of another behavior family, and a strong row whose own
-boundary input misses the pinned boundary or whose changed-sink observation
-is unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file reading
-cannot prove a call path absent: a heuristic-only row may reach the owner
-through an alias, callback or table, and a shadow or unrelated-import
+and per-row predicate activation (#5527). `weak_assertion` is a row whose own
+selected oracle is below strong. `observation_unconfirmed` covers a
+module-entry path, a mocked or spied owner call with an admitted assertion (an
+unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
+strong assertion of another behavior family, and a strong row whose own
+boundary input misses the pinned boundary or whose changed-sink observation is
+unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file
+reading cannot prove a call path absent: a heuristic-only row may reach the
+owner through an alias, callback or table, and a shadow or unrelated-import
 rejection refutes only the apparent call, not hooks, helpers or re-exports),
-`assertion_not_observing`
-(`RelatedTest::is_unmatched` reads it as a decision input), `no_assertion`
-(the single-file admission scan cannot see project setup files or runner
-plugins) and `missing_input` (its shared prose says no test input reaches the
-boundary, stronger than a single-file reading supports). Rows with unresolved
-admission, static-limited findings, `exposed`, `static_unknown` and Bun bridge
-findings keep `miss: null`.
+`assertion_not_observing` (`RelatedTest::is_unmatched` reads it as a decision
+input), `no_assertion` (the single-file admission scan cannot see project setup
+files or runner plugins) and `missing_input` (its shared prose says no test
+input reaches the boundary, stronger than a single-file reading supports). Rows
+with unresolved admission, static-limited findings, `exposed`, `static_unknown`
+and Bun bridge findings keep `miss: null`.
 
 "Pending" means the producer has not mapped that reason yet; the row-evidence
 prerequisites for it are specified in this document. Perl's narrower coverage is

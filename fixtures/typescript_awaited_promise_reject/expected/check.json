@@ -67,9 +67,7 @@
           "line": 1,
           "oracle_strength": "weak",
           "oracle_kind": "broad_error",
-          "oracle": "expect(...).toThrow()",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "expect(...).toThrow()"
         }
       ],
       "typescript_preview_card": {
@@ -206,9 +204,7 @@
           "line": 5,
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
-          "oracle": "await expect(...).rejects.toThrow(\"missing id\")",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "await expect(...).rejects.toThrow(\"missing id\")"
         }
       ],
       "typescript_preview_card": {

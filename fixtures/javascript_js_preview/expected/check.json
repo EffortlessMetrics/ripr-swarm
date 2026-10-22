@@ -66,9 +66,7 @@
           "line": 1,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "expect(...).toBe(...)",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "expect(...).toBe(...)"
         }
       ],
       "typescript_preview_card": {

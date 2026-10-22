@@ -30,6 +30,9 @@
 //!   decision input (gap next-step choice, witness and row triage), so
 //!   emitting it would change TypeScript behavior. Rows that would have
 //!   carried it get `observation_unconfirmed` or no miss.
+//! - `observation_unconfirmed` on an unanchored or unresolved-alias owner
+//!   call: identity is unproved, so no row-to-owner relationship exists to
+//!   leave unconfirmed.
 //! - `no_assertion`: the admission scan sees one file and cannot see project
 //!   setup files or runner plugins (`admission.rs` known blind spots), so
 //!   `NoAssertionLike` is not strong enough to claim absence.
@@ -107,19 +110,19 @@ pub(crate) fn ts_row_miss(
         // rejections refute only the apparent call; the test can still reach
         // the owner through hooks (`beforeEach`), helpers, re-exports or mocks
         // this scan does not follow.
-        Disp::HeuristicOnly | Disp::RejectedLocalShadow | Disp::RejectedUnrelatedImportOrDestructure => None,
+        Disp::HeuristicOnly
+        | Disp::RejectedLocalShadow
+        | Disp::RejectedUnrelatedImportOrDestructure => None,
         // The call reaches a replacement, so the row does call something, but
         // whether the assertion observes the changed owner is unknown.
         Disp::RejectedOwnerModuleMock | Disp::RejectedSpyFabrication => {
             admitted_assertion_row(admission, test)
                 .then_some(RelatedTestMiss::ObservationUnconfirmed)
         }
-        // Identity is possible but unproved, or the binding cannot be placed.
-        // A relationship exists only when an assertion was admitted.
-        Disp::OwnerNameCallUnanchored | Disp::UnresolvedAliasOrReexport => {
-            admitted_assertion_row(admission, test)
-                .then_some(RelatedTestMiss::ObservationUnconfirmed)
-        }
+        // Identity is unproved: the name may be a same-named function from an
+        // enclosing scope or an import the resolver cannot place. No path or
+        // assertion relationship to the changed owner is established.
+        Disp::OwnerNameCallUnanchored | Disp::UnresolvedAliasOrReexport => None,
         // The path is established (a module entry's path is real but
         // indirect). Judge admission, then the family-relevant assertion.
         Disp::TrustedOwnerPath | Disp::ModuleEntryPath => {
