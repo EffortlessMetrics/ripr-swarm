@@ -3186,6 +3186,39 @@ Durable rules:
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
 
+### Assertion operand items can replace an outer receiver (#8004)
+
+A token-tree assertion operand parsed in a synthetic function must not borrow
+its invocation's outer receiver through an operand-local item. A unit or tuple
+struct introduces a value constructor, so `struct value; value.as_object()` can
+dispatch a foreign blanket trait despite an outer `let value = JsonValue::Null`;
+type aliases, enums and modules can likewise replace nominal type paths. Refuse
+operand items as a bounded class and exempt a synthetic wrapper by syntax
+identity, never its name. The `inherent_receiver_operand_item_shadow` honesty
+fixture pins a retained weak relation independently of its golden output. This
+is a refusal boundary, not general Rust type or value-flow resolution.
+
+### Owner evidence requires execution and declaration identity (#8004)
+
+Owner admission needs more than a scope-aware nominal receiver check.
+Repository direct calls must reuse the complete refusal used by diff and helper
+last hops, or a module-local type with the right terminal name regains high
+credit; audit every consumer when extending a shared admission boundary.
+
+Descendant syntax is not execution: an uncalled nested function, closure or
+async body can contain a perfect assertion without running the owner. Keep the
+outer executable walk separate from declared/deferred bodies and use it for
+helper entry too. A helper-name graph supplies candidates, not identities:
+resolve each free call in its own hop's module/import scope and refuse unknown
+declarations. Paired native controls distinguish runtime discrimination from
+static support.
+
+Boundary tests must exercise the candidate route as well as the final gate: a
+one-line qualified `bridge` control was already absent from the candidate graph.
+Keep such setup failures and raw inputs rather than counting a vacuous negative
+as identity proof. Repeated parsing and discarded per-call syntax caches remain
+performance work under #8005.
+
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 
 `cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on

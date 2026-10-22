@@ -1,5 +1,209 @@
 mod json_construction;
 mod retention_parity;
+#[test]
+fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
+    let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
+    let index = index(&[(LIB, source)]);
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 4)
+        .ok_or("production subject")?;
+    let owner = OwnerScope::new("read", 3, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(!test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(owner),
+            &index
+        ));
+    }
+    assert_eq!(
+        snapshot.shadow_computations(),
+        1,
+        "identical shadow queries must compute once"
+    );
+    let scopes = snapshot.lexical_items().ok_or("scope facts")?;
+    assert!(std::ptr::eq(
+        scopes,
+        snapshot.lexical_items().ok_or("scope facts")?
+    ));
+    // Owner file/name/line all affect the exemption, even at the same test.
+    for wrong in [
+        OwnerScope::new("read", 3, Path::new(HELPERS)),
+        OwnerScope::new("missing", 3, Path::new(LIB)),
+        OwnerScope::new("read", 100, Path::new(LIB)),
+    ] {
+        assert!(test_module_shadows_type(
+            test,
+            source,
+            "Widget",
+            Some(wrong),
+            &index
+        ));
+    }
+    let nested = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 6)
+        .ok_or("nested subject")?;
+    assert!(test_module_shadows_type(
+        nested,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    assert!(test_module_shadows_trait(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Render",
+        Some(owner),
+        &index
+    ));
+    assert!(!test_module_shadows_type(
+        nested,
+        source,
+        "Absent",
+        Some(owner),
+        &index
+    ));
+    let peer = index
+        .tests()
+        .iter()
+        .find(|t| t.start_line == 10)
+        .ok_or("peer subject")?;
+    assert!(test_module_shadows_type(
+        peer,
+        source,
+        "Widget",
+        Some(owner),
+        &index
+    ));
+    // Name and both coordinates remain in the key, including macro-shaped
+    // callers that have no matching function and require the line fallback.
+    let before = snapshot.shadow_computations();
+    for changed in 0..3 {
+        let mut other = test.clone();
+        match changed {
+            0 => other.name = "macro_subject".into(),
+            1 => other.start_line = 5,
+            _ => other.end_line = 6,
+        }
+        let _ = test_module_shadows_type(&other, source, "Widget", Some(owner), &index);
+    }
+    assert_eq!(snapshot.shadow_computations(), before + 3);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers()
+-> Result<(), String> {
+    let original = "mod tests { struct Widget; #[test] fn subject() {} }";
+    let mut index = index(&[(LIB, original)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let old = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_type(
+        &test,
+        "mod tests { #[test] fn subject() {} }",
+        "Widget",
+        None,
+        &index
+    ));
+    assert!(test_module_shadows_type(
+        &test,
+        "mod tests { struct Widget; fn broken( {",
+        "Widget",
+        None,
+        &index
+    ));
+    let clone = index.clone();
+    let cloned = clone
+        .source_syntax
+        .get(&clone, Path::new(LIB))
+        .ok_or("clone")?;
+    assert!(!Arc::ptr_eq(&old, &cloned));
+    assert_eq!(cloned.shadow_computations(), 0);
+    index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
+        "mod tests { #[test] fn subject() {} }".into();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    let new = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("new snapshot")?;
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert_eq!(old.shadow_computations(), 1);
+    assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Result<(), String> {
+    for (source, expected) in [
+        (
+            "mod sibling { struct Widget; } #[test] fn subject() {}",
+            false,
+        ),
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { #[test] fn subject() {} }",
+            true,
+        ),
+        ("mod a { struct r#Widget; #[test] fn r#subject() {} }", true),
+        (
+            "mod a { type Widget = Other; #[test] fn subject() {} }",
+            true,
+        ),
+        (
+            "mod a { use foreign::Other as Widget; #[test] fn subject() {} }",
+            false,
+        ),
+        (
+            "mod a { struct Widget; fn read() {} fn read() {} #[test] fn subject() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+        assert!(!index.tests().is_empty());
+        if source.contains("use foreign::Other as Widget") {
+            // Import renames refuse at the outer caller's existing authority;
+            // they are not declarations handled by this module-item helper.
+            assert!(file_renames_to(source, "Widget"));
+        }
+    }
+    Ok(())
+}
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -12,6 +216,27 @@ const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
 const HELPERS: &str = "src/helpers.rs";
 const CHILD: &str = "src/helpers/stack_tests.rs";
+
+#[test]
+fn owner_lexical_facts_are_shared_across_syntax_owners() -> Result<(), String> {
+    let index = index(&[(LIB, "fn helper() {}\n#[test] fn subject() { helper(); }\n")]);
+    let first = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .ok_or("scope table")?;
+    let second = OwnerPinSyntax::default()
+        .file_scopes(&index, Path::new(LIB))
+        .ok_or("scope table")?;
+    assert!(
+        std::ptr::eq(&*first, &*second),
+        "a source snapshot must share lexical facts across owners"
+    );
+    let cloned = index.clone();
+    let other_index = OwnerPinSyntax::default()
+        .file_scopes(&cloned, Path::new(LIB))
+        .ok_or("scope table")?;
+    assert!(!std::ptr::eq(&*first, &*other_index));
+    Ok(())
+}
 
 /// The bytes 7930d93 shape: a trait default method whose changed tail is
 /// the only `Ok(..)` and whose `?` exits early with an `Err(..)`.
@@ -12379,5 +12604,298 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
         "use other::Counter as u32;",
     ] {
         assert!(scalar_names_rebound("u32", source), "{source}");
+    }
+}
+
+const WIDGET_LIB: &str = "pub struct Widget {\n    n: u32,\n}\n\nimpl Widget {\n    pub fn new() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub fn make_sync() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub async fn make() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub fn read(&self) -> u32 {\n        self.n\n    }\n\n    pub fn peek(&self) -> u32 {\n        self.n\n    }\n}\n";
+
+/// Whether the inherent `Widget::{owner}` is a direct owner call of the one
+/// test whose body is `body`, through the full shared receiver refusal.
+fn widget_owner_call(owner: &str, lib: &str, body: &str, syntax: &OwnerPinSyntax) -> bool {
+    widget_owner_call_under(owner, lib, body, syntax, &widget_root("plain", ""))
+}
+
+/// A workspace whose manifest declares `dependencies`, so a qualified
+/// `std`/`core` root can be proved unbound (or aliased) from Cargo.
+fn widget_root(label: &str, dependencies: &str) -> PathBuf {
+    let manifest = format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
+    );
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        &format!("owner-pin-widget-{label}"),
+        &[("Cargo.toml", &manifest)],
+    );
+    assert!(root.is_ok(), "temp workspace");
+    root.unwrap_or_default()
+}
+
+fn widget_owner_call_under(
+    owner: &str,
+    lib: &str,
+    body: &str,
+    syntax: &OwnerPinSyntax,
+    root: &Path,
+) -> bool {
+    // File-level `use` lines (a rebound root) are hoisted out of the fn.
+    let (uses, body): (Vec<_>, Vec<_>) = body.lines().partition(|l| l.trim().starts_with("use "));
+    let (uses, body) = (uses.join("\n"), body.join("\n"));
+    let tests = format!("use demo::Widget;\n{uses}\n\n#[test]\nfn t() {{\n    {body}\n}}\n");
+    let mut index = index(&[(LIB, lib), (TESTS, &tests)]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner && function.file == Path::new(LIB));
+    assert!(function.is_some(), "{owner} must be indexed");
+    let Some(function) = function else {
+        return false;
+    };
+    let test = index.tests().iter().find(|test| test.name == "t");
+    assert!(test.is_some(), "the test must be indexed");
+    let Some(test) = test else { return false };
+    crate::analysis::classify::inherent_owner_call_resolves(test, function, &index, syntax)
+}
+
+/// Devin 9611: a `std`/`core`-qualified assertion evaluates the same
+/// operands as the bare one, so its receiver earns the same attribution; a
+/// rebound root or a different receiver type still earns nothing.
+#[test]
+fn qualified_standard_assertion_operands_give_receiver_identity() {
+    for (body, expected) in [
+        ("assert_eq!(Widget::new().read(), 4);", true),
+        ("std::assert_eq!(Widget::new().read(), 4);", true),
+        ("core::assert_eq!(Widget::new().read(), 4);", true),
+        ("std::assert!(Widget::new().read() == 4);", true),
+        ("std::assert_ne!(4, Widget::new().read());", true),
+        ("std::assert_eq!(Other::new().read(), 4);", false),
+        // An operand past the evaluated ones is only a message argument.
+        (
+            "std::assert_eq!(1, 1, \"{}\", Widget::new().read());",
+            false,
+        ),
+        // Source rebinding of the root (#9611 review): a macro that discards
+        // its tokens, re-exported as `fake::assert_eq`, then `use fake as std;`.
+        (
+            "mod fake { macro_rules! assert_eq { ($a:expr, $b:expr) => {}; } pub(crate) use assert_eq; }\nuse fake as std;\nstd::assert_eq!(Widget::new().read(), 4);",
+            false,
+        ),
+        (
+            "mod fake { macro_rules! assert_eq { ($a:expr, $b:expr) => {}; } pub(crate) use assert_eq; }\nuse fake as core;\ncore::assert_eq!(Widget::new().read(), 4);",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", WIDGET_LIB, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+    // Cargo rebinding the root to another package defeats the qualification
+    // even though the source spelling is identical.
+    let aliased = widget_root(
+        "aliased",
+        "std = { package = \"fake-std\", version = \"1\" }\n",
+    );
+    assert!(!widget_owner_call_under(
+        "read",
+        WIDGET_LIB,
+        "std::assert_eq!(Widget::new().read(), 4);",
+        &OwnerPinSyntax::default(),
+        &aliased
+    ));
+}
+
+/// Devin 9611: an `async` factory yields a future, not `Self`. The indexed
+/// body starts at `fn`, so the qualifier must be read from the declaration.
+#[test]
+fn async_factories_give_no_receiver_identity() {
+    for (body, expected) in [
+        (
+            "let w = Widget::make_sync();\n    assert_eq!(w.read(), 4);",
+            true,
+        ),
+        ("assert_eq!(Widget::make_sync().read(), 4);", true),
+        (
+            "let w = Widget::make();\n    assert_eq!(w.read(), 4);",
+            false,
+        ),
+        ("assert_eq!(Widget::make().read(), 4);", false),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", WIDGET_LIB, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+    // The constructor-name convention must not bypass the declaration.
+    let async_new = WIDGET_LIB.replace("pub fn new()", "pub async fn new()");
+    for (body, expected) in [
+        (
+            "let w = Widget::new();\n    assert_eq!(w.read(), 4);",
+            false,
+        ),
+        ("assert_eq!(Widget::new().read(), 4);", false),
+        (
+            "let w = Widget::make_sync();\n    assert_eq!(w.read(), 4);",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", &async_new, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+}
+
+/// Devin 9611: owner/test pairs share the run's syntax memo, so the workspace
+/// macro-site scan is paid once, not once per pair.
+#[test]
+fn receiver_checks_over_many_owners_share_one_workspace_scan() {
+    let shared = OwnerPinSyntax::default();
+    let fresh_passes: u32 = ["read", "peek", "read", "peek"]
+        .iter()
+        .map(|owner| {
+            let fresh = OwnerPinSyntax::default();
+            assert!(widget_owner_call(
+                owner,
+                WIDGET_LIB,
+                &format!("assert_eq!(Widget::new().{owner}(), 4);"),
+                &fresh
+            ));
+            fresh.workspace_scan_passes()
+        })
+        .sum();
+    assert!(fresh_passes >= 4, "each fresh memo pays its own scan");
+    let index_text = "use demo::Widget;\n\n#[test]\nfn t() {\n    assert_eq!(Widget::new().read(), 4);\n    assert_eq!(Widget::new().peek(), 4);\n}\n";
+    let index = index(&[(LIB, WIDGET_LIB), (TESTS, index_text)]);
+    let test = index.tests().iter().find(|test| test.name == "t");
+    assert!(test.is_some());
+    let Some(test) = test else { return };
+    for _ in 0..3 {
+        for owner in ["read", "peek"] {
+            let function = index
+                .functions()
+                .iter()
+                .find(|function| function.name == owner);
+            assert!(function.is_some());
+            let Some(function) = function else { return };
+            assert!(crate::analysis::classify::inherent_owner_call_resolves(
+                test, function, &index, &shared
+            ));
+        }
+    }
+    assert_eq!(
+        shared.workspace_scan_passes(),
+        1,
+        "six pair checks over one index must share one workspace scan"
+    );
+}
+
+/// #9676: a declared nominal parameter type (an `#[rstest]` fixture injection)
+/// and a bare enum variant imported by one `use Enum::*` are visible receiver
+/// bindings; shadowing, aliasing, prelude spellings and other types are not.
+#[test]
+fn parameter_types_and_imported_variants_give_receiver_identity() {
+    let params = [
+        ("fn t(w: Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(mut w: Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(w: &Widget) {\n assert_eq!(w.read(), 4);\n}", true),
+        ("fn t(w: Other) {\n assert_eq!(w.read(), 4);\n}", false),
+        ("fn t(w: impl Sized) {\n assert_eq!(w.read(), 4);\n}", false),
+        (
+            "fn t(w: Widget) {\n let w = other();\n assert_eq!(w.read(), 4);\n}",
+            false,
+        ),
+        ("fn t() {\n assert_eq!(w.read(), 4);\n}", false),
+    ];
+    for (function, expected) in params {
+        let tests = format!("use demo::Widget;\n\n#[test]\n{function}\n");
+        let index = index(&[(LIB, WIDGET_LIB), (TESTS, &tests)]);
+        let owner = index.functions().iter().find(|f| f.name == "read");
+        let test = index.tests().iter().find(|test| test.name == "t");
+        assert!(owner.is_some() && test.is_some(), "{function}");
+        let (Some(owner), Some(test)) = (owner, test) else {
+            return;
+        };
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(
+                test,
+                owner,
+                &index,
+                &OwnerPinSyntax::default()
+            ),
+            expected,
+            "{function}"
+        );
+    }
+    let mode_lib = "pub enum Mode {\n    Fast,\n    Slow,\n}\n\nimpl Mode {\n    pub fn label(&self) -> u32 {\n        1\n    }\n}\n";
+    let variants = [
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(Fast.label(), 1);",
+            true,
+        ),
+        (
+            "use crate::Mode::Fast;\n",
+            "assert_eq!(Fast.label(), 1);",
+            true,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "for x in [1] { assert_eq!(Fast.label(), x); }",
+            true,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "for Fast in [1] { assert_eq!(Fast.label(), 1); }",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(Slow.other(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::Fast as Quick;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
+        ("", "assert_eq!(Fast.label(), 1);", false),
+        (
+            "use crate::Mode::*;\nuse other::Fast;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\nconst Fast: u32 = 1;\n",
+            "assert_eq!(Fast.label(), 1);",
+            false,
+        ),
+        (
+            "use crate::Mode::*;\n",
+            "assert_eq!(None.label(), 1);",
+            false,
+        ),
+    ];
+    for (uses, body, expected) in variants {
+        let tests = format!("{uses}\n#[test]\nfn t() {{\n    {body}\n}}\n");
+        let index = index(&[(LIB, mode_lib), (TESTS, &tests)]);
+        let owner = index.functions().iter().find(|f| f.name == "label");
+        let test = index.tests().iter().find(|test| test.name == "t");
+        assert!(owner.is_some() && test.is_some(), "{body}");
+        let (Some(owner), Some(test)) = (owner, test) else {
+            return;
+        };
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(
+                test,
+                owner,
+                &index,
+                &OwnerPinSyntax::default()
+            ),
+            expected,
+            "{uses}{body}"
+        );
     }
 }
