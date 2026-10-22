@@ -431,6 +431,7 @@ now reads `abstained` instead of `ideal`; its case accepts `limited`, and ripr
 cannot tell twin impls apart from a dyn call, so the rule trades that one
 advisory for removing three false actionable claims. The finding names at most
 three judged tests.
+
 ### Owners reached without a call ripr can place (#9442, #9443)
 
 A gap pairs an assertion with a call to the owner. Three source forms give
