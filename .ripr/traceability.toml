@@ -17518,6 +17518,7 @@ tests = [
   "xtask/src/reports/release_ledger/capture_tests.rs::lines_written_under_a_renamed_path_are_attributed_by_blame",
   "xtask/src/reports/release_ledger/tests.rs::merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
+  "xtask/src/reports/release_ledger/tests.rs::markdown_projection_shows_every_records_theme",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]
