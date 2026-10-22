@@ -777,6 +777,33 @@ fn macro_binding_sites_in_tree(
                             .is_some_and(named)
             })
     };
+    // The names a plain import (no glob, or a list naming `self`) binds
+    // anywhere in the file. Every `use std::..` item asks whether its root is
+    // among them, so the one tree walk is shared instead of repeated per item.
+    let plain_imports = std::cell::OnceCell::new();
+    let plain_import_names = || -> &BTreeSet<String> {
+        plain_imports.get_or_init(|| {
+            file_tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|item| {
+                    item.star_token().is_none()
+                        && item.use_tree_list().is_none_or(|list| {
+                            // `use other::std::{self}` binds `std` too.
+                            list.use_trees()
+                                .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                        })
+                })
+                .filter_map(|item| {
+                    item.path()
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .map(|name| name.text().trim_start_matches("r#").to_string())
+                })
+                .collect()
+        })
+    };
     for node in file_tree.syntax().descendants() {
         // `extern crate other as std;` at a crate root rebinds the name for
         // every file, so a standard-root glob elsewhere cannot be trusted.
@@ -1016,26 +1043,7 @@ fn macro_binding_sites_in_tree(
             // A plain import that binds the root name (`use crate::other::std;`)
             // also takes it over for the module; `use x as std` is a rename
             // and is caught by `drop_in_shadowed`.
-            let root_imported = || {
-                file_tree
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::UseTree::cast)
-                    .filter(|item| {
-                        item.star_token().is_none()
-                            && item.use_tree_list().is_none_or(|list| {
-                                // `use other::std::{self}` binds `std` too.
-                                list.use_trees()
-                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
-                            })
-                    })
-                    .any(|item| {
-                        item.path()
-                            .and_then(|path| path.segment())
-                            .and_then(|segment| segment.name_ref())
-                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
-                    })
-            };
+            let root_imported = || plain_import_names().contains(root);
             let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some()
