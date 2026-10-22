@@ -2267,6 +2267,21 @@ on a `dependabot/` branch without the template claim lines: the claim is this
 dependency policy and the acceptance delta is the update branch. Any other PR
 still has to state its own claim.
 
+The ordinary size envelope (files and changed lines) counts only what a human
+has to review. Generated files are declared once, with `linguist-generated` in
+`.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
+public-proof metrics), and their lines and files are not counted. The
+declaration is read from the PR's base commit, so a PR cannot label its own
+files; a `.gitattributes` edit is itself counted in full. Three guards keep the
+label from hiding hand-written code: only declarable shapes count (lockfiles,
+`fixtures/**/expected/**`, `metrics/public-proof/**`; a new family is added to
+`GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
+ignored and fails admission with `generated_declaration_invalid`); only data
+file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
+exempt, and a file must change at least one line; and the exempt lines have their
+own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
+from the hand-written change. A truncated file listing exempts nothing.
+
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
 Dependabot security updates, secret scanning, push protection, and private

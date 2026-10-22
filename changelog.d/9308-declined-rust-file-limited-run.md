@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust file a parse limit declined (`rust_nesting_budget` or a non-UTF-8 source) no longer leaves the run reading complete. `ripr check` adds a `producer_failure` limitation to `analysis_outcome` for declined files outside the diff, so `analysis_complete` is false. `ripr pilot` and repo exposure report `run_status: limited_declined_files` with a `rust_files_declined` limitation, and the pilot summary JSON, Markdown and terminal name the files and their typed reason. The stderr disclosure is unchanged (#9308, #4511).
