@@ -274,6 +274,10 @@ assertion-only callback with no nested test call. This does not expand aliases.
   an enclosing caught try still withholds those nested assertions. This is
   not general analysis of abrupt completion in finally blocks. Withheld
   assertion-like syntax remains unresolved admission, not established absence.
+- (Amended 2026-10-22, #9685; decision 20.) The one exception to the
+  handler rule: a handler that is exactly `catch (e) { throw e; }` passes the
+  failure through, so its try body keeps collection, for a synchronous
+  assertion and an awaited rejection alike.
 - (Amended 2026-10-17, #8508.) A `finally` that can replace its `try`'s
   completion withholds the try body's and catch handler's assertions: any
   `return` or `throw` outside a nested function, or a `break`/`continue`
