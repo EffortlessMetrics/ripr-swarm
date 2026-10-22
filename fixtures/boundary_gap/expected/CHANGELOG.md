@@ -1062,6 +1062,13 @@ exact updated bytes. Semantic evidence, unchanged movement, incomplete receipt
 routing and all tamper controls remain unchanged. This is a portable
 negative-control input update, not a new execution receipt.
 
+### same-file assertion-wrapper limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.94 to 1.95 for the
+same-file assertion-wrapper limit (RIPR-SPEC-0120, #7089), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
