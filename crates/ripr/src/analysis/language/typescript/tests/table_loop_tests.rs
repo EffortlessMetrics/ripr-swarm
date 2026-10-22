@@ -212,3 +212,17 @@ fn a_non_block_body_or_a_redeclared_name_keeps_the_loop_assertion() {
         &format!("    const tier = \"x\";\n{ASSERT}"),
     ));
 }
+
+#[test]
+fn a_loop_over_an_empty_const_table_holds_no_assertions() -> Result<(), String> {
+    let empty = loop_test("", ASSERT);
+    assert_eq!(observed(&empty), Vec::new());
+    assert_ne!(tier_class("loop-empty", &empty)?, ExposureClass::Exposed);
+    // A table the test can still change is not known to be empty.
+    let reassignable = empty.replace("const rows", "let rows");
+    assert_eq!(
+        observed(&reassignable),
+        vec![(Some("loyaltyTier(points)".to_string()), None, 8)]
+    );
+    Ok(())
+}

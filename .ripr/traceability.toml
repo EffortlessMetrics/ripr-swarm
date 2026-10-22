@@ -16226,6 +16226,12 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_deferred_helper_when_a_write_is_unmodeled_then_method_credit_still_refuses",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_preserved",
+  "crates/ripr/src/analysis/language/python/sink_alignment.rs::helper_origin_tests::helper_origin_survives_reported_oracle_fallback_without_tainting_raw_assertions",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_a_discarded_short_function_result",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_preserve_a_short_function_output_assertion",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_module_comparison_text",
@@ -16233,11 +16239,18 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_assertion_helper_field",
+  "fixtures/python_assertion_helper_wrong_receiver",
+  "fixtures/python_assertion_helper_wrong_field",
+  "fixtures/python_assertion_helper_weak_comparison",
+  "fixtures/python_assertion_helper_async_owner",
+  "fixtures/python_assertion_helper_generator_owner",
   "fixtures/python_empty_sink_unrelated_short_function",
   "fixtures/python_empty_sink_observed_short_function",
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
   "crates/ripr/src/analysis/language/python/probe_shape.rs",
