@@ -445,7 +445,9 @@ these states as an actionable offer:
 - `lsp::tests::bare_cr_origin_tests::rust_analysis_origins_project_editor_rows_for_bare_cr`:
   real Rust origins, five line-ending layouts, three encodings and changed disk bytes.
 - `lsp::tests::bare_cr_origin_tests::rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row`:
-  real removed-only EOF findings with an earlier bare CR and LF/CRLF final terminators.
+  real context-bearing Git diff-file analysis with removed-only EOF findings,
+  an earlier bare CR and LF/CRLF final terminators. Ordinary zero-context
+  worktree deletion instead retains the preceding analyzer row's coordinate.
 - `analysis::diagnostic_origin::tests::standalone_cr_bounds_untrusted_or_missing_anchors`,
   `standalone_cr_deleted_eof_preserves_the_terminal_editor_row`, and
   `standalone_cr_duplicate_expression_uses_the_parser_anchor`: refusal and identity controls.

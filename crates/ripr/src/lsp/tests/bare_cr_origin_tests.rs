@@ -37,14 +37,42 @@ fn rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row() -> Result<()
             ],
         )?;
         fs::write(&path, &after).map_err(|error| error.to_string())?;
-        let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-        let (output, origins, _) =
-            crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress(
-                config.check_input(root),
-                config.repo_config(),
-                &BTreeSet::new(),
-                None,
-            )?;
+        // The worktree loader uses zero context and records this deletion at
+        // analyzer row 1. The supported diff-file path retains context, whose
+        // preceding row advances the deletion's new-side coordinate to EOF.
+        let diff = lsp_scope_git_output(
+            root,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-color",
+                "--unified=3",
+                "HEAD",
+                "--",
+                "src/lib.rs",
+            ],
+        )?;
+        assert!(diff.status.success(), "create context-bearing EOF diff");
+        assert!(String::from_utf8_lossy(&diff.stdout).contains("@@ -1,2 +1 @@"));
+        let diff_path = root.join("deleted-eof.diff");
+        fs::write(&diff_path, &diff.stdout).map_err(|error| error.to_string())?;
+        let output = crate::analysis::run_analysis(&crate::analysis::AnalysisOptions {
+            root: root.to_path_buf(),
+            base: None,
+            diff_file: Some(diff_path),
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        })?;
+        let origins = &output.rust_diagnostic_origins;
         let deleted = output
             .findings
             .iter()
@@ -74,7 +102,7 @@ fn rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row() -> Result<()
                 FindingDiagnosticProjection::new(
                     crate::config::LspDiagnosticProfile::Full,
                     &PositionEncodingKind::UTF16,
-                    &origins,
+                    origins,
                 ),
             )?;
             let diagnostic = grouped
