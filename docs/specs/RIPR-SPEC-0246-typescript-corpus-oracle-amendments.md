@@ -225,7 +225,9 @@ through to a later one; for the final operand, whose value is returned,
 they differ. A missing key that names an `Object.prototype` member
 (`constructor`, `toString`, ...) is unreadable, not absent, and a
 parameter with a default value (`function f(person = {...})`) or an
-unreadable parameter list fails open. If one observed input tells them apart, or any observed input cannot be read
+unreadable parameter list fails open. Only direct owner calls with a strong whole-result assertion count, so a
+test routed through a wrapper is ignored (a false gap, never a false
+credit). A `__proto__` entry in an argument literal is unreadable. If one observed input tells them apart, or any observed input cannot be read
 (a spread, a non-literal value, a non-literal argument, a non-optional read
 of `undefined`), the ladder result stands. Otherwise, when at least one
 whole-result call is observed, an `exposed` ladder result reads

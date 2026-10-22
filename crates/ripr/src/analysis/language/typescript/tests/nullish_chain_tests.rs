@@ -260,3 +260,25 @@ fn default_parameter_reader() {
         "p"
     ));
 }
+
+#[test]
+fn proto_entry_in_the_argument_fails_open() -> Result<(), String> {
+    let finding = finding(
+        "nullish-proto-entry",
+        "expect(displayName({ __proto__: { name: \"K\" } })).toBe(\"K\");",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn default_reader_skips_a_generic_list() {
+    assert!(parameter_may_have_default(
+        "function f<T = {}>(p: T = x) {}",
+        "p"
+    ));
+    assert!(!parameter_may_have_default(
+        "function f<T = {}>(p: T) {}",
+        "p"
+    ));
+}

@@ -149,6 +149,8 @@ fn property_value(entries: &[String], prop: &str) -> Value {
             return Value::Unknown;
         }
         match key_value(entry) {
+            // `__proto__: {...}` sets the prototype, which can hold any key.
+            Some((key, _)) if key == "__proto__" => return Value::Unknown,
             Some((key, text)) if key == prop => {
                 found = Some(match literal_value(&text) {
                     Some(LiteralValue::Word("null")) => Value::Null,
@@ -185,7 +187,20 @@ const OBJECT_PROTOTYPE_MEMBERS: [&str; 8] = [
 /// the list cannot be read. An omitted or `undefined` argument is then not
 /// nullish in the body.
 pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
-    let Some(open) = source.find('(') else {
+    // Skip a generic list (`<T = {}>`) before the parameter list.
+    let mut angle = 0usize;
+    let Some(open) = source.char_indices().find_map(|(at, ch)| match ch {
+        '<' => {
+            angle += 1;
+            None
+        }
+        '>' => {
+            angle = angle.saturating_sub(1);
+            None
+        }
+        '(' if angle == 0 => Some(at),
+        _ => None,
+    }) else {
         return false;
     };
     let mut depth = 0usize;
