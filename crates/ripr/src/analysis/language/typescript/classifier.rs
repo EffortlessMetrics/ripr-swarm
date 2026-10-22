@@ -5835,7 +5835,7 @@ fn ts_apply_post_ladder_rules(
         verdict.class = ExposureClass::WeaklyExposed;
         verdict.discriminate_state = StageState::Weak;
         verdict.missing = vec![format!(
-            "The change to `{}` sits inside a `catch` arm, and no related test carries a throwing or rejecting call, so the catch arm is never exercised by the related tests. The changed line never runs under the tests, so no assertion can observe it. Add a test whose call throws or rejects.",
+            "The change to `{}` sits inside a `catch` arm, and no related test file shows a throwing or rejecting signal, so the catch arm is never exercised by the related tests. The changed line never runs under the tests, so no assertion can observe it. Add a test whose call throws or rejects.",
             context.owner.name
         )];
         return;
@@ -5917,6 +5917,7 @@ fn ts_catch_arm_unreached(context: &TsPostLadderContext<'_>) -> bool {
             owner.start_line,
             context.line,
             context.line_text,
+            &owner.params,
         )
     {
         return false;

@@ -10,9 +10,9 @@
 
 use super::ts_mask_literals_and_comments;
 
-/// Lower-case fragments that may make a call throw or reject. Deliberately
-/// generous: any hit keeps the ladder verdict.
-const THROW_SIGNALS: [&str; 9] = [
+/// Lower-case fragments that may make a call throw or reject, explicitly or
+/// through bad input. Deliberately generous: any hit keeps the ladder verdict.
+const THROW_SIGNALS: [&str; 20] = [
     "reject",
     "throw",
     "error",
@@ -22,6 +22,17 @@ const THROW_SIGNALS: [&str; 9] = [
     "timeout",
     "catch",
     "boom",
+    "invalid",
+    "bad",
+    "malformed",
+    "corrupt",
+    "parse",
+    "missing",
+    "nonexist",
+    "null",
+    "undefined",
+    "empty",
+    "nan",
 ];
 
 /// `true` when the text of a related test file holds a signal that could make
@@ -31,13 +42,27 @@ pub(crate) fn may_throw_or_reject(test_file_text: &str) -> bool {
     THROW_SIGNALS.iter().any(|signal| lower.contains(signal))
 }
 
+/// One open `{` block while scanning.
+struct Open {
+    at: usize,
+    /// `catch` clause (with the try body it guards) or `.catch(` handler
+    /// (with the receiver text it guards).
+    catch_guarding: Option<String>,
+    is_try: bool,
+}
+
 /// `true` when the changed line is located exactly in the owner's source and
-/// sits inside a `catch (...) { }` block or a `.catch(` handler callback body.
+/// sits inside a `catch (...) { }` clause or a `.catch(` handler body, and the
+/// code that catch guards is plain: it calls only owner parameters and holds no
+/// `new`, member access, indexing, `throw` or immediately invoked expression.
+/// A guarded call that can fail by itself (`JSON.parse`, a null dereference)
+/// keeps the ladder verdict.
 pub(crate) fn changed_line_in_catch_arm(
     owner_source: &str,
     start_line: usize,
     changed_line: usize,
     line_text: &str,
+    params: &[String],
 ) -> bool {
     let wanted = line_text.trim();
     if wanted.is_empty()
@@ -54,48 +79,72 @@ pub(crate) fn changed_line_in_catch_arm(
     else {
         return false;
     };
-    let target: usize = lines[..index].iter().map(|line| line.len() + 1).sum();
+    let target: usize = lines.iter().take(index).map(|line| line.len() + 1).sum();
     let masked = ts_mask_literals_and_comments(owner_source);
     if masked.len() != owner_source.len() {
         return false;
     }
-    let mut stack: Vec<bool> = Vec::new();
+    let mut stack: Vec<Open> = Vec::new();
     let mut header_start = 0usize;
+    let mut last_closed_try: Option<String> = None;
     for (at, c) in masked.char_indices() {
         if at >= target {
             break;
         }
         match c {
             '{' => {
-                stack.push(is_catch_header(&masked[header_start..at]));
+                let header = masked[header_start..at].trim();
+                let after_brace = masked[..header_start].trim_end().ends_with('}');
+                let catch_guarding = catch_clause(header, after_brace, last_closed_try.take())
+                    .or_else(|| dot_catch_receiver(header));
+                stack.push(Open {
+                    at,
+                    catch_guarding,
+                    is_try: header == "try",
+                });
                 header_start = at + 1;
             }
             '}' => {
-                stack.pop();
+                last_closed_try = stack
+                    .pop()
+                    .filter(|open| open.is_try)
+                    .map(|open| masked[open.at + 1..at].to_string());
                 header_start = at + 1;
             }
             ';' => header_start = at + 1,
             _ => {}
         }
     }
-    stack.contains(&true)
+    let mut guarded = stack
+        .iter()
+        .filter_map(|open| open.catch_guarding.as_deref());
+    let Some(first) = guarded.next() else {
+        return false;
+    };
+    std::iter::once(first)
+        .chain(guarded)
+        .all(|text| is_plain_guarded_code(text, params))
 }
 
-/// The text before a `{` opens a `catch` clause or the body of a function
-/// passed to `.catch(`.
-fn is_catch_header(header: &str) -> bool {
-    let header = header.trim();
-    if let Some(rest) = header.strip_prefix("catch")
-        && rest
+/// A `catch` clause header that directly follows a closed `try` block: the
+/// try body it guards.
+fn catch_clause(header: &str, after_brace: bool, closed_try: Option<String>) -> Option<String> {
+    let rest = header.strip_prefix("catch")?;
+    if !after_brace
+        || !rest
             .chars()
             .next()
             .is_none_or(|c| c == '(' || c.is_whitespace())
     {
-        return true;
+        return None;
     }
-    let Some(at) = header.rfind(".catch(") else {
-        return false;
-    };
+    closed_try
+}
+
+/// The text before a `{` opens the body of a function passed to `.catch(`:
+/// the receiver the handler guards (the header text before `.catch(`).
+fn dot_catch_receiver(header: &str) -> Option<String> {
+    let at = header.rfind(".catch(")?;
     let after = &header[at + ".catch(".len()..];
     let mut depth = 1i32;
     for c in after.chars() {
@@ -106,10 +155,61 @@ fn is_catch_header(header: &str) -> bool {
         }
         // The `.catch(` call closed before the brace: not its handler body.
         if depth == 0 {
-            return false;
+            return None;
         }
     }
-    after.contains("=>") || after.contains("function")
+    (after.contains("=>") || after.contains("function")).then(|| header[..at].to_string())
+}
+
+const KEYWORDS: [&str; 9] = [
+    "await", "return", "if", "else", "typeof", "void", "in", "of", "const",
+];
+
+/// `true` when masked code calls nothing but owner parameters and holds no
+/// operation that can fail on its own.
+fn is_plain_guarded_code(text: &str, params: &[String]) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0usize;
+    while at < chars.len() {
+        let c = chars[at];
+        if c == '.' {
+            let digit = |i: Option<usize>| {
+                i.and_then(|i| chars.get(i))
+                    .is_some_and(|d| d.is_ascii_digit())
+            };
+            if !(digit(at.checked_sub(1)) && digit(Some(at + 1))) {
+                return false;
+            }
+        } else if c == '[' {
+            return false;
+        } else if c == '(' {
+            let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+            if matches!(before, Some(')') | Some(']')) {
+                return false;
+            }
+        } else if c.is_alphabetic() || c == '_' || c == '$' {
+            let start = at;
+            while at < chars.len()
+                && (chars[at].is_alphanumeric() || matches!(chars[at], '_' | '$'))
+            {
+                at += 1;
+            }
+            let word: String = chars[start..at].iter().collect();
+            if word == "new" || word == "throw" {
+                return false;
+            }
+            let called = chars[at..].iter().find(|c| !c.is_whitespace()) == Some(&'(');
+            if called && !KEYWORDS.contains(&word.as_str()) && !params.contains(&word) {
+                return false;
+            }
+            continue;
+        }
+        at += 1;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -118,12 +218,19 @@ mod tests {
 
     const OWNER: &str = "export async function f(read) {\n  try {\n    return await read();\n  } catch {\n    return 1;\n  }\n}\n";
 
+    fn p() -> Vec<String> {
+        vec!["read".to_string()]
+    }
+
+    fn at(src: &str, line: usize, text: &str) -> bool {
+        changed_line_in_catch_arm(src, 1, line, text, &p())
+    }
+
     #[test]
     fn catch_clause_body_is_a_catch_arm() {
-        assert!(changed_line_in_catch_arm(OWNER, 1, 5, "    return 1;"));
-        assert!(changed_line_in_catch_arm(
-            "function f() {\n  try {\n    a();\n  } catch (e) {\n    b();\n  }\n}\n",
-            1,
+        assert!(at(OWNER, 5, "    return 1;"));
+        assert!(at(
+            "function f(read) {\n  try {\n    read();\n  } catch (e) {\n    b();\n  }\n}\n",
             5,
             "    b();"
         ));
@@ -131,35 +238,75 @@ mod tests {
 
     #[test]
     fn try_body_and_trailing_code_are_not_catch_arms() {
-        assert!(!changed_line_in_catch_arm(
-            OWNER,
-            1,
-            3,
-            "    return await read();"
-        ));
-        let after =
-            "function f() {\n  try {\n    a();\n  } catch {\n    b();\n  }\n  return 2;\n}\n";
-        assert!(!changed_line_in_catch_arm(after, 1, 7, "  return 2;"));
+        assert!(!at(OWNER, 3, "    return await read();"));
+        let after = "function f(read) {\n  try {\n    read();\n  } catch {\n    b();\n  }\n  return 2;\n}\n";
+        assert!(!at(after, 7, "  return 2;"));
     }
 
     #[test]
     fn dot_catch_handler_body_is_a_catch_arm() {
-        let src = "function f(p) {\n  return p.catch((e) => {\n    return 1;\n  });\n}\n";
-        assert!(changed_line_in_catch_arm(src, 1, 3, "    return 1;"));
-        let then = "function f(p) {\n  return p.catch(h).then((v) => {\n    return 1;\n  });\n}\n";
-        assert!(!changed_line_in_catch_arm(then, 1, 3, "    return 1;"));
+        let src = "function f(read) {\n  return read().catch((e) => {\n    return 1;\n  });\n}\n";
+        assert!(at(src, 3, "    return 1;"));
+        let then =
+            "function f(read) {\n  return read().catch(h).then((v) => {\n    return 1;\n  });\n}\n";
+        assert!(!at(then, 3, "    return 1;"));
     }
 
     #[test]
-    fn a_misplaced_line_is_refused() {
-        assert!(!changed_line_in_catch_arm(OWNER, 1, 4, "    return 1;"));
+    fn a_method_named_catch_is_not_a_catch_clause() {
+        let src =
+            "class A {\n  run(read) {\n    read();\n  }\n  catch(x) {\n    return 1;\n  }\n}\n";
+        assert!(!at(src, 6, "    return 1;"));
+    }
+
+    #[test]
+    fn a_misplaced_or_closing_line_is_refused() {
+        assert!(!at(OWNER, 4, "    return 1;"));
+        assert!(!at(OWNER, 4, "  } catch {"));
+        assert!(!at(OWNER, 6, "  }"));
+    }
+
+    #[test]
+    fn guarded_code_that_can_fail_by_itself_is_refused() {
+        for body in [
+            "return JSON.parse(s);",
+            "return new URL(s);",
+            "return s.length;",
+            "return other(read());",
+            "return list[0];",
+            "return (() => 1)();",
+            "throw 1;",
+        ] {
+            let src = format!(
+                "function f(read, s) {{\n  try {{\n    {body}\n  }} catch {{\n    return 1;\n  }}\n}}\n"
+            );
+            assert!(
+                !changed_line_in_catch_arm(
+                    &src,
+                    1,
+                    5,
+                    "    return 1;",
+                    &["read".into(), "s".into()]
+                ),
+                "{body}"
+            );
+        }
     }
 
     #[test]
     fn throw_signals_are_generous() {
-        assert!(may_throw_or_reject("mockRejectedValue(1)"));
-        assert!(may_throw_or_reject("() => { throw 1 }"));
-        assert!(may_throw_or_reject("Promise.reject(1)"));
+        for text in [
+            "mockRejectedValue(1)",
+            "() => { throw 1 }",
+            "Promise.reject(1)",
+            "parse('not json')",
+            "f(null)",
+            "f(undefined)",
+            "f(NaN)",
+            "f('')empty",
+        ] {
+            assert!(may_throw_or_reject(text), "{text}");
+        }
         assert!(!may_throw_or_reject("loadOrDefault(async () => 42, 0)"));
     }
 }

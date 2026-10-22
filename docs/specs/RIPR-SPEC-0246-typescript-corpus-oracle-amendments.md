@@ -214,7 +214,15 @@ owner and test frameworks, and holds no throw-capable text (`reject`,
 `throw`, `error`, `exception`, `fail`, `abort`, `timeout`, `catch`, `boom`,
 compared case-insensitively over the whole file including strings and
 comments), an `exposed` ladder result reads `weakly_exposed`. The missing note
-says the catch arm is never exercised by the related tests. Any piece the
+says the catch arm is never exercised by the related tests. The code the catch guards (the `try` body, or the receiver text before
+`.catch(`) must also be plain: it calls only owner parameters and holds no
+`new`, `throw`, member access (`JSON.parse`, `fs.x`, `obj.m()`), indexing or
+immediately invoked expression, because any other call can fail on bad input
+without a test saying so. The `catch` keyword must follow a closing `}`
+(a method named `catch(x) {` is not a clause), and a `catch (e) {` header
+line or any changed line starting with `}` is excluded. The throw-capable
+text list also holds `invalid`, `bad`, `malformed`, `corrupt`, `parse`,
+`missing`, `nonexist`, `null`, `undefined`, `empty` and `nan`. Any piece the
 rule cannot read keeps the ladder result. Rule 5 only removes credit and runs
 after the #8569 unentered-guard rule.
 

@@ -126,3 +126,127 @@ fn an_edit_outside_the_catch_arm_is_unchanged() -> Result<(), String> {
     );
     Ok(())
 }
+
+const HAPPY: &str = "  await expect(load(async () => 42, 0)).resolves.toBe(42);";
+
+fn edit_with_test(label: &str, owner: &str, line: usize, test: &str) -> Result<Finding, String> {
+    run(
+        label,
+        owner,
+        line,
+        "    return fallback;",
+        "    return fallback + 1;",
+        test,
+    )
+}
+
+fn plain_test(body: &str) -> String {
+    format!("{HEAD}\nit(\"x\", async () => {{\n{body}\n}});\n")
+}
+
+#[test]
+fn a_guarded_call_that_can_fail_by_itself_keeps_exposed() -> Result<(), String> {
+    let parse = "export function load(s: string, fallback: number): number {\n  try {\n    return JSON.parse(s);\n  } catch {\n    return fallback + 1;\n  }\n}\n";
+    let test = format!("{HEAD}\nit(\"x\", () => {{\n  expect(load(\"7\", 0)).toBe(7);\n}});\n");
+    let finding = edit_with_test("catch-json-parse", parse, 5, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    // Bad input reaches the catch with no throw keyword in the test.
+    let test = format!("{HEAD}\nit(\"x\", () => {{\n  expect(load(\"nope\", 0)).toBe(1);\n}});\n");
+    let finding = edit_with_test("catch-json-parse-bad-input", parse, 5, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let deref = "export function load(o: { v: number } | null, fallback: number): number {\n  try {\n    return o.v;\n  } catch {\n    return fallback + 1;\n  }\n}\n";
+    let test =
+        format!("{HEAD}\nit(\"x\", () => {{\n  expect(load({{ v: 7 }}, 0)).toBe(7);\n}});\n");
+    let finding = edit_with_test("catch-null-deref", deref, 5, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dot_catch_handler_is_a_catch_arm() -> Result<(), String> {
+    let owner = "export function load(read: () => Promise<number>, fallback: number): Promise<number> {\n  return read().catch(() => {\n    return fallback + 1;\n  });\n}\n";
+    let weak = edit_with_test("dotcatch-unreached", owner, 3, &plain_test(HAPPY))?;
+    assert_eq!(
+        weak.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        weak.missing
+    );
+    let reached = edit_with_test(
+        "dotcatch-reached",
+        owner,
+        3,
+        &plain_test("  await expect(load(() => Promise.reject(1), 7)).resolves.toBe(7);"),
+    )?;
+    assert_eq!(
+        reached.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        reached.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_signal_in_a_comment_keeps_exposed() -> Result<(), String> {
+    // The scan is deliberately generous: comments and strings count.
+    let body = format!("  // the reader could reject here\n{HAPPY}");
+    let finding = catch_edit("catch-comment-signal", &body)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_mock_keeps_exposed() -> Result<(), String> {
+    let test = format!(
+        "{HEAD}vi.mock(\"../src/dep\", () => ({{}}));\nit(\"x\", async () => {{\n{HAPPY}\n}});\n"
+    );
+    let finding = edit_with_test("catch-mocked", LOAD, 5, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn every_related_test_must_lack_a_signal() -> Result<(), String> {
+    let both_quiet = format!(
+        "{HEAD}\nit(\"a\", async () => {{\n{HAPPY}\n}});\nit(\"b\", async () => {{\n  await expect(load(async () => 5, 0)).resolves.toBe(5);\n}});\n"
+    );
+    let weak = edit_with_test("catch-two-quiet", LOAD, 5, &both_quiet)?;
+    assert_eq!(
+        weak.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        weak.missing
+    );
+    let one_throws = format!(
+        "{HEAD}\nit(\"a\", async () => {{\n{HAPPY}\n}});\nit(\"b\", async () => {{\n  await expect(load(async () => {{ throw 1; }}, 5)).resolves.toBe(5);\n}});\n"
+    );
+    let kept = edit_with_test("catch-one-throws", LOAD, 5, &one_throws)?;
+    assert_eq!(kept.class, ExposureClass::Exposed, "{:?}", kept.missing);
+    Ok(())
+}
