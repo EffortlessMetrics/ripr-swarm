@@ -910,3 +910,38 @@ reason = "Const-generic empty-array case (#9444)."
 case = "shape-cast-truncation-mask"
 issue = 9444
 reason = "Cast truncation mask case (#9444)."
+
+[[known_false]]
+case = "shape-closure-returned-adder"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-collect-result-short-circuit"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-impl-trait-return-filter"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-op-add-impl"
+issue = 9441
+reason = "Implicit-call impl is not followed (#9441)."
+
+[[known_false]]
+case = "shape-drop-impl-side-effect"
+issue = 9441
+reason = "Implicit-call Drop impl is not followed (#9441)."
+
+[[known_false]]
+case = "shape-dyn-trait-method-exact"
+issue = 9441
+reason = "Dyn-trait method call is not followed (#9441)."
+
+[[known_false]]
+case = "shape-async-fn-block-on"
+issue = 9443
+reason = "Async fn driven by block_on is not followed (#9443)."

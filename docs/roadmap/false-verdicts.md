@@ -5,7 +5,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main 50
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 12 | 535 |
+| Rust | 19 | 555 |
 | TypeScript | 17 | 243 |
 | Python | 13 | 135 |
 | Perl | 1 | 60 |
@@ -30,7 +30,8 @@ spec or the analyzer. Never exclude or reclassify it.
 
 | Group | Cases | Owner |
 | --- | --- | --- |
-| Rust exact pin read as gap | `shape-thread-join-result`, `shape-sort-direction-truncate`, `shape-let-else-branch-pinned` | #9440 |
+| Rust exact pin read as gap | `shape-thread-join-result`, `shape-sort-direction-truncate`, `shape-let-else-branch-pinned`, `-closure-returned-adder`, `-collect-result-short-circuit`, `-impl-trait-return-filter` | #9440 |
+| Rust implicit-call and async owners | `shape-op-add-impl`, `-drop-impl-side-effect`, `-dyn-trait-method-exact` (#9441), `shape-async-fn-block-on` (#9443) | see each |
 | Rust generated and fn-value owners | `shape-hostile-owner-as-path-value`, `-owner-through-fn-pointer`, `-cfg-attr-test`, `-macro-defined-owner` | #9442 |
 | Rust attribute noise | `shape-hostile-attribute-noise-test` | #9439 (fix in #9451) |
 | Rust const-generic and cast | `shape-const-generic-empty-only`, `shape-cast-truncation-mask` | #9444 |
