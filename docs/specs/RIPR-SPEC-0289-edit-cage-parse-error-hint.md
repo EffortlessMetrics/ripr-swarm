@@ -45,11 +45,11 @@ Policy impact:
 
 ## Problem
 
-When an agent-repair attempt's newly written test has a parse error, the
+When an agent-repair attempt leaves the selected file with a parse error, the
 after phase goes terminal with an `OutsideInlineTestRegion ... unparseable`
 refusal. The narration named the refused path and then a long CRLF-oriented
-recovery paragraph, but never said the plain thing the user needs: the test
-they just wrote does not parse — fix the syntax error and start the attempt
+recovery paragraph, but never said the plain thing the user needs: the file
+they just edited does not parse — fix the syntax error and start the attempt
 again. The user had to infer the actual problem from the refusal vocabulary
 ("unparseable inline test region", line-ending recovery prose) while the
 attempt was already terminal.
@@ -60,14 +60,16 @@ attempt was already terminal.
 
 When the after-phase verdict refuses the attempt with an
 `OutsideInlineTestRegion` violation whose region-observation detail reports
-`unparseable` (the attempt's newly written test does not parse), the
-recovery narration's first line is:
+`unparseable` (the selected file does not parse after the attempt's edit),
+the recovery narration's first line is:
 
-> the test written for this attempt does not parse — fix the syntax error
+> `<file>` does not parse after this attempt's edit — fix the syntax error
 > and start the attempt again.
 
-The statement names the newly written test specifically; it is not a general
-syntax complaint and does not fire for any other refusal reason.
+`<file>` is the violation's selected path. The inline-region observation
+parses the whole file, so the label cannot say whether the syntax error is in
+the newly written test or in production code beside it; the statement names
+the file, not the test, and does not fire for any other refusal reason.
 
 ### Rule 2: the existing bounded-recovery detail stays secondary, verbatim
 
@@ -88,7 +90,7 @@ what the `--json` `repair_after_refusal` / `repair_after_failure` envelopes
 serialize under `narration`, so the human surface, the recorded refusal
 projected by `ripr agent status`, and the JSON envelopes all carry the new
 first line without per-surface edits. The detection predicate
-(`refusal_is_unparseable_new_test`) is owned beside the violation-reason
+(`refusal_is_unparseable_selected_file`) is owned beside the violation-reason
 producer in `edit_cage`, which owns the region-observation label vocabulary
 and the `` `mod <name>`: <label> `` detail spelling.
 
@@ -119,9 +121,10 @@ and the `` `mod <name>`: <label> `` detail spelling.
 
 ## Acceptance Examples
 
-1. A newly written test with a syntax error ends the attempt terminal; the
-   refusal's first line reads "the test written for this attempt does not
-   parse — fix the syntax error and start the attempt again.", and the
+1. A syntax error in the newly written test, or in production code of the
+   selected file, ends the attempt terminal; the refusal's first line reads
+   "`src/lib.rs` does not parse after this attempt's edit — fix the syntax
+   error and start the attempt again.", and the
    `unparseable` region detail plus the CRLF-aware undo route still follow.
 2. A production edit beside a valid new test keeps the existing narration
    with no parse hint.
@@ -129,8 +132,12 @@ and the `` `mod <name>`: <label> `` detail spelling.
 ## Test Mapping
 
 - `crates/ripr/src/cli/commands/agent.rs`:
-  `unparseable_new_test_refusal_leads_with_the_plain_hint`,
+  `unparseable_selected_file_refusal_leads_with_the_plain_hint`,
   `other_inline_region_refusals_do_not_lead_with_the_parse_hint`.
+- `crates/ripr/src/edit_cage/mod.rs`:
+  `unparseable_predicate_agrees_with_the_real_observation_and_cage` binds the
+  predicate to the real observation and `evaluate_edit_cage`, for a broken
+  new test, broken production code, and a parseable production edit.
 
 ## Implementation Mapping
 
@@ -138,7 +145,7 @@ and the `` `mod <name>`: <label> `` detail spelling.
   `repair_after_cage_recovery_lines` owns the refusal narration and the new
   lead line.
 - `crates/ripr/src/edit_cage/mod.rs`:
-  `refusal_is_unparseable_new_test` owns the detection predicate beside the
+  `refusal_is_unparseable_selected_file` owns the detection predicate beside the
   `OutsideInlineTestRegion` reason producer (`evaluate_edit_cage`).
 - `docs/REPAIR_ATTEMPT.md`: records the lead line in the terminal-attempt
   recovery narration contract.

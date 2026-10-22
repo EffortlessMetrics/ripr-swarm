@@ -17608,7 +17608,8 @@ id = "RIPR-SPEC-0289"
 name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
 spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
 tests = [
-  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_new_test_refusal_leads_with_the_plain_hint",
+  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_selected_file_refusal_leads_with_the_plain_hint",
+  "crates/ripr/src/edit_cage/mod.rs::tests::unparseable_predicate_agrees_with_the_real_observation_and_cage",
   "crates/ripr/src/cli/commands/agent.rs::tests::other_inline_region_refusals_do_not_lead_with_the_parse_hint",
 ]
 fixtures = []
