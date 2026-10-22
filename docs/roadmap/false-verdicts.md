@@ -7,7 +7,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 | --- | --- | --- |
 | Rust | 13 | 555 |
 | TypeScript | 39 | 309 |
-| Python | 25 | 191 |
+| Python | 21 | 191 |
 | Perl | 1 | 60 |
 
 Every false row is listed once in the `[[known_false]]` tables of
@@ -42,7 +42,7 @@ spec or the analyzer. Never exclude or reclassify it.
 | TS mocha and node:test | nine false actionable rows (`mocha-*`, `node-*`) | #9496 |
 | TS skip and unexercised bound credited | `mocha-it-skip-sole-pin`, `mocha-clamp-unexercised-lower-arm`, `node-t-skip-inside-test`, `node-first-attempt-nonnegative-bound` | #9497 |
 | TS operator grid | `ts-grid-*` (eleven rows) | #9515, #9532, #9533, #9534 |
-| Python operator grid | `py-grid-*` (seven rows) | #9542 |
+| Python operator grid | `py-grid-*` (three rows listed here; four more under #9594) | #9542 |
 | Python hostile inputs | `py-hostile-*` (five rows) | #9415, #9419, #9423, #9426 |
 
 ## Gate

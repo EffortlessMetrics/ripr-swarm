@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Refreshed the `[[known_false]]` ledgers after main moved: dropped three Rust rows that no longer score as false verdicts (they now abstain as `static_unknown`, not credited) and listed four new Python operator-grid rows under #9542 (#9430).
+- Dropped three Rust `[[known_false]]` entries whose rows no longer score as false verdicts (they now abstain as `static_unknown`, not credited). The four Python operator-grid rows that landed unlisted are owned by #9594 and listed in #9596 (#9430).
