@@ -193,6 +193,82 @@ fn throws_builtin_error(throw: &[LineToken]) -> bool {
         if open == "(" && BUILTIN_ERROR_CLASSES.contains(&class.as_str()))
 }
 
+/// Whether the owner body calls something that may throw or reject with a
+/// message of its own: any member call, or a call to a name that is neither
+/// an owner parameter, a keyword, nor a `new` construction. Conservative.
+fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
+    const KEYWORDS: [&str; 9] = [
+        "if", "for", "while", "switch", "catch", "function", "return", "typeof", "await",
+    ];
+    // The signature is not a call; scan from the body's first `{`.
+    let body = masked.find('{').map_or(masked, |at| &masked[at..]);
+    let chars: Vec<char> = body.chars().collect();
+    for (at, ch) in chars.iter().enumerate() {
+        if *ch != '(' {
+            continue;
+        }
+        let mut end = at;
+        while end > 0 && chars[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0
+            && (chars[start - 1].is_alphanumeric() || matches!(chars[start - 1], '_' | '$' | '.'))
+        {
+            start -= 1;
+        }
+        let word: String = chars[start..end].iter().collect();
+        if word.is_empty() {
+            // `) (` or an arrow / grouping paren: a call on a value is unknown
+            // only when it follows `)` or `]`.
+            if matches!(chars.get(end.wrapping_sub(1)), Some(')' | ']')) {
+                return true;
+            }
+            continue;
+        }
+        if word.contains('.') {
+            return true;
+        }
+        let before: String = chars[..start].iter().collect();
+        let before = before.trim_end();
+        if KEYWORDS.contains(&word.as_str()) || params.contains(&word) || before.ends_with("new") {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// The built-in class a `throw new X(...)` / `throw X(...)` run constructs.
+fn builtin_class(throw: &[LineToken]) -> Option<String> {
+    let rest = match throw {
+        [LineToken::Other(keyword), LineToken::Other(new), rest @ ..]
+            if keyword == "throw" && new == "new" =>
+        {
+            rest
+        }
+        [LineToken::Other(keyword), rest @ ..] if keyword == "throw" => rest,
+        _ => return None,
+    };
+    match rest {
+        [LineToken::Other(class), LineToken::Other(open), ..]
+            if open == "(" && BUILTIN_ERROR_CLASSES.contains(&class.as_str()) =>
+        {
+            Some(class.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Whether a `throw ...` token run rethrows one plain local (`throw err;`).
+fn throws_forwarded_local(throw: &[LineToken]) -> bool {
+    matches!(without_trailing_semicolon(throw), [LineToken::Other(keyword), LineToken::Other(name)]
+        if keyword == "throw"
+            && name != "new"
+            && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$'))
+}
+
 /// Drop a statement-ending `;`, which adds no behavior.
 fn without_trailing_semicolon(tokens: &[LineToken]) -> &[LineToken] {
     match tokens.split_last() {
@@ -276,6 +352,17 @@ pub(crate) struct ErrorChangeFacts {
     pub(crate) old_primitive: bool,
     /// The new side's [`Self::old_primitive`].
     pub(crate) new_primitive: bool,
+    /// The old side rethrows a local (`throw lastError;`), so its message is
+    /// whatever that local held and ripr cannot read it.
+    pub(crate) old_forwarded: bool,
+    /// The changed line is the only `throw` / `reject` site of the owner
+    /// (set by the caller from the owner source; `false` when unread).
+    pub(crate) sole_throw_site: bool,
+    /// The built-in error class each side constructs (`new RangeError(..)`),
+    /// `None` for any other thrown value or class.
+    pub(crate) old_builtin_class: Option<String>,
+    /// The new side's [`Self::old_builtin_class`].
+    pub(crate) new_builtin_class: Option<String>,
 }
 
 impl ErrorChangeFacts {
@@ -357,7 +444,72 @@ impl ErrorChangeFacts {
             new_string_form,
             old_primitive: old_split.is_some_and(|(_, throw)| rejects_primitive(throw)),
             new_primitive: new_split.is_some_and(|(_, throw)| rejects_primitive(throw)),
+            old_forwarded: old_split.is_some_and(|(_, throw)| throws_forwarded_local(throw)),
+            sole_throw_site: false,
+            old_builtin_class: old_split.and_then(|(_, throw)| builtin_class(throw)),
+            new_builtin_class: new_split.and_then(|(_, throw)| builtin_class(throw)),
         }
+    }
+
+    /// The two sides construct different built-in sibling error classes
+    /// (neither inherits from the other), and `pinned` names one of them. A
+    /// chai class check uses `instanceof`, so only such a swap is certain to
+    /// pass on one side and fail on the other; a user class, an alias or a
+    /// subclass is not.
+    fn builtin_sibling_swap_pinned(&self, pinned: &str) -> bool {
+        const SIBLINGS: [&str; 6] = [
+            "TypeError",
+            "RangeError",
+            "SyntaxError",
+            "EvalError",
+            "URIError",
+            "ReferenceError",
+        ];
+        match (
+            self.old_builtin_class.as_deref(),
+            self.new_builtin_class.as_deref(),
+        ) {
+            (Some(old), Some(new)) => {
+                old != new
+                    && SIBLINGS.contains(&old)
+                    && SIBLINGS.contains(&new)
+                    && (pinned == old || pinned == new)
+            }
+            _ => false,
+        }
+    }
+
+    /// Record whether the changed line is the owner's only throw site, read
+    /// from the owner's source after the change. `reject` and `new Promise` are
+    /// refused too: any other way to reject could produce the pinned error.
+    pub(crate) fn with_owner_source(
+        mut self,
+        owner_source: Option<&str>,
+        owner_params: &[String],
+    ) -> Self {
+        self.sole_throw_site = owner_source.is_some_and(|source| {
+            let masked = ts_mask_literals_and_comments(source);
+            let count = |word: &str| {
+                masked
+                    .match_indices(word)
+                    .filter(|(at, _)| {
+                        let before = masked[..*at].chars().next_back();
+                        let after = masked[at + word.len()..].chars().next();
+                        !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                    })
+                    .count()
+            };
+            count("throw") == 1
+                && !calls_unknown_function(&masked, owner_params)
+                && count("reject") == 0
+                && !masked
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .contains("new Promise")
+        });
+        self
     }
 
     /// On a message-only change, whether a payload that `matches` a message
@@ -678,12 +830,17 @@ pub(crate) fn error_payload_credits(
 ) -> bool {
     use TypeScriptErrorPayloadKind as Kind;
     match payload.kind {
-        Kind::ThrowsClass | Kind::RejectsThrowClass => {
+        Kind::ThrowsClass | Kind::RejectsThrowClass | Kind::ChaiThrowClass => {
             // Every thrown error is an `Error`, so this payload is a bare
             // `toThrow()` (RIPR-SPEC-0243 decision 6); only a primitive throw
             // on exactly one side, under the same guard, fails it there.
             if payload.expected.trim() == "Error" {
                 return facts.primitive_throw_flips;
+            }
+            if payload.kind == Kind::ChaiThrowClass {
+                // chai tests `instanceof`: only a swap of built-in siblings,
+                // one of them pinned, is certain to separate the versions.
+                return facts.builtin_sibling_swap_pinned(payload.expected.trim());
             }
             // The same class is thrown on both versions of a message change.
             !facts.message_only
@@ -698,6 +855,23 @@ pub(crate) fn error_payload_credits(
             };
             facts.separates(|message| message.contains(&expected))
         }
+        Kind::ChaiThrowClassLiteral => {
+            // chai passes only when the class and the message substring both
+            // match, so a change to either one fails it. chai tests `instanceof`, so
+            // only a swap of built-in sibling classes tells the versions apart
+            // by class; any other class change (a subclass, an alias, `Error`)
+            // passes on both, and only the message part can separate them.
+            let Some((class, message)) = payload.expected.split_once(',') else {
+                return false;
+            };
+            let Some(expected) = string_literal_value(message.trim()) else {
+                return false;
+            };
+            if facts.builtin_sibling_swap_pinned(class.trim()) {
+                return true;
+            }
+            facts.separates(|message| message.contains(&expected))
+        }
         Kind::ThrowsObject | Kind::RejectsThrowObject | Kind::RejectsMatchObject => true,
         Kind::AssertThrowsObject | Kind::AssertRejectsObject => {
             if !facts.message_only {
@@ -707,6 +881,31 @@ pub(crate) fn error_payload_credits(
                 return false;
             };
             facts.separates(|candidate| candidate == message)
+        }
+        Kind::AssertThrowsContainsRegex | Kind::AssertRejectsContainsRegex => {
+            let Some(literal) = plain_unanchored_regex_text(&payload.expected) else {
+                return false;
+            };
+            // `node:assert` tests the regex against `String(err)`. Both
+            // sides readable: the literal must sit in exactly one of them.
+            // Both branches need the changed line to be the owner's only
+            // throw site and the owner to call nothing that could throw
+            // the pinned text itself.
+            if !facts.sole_throw_site {
+                return false;
+            }
+            if facts.separates_string_form(|candidate| candidate.contains(&literal)) {
+                return true;
+            }
+            // The old side forwards a caught local, so only the new side is
+            // readable. This line is the owner's only throw site, so a test
+            // that passes on the old code reaches it, and the literal it
+            // pins is absent from the new error: the test fails on the edit.
+            facts.old_forwarded
+                && facts
+                    .new_string_form
+                    .as_deref()
+                    .is_some_and(|candidate| !candidate.contains(&literal))
         }
         Kind::AssertThrowsRegex | Kind::AssertRejectsRegex => {
             if !facts.message_only {
@@ -755,9 +954,27 @@ fn object_message_value(text: &str) -> Option<String> {
     None
 }
 
+/// The literal text an unanchored regex `/text/` searches for: no flags but
+/// `u` and no metacharacter or escape, so it is a plain substring test.
+pub(crate) fn plain_unanchored_regex_text(text: &str) -> Option<String> {
+    let (pattern, flags) = split_regex_literal(text)?;
+    if !flags.chars().all(|flag| flag == 'u') || pattern.is_empty() {
+        return None;
+    }
+    pattern
+        .chars()
+        .all(|ch| {
+            !matches!(
+                ch,
+                '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$'
+            ) && !ch.is_control()
+        })
+        .then(|| pattern.to_string())
+}
+
 /// The literal text an anchored regex matches when its pattern between `^`
 /// and `$` holds no metacharacters other than escapes.
-fn plain_anchored_regex_text(text: &str) -> Option<String> {
+pub(crate) fn plain_anchored_regex_text(text: &str) -> Option<String> {
     let (pattern, flags) = split_regex_literal(text)?;
     // `i` and `m` widen what a literal pattern matches; ripr compares it
     // as plain text only without them.
@@ -789,6 +1006,30 @@ fn plain_anchored_regex_text(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sole_site(source: &str) -> bool {
+        ErrorChangeFacts::default()
+            .with_owner_source(Some(source), &["fn".to_string()])
+            .sole_throw_site
+    }
+
+    #[test]
+    fn sole_throw_site_reads_code_only_and_fails_closed_on_rejection_constructs() {
+        let base = "function f(fn) {\n  BODY\n  throw new Error(\"x\");\n}";
+        let with = |body: &str| base.replace("BODY", body);
+        assert!(sole_site(&with("fn();")));
+        // Words in a string or a comment are not throw sites.
+        assert!(sole_site(&with(
+            "const m = 'throw reject new Promise'; // throw reject"
+        )));
+        // A second throw, a rejection construct or an outside call is unknown.
+        assert!(!sole_site(&with("if (a) throw new Error(\"y\");")));
+        assert!(!sole_site(&with("return new Promise((_, r) => r(1));")));
+        assert!(!sole_site(&with("Promise.reject(1);")));
+        assert!(!sole_site(&with("await other();")));
+        assert!(!sole_site(&with("fn().then(g);")));
+        assert!(!sole_site(&with("fn().catch(g);")));
+    }
 
     fn payload(kind: TypeScriptErrorPayloadKind, expected: &str) -> TypeScriptErrorPayload {
         TypeScriptErrorPayload {

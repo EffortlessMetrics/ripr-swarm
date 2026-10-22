@@ -60,6 +60,7 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod call_removal_guard;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod classifier;
@@ -97,6 +98,8 @@ mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
+#[cfg(test)]
+mod assertion_form_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
 mod parse;
