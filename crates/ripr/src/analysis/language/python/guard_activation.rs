@@ -680,7 +680,18 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
         .skip(owner.start_line)
         .take(owner.end_line.saturating_sub(owner.start_line))
         .map(str::trim)
-        .any(|line| line_rebinds_parameter(line, name) || for_target_rebinds(line, name))
+        .any(|line| {
+            // A condition header ends in `:`, which the annotated-assignment
+            // reading of `name:` would take for a rebinding; only a walrus
+            // can bind inside one.
+            let condition = ["if ", "elif ", "while "]
+                .iter()
+                .any(|keyword| line.starts_with(keyword));
+            if condition && !line.contains(":=") {
+                return false;
+            }
+            line_rebinds_parameter(line, name) || for_target_rebinds(line, name)
+        })
 }
 
 /// One `left <op> right` comparison under a row's literal bindings, or None

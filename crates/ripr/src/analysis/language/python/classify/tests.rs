@@ -2488,6 +2488,22 @@ fn rebound_loop_operand_declines_the_boundary_gap() -> Result<(), String> {
     Ok(())
 }
 
+// Discriminating negative: a parameter named only in `if ...:` headers (the
+// trailing `:` is not an annotation) is not rebound and keeps the gap.
+#[test]
+fn parameter_in_condition_headers_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        "from src.subject import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(150, 100) == 140\n",
+        2,
+        "    if amount > threshold:",
+        "    if amount >= threshold:",
+    )?;
+    assert_owner(&finding, "apply_discount");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
 // Discriminating negative: a local assigned once from a parameter is not a
 // call-bound operand, so its assignment must not decline the boundary gap.
 #[test]
