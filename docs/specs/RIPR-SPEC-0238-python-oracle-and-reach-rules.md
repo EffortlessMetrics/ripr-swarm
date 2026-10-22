@@ -743,12 +743,24 @@ mutant calibrates the rule; ripr reports only the static shape.
     unconditional module-level `pytest.importorskip(...)`,
     `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
     a recognized skip, skipif or xfail mark control every affected test the
-    same way a `@pytest.mark.skip` decorator does (a condition is never
-    evaluated, so a `skipif` that is false on the host still abstains): the finding is
-    `static_unknown` with `decorator_indirection`. The adapter does not
-    evaluate whether the module is installed, so `importorskip` of a present
-    module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
-    `py-trap-module-loaded`, #9691).
+    same way a `@pytest.mark.skip` decorator does (a condition is not
+    evaluated, so a `skipif` on a name or comparison that is false on the
+    host still abstains): the finding is `static_unknown` with
+    `decorator_indirection`. Two things are decidable from the source and
+    leave the test active: a condition that is itself the boolean literal
+    that never triggers the mark and is the only condition, given with the
+    string `reason` the runner requires for a boolean
+    (`skipif(False, reason="...")`, `xfail(False, reason="...")`,
+    `unittest.skipIf(False, "...")`, `unittest.skipUnless(True, "...")`).
+    A missing or non-string reason, a second positional condition, a
+    `condition=` that overrides the positional one and a `*` spread keep
+    the control, because the runner then errors, skips or xfails. The
+    second decidable case is `pytest.importorskip` of one bare module name that
+    every interpreter ships (`json`, `math`, `re`, ...). The adapter does
+    not evaluate whether any other module is installed, so `importorskip`
+    of it, or with `minversion` or `reason`, still abstains
+    (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
 
 ### Verdict ladder
 
