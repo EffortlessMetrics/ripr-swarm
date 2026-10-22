@@ -618,6 +618,72 @@ mod tests {
         Ok(())
     }
 
+    /// A program that cannot start surfaces as the typed spawn error from
+    /// `OwnedProcess::spawn` itself, before any ownership exists (#3803
+    /// native control 7, spawn arm; the assign/resume arms need an injection
+    /// seam and stay tracked on #9323).
+    #[test]
+    fn spawning_a_missing_program_returns_a_typed_not_found_error() -> Result<(), String> {
+        let mut command = Command::new("ripr-owner-no-such-program-9323");
+        command.stdin(Stdio::null());
+        match OwnedProcess::spawn(command) {
+            Ok(_) => Err("a missing program must not produce an owned process".to_string()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(format!("expected NotFound, got {:?}: {err}", err.kind())),
+        }
+    }
+
+    /// Arguments containing spaces, embedded quotes, a trailing backslash and
+    /// non-ASCII text reach the child unchanged through the suspended-create
+    /// path (#3803 native control 11). The child writes the arguments it
+    /// received to a file as UTF-8, so console code pages cannot alter the
+    /// observation.
+    #[cfg(windows)]
+    #[test]
+    fn windows_arguments_round_trip_through_owned_spawn() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-owner-args-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let script = dir.join("echo-args.ps1");
+        let out = dir.join("args.txt");
+        std::fs::write(
+            &script,
+            "param([string]$OutFile)\n[System.IO.File]::WriteAllLines($OutFile, [string[]]$args, (New-Object System.Text.UTF8Encoding($false)))\n",
+        )
+        .map_err(|err| format!("write script: {err}"))?;
+        let expected = [
+            "two words",
+            "say \"hi\"",
+            "naïve ✓ ключ",
+            "trailing slash\\",
+        ];
+        let mut command = Command::new("powershell");
+        command
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&script)
+            .arg(&out)
+            .args(expected)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        let mut stderr = String::new();
+        if let Some(mut pipe) = owned.stderr_pipe().take() {
+            let _ = pipe.read_to_string(&mut stderr);
+        }
+        let status = owned.wait().map_err(|err| format!("wait: {err}"))?;
+        let observed = std::fs::read_to_string(&out);
+        let _ = std::fs::remove_dir_all(&dir);
+        if !status.success() {
+            return Err(format!("child failed ({status}): {stderr}"));
+        }
+        let observed = observed.map_err(|err| format!("read args: {err}"))?;
+        let lines: Vec<&str> = observed.lines().collect();
+        if lines != expected {
+            return Err(format!("arguments changed in transit: {lines:?}"));
+        }
+        Ok(())
+    }
+
     /// Poll until the marker holds a whole PID. `Set-Content` creates the
     /// file before writing it, so an early read can see it empty or partial;
     /// that is not yet a marker, and stopping on it failed the setup rather

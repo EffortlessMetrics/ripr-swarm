@@ -1696,6 +1696,45 @@ mod tests {
         Ok(())
     }
 
+    /// Native control for the verify-execute route (#9306): cancelling a
+    /// command whose descendant inherited the output pipes must end that
+    /// descendant, so the reader joins return at once instead of waiting out
+    /// its 60 s lifetime. Pipe EOF is the observable: a surviving descendant
+    /// holds the write end open, so the call could not return in time.
+    #[cfg(windows)]
+    #[test]
+    fn windows_cancellation_ends_a_pipe_inheriting_descendant() -> Result<(), String> {
+        let mut spec = agent_verify_command_spec(".", "before.json", "after.json", None);
+        spec.args = vec![
+            "/d".to_string(),
+            "/s".to_string(),
+            "/c".to_string(),
+            "start /b ping -n 60 127.0.0.1 >NUL & ping -n 60 127.0.0.1 >NUL".to_string(),
+        ];
+        spec.timeout_ms = 120_000;
+        let root = std::env::temp_dir();
+        let started = Instant::now();
+        let observation = run_process(Path::new("cmd"), &spec, &root, Some(500))
+            .map_err(|refusal| format!("run_process refused: {refusal:?}"))?;
+        let elapsed = started.elapsed();
+        if observation.disposition != VerificationProcessDispositionV1::Cancelled {
+            return Err(format!(
+                "expected a cancelled observation, got {:?}",
+                observation.disposition
+            ));
+        }
+        if !observation.cancellation_requested {
+            return Err("cancellation was not recorded on the observation".to_string());
+        }
+        if elapsed >= Duration::from_secs(30) {
+            return Err(format!(
+                "returned after {}s; a pipe-inheriting descendant outlived cancellation",
+                elapsed.as_secs()
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn normalize_strips_only_drive_letter_verbatim_prefixes() {
         // `check-local-context` forbids drive-letter path literals anywhere in
