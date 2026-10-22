@@ -239,7 +239,7 @@ pub(crate) fn collect_context_from_artifact(
             ))
         }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
-            super::explain::no_finding_matched(selector, "ripr check --json"),
+            super::explain::no_finding_matched(selector, "ripr check --json", None),
         )),
     }
 }
