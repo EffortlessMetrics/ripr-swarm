@@ -41,7 +41,9 @@ pub(super) fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) 
     {
         return (ProbeFamily::FieldConstruction, DeltaKind::Value);
     }
-    if super::boundary::python_return_comparison(trimmed).is_some() {
+    if super::boundary::python_return_comparison(trimmed).is_some()
+        || super::boundary::python_comprehension_filter(trimmed).is_some()
+    {
         return (ProbeFamily::Predicate, DeltaKind::Control);
     }
     if trimmed.starts_with("return ") || trimmed == "return" {

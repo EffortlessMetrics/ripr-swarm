@@ -7639,3 +7639,106 @@ fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String>
     );
     Ok(())
 }
+
+const FILTER_BOUNDARY_OWNER: &str = "import asyncio\n\n\nasync def fetch_total(prices):\n    await asyncio.sleep(0)\n    return sum(p for p in prices if p > 1)\n";
+
+/// Classifies the `p > 0` -> `p > 1` filter change in `fetch_total` against a
+/// strong exact-value test whose assertion is `assert {call} == 7` (#9414).
+fn classify_filter_boundary(call: &str) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/agg.py"), FILTER_BOUNDARY_OWNER);
+    let tests = extract_tests(
+        Path::new("tests/test_agg.py"),
+        &format!(
+            "import asyncio\n\nfrom src.agg import fetch_total\n\n\ndef test_total():\n    assert {call} == 7\n"
+        ),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse one test for `{call}`");
+    classify_change(
+        Path::new("src/agg.py"),
+        6,
+        "    return sum(p for p in prices if p > 1)",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| format!("filter change should classify for `{call}`"))
+}
+
+#[test]
+fn a_coroutine_runner_is_transparent_and_the_filter_bound_decides_the_verdict() -> Result<(), String>
+{
+    // The list holds a 1, the element where `p > 0` and `p > 1` disagree.
+    for call in [
+        "asyncio.run(fetch_total([3, 1, 4]))",
+        "asyncio.get_event_loop().run_until_complete(fetch_total([3, 1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{call}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{call}"
+        );
+    }
+    // Discriminating control: no element meets the bound, so the strong oracle
+    // reaches the owner (the runner is transparent, alignment stays direct)
+    // but cannot see the cutoff move.
+    for call in [
+        "asyncio.run(fetch_total([3, -1, 4]))",
+        "asyncio.get_event_loop().run_until_complete(fetch_total([3, -1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{call}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{call}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_runner_lookalike_wrapper_stays_opaque() -> Result<(), String> {
+    // A bare `run(...)` or another receiver's `.run(...)` is any function: it
+    // can drop the awaited value, so the assertion does not observe the owner.
+    for call in [
+        "run(fetch_total([3, 1, 4]))",
+        "task.run(fetch_total([3, 1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{call}");
+    }
+    Ok(())
+}
+
+#[test]
+fn only_a_single_simple_comprehension_filter_is_a_predicate_line() {
+    for (line, family) in [
+        (
+            "    return sum(p for p in prices if p > 1)",
+            ProbeFamily::Predicate,
+        ),
+        (
+            "    return [p for p in prices if p >= limit]",
+            ProbeFamily::Predicate,
+        ),
+        (
+            "    return sum(p for p in prices if p > 1 and p < 9)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in prices if len(p) > 1)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in load() if p > 1)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in prices)",
+            ProbeFamily::ReturnValue,
+        ),
+    ] {
+        assert_eq!(classify_probe_shape(line).0, family, "{line}");
+    }
+}
