@@ -95,10 +95,12 @@ Environment variables:
                                  lower bounds until you raise or remove the limit.
   RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
                                  in the current-change discovery path, exactly as `ripr
-                                 check` uses it. A git command that exceeds the deadline
-                                 is terminated and the error names git_invocation_timeout.
-                                 0 disables the deadline. Invalid values fail closed.
-                                 Default: 300 (5 minutes).
+                                 check` uses it. When the deadline trips, the pilot
+                                 scope line reads `current change: git timed out`
+                                 (pilot keeps fixed phrases for determinism; the
+                                 machine-readable git_invocation_timeout name is what
+                                 `ripr check` reports). 0 disables the deadline.
+                                 Invalid values fail closed. Default: 300 (5 minutes).
 
 Outputs:
   - repo-exposure.json and repo-exposure.md
