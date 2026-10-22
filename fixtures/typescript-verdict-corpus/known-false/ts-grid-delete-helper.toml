@@ -1,0 +1,3 @@
+case = "ts-grid-delete-helper"
+issue = 9534
+reason = "False actionable: field update read through a same-file helper is not credited (#9534)."
