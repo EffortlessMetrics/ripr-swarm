@@ -3549,7 +3549,10 @@ fn lsp_message(finding: &Finding) -> String {
             let fix_site = witness.fix_site.as_ref();
             let detail = match fix_site {
                 Some(site) if site.current_oracle.is_some() => {
-                    format!("`{}` only has {} oracle", site.test_name, site.oracle_kind)
+                    format!(
+                        "`{}` only has oracle kind `{}`",
+                        site.test_name, site.oracle_kind
+                    )
                 }
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
