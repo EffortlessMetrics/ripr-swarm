@@ -4135,6 +4135,129 @@ fn classify_field_assertion_as_exposed() -> Result<(), String> {
     Ok(())
 }
 
+fn classify_area_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change(
+        Path::new("src/geometry.py"),
+        2,
+        "    return 3.1416 * radius * radius",
+        &extract_owners(
+            Path::new("src/geometry.py"),
+            "def circle_area(radius):\n    return 3.1416 * radius * radius\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_geometry.py"),
+            &format!(
+                "import pytest\nfrom src.geometry import circle_area\n\n\
+                 def test_circle_area():\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "numeric edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+#[test]
+fn approx_with_an_explicit_band_abstains_for_a_numeric_edit() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 12 for `approx`: the band may admit the old value.
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
+        "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
+        "assert circle_area(2) == pytest.approx(12.566, **band)",
+        "assert circle_area(2) == pytest.approx(*values)",
+        "assert circle_area(2) == pytest.approx(**values)",
+    ] {
+        assert_eq!(
+            classify_area_edit(assertion)?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result<(), String> {
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.5664)",
+        "assert circle_area(2) == pytest.approx(12.5664, rel=None)",
+        "assert circle_area(2) == pytest.approx(12.5664, nan_ok=True)",
+        "assert circle_area(2) == 12.5664",
+    ] {
+        assert_eq!(
+            classify_area_edit(assertion)?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    classify_log_edit_message("balance low: %s", assertion)
+}
+
+fn classify_log_edit_message(
+    message: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change(
+        Path::new("src/audit.py"),
+        4,
+        &format!("        log.warning(\"{message}\", balance)"),
+        &extract_owners(
+            Path::new("src/audit.py"),
+            "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+             def check_balance(balance):\n    if balance < 10:\n        log.warning(\"balance low: %s\", balance)\n        return False\n    return True\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!(
+                "from src.audit import check_balance\n\n\
+                 def test_low_balance(caplog):\n    assert check_balance(5) is False\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "log edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+#[test]
+fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
+    assert_eq!(
+        classify_log_edit("assert \"low balance: 5\" in caplog.text")?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_about_unrelated_text_keeps_its_verdict() -> Result<(), String> {
+    let (class, limit) = classify_log_edit("assert \"payment accepted\" in caplog.text")?;
+    assert_ne!(class, ExposureClass::StaticUnknown);
+    assert_eq!(limit, None);
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_ignores_the_assertion_scaffolding_words() -> Result<(), String> {
+    // "text" and "assert" appear in every `assert .. in caplog.text` line; only
+    // the checked literal may supply an overlapping word.
+    let (class, limit) = classify_log_edit_message(
+        "assert text: %s",
+        "assert \"payment accepted\" in caplog.text",
+    )?;
+    assert_ne!(class, ExposureClass::StaticUnknown);
+    assert_eq!(limit, None);
+    Ok(())
+}
+
 #[test]
 fn classify_output_assertion_as_exposed() -> Result<(), String> {
     let finding = classify_change(

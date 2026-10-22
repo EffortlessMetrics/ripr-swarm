@@ -226,6 +226,13 @@ owner call in setup keeps the credit. A constant return value satisfies such a r
 expected value, a different function on the expected side, or a member read
 of the result (`normalize(x).length`) keeps the credit.
 
+The expected side may also be a local bound once by a single-line
+`const once = normalize(t);` and named nowhere else in the test except inside
+the observed call (`expect(normalize(once)).toEqual(once)`): the bound call
+counts as the expected-side owner call. A `let`, a reassignment, a second
+declaration, a type annotation, a multi-line initializer, an initializer that
+is not a whole owner call, or any other mention of the local keeps the credit.
+
 Both rules only move `exposed` to `weakly_exposed`; neither adds credit.
 
 Known limits of rules 2 and 3:
@@ -237,9 +244,9 @@ Known limits of rules 2 and 3:
 - A bare mention of the owner that the call counter cannot read
   (`.map(owner)`, `owner<T>(..)`, an alias binding, `other.owner(..)`) in a
   related test keeps the credit under both rules.
-- Rule 3 does not read the one-hop local spelling
-  (`const once = normalize(t); expect(normalize(once)).toEqual(once)`); the
-  expected side is a local, not an owner call, so the credit stays.
+- Rule 3 reads the one-hop local only as a single-line `const`; a chain of
+  locals (`const a = f(t); const b = f(a); ...`) or a destructured binding
+  keeps the credit.
 
 ## Required Evidence
 

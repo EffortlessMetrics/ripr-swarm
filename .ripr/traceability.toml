@@ -16589,6 +16589,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::owner_only_relation_holds_for_a_constant_and_withdraws_credit",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_operand_rule_needs_an_in_place_operand_rewrite",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_operand_rule_keeps_credit_for_calls_outside_the_assertions",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::one_hop_local_idempotence_is_read_and_its_controls_keep_credit",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_input_also_hides_an_added_factor_and_an_inverse_swap",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::owner_mentions_the_call_counter_cannot_read_keep_the_credit",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::owner_only_relation_reads_node_assert_and_object_returns",
@@ -17585,6 +17586,7 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::input_over_the_byte_cap_is_rejected_not_truncated",
   "xtask/src/reports/release_ledger/tests.rs::audit_file_digest_must_match_the_recorded_sha",
   "xtask/src/reports/release_ledger/tests.rs::editing_the_audit_file_after_derivation_fails_validation",
+  "xtask/src/reports/release_ledger/rule_tests.rs::product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]
@@ -18015,11 +18017,22 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::field_access_receiver_is_not_the_typed_binding",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::macro_paths_must_be_exactly_rooted_std_or_core",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::only_leaf_imports_rebind_a_macro_name",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_to_string_against_a_literal_pins_the_display_output",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_string_pin_refuses_other_receivers_expectations_and_traits",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_string_pin_refuses_a_computed_or_doubled_expectation",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::only_a_change_to_string_literal_text_counts_as_literal_only",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::fmt_owner_tail_line_reads_only_a_write_into_the_formatter_parameter",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::format_tail_witness_completes_a_fmt_write_tail_and_refuses_a_rebound_write",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/idiom-display-string-pin.json",
+]
 code = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs",
   "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md",
