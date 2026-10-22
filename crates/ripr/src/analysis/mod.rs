@@ -14,6 +14,7 @@ pub(crate) use generated_rust_corpus::{
 };
 pub(crate) mod harness_projection;
 mod language;
+pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
