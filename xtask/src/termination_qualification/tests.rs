@@ -88,6 +88,40 @@ fn corpus_covers_every_issue_required_shape() -> TestResult {
     Ok(())
 }
 
+/// `ripr` reports every generated skip under one limitation wording, so the
+/// harness cannot read an exclusion's cause from it. It attributes the cause by
+/// experiment instead: a file is only credited as excluded by the configured
+/// pattern if the same path is analyzed under a nonmatching pattern, which rules
+/// out a naming convention or generator header as the cause.
+#[test]
+fn every_generated_exclusion_is_paired_with_an_analyzed_run_of_the_same_path() -> TestResult {
+    let cases = all_cases();
+    let analyzed: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedNotExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    let excluded: Vec<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    if excluded.is_empty() {
+        return Err("corpus has no generated-exclusion row".to_string());
+    }
+    let unpaired: Vec<&str> = excluded
+        .into_iter()
+        .filter(|path| !analyzed.contains(path))
+        .collect();
+    if unpaired.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "generated exclusions with no analyzed run of the same path: {unpaired:?}"
+        ))
+    }
+}
+
 #[test]
 fn rust_cases_exercise_both_routes_and_the_pilot_reads_an_artifact() -> TestResult {
     let check = case_named("rust-nested-blocks-over-budget.check")?;
@@ -1198,6 +1232,29 @@ mod unix_stubs {
     }
 
     #[test]
+    fn a_flooding_stub_is_an_instrument_failure_naming_the_stream() -> TestResult {
+        let root = scratch("flood")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nhead -c 20000000 /dev/zero\n",
+        )?;
+        let options = stub_options(&root, binary);
+        let packet = build_packet(&options)?;
+        let _ = fs::remove_dir_all(&root);
+        if packet.rows.is_empty()
+            || packet.rows.iter().any(|row| {
+                row.result != RowResult::InstrumentFailure
+                    || !row.detail.contains("stdout exceeds its")
+            })
+        {
+            return Err(
+                "every row of a stdout-flooding binary must be an instrument failure".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_binary_with_the_wrong_digest_is_refused_before_any_row_runs() -> TestResult {
         let root = scratch("digest")?;
         let binary = stub(
@@ -1230,6 +1287,7 @@ mod unix_stubs {
             != [
                 "execution-scrubbed-path",
                 "execution-owned-cwd",
+                "execution-decoy-repository",
                 "execution-stale-artifact",
                 "execution-snapshot-isolation",
                 "execution-cleanup-failure",

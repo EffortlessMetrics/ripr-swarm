@@ -1,3 +1,0 @@
-case = "py-idioms-caplog-level"
-issue = 9424
-reason = "caplog level edit; abstain with a typed limit (#9424)."

@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twelve small authored Python projects under `subjects/`, our own code under
+Twenty small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -82,6 +82,20 @@ The two no-`__all__` star-import cases were labeled under Python 3.12.14 and
 pytest 9.1.1. The public-name edit fails its exact-value assertion; the
 underscore-name edit leaves the tests passing, including the assertion that
 the underscore name is absent from the star-import namespace.
+
+`authored-py-grid-<operator>` (seven subjects: boundary, equality, logical,
+arithmetic, returns, delete, constant) cross each mutation-operator class with
+five test styles (exact pin, parametrized table, property loop, helper-wrapped
+assert, no assertion; returns adds a startswith case for a partial result),
+one function per style. `authored-py-trap-kit` holds false-credit traps, tests
+that look like they check the change but cannot notice it (`if False:`,
+`skip`, non-strict `xfail`, `importorskip` of a missing module, a platform
+guard, a misnamed test, an unused helper, assertions on inputs, an always-true
+tuple assert, a swallowed `AssertionError`, a tautology, a truthy-only assert,
+a patched owner, a swallowing wrapper, an empty parametrize table, a mock
+checked without arguments, a sibling arm), each paired with a control that does
+notice the change. Truth for these comes from running the subject's pytest
+suite on the edit and on every listed mutant.
 
 ## When
 
