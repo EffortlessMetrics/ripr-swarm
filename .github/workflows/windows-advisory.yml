@@ -470,6 +470,14 @@ jobs:
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
                   self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=True), expected)
 
+              def test_recovery_escapes_apostrophes_like_the_formatter(self):
+                  drive = 'Q' + ':'
+                  root = drive + r"\synthetic $O'Brien literal"
+                  diff = root + r'\fixture change.diff'
+                  expected = "ripr check --root '" + drive + "/synthetic $O'\\''Brien literal' --diff '" + drive + "/synthetic $O'\\''Brien literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=True), expected)
+
               def test_posix_recovery_keeps_single_quotes(self):
                   root = '/synthetic-selector-fixture literal'
                   diff = root + '/fixture change.diff'
@@ -1080,8 +1088,8 @@ jobs:
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              quote = lambda p: '"' if windows and not any(c in p for c in '$' + chr(96)) else "'"
-              return f"ripr check --root {quote(paths[0])}{paths[0]}{quote(paths[0])} --diff {quote(paths[1])}{paths[1]}{quote(paths[1])} --json"
+              quote = lambda p: f'"{p}"' if windows and not any(c in p for c in '$' + chr(96)) else "'" + p.replace("'", "'\\''") + "'"
+              return f"ripr check --root {quote(paths[0])} --diff {quote(paths[1])} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
