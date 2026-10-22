@@ -580,6 +580,7 @@ mod tests {
 
     #[test]
     fn repo_root_keeps_absolute_and_anchors_relative_to_cwd() -> Result<(), String> {
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let absolute = unique_dir("repo-root")?;
         if repo_root(&absolute)? != absolute {
             return Err("absolute root must be returned unchanged".to_string());
