@@ -116,9 +116,20 @@ pub(super) fn owner_call_only_inside_opaque_wrapper(text: &str, names: &[String]
     calls > 0 && calls == opaque
 }
 
+/// Single-coroutine runners: they drive one awaitable to completion and
+/// return its result unchanged, so the coroutine's output is still what a
+/// strong comparison sees. Matched on the whole callee: a bare `run(...)` or
+/// `task.run(...)` is any function, not a runner.
+const COROUTINE_RUNNERS: &[&str] = &["asyncio.run", "anyio.run", "trio.run"];
+
 fn is_transparent(callee: &str) -> bool {
     let last = callee.rsplit('.').next().unwrap_or(callee);
     TRANSPARENT_WRAPPERS.contains(&last)
+        || COROUTINE_RUNNERS.contains(&callee)
+        // `loop.run_until_complete(coro)` and `asyncio.get_event_loop()
+        // .run_until_complete(coro)` return the awaited result; the name is
+        // specific enough to match on the method alone.
+        || (callee.contains('.') && last == "run_until_complete")
 }
 
 /// Python keywords that may precede a grouping `(`. They are not callees.

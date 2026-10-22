@@ -634,6 +634,11 @@ id = "RIPR-SPEC-0309"
 scope = "out"
 reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
@@ -787,11 +792,6 @@ reason = "False actionable: bare boolean assert on a predicate owner reads as sm
 case = "ts-grid-boundary-table"
 issue = 9533
 reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
-
-[[known_false]]
-case = "ts-grid-delete-exact"
-issue = 9515
-reason = "False actionable: delete-operator edit with an exact assertion reads as a gap (#9515)."
 
 [[known_false]]
 case = "ts-grid-delete-helper"

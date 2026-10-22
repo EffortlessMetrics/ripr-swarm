@@ -1348,6 +1348,74 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     )
 }
 
+/// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
+/// of an oracle relation reads the updated field from an instance the test
+/// called the owner method on.
+pub(crate) fn ts_field_update_witnessed(
+    change: &FieldUpdateChange,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+) -> bool {
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        if !candidate.relation.uses_oracle()
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        let masked = ts_mask_literals_and_comments(&test.body_text);
+        test.assertions.iter().any(|assertion| {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
+                || !assertion_expected_side_is_pinned(assertion)
+            {
+                return false;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            if assertion_is_self_comparing(assertion, observed) {
+                return false;
+            }
+            // The read inside this assertion's own line of the test body.
+            let Some(relative) = assertion.line.checked_sub(test.line) else {
+                return false;
+            };
+            let line_start: usize = masked
+                .split_inclusive('\n')
+                .take(relative)
+                .map(str::len)
+                .sum();
+            let line_end = masked[line_start..]
+                .find('\n')
+                .map_or(masked.len(), |at| line_start + at);
+            let observed = observed.trim();
+            // A pinned zero or empty value matches the field's initial state, so the
+            // update could be deleted without failing the assertion.
+            if assertion
+                .expected_value_or_variant
+                .as_deref()
+                .is_some_and(|expected| {
+                    matches!(
+                        expected.trim(),
+                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+                    )
+                })
+            {
+                return false;
+            }
+            masked[line_start..line_end]
+                .match_indices(observed)
+                .any(|(at, _)| {
+                    // The assertion observes the field itself, not a derived
+                    // value (`stats.hits - stats.hits`).
+                    ts_field_update_precedes_read(change, &owner.name, &masked, line_start + at)
+                        .is_some_and(|receiver| observed == format!("{receiver}.{}", change.field))
+                })
+        })
+    })
+}
+
 /// RIPR-SPEC-0243 rule 15: whether some strong, pinned, exact-value assertion
 /// of an oracle relation calls the owner with a literal argument that
 /// provably selects the edited arm of the returned conditional.
@@ -1372,6 +1440,22 @@ pub(crate) fn ts_arm_change_witnessed(
             .member_root()
             .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
         {
+            return false;
+        }
+        // A test importing the enum root from a module other than the
+        // owner's names a different enum that may share the root's text.
+        if change.member_root().is_some_and(|root| {
+            test.imports_in_file.iter().any(|import| {
+                import.local == root
+                    && !import_source_matches_owner(
+                        import,
+                        &test.file,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    )
+            })
+        }) {
             return false;
         }
         let receivers =
@@ -5175,10 +5259,19 @@ pub(crate) fn classify_change_with_alias_state(
                 workspace_root,
             )
         });
+    // RIPR-SPEC-0243 decision 18: an update of a field the owner method writes
+    // is a return-value change when a strong exact assertion reads that
+    // field from an instance the test called the method on.
+    let field_update_witnessed = !probe_shape.specific
+        && lookup_change.is_none()
+        && !returns_changed_state
+        && ts_field_update_change(owner, line_text, old_line_text)
+            .is_some_and(|change| ts_field_update_witnessed(&change, owner, &related_candidates));
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
         || loop_bound_witnessed
+        || field_update_witnessed
     {
         TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value)
     } else {
@@ -5460,18 +5553,19 @@ pub(crate) fn classify_change_with_alias_state(
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
-        && ts_changed_value_is_observed(
-            &probe_shape,
-            line_text,
-            owner,
-            &related_candidates,
-            alias_map,
-            workspace_root,
-            CreditFacts {
-                mock_facts: &mock_facts,
-                pin_facts: &pin_facts,
-            },
-        );
+        && (field_update_witnessed
+            || ts_changed_value_is_observed(
+                &probe_shape,
+                line_text,
+                owner,
+                &related_candidates,
+                alias_map,
+                workspace_root,
+                CreditFacts {
+                    mock_facts: &mock_facts,
+                    pin_facts: &pin_facts,
+                },
+            ));
 
     let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
         (
