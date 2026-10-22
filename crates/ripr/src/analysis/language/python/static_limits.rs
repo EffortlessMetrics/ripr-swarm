@@ -915,6 +915,7 @@ mod tests {
             route_paths: Vec::new(),
             dynamic_route_decorators: Vec::new(),
             unplain_decorators: Vec::new(),
+            decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
             star_exported: false,
