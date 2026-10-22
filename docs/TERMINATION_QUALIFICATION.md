@@ -128,6 +128,13 @@ Known gaps against the child issues, each deliberate for this first harness:
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
 - #4510 controls not built: a decoy repository in the caller's directory.
   `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
+- `ripr` words every generated skip the same way, so the harness cannot read an
+  exclusion's cause from the limitation. It attributes the cause by experiment:
+  each excluded path is also run under a nonmatching `generated_file_patterns`
+  and must be analyzed, which rules out a naming convention or generator header
+  as the cause. A test fails if a generated-exclusion row has no such pair. A
+  per-path cause in `ripr`'s output would be a public schema change and is not
+  part of this harness.
 - The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
   and is tested against an inline fixture, not the real DTO.
 - A control passed with `--removal-control` instead of a manifest is bound to
