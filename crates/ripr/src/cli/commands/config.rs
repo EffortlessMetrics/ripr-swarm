@@ -3,7 +3,7 @@
 use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::load_for_root;
-use crate::output::path::display_path;
+use crate::output::path::human_path;
 use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
@@ -57,16 +57,28 @@ fn validate_config(root: &Path) -> Result<String, String> {
     // so the success line names the file that actually governed (#9604).
     match load_for_root(root) {
         Ok(config) => Ok(match &config.source_path {
-            Some(path) => format!("✓ ripr.toml valid ({})", display_path(path)),
+            // `human_path` is the lossless renderer: the escaping display
+            // renderer would rewrite a real `%` or `\` in the filename and
+            // name a file that does not exist (#9604 review).
+            Some(path) => format!("✓ ripr.toml valid ({})", human_path(path)),
             None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
         }),
         // Marker detection can refuse a root that has no config file at all
         // (Python markers in a binary without `lang-python`). That is a
         // setup advisory about a file the user never wrote, not a validation
-        // failure — the command stays green and carries the note.
-        Err(error) if error.starts_with("Python project markers were detected") => Ok(format!(
-            "✓ no ripr.toml found; built-in defaults apply (note: {error})"
-        )),
+        // failure — the command stays green and carries the note. The
+        // discovered-file guard matters: a parse/read error is prefixed with
+        // the file path, which can itself start with this text when a parent
+        // directory is named after the marker sentence; a malformed config
+        // must still fail instead of passing as an advisory (#9604 review).
+        Err(error)
+            if error.starts_with("Python project markers were detected")
+                && !crate::config::config_discovered_for_root(root) =>
+        {
+            Ok(format!(
+                "✓ no ripr.toml found; built-in defaults apply (note: {error})"
+            ))
+        }
         Err(error) => Err(error),
     }
 }
@@ -122,6 +134,76 @@ mod tests {
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         if result? != "✓ no ripr.toml found; built-in defaults apply" {
             return Err("missing configuration returned the wrong success message".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_names_the_discovered_file_losslessly() -> Result<(), String> {
+        // #9604 review: a real `%` in a directory name must survive the
+        // success line. The escaping display renderer would rewrite it and
+        // name a file that does not exist.
+        let root = temp_dir("lossless").join("100%");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"draft\"\ninclude_unchanged_tests = true\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let message = result?;
+        if !message.starts_with("✓ ripr.toml valid (") || !message.contains("100%") {
+            return Err(format!(
+                "the success line must name the discovered file losslessly: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_rejects_a_malformed_config_under_a_marker_named_root() -> Result<(), String> {
+        // #9604 review: loader errors are prefixed with the file path, which
+        // can itself start with the marker sentence when a parent directory
+        // is named after it. The advisory branch must not swallow a real
+        // parse failure.
+        let parent = temp_dir("marker-named-root");
+        let root = parent.join("Python project markers were detected");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join(CONFIG_FILE_NAME), "not = [valid toml\n")
+            .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&parent).map_err(|error| error.to_string())?;
+        result
+            .err()
+            .ok_or_else(|| {
+                "a malformed config must fail even when the root path starts with the marker sentence"
+                    .to_string()
+            })
+            .map(|_| ())
+    }
+
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn validate_carries_python_marker_refusal_as_an_advisory() -> Result<(), String> {
+        // Without `lang-python`, marker detection refuses a marker-only root;
+        // `config validate` downgrades that to a green advisory because the
+        // user never wrote a config file (#9604).
+        let root = temp_dir("python-marker-advisory");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join("pyproject.toml"), "[project]\nname = \"demo\"\n")
+            .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let message = result?;
+        if !message.starts_with("✓ no ripr.toml found; built-in defaults apply (note: Python project markers were detected")
+        {
+            return Err(format!(
+                "marker refusal must stay a green advisory naming the note: {message}"
+            ));
         }
         Ok(())
     }
