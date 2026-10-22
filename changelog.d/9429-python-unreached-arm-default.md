@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python findings no longer read `exposed` for an edit to a `match` arm or a `dict.get(key, default)` fallback that no test input reaches: a wildcard arm only other arms take, or a default only present keys skip, now reads `weakly_exposed`. The `match` subject must be an unrebound parameter and the table one literal dict nothing mutates, otherwise the verdict is unchanged. The derived-observation shape (`cls(...)` read only through `.method()`) is not yet covered (#9429).
