@@ -366,6 +366,18 @@ present, verify command, receipt command, receipt path, receipt state, and
 advisory non-claims.
 Raw finding counts remain supporting evidence.
 
+The generated CI summary's `Changed behavior` value must render as one literal
+Markdown code span for either the start-here or first-useful-action artifact,
+including the latter's `why` fallback. Embedded backticks determine the span's
+delimiter length; they must not be backslash-escaped inside a fixed delimiter.
+Pipes, backslashes, markup-like text, and leading/trailing spaces remain literal.
+This compact projection normalizes LF, CRLF, and CR to spaces after the legacy
+field reader removes trailing LF characters. It does not rewrite the backing
+JSON artifact. The exhaustive text report preserves source lines and tabs and
+spells other terminal controls visibly; check JSON round-trips the original
+source expression, including controls. Neither is replaced by the compact CI
+projection.
+
 ## Outputs
 
 The first-run path should output:

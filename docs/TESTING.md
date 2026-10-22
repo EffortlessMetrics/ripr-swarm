@@ -356,6 +356,14 @@ When changing user-visible output, update or add golden coverage for:
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
 
+CI-summary changed-source escaping has literal render pins in
+`output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
+artifact routes and the `why` fallback. The companion
+`output::json::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls`
+checks the real full-text and JSON renderers with delimiters, whitespace, C0/C1
+controls, bidi formatting, and Unicode. These tests distinguish compact Markdown
+line normalization from the exhaustive source representations (RIPR-SPEC-0051).
+
 ## CI Test Results
 
 The protected routed Rust lane has an intentional dual runner contract:

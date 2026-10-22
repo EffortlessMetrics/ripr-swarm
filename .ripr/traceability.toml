@@ -5311,6 +5311,9 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span",
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal",
+  "crates/ripr/src/output/json/mod.rs::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
@@ -5370,6 +5373,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/src/output/first_pr/freshness.rs",
   "crates/ripr/src/output/first_pr/options.rs",
   "crates/ripr/src/output/first_pr/validation.rs",

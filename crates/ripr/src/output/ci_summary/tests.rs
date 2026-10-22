@@ -473,6 +473,56 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     Ok(())
 }
 
+/// RIPR-SPEC-0051: source delimiters must stay literal in both first-run
+/// artifact routes. Expected spans are literal pins, not the helper under test.
+#[test]
+fn given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span() -> TestResult {
+    for path in [super::START_HERE_JSON, super::FIRST_ACTION_JSON] {
+        let fixture = Fixture::new("changed-behavior")?;
+        for (source, expected) in [
+            ("amount >= limit", "`amount >= limit`"),
+            ("a`b", "``a`b``"),
+            (
+                "format!(\"a`b``c```d | \\path <value>\")",
+                "````format!(\"a`b``c```d | \\path <value>\")````",
+            ),
+            ("`edge`", "`` `edge` ``"),
+            ("  spaced  ", "`   spaced   `"),
+            ("a`b\nc\r\nd\re", "``a`b c d e``"),
+        ] {
+            fixture.json(path, &json!({"selected": {"changed_behavior": source}}))?;
+            let summary = fixture.render(&[])?;
+            let first_run = block(&summary, "#### First-run status");
+            let lines = first_run
+                .lines()
+                .filter(|line| line.starts_with("- Changed behavior: "))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lines,
+                vec![format!("- Changed behavior: {expected}")],
+                "changed behavior from {path}: {source:?}"
+            );
+            // Rendering must not rewrite the backing JSON's original string.
+            let artifact: Value = serde_json::from_slice(&fs::read(fixture.root.join(path))?)?;
+            assert_eq!(artifact["selected"]["changed_behavior"], source);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal() -> TestResult {
+    let fixture = Fixture::new("changed-behavior-fallback")?;
+    fixture.json(
+        super::FIRST_ACTION_JSON,
+        &json!({"why": "compare `a` and ``b``"}),
+    )?;
+    let summary = fixture.render(&[])?;
+    let first_run = block(&summary, "#### First-run status");
+    assert!(first_run.contains("- Changed behavior: ``` compare `a` and ``b`` ```\n"));
+    Ok(())
+}
+
 /// Field values cannot break out of their code span or line.
 #[test]
 fn field_values_are_escaped_into_one_inline_code_span() -> TestResult {

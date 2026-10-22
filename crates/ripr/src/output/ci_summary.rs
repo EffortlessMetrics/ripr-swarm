@@ -6,9 +6,10 @@
 //! same artifacts, so the step is one command. Reads only; it never runs
 //! analysis, edits source, or decides pass/fail.
 //!
-//! Byte parity with the retired shell is the contract: field fallbacks,
-//! `markdown_inline` escaping, `repo_relative` rewriting, and raw report
-//! inclusion follow [`jq`]'s model of what the step printed.
+//! Field fallbacks, `repo_relative` rewriting, and raw report inclusion follow
+//! [`jq`]'s model of what the retired shell printed. Changed-behavior source
+//! snippets use the shared Markdown code-span renderer so source backticks
+//! remain literal; other fields retain the legacy `markdown_inline` spelling.
 
 pub(crate) mod annotations;
 mod jq;
@@ -24,6 +25,7 @@ use crate::output::first_pr::{
     MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
     REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
 };
+use crate::output::markdown::code_span;
 use jq::{Doc, Fail, Q, RepoRelative, captured, inline};
 use serde_json::Value;
 use std::fs;
@@ -294,7 +296,8 @@ impl Summary {
             "unknown",
         ));
         let kind = field(&["selected.kind"], "none");
-        let changed = field(&["selected.changed_behavior"], "not_available");
+        let changed =
+            code_span(&doc.field(&["selected.changed_behavior"], "not_available", "unknown"));
         let evidence = field(
             &["selected.current_evidence_strength", "selected.state"],
             "not_available",
@@ -366,7 +369,7 @@ impl Summary {
         self.line(&format!("- Language: `{language}`"));
         self.line(&format!("- Top gap/no-action: `{kind}`"));
         self.line(&format!("- Repair: `{repair}`"));
-        self.line(&format!("- Changed behavior: `{changed}`"));
+        self.line(&format!("- Changed behavior: {changed}"));
         self.line(&format!("- Current evidence strength: `{evidence}`"));
         self.line(&format!("- Missing discriminator: `{missing}`"));
         self.line(&format!("- Focused proof intent: `{focused}`"));
@@ -394,7 +397,11 @@ impl Summary {
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
         let why = field(&["why"], "not_available");
-        let changed = field(&["selected.changed_behavior", "why"], "not_available");
+        let changed = code_span(&doc.field(
+            &["selected.changed_behavior", "why"],
+            "not_available",
+            "unknown",
+        ));
         let evidence = field(
             &[
                 "selected.current_evidence_strength",
@@ -464,7 +471,7 @@ impl Summary {
         self.line(&format!("- Safe next action: `{action_kind}`"));
         self.line(&format!("- Title: `{title}`"));
         self.line(&format!("- Why: `{why}`"));
-        self.line(&format!("- Changed behavior: `{changed}`"));
+        self.line(&format!("- Changed behavior: {changed}"));
         self.line(&format!("- Current evidence strength: `{evidence}`"));
         self.line(&format!("- Missing discriminator: `{missing}`"));
         self.line(&format!("- Focused proof intent: `{proof}`"));
