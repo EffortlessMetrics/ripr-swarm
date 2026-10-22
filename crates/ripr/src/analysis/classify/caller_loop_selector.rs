@@ -560,11 +560,15 @@ fn assert_operand_hits(test_code: &str, name: &str) -> usize {
             let Some(args) = paren_args(args) else {
                 continue;
             };
-            hits += args
+            let named = args
                 .iter()
                 .take(2)
                 .filter(|arg| arg.trim().trim_start_matches('&').trim() == name)
                 .count();
+            // `assert_eq!(x, x)` compares the collection with itself.
+            if named == 1 {
+                hits += 1;
+            }
         }
     }
     hits
@@ -709,6 +713,7 @@ mod tests {
         let plain = "let seqs = Seq::new(1, 2).collect(); assert_eq!(vec![1], seqs);";
         assert!(collects_and_compares(plain, "Seq"));
         for bad in [
+            "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs, seqs);",
             "let seqs = Seq::new(1, 2).take(1).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);",
             "let seqs = Seq::new(1, 2).map(f).collect::<Vec<_>>(); assert_eq!(seqs, vec![1]);",
             "let seqs = Seq::new(1, 2).collect::<Vec<_>>(); assert_eq!(seqs.len(), 1);",
