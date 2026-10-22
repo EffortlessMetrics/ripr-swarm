@@ -7916,10 +7916,11 @@ fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), Str
     );
     assert_eq!(tests.len(), 1);
     let finding =
-        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests);
-    assert!(finding.is_none_or(|finding| !matches!(
+        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests)
+            .ok_or_else(|| "module-level edit must still produce a finding".to_string())?;
+    assert!(!matches!(
         finding.class,
         ExposureClass::StaticUnknown | ExposureClass::Exposed
-    )));
+    ));
     Ok(())
 }
