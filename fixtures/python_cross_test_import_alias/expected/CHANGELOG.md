@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_cross_test_import_alias (5)
+
+Reason:
+RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
+
+Command:
+`cargo xtask goldens bless python_cross_test_import_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,52 @@
+{
+  "case_id": "ts-grid-returns-exact",
+  "subject_id": "authored-ts-grid-returns",
+  "diff": "cases/ts-grid-returns-exact.diff",
+  "anchor": {
+    "file": "src/returns.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return \"\";",
+        "mutated_line": "return \"\";",
+        "outcome": "tests_failed",
+        "failing_test": "greeting names the person",
+        "equivalence_review": "not equivalent: returns the empty string instead of the computed value"
+      },
+      {
+        "replacement": "return \"xyzzy\";",
+        "mutated_line": "return \"xyzzy\";",
+        "outcome": "tests_failed",
+        "failing_test": "greeting names the person",
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: return value x exact pin on the full greeting.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
