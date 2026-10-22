@@ -107,7 +107,13 @@ read-only and without execution authority (ADR 0022):
   `missing_discriminator`,
   `discriminator_not_populated_for_language`, `static_limitation`,
   `fix_site_not_established`,
-  `fix_site_not_test_surface`). A producer that names its missing
+  `fix_site_not_test_surface`). A fix site on the seam's own production file
+  is not a test surface; it lifts `fix_site_not_test_surface` only when the
+  shared seam validator admitted that seam with exactly that file's one
+  governed inline `#[cfg(test)]` module as the edit target (#5516). The
+  packet then states the module confinement (`inline_test_module`,
+  `must_not_change`) using the same wording as the CLI before phase, and
+  MCP-ready never exceeds `ripr repair`. A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
   `Missing discriminator value:` entry in `missing`) on any class other
   than `weakly_exposed` refuses as `missing_discriminator`; on a
@@ -381,6 +387,12 @@ read-only and without execution authority (ADR 0022):
   `mcp_ready_item_is_the_item_the_cli_repair_gate_admits` — real-stdio
   parity of list, get_gap and prepare readiness against `ripr repair`
   (#8717).
+- `crates/ripr/tests/mcp_stdio.rs`
+  `mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams` and
+  `crates/ripr/src/mcp/gaps.rs::tests::inline_admission_lifts_only_the_matching_non_surface_fix_site`
+  — one governed inline module is repair-ready with the module confinement
+  stated, two candidate modules stay refused, and the lift needs the exact
+  admitted file (#5516).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, vocabulary, instructions, dispatch-edge rejections, and
   pre-refresh typed failures.
