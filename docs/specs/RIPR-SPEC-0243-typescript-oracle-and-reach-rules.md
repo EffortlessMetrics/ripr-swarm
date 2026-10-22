@@ -739,9 +739,43 @@ prove its condition costs an abstention or a gap, never a credit.
    credited when a strong, pinned, exact-value assertion of an oracle
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
-   `null`/`undefined` by equality; a member path only by the same text, and
-   not when the test body rebinds the path's root (`const Level = ...`) or
-   imports it from a module other than the owner's. The
+   `null`/`undefined` by equality. A member path requires the same canonical
+   runtime enum declaration and member, rather than the same local spelling.
+   Named import aliases, bounded named/star re-exports (including an imported
+   local subsequently exported), and `namespace.Enum.Member` retain that
+   identity. The owner may import its enum from a third module. A different
+   export from the owner's own module is a different binding. Missing,
+   unreadable, ambiguous, cyclic, over-deep or mocked provenance credits
+   nothing. Only ordinary enum declarations with statically named members
+   and literal/implicit initializers supply a terminal identity; ambient or
+   const enums and arbitrary member-bearing objects remain unknown.
+   Owner parameter/body shadows, test callback/enclosing/file bindings,
+   root reassignments, member mutation/deletion and root escapes withhold
+   credit. Known mutation or escape through another imported alias of the
+   same enum declaration also withholds credit; a bare call to an unrelated
+   imported function is not an enum mutation. A namespace enum-object read
+   (`levels.Level`) can escape, while a proven scalar member read
+   (`levels.Level.High`) retains identity. Calls through a grouped enum
+   member, including non-null/optional invocation and a tagged template,
+   are possible receiver escapes; cast
+   and generic-call tails also remain unknown. Grouping a scalar member
+   read alone does not withdraw a separate canonical witness. The test check
+   also rejects grouped member updates, assignments and deletion. Whitespace
+   or comments after an optional-call token do not establish read-only use,
+   and optional generic invocation is still invocation. Scalar unary minus,
+   logical not and ordinary comparisons remain reads. Unmasked Unicode-escaped
+   runtime identifiers make stability unknown; escapes confined to strings or
+   comments do not. The test check
+   covers the whole file, including setup hooks. Distinct source files
+   collapsed by extension
+   stripping (for example `constants.ts` and `constants.mts`) make that
+   module's enum identity unknown, even when an import names its extension.
+   A re-export statement supplies an exported binding, never a local import
+   for the owner's condition; owner roots use only actual module imports or
+   declarations. A same-named local object beside a canonical re-export is
+   still an unknown member root.
+   Supported function type annotations and import/export syntax are not
+   runtime escapes. The
    assertion must observe the owner's whole result (not `price(150) > 0`),
    through the owner's name or an import alias, and an expected value that
    provably equals neither the old nor the new arm is dead and credits
@@ -1305,6 +1339,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
   `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
   gap to credited.
+- #9624 canonical member provenance:
+  `crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs`
+  pins exact/renamed/namespace imports, canonical named/star/imported-local
+  re-exports and a third-module owner import against different bindings,
+  missing declarations, scope shadows, mutations and escapes. Its unchanged
+  arm returns the old changed-arm value, so a wrong-binding test can pass both
+  versions without becoming a dead expected-side control. The shared honesty
+  corpus pins a wrong-export negative and a canonical-alias positive.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture

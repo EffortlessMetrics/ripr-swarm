@@ -16722,6 +16722,24 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_scalar_enum_reads_preserve_a_canonical_witness",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::reexports_do_not_invent_local_enum_bindings",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::mutation_through_another_canonical_import_alias_withholds_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::namespace_enum_object_escapes_taint_other_canonical_aliases",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::unrelated_callable_imports_and_scalar_namespace_reads_preserve_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::extension_colliding_modules_cannot_establish_enum_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::canonical_enum_imports_aliases_and_reexports_select_the_edited_arm",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::an_owner_imported_enum_keeps_its_canonical_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_spelling_without_the_same_declaration_never_credits",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_reexports_require_a_real_export_at_every_module",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_imported_local_reexports_share_the_existing_hop_budget",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::mutated_or_escaped_enum_roots_never_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::an_enclosing_scope_enum_shadow_never_credits",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::owner_enum_shadows_and_opaque_declarations_never_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::scalar_edited_arm_witnesses_are_unchanged",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_no_test_input_enters_withdraws_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_some_test_input_can_enter_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::an_else_arm_is_entered_by_the_inputs_that_fail_the_guard",
@@ -16854,6 +16872,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_conditional_credit_disclosure_names_a_line_of_the_file",
 ]
 fixtures = [
+  "fixtures/typescript_enum_wrong_export",
+  "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
   "fixtures/typescript-verdict-corpus",
   "fixtures/javascript_awaited_registration",
@@ -16865,6 +16885,7 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",

@@ -1477,15 +1477,27 @@ pub(crate) fn ts_arm_change_witnessed(
     change: &TernaryArmChange,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
     ts_conditional_call_witnessed(
         &ConditionalCallWitness {
             param_index: change.param_index,
-            member_root: change.member_root(),
             expected_is_dead: &|expected| change.expected_is_dead(expected),
-            selects: &|argument| change.selects_changed_arm(argument),
+            selects: &|argument, test| {
+                change.selects_changed_arm(argument, |test_path, owner_path| {
+                    enum_member_guard::ts_same_enum_member(
+                        test_path,
+                        owner_path,
+                        test,
+                        owner,
+                        reexport_index,
+                        alias_map,
+                        workspace_root,
+                    )
+                })
+            },
         },
         owner,
         candidates,
@@ -1508,9 +1520,8 @@ pub(crate) fn ts_threshold_move_witnessed(
     ts_conditional_call_witnessed(
         &ConditionalCallWitness {
             param_index: change.param_index,
-            member_root: None,
             expected_is_dead: &|expected| change.expected_is_dead(expected),
-            selects: &|argument| change.flips(argument),
+            selects: &|argument, _test| change.flips(argument),
         },
         owner,
         candidates,
@@ -1523,10 +1534,8 @@ pub(crate) fn ts_threshold_move_witnessed(
 /// parameter its call must set, and how a literal argument is judged.
 struct ConditionalCallWitness<'a> {
     param_index: usize,
-    /// The enum root of a member-path operand, which a test may rebind.
-    member_root: Option<&'a str>,
     expected_is_dead: &'a dyn Fn(&str) -> bool,
-    selects: &'a dyn Fn(&str) -> bool,
+    selects: &'a dyn Fn(&str, &TypeScriptTest) -> bool,
 }
 
 fn ts_conditional_call_witnessed(
@@ -1542,30 +1551,6 @@ fn ts_conditional_call_witnessed(
         if !candidate.relation.uses_oracle()
             || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
         {
-            return false;
-        }
-        // A test that rebinds the enum root compares its own constants, not
-        // the owner module's.
-        if witness
-            .member_root
-            .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
-        {
-            return false;
-        }
-        // A test importing the enum root from a module other than the
-        // owner's names a different enum that may share the root's text.
-        if witness.member_root.is_some_and(|root| {
-            test.imports_in_file.iter().any(|import| {
-                import.local == root
-                    && !import_source_matches_owner(
-                        import,
-                        &test.file,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    )
-            })
-        }) {
             return false;
         }
         let receivers =
@@ -1600,7 +1585,7 @@ fn ts_conditional_call_witnessed(
                 substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
             arguments
                 .get(witness.param_index)
-                .is_some_and(|argument| (witness.selects)(argument))
+                .is_some_and(|argument| (witness.selects)(argument, test))
         })
     })
 }
@@ -5374,6 +5359,7 @@ pub(crate) fn classify_change_with_alias_state(
                 &change,
                 owner,
                 &related_candidates,
+                reexport_index,
                 alias_map,
                 workspace_root,
             )
