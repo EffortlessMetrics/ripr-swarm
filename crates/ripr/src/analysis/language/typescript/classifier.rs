@@ -5768,6 +5768,8 @@ struct TsPostLadderContext<'a> {
 /// - #8569: an `exposed` result whose changed line sits under an `if` arm
 ///   that every related test call provably leaves untaken reads
 ///   `weakly_exposed`, because the line never runs under the tests.
+/// - RIPR-SPEC-0246 rule 5: an `exposed` result whose changed line sits in a
+///   `catch` arm that no related test can make run reads `weakly_exposed`.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -5824,6 +5826,17 @@ fn ts_apply_post_ladder_rules(
         verdict.missing = vec![format!(
             "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
             context.owner.name, guard.condition, guard.observed
+        )];
+        return;
+    }
+    // RIPR-SPEC-0246 rule 5: a changed line in a `catch` arm no related test
+    // can make run.
+    if ts_catch_arm_unreached(context) {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` sits inside a `catch` arm, and no related test carries a throwing or rejecting call, so the catch arm is never exercised by the related tests. The changed line never runs under the tests, so no assertion can observe it. Add a test whose call throws or rejects.",
+            context.owner.name
         )];
         return;
     }
@@ -5887,6 +5900,43 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// RIPR-SPEC-0246 rule 5: `true` only when the changed line is located in a
+/// `catch` arm of the owner and every related test is a direct owner call
+/// whose whole file (and imports) show no signal that could throw or reject.
+/// Anything unreadable returns `false` and keeps the ladder verdict.
+fn ts_catch_arm_unreached(context: &TsPostLadderContext<'_>) -> bool {
+    let owner = context.owner;
+    let (Some(source), Some(root)) = (owner.source_text.as_deref(), context.workspace_root) else {
+        return false;
+    };
+    if context.candidates.is_empty()
+        || !super::catch_arm_guard::changed_line_in_catch_arm(
+            source,
+            owner.start_line,
+            context.line,
+            context.line_text,
+        )
+    {
+        return false;
+    }
+    context.candidates.iter().all(|candidate| {
+        let test = candidate.test;
+        matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+        ) && test.mocks_in_file.is_empty()
+            && test.imports_in_file.iter().all(|import| {
+                is_test_framework_source(&import.source)
+                    || import.imported.as_deref() == Some(owner.name.as_str())
+                    || import.local == owner.name
+            })
+            && std::fs::read_to_string(root.join(&test.file))
+                .is_ok_and(|text| !super::catch_arm_guard::may_throw_or_reject(&text))
+    })
 }
 
 /// The guard no related test call enters, and what the tests pass instead.

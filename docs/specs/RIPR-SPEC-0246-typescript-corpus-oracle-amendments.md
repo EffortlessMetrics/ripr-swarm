@@ -205,6 +205,19 @@ discriminator is not established either way, and a stop reason
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.
 
+**Rule 5. A `catch` arm no related test can reach needs a throwing call.**
+(Added 2026-10-22, #9437.) When the changed line is located exactly in the
+owner's source and sits inside a `catch` clause or the body of a function
+passed to `.catch(`, and every related candidate is a direct, aliased or
+imported owner call whose test file has no module mock, imports only the
+owner and test frameworks, and holds no throw-capable text (`reject`,
+`throw`, `error`, `exception`, `fail`, `abort`, `timeout`, `catch`, `boom`,
+compared case-insensitively over the whole file including strings and
+comments), an `exposed` ladder result reads `weakly_exposed`. The missing note
+says the catch arm is never exercised by the related tests. Any piece the
+rule cannot read keeps the ladder result. Rule 5 only removes credit and runs
+after the #8569 unentered-guard rule.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -334,6 +347,12 @@ and the rejected alternative.
     `weakly_exposed`. With an owner that runs `cfg.ok = false` or
     `normalize(cfg)` before the return: the ladder result, `exposed`.
 
+15. `catch { return fallback; }` becomes `catch { return fallback + 1; }`,
+    test `expect(load(async () => 42, 0)).resolves.toBe(42)`:
+    `weakly_exposed`. With a test whose reader throws or rejects
+    (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
+    outside the `catch` arm: the ladder result.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -344,6 +363,9 @@ and the rejected alternative.
   `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
   `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
   and a shadowed-`expect` negative.
+- `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
+  `catch_arm_guard.rs` unit tests pin rule 5 (example 15); corpus case
+  `shape-async-catch-fallback-unexercised` pins the row.
 
 ## Implementation Mapping
 
@@ -362,6 +384,8 @@ and the rejected alternative.
   `ts_owner_call_member_arguments` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
+- `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
+  `classifier.rs`: `ts_catch_arm_unreached` (rule 5).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
