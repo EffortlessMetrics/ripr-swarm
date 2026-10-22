@@ -137,9 +137,9 @@ law above (see Current Rust conformance gaps).
 
 TypeScript (#5495) maps only row-local merged evidence: the owner-path
 disposition (#5523), assertion admission, the family-relevant assertion (#5525)
-and per-row predicate activation (#5527). `weak_assertion` is (weak and smoke only; a medium snapshot or mock oracle keeps no miss) a row whose own
-selected oracle is below strong. `observation_unconfirmed` covers a
-module-entry path, a mocked or spied owner call with an admitted assertion (an
+and per-row predicate activation (#5527). `weak_assertion` is a row whose own selected oracle is weak or smoke (a medium
+snapshot or mock oracle keeps no miss). `observation_unconfirmed` covers a
+mocked or spied owner call with an admitted assertion (an
 unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
 strong assertion of another behavior family, and a strong row whose own
 boundary input misses the pinned boundary or whose changed-sink observation is

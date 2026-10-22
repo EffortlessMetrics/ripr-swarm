@@ -258,7 +258,7 @@ fn medium_mock_expectation_row_is_not_weak_assertion() -> Result<(), String> {
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     let miss = miss_of(&finding, "mock")?;
-    assert_ne!(miss, Some(RelatedTestMiss::WeakAssertion), "{finding:?}");
+    assert_eq!(miss, None, "{finding:?}");
     Ok(())
 }
 
@@ -347,21 +347,19 @@ fn wrong_family_strong_plus_relevant_weak_follows_the_relevant_assertion() -> Re
     Ok(())
 }
 
-/// Module-entry reach is a real path: never `no_call_path`. A strong
-/// entry assertion cannot confirm the owner's effect.
+/// Module-entry reach is a real path: never `no_call_path`. A finding whose
+/// rows are all entry rows is `static_unknown`, so the class gate keeps the
+/// row at no miss; the mapper's entry arm is defensive.
 #[test]
-fn module_entry_row_is_observation_unconfirmed_never_no_call_path() -> Result<(), String> {
+fn module_entry_row_is_static_unknown_with_no_miss() -> Result<(), String> {
     let source = "import { price } from '../src/pricing';\ntest('via entry', () => {\n  expect(price(2)).toBe(4);\n});\n";
-    let finding = classify(&CALC_CHANGE, source)?;
-    weakly(&finding);
     assert_eq!(
         relation_of(&CALC_CHANGE, source, "via entry")?,
         TypeScriptRelationKind::ModuleEntryCall
     );
-    assert_eq!(
-        miss_of(&finding, "via entry")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    let finding = classify(&CALC_CHANGE, source)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+    assert_eq!(miss_of(&finding, "via entry")?, None);
     Ok(())
 }
 
