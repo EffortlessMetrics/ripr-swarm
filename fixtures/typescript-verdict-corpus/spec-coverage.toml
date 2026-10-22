@@ -20,8 +20,12 @@
 # Case ids containing `spec0234` were named before the TypeScript rules were
 # renumbered; they cite today's RIPR-SPEC-0243.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `floor` is the covered-example count `verdict-corpus check` protects. A PR
+# that adds an example does not need to raise it (the `uncovered` assertion in
+# the xtask tests already fails on an example no case cites, and every PR
+# editing the same line conflicts with the others, #9859); raise it in a
+# dedicated change when the gap to the covered count is worth protecting.
+# Lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 131
