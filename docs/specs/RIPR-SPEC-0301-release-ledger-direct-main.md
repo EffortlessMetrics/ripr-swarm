@@ -209,6 +209,35 @@ commit the rule left `blocking_unresolved`. The row keeps
 the rule's disposition in its limitations and carries `override_ref`. A refuted
 rule changes `rule_version` and regenerates; it never edits rows by hand.
 
+## Producing the final ledger
+
+At the frozen cut (`FINAL_SWARM_CUT`, #2768; the cut checklist owns the freeze),
+with the final `policy/release-selection.json` and the completed sample audit
+committed or otherwise retained:
+
+```text
+cargo xtask release-ledger finalize \
+  --cut <full 40-hex FINAL_SWARM_CUT> \
+  --packet policy/release-selection.json \
+  --audit <audit file> \
+  --overrides policy/release-ledger-overrides.json
+```
+
+The command runs four steps and stops at the first failure: `capture` of
+`--base..--cut` with `--main` equal to the cut (the open-PR roster is read at the
+cut, as a final ledger requires), `derive --stage final` with the audit digest
+recorded, a Markdown projection rendered from the same ledger, and `--final`
+validation against the packet, the Markdown and `--manifest` when given.
+`--base` defaults to the pinned 0.11 base. `--cut` must be a full commit id;
+a moving ref such as `origin/main` is rejected. Outputs land in `--outdir`
+(default `target/ripr/release-ledger/final`): `facts.json`, `ledger.json` and
+`ledger.md`; the validation report is written to
+`target/ripr/reports/release-ledger.{json,md}`. Success means a valid final
+ledger: every row has a closed non-blocking disposition and the audit file still
+matches its recorded digest. A `blocking_unresolved` row fails the run; resolve it
+with a reviewed override and rerun, never by editing `ledger.json`. The command
+does not freeze, select, qualify, tag or publish.
+
 ## Required Evidence
 
 One negative control per rule above, each starting from a valid ledger, plus a
@@ -262,7 +291,10 @@ valid-ledger control that yields no reasons.
   `failed_derivation_leaves_an_existing_output_untouched`,
   `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
   `inline_test_only_product_paths_count_as_evidence`.
-- `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
+- `xtask/src/reports/release_ledger/tests.rs`: `finalize_defaults_to_the_pinned_base_and_output_directory`,
+  `finalize_requires_the_frozen_cut_as_a_full_sha`,
+  `finalize_requires_cut_packet_and_audit`,
+  `finalize_rejects_unknown_repeated_and_valueless_flags`; and one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
   `count_consistent_but_wrong_set_is_rejected_by_digest`,
