@@ -159,8 +159,41 @@ Python today.
 Only the test function's own body is read. The walker enters `if`, `for`,
 `while`, `with`, `try`, `try*` and `match` bodies, handlers, `else` and
 `finally`, and `with` item expressions. It does not enter a nested `def`,
-`class` or `lambda`, and it does not follow a helper function. An
+`class` or `lambda`. Apart from the bounded same-file comparison below,
+it does not follow a helper function. An
 `await`ed call is not read.
+
+#### Same-file comparison helpers
+
+A plain top-level test can call a same-file helper whose complete body is
+one comparison assertion, such as `def check_writes(obj, want): assert
+obj.writes == want`. For a direct statement `check_writes(stats, 2)`, the
+adapter reads `assert stats.writes == 2` through the existing assertion
+table and changed-effect alignment gates. It must observe the actual effect
+on the bound receiver and changed field; an owner-name token in another
+comparison supplies no credit. The assertion's line is the call site,
+so a read before the changed owner runs does not observe its later effect.
+
+This bounded form requires a plain, undecorated top-level helper with one
+to four positional parameters, no defaults or variadic parameters, and a
+single comparison between parameters, their direct fields, or literals.
+Call arguments must be bare names or scalar constant expressions, supplied
+positionally. The test must be a plain top-level function with a straight
+line body of imports, simple assignments and eager name, literal, attribute or
+call expressions, with no other statement sharing a helper call's start line.
+Helper and test definitions have no parameter defaults, annotations or type
+parameters, so definition-time or deferred calls cannot supply local effects.
+Imported helpers, rebinding, references to executable code or global namespaces,
+decorators, expression-level branching or deferred execution,
+computed operands, nested helpers and unresolved arguments retain their
+previous classification. This does not add a relation to an owner called
+only inside a helper, or resolve helpers in another file (#9419).
+
+The comparison keeps its ordinary strength: `obj.writes >= want` remains
+weak, and comparing a field with itself is not an exact discriminator.
+An exact comparison on another object or another field cannot observe the
+changed write. The `python_assertion_helper_*` fixtures and the
+`py-grid-delete-helper` corpus row pin these boundaries (#9594).
 
 `assert <expr>`, first match wins:
 
@@ -834,7 +867,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 - No new oracle kind, strength, relation, limit kind or alignment value,
   apart from rule 17's `alignment_reason` token.
-- No helper body resolution, fixture resolution or import graph. Rule
+- No general helper body resolution, fixture resolution or import graph;
+  only the same-file comparison form above is read. Rule
   20 reads one owner-module callee of a single guarded-return shape; it
   is not a general value evaluator.
 - No change to the boundary activation rule, apart from rule 16's offset

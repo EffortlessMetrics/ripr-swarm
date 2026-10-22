@@ -953,8 +953,8 @@ pub(super) fn classify_sink_alignment_prepared(
             && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
             && !assertion_calls_stand_in(unit, owner)
     };
-    // A mock assertion credits only through the effect branch, where it pins
-    // the arguments of the very call the changed line makes.
+    // Mock and instantiated-helper assertions credit only through the effect
+    // branch. A helper cannot borrow a method-name token on an unrelated field.
     let gates_ok = |unit: &AlignmentUnit<'_>| !unit.effect_only && gates_ok(unit);
     // What each related test can read of the changed effect, with its owner
     // identity, is a per-test fact: built once, then checked per assertion.
@@ -1104,7 +1104,7 @@ struct AlignmentUnit<'a> {
     /// The file line the assertion starts on, when it is a source assertion.
     line: Option<usize>,
     kind: OracleKind,
-    /// A mock assertion admitted only to observe a changed call's arguments.
+    /// A mock or instantiated helper admitted only to observe the changed effect.
     effect_only: bool,
 }
 
@@ -1141,7 +1141,7 @@ fn alignment_units<'a>(
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
                     kind: assertion.oracle_kind.clone(),
-                    effect_only: !strong,
+                    effect_only: !strong || assertion.effect_only,
                 })
             }));
         }
