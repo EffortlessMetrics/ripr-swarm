@@ -2438,7 +2438,7 @@ mod tests {
         assert!(markdown.contains("- src/line.rs:3"));
         assert!(markdown.contains("- src/class.rs weakly_gripped"));
         assert!(markdown.contains("- src/path.rs"));
-        // A pathless entry cannot be proven inside the analyzed scope, so it
+        // A pathless entry cannot be placed inside the analyzed scope, so it
         // is never listed as a resolved headline (issue #9301 F2).
         assert!(!markdown.contains("Resolved baseline entries:\n- identity-only"));
     }
