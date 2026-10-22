@@ -1,5 +1,5 @@
 //! A changed line inside a `catch` arm that no related test can reach
-//! (RIPR-SPEC-0246 rule 5, #9437).
+//! (RIPR-SPEC-0246 rule 6, #9437).
 //!
 //! `catch { return fallback; }` runs only when the guarded call throws or
 //! rejects. When no related test file holds any signal that could make a call

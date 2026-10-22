@@ -152,6 +152,16 @@ impl Add for Money {{
     }}
 }}
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tile(pub i64);
+
+impl Add for Tile {{
+    type Output = Tile;
+    fn add(self, other: Tile) -> Tile {{
+        Tile(self.0 + other.0)
+    }}
+}}
+
 #[cfg(test)]
 mod tests {{
     use super::*;
@@ -178,6 +188,62 @@ fn an_operator_impl_reached_through_the_operator_is_withheld() -> Result<(), Str
 }
 
 #[test]
+fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
+    let edit = |lib: &str| -> Result<(usize, String), String> {
+        let line = line_of(lib, "Money(other.0 + self.0)")?;
+        let edit = diff(
+            line,
+            "        Money(self.0 + other.0)",
+            "        Money(other.0 + self.0)",
+        );
+        Ok((line, edit))
+    };
+    for (label, body) in [
+        (
+            "result bound then asserted",
+            "let total = Money(2) + Money(3);\n        assert_eq!(total, Money(5));",
+        ),
+        (
+            "operand from a helper",
+            "fn money(v: i64) -> Money {\n            Money(v)\n        }\n        assert_eq!(money(2) + Money(3), Money(5));",
+        ),
+        (
+            "associated call returning Money",
+            "struct Factory;\n        impl Factory {\n            fn new() -> Money {\n                Money(1)\n            }\n        }\n        let value = Factory::new();\n        assert_eq!(value + Money(1), Money(2));",
+        ),
+        (
+            "closed block shadowing the operand",
+            "let m = Money(1);\n        {\n            let m = Tile(1);\n            let _ = m;\n        }\n        assert_eq!(m + Money(2), Money(3));",
+        ),
+        (
+            "destructured result",
+            "let Money(v) = Money(2) + Money(3);\n        assert_eq!(v, 5);",
+        ),
+        (
+            "reassigned accumulator",
+            "let mut acc = Money(0);\n        acc = acc + Money(1);\n        assert_eq!(acc, Money(1));",
+        ),
+        (
+            "operand rebound by a for loop",
+            "let t = Tile(1);\n        let _ = t;\n        for t in [Money(1)] {\n            assert_eq!(t + Money(2), Money(3));\n        }",
+        ),
+        (
+            "operand rebound by a match arm",
+            "let t = Tile(1);\n        let _ = t;\n        match Some(Money(1)) {\n            Some(t) if true => assert_eq!(t + Money(2), Money(3)),\n            _ => {}\n        }",
+        ),
+        (
+            "operands bound",
+            "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
+        ),
+    ] {
+        let lib = add_source(body);
+        let (line, patch) = edit(&lib)?;
+        withheld(&lib, &patch, line, label)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn an_operator_impl_controls_keep_the_gap() -> Result<(), String> {
     let edit = |lib: &str| -> Result<(usize, String), String> {
         let line = line_of(lib, "Money(other.0 + self.0)")?;
@@ -198,6 +264,25 @@ fn an_operator_impl_controls_keep_the_gap() -> Result<(), String> {
             "wrong operator",
             add_source("assert_eq!(Money(2).0 - Money(3).0, -1);"),
         ),
+        // The type is built and a strong assertion exists, but the operator
+        // is used on integers, so nothing adds a `Money`.
+        (
+            "operator on integers beside an unused Money",
+            add_source("let _unused = Money(0);\n        assert_eq!(1 + 2, 3);"),
+        ),
+        // The operands are bindings of another type.
+        (
+            "operator on a binding of another type",
+            add_source(
+                "let _unused = Money(0);\n        let other = Tile(1);\n        assert_eq!(other + other, Tile(2));",
+            ),
+        ),
+        // The sum is computed and thrown away; the assertion checks nothing
+        // it produced.
+        (
+            "result discarded",
+            add_source("let _ = Money(2) + Money(3);\n        assert_eq!(Money(9).0, 9);"),
+        ),
         // An ignored test never runs.
         (
             "ignored test",
@@ -205,11 +290,18 @@ fn an_operator_impl_controls_keep_the_gap() -> Result<(), String> {
                 .replace("    #[test]\n", "    #[test]\n    #[ignore]\n"),
         ),
     ];
+    let mut failures = Vec::new();
     for (label, lib) in controls {
         let (line, edit) = edit(&lib)?;
-        kept(&lib, &edit, line, label)?;
+        if let Err(message) = kept(&lib, &edit, line, label) {
+            failures.push(message);
+        }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[test]
@@ -340,7 +432,13 @@ fn a_dispatch_shape_that_differs_keeps_its_class() -> Result<(), String> {
     // The test calls `area` but never names `Square`.
     let lib = dispatch_source("let tile = Tile(3);\n        assert_eq!(tile.area(), 9);");
     let (line, patch) = edit(&lib)?;
-    kept(&lib, &patch, line, "never names Square")
+    kept(&lib, &patch, line, "never names Square")?;
+    // The test builds a `Square` but calls `area` on a `Tile`.
+    let lib = dispatch_source(
+        "let _square = Square(3);\n        let tile = Tile(3);\n        assert_eq!(tile.area(), 9);",
+    );
+    let (line, patch) = edit(&lib)?;
+    kept(&lib, &patch, line, "receiver is a Tile")
 }
 
 #[test]

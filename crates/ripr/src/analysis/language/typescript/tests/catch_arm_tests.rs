@@ -1,4 +1,4 @@
-//! #9437 / RIPR-SPEC-0246 rule 5: a changed line in a `catch` arm keeps
+//! #9437 / RIPR-SPEC-0246 rule 6: a changed line in a `catch` arm keeps
 //! `exposed` only when a related test can make the guarded call throw.
 
 use super::*;

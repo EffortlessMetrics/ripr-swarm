@@ -873,6 +873,28 @@ pub(crate) fn capture_bytes_in_dir_with_budget(
     )
 }
 
+/// `capture_bytes_in_dir_with_budget` for a caller that owns the child's
+/// environment. Overflow on either stream is a refusal, not truncated output.
+pub(crate) fn capture_bytes_in_dir_with_env_budget(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    envs: (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (envs, env_remove) = envs;
+    capture_bytes_with_input(
+        program,
+        args,
+        (cwd, None),
+        envs,
+        env_remove,
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
 fn capture_bytes_with_input(
     program: &Path,
     args: &[String],

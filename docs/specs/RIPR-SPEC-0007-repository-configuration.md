@@ -498,6 +498,11 @@ not the symlink spelling.
   pins the probe on an existing sharded entry directory.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories`
   pins the deepened probe inside an existing per-key directory.
+  These three deny-subdirectory tests return early, asserting nothing, on
+  hosts where an `icacls (AD)` deny is not enforced for the test process
+  (hosted Windows runners). The skip line on stderr is visible only with
+  `--nocapture`/`--show-output`; under the hosted invocation the test still
+  reads as an ordinary pass. Until #9688 lands they are not Windows evidence.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::probe_removal_failure_is_reported_not_left_silent`
   pins probe-cleanup failures being reported rather than ignored.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_screen_skips_the_cache_probe_when_the_root_is_missing`

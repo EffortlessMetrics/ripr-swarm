@@ -3581,6 +3581,17 @@ validated by the same identity, commitment and Git-provenance authority as
 and unique gap ids with a non-empty classification, file and line. Movement is
 compared per canonical gap id.
 
+`ripr agent verify --gap-id <canonical gap id>` binds the result to one gap in
+two such snapshots. The gap must be present and not `exposed` in the before
+snapshot and present and `exposed` in the after snapshot. Absence from the
+after snapshot is never closure: a shrunk diff or a moved base also removes a
+gap. On success the verify document gains one additive member,
+`bound_gap` (`gap_id`, `before_classification`, `after_classification`,
+`file`, `line`, `closed: true`); without `--gap-id` the document is unchanged.
+Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
+exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
+an operational error (exit `2`).
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
@@ -18359,7 +18370,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.92",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.93",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19127,7 +19138,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.92",
+      "schema_version": "1.93",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
