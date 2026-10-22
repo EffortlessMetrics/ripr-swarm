@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 const EDIT_MARKER: &str = "\n// ripr dx-scoreboard editor-refresh edit\n";
 
 /// Terminal `ripr/analysisStatus` states; every other state is in flight.
-const TERMINAL_STATES: [&str; 4] = ["succeeded", "failed", "cancelled", "superseded"];
+const TERMINAL_STATES: [&str; 5] = ["succeeded", "failed", "cancelled", "superseded", "stopped"];
 
 /// How long to wait for the opening refresh to start before concluding the
 /// server already held analysis state and scheduled none.
@@ -160,9 +160,12 @@ fn changed_rust_file(checkout: &Path, base: &str) -> Result<Option<PathBuf>, Str
 /// `file://` URI with every byte outside the unreserved set (and `/`)
 /// percent-encoded, so a checkout path holding a space or `#` stays one URI.
 /// A drive-absolute Windows path becomes `file:///C:/dir`, the form the
-/// server's URI parser reads.
+/// server's URI parser reads. A verbatim `\\?\` prefix, which
+/// `canonicalize` adds on Windows, is dropped first: the server refuses
+/// `file:////%3F/C%3A/...` and the row would wait out the whole timeout.
 fn file_uri(path: &Path) -> String {
     let text = path.display().to_string().replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
     let drive = text.as_bytes();
     let drive_absolute = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     let mut uri = String::from("file://");
@@ -320,24 +323,7 @@ impl Session {
             let Some(status) = analysis_status(&message) else {
                 continue;
             };
-            let AnalysisStatus {
-                state,
-                attempt,
-                reason: attempt_reason,
-            } = status;
-            if !TERMINAL_STATES.contains(&state.as_str()) {
-                // Only an attempt started by this phase's own event counts:
-                // an earlier request still in flight must not stand in for it.
-                if attempt_reason.as_deref() == Some(reason) {
-                    current = attempt;
-                }
-                continue;
-            }
-            if attempt.is_some() && attempt == current {
-                if state == "superseded" {
-                    current = None;
-                    continue;
-                }
+            if let Some(state) = settle(status, reason, &mut current) {
                 return Wait::Terminal(state);
             }
         }
@@ -410,6 +396,34 @@ fn analysis_status(message: &Value) -> Option<AnalysisStatus> {
         attempt: text("attempt_id"),
         reason: text("reason"),
     })
+}
+
+/// Fold one status into the wait's view of the attempt it follows. Returns
+/// the terminal state once the followed attempt ends; `superseded` hands
+/// over to the next attempt instead, and a status naming any other attempt
+/// never ends the wait.
+fn settle(status: AnalysisStatus, reason: &str, current: &mut Option<String>) -> Option<String> {
+    let AnalysisStatus {
+        state,
+        attempt,
+        reason: attempt_reason,
+    } = status;
+    if !TERMINAL_STATES.contains(&state.as_str()) {
+        // Only an attempt started by this phase's own event counts: an
+        // earlier request still in flight must not stand in for it.
+        if attempt_reason.as_deref() == Some(reason) {
+            *current = attempt;
+        }
+        return None;
+    }
+    if attempt.is_none() || attempt != *current {
+        return None;
+    }
+    if state == "superseded" {
+        *current = None;
+        return None;
+    }
+    Some(state)
 }
 
 /// The reply a client owes a server-to-client request, or `None` when the
@@ -513,6 +527,71 @@ mod tests {
         assert_eq!(
             file_uri(Path::new(&["C:", "work", "src", "lib.rs"].join("\\"))),
             "file:///C:/work/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn file_uri_drops_the_windows_verbatim_prefix() {
+        assert_eq!(
+            file_uri(Path::new(&[r"\\?\C:", "work", "src", "lib.rs"].join("\\"))),
+            "file:///C:/work/src/lib.rs"
+        );
+    }
+
+    fn status(state: &str, attempt: &str) -> AnalysisStatus {
+        AnalysisStatus {
+            state: state.to_string(),
+            attempt: Some(attempt.to_string()),
+            reason: Some("did_save".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_stopped_attempt_ends_the_wait() {
+        let mut current = None;
+        assert_eq!(
+            settle(status("running", "7"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(
+            settle(status("stopped", "7"), "did_save", &mut current),
+            Some("stopped".to_string())
+        );
+    }
+
+    #[test]
+    fn a_stopped_status_for_an_earlier_attempt_does_not_end_the_wait() {
+        let mut current = None;
+        assert_eq!(
+            settle(status("stopped", "6"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(
+            settle(status("running", "7"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(current.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn a_superseded_attempt_hands_over_to_the_next() {
+        let mut current = None;
+        assert_eq!(
+            settle(status("running", "7"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(
+            settle(status("superseded", "7"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(current, None);
+        assert_eq!(
+            settle(status("running", "8"), "did_save", &mut current),
+            None
+        );
+        assert_eq!(
+            settle(status("succeeded", "8"), "did_save", &mut current),
+            Some("succeeded".to_string())
         );
     }
 
