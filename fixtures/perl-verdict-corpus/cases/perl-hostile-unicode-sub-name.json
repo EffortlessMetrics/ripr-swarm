@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "hostile_unicode_identifier",
-  "hard_case": "The owner and a variable have non-ASCII names under `use utf8`.",
+  "hard_case": "The owner has a non-ASCII name under `use utf8`.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

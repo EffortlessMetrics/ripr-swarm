@@ -2232,7 +2232,15 @@ fn tampered_perl(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
 fn committed_perl_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
     let dir = perl_corpus_dir();
     let corpus = validated_corpus_without_coverage(&dir)?;
-    for library in ["testmore", "test2", "testexception"] {
+    for library in [
+        "testmore",
+        "test2",
+        "testexception",
+        "testdeep",
+        "moose",
+        "idioms",
+        "hostile",
+    ] {
         assert!(
             corpus.subjects.iter().any(|s| s
                 .subject_id
