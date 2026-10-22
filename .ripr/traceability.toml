@@ -5402,6 +5402,7 @@ spec = "docs/specs/RIPR-SPEC-0052-editor-first-pr-packet-projection.md"
 tests = [
   "crates/ripr/src/lsp/tests.rs",
   "editors/vscode/test/suite/extension.test.ts",
+  "editors/vscode/test/suite/first_pr_command_safety.test.ts",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5411,6 +5412,7 @@ code = [
   "editors/vscode/package.json",
   "editors/vscode/src/client.ts",
   "editors/vscode/src/extension.ts",
+  "editors/vscode/src/firstPrProjection.ts",
   "xtask/src/main.rs",
 ]
 outputs = [
