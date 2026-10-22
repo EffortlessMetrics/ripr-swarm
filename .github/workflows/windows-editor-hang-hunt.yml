@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       iterations:
-        description: "Trusted editor journeys per shard (each is capped at 15 minutes)"
+        description: "Trusted editor journeys per shard (1 to 8; each is capped at 15 minutes)"
         required: false
         type: string
         default: "5"
@@ -65,7 +65,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw 'candidate_sha must be a full 40-character commit SHA' }
-          if ($env:ITERATIONS -notmatch '^[1-9][0-9]?$') { throw 'iterations must be 1 to 99' }
+          if ($env:ITERATIONS -notmatch '^[1-8]$') { throw 'iterations must be 1 to 8 (each may wait 15 minutes inside a 150-minute job)' }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "checkout identity mismatch: HEAD=$head candidate_sha=$env:CANDIDATE_SHA" }
 
@@ -111,30 +111,33 @@ jobs:
           $patterns = @(
             '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----',
             '-----BEGIN [A-Z0-9 ]+-----[\s\S]*$',
+            '\A[A-Za-z0-9+/=\s]*-----END [A-Z0-9 ]+-----',
             '-----END [A-Z0-9 ]+-----',
             '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b',
             '\bgithub_pat_[A-Za-z0-9_]{20,}\b',
             'x-access-token:[^@\s]+'
           )
+          function Copy-Redacted([string]$source, [string]$to) {
+            try {
+              $stream = [System.IO.File]::Open($source, 'Open', 'Read', 'ReadWrite,Delete')
+              try {
+                $take = [int][Math]::Min($stream.Length, $cap)
+                $null = $stream.Seek(-$take, 'End')
+                $bytes = New-Object byte[] $take
+                $read = 0
+                while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
+                if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
+              } finally { $stream.Dispose() }
+              $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+              foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
+              New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+              [System.IO.File]::WriteAllText($to, $text)
+            } catch { Write-Host "skipped $source: $_" }
+          }
           function Save-HostLogs([string]$logs, [string]$dest) {
             if (-not (Test-Path $logs)) { return }
             foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
-              try {
-                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite,Delete')
-                try {
-                  $take = [int][Math]::Min($stream.Length, $cap)
-                  $null = $stream.Seek(-$take, 'End')
-                  $bytes = New-Object byte[] $take
-                  $read = 0
-                  while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
-                  if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
-                } finally { $stream.Dispose() }
-                $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-                foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
-                $to = Join-Path $dest $file.FullName.Substring($logs.Length + 1)
-                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
-                [System.IO.File]::WriteAllText($to, $text)
-              } catch { Write-Host "skipped $($file.Name): $_" }
+              Copy-Redacted $file.FullName (Join-Path $dest $file.FullName.Substring($logs.Length + 1))
             }
           }
           $summary = @()
@@ -144,8 +147,10 @@ jobs:
             $env:RIPR_TEST_SERVER_PATH = $env:RIPR_SERVER
             $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'
             $env:RIPR_TEST_ARTIFACT_ROOT = $artifactRoot
-            $out = Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.log"
-            $err = Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.err.log"
+            $rawDir = Join-Path $env:QUAL_TEMP_ROOT 'raw-console'
+            New-Item -ItemType Directory -Force -Path $rawDir | Out-Null
+            $out = Join-Path $rawDir "shard$($env:SHARD)-iter$i.log"
+            $err = Join-Path $rawDir "shard$($env:SHARD)-iter$i.err.log"
             $started = Get-Date
             $p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'test:e2e' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
             $finished = $p.WaitForExit(900000)
@@ -157,15 +162,20 @@ jobs:
               Get-Process | Where-Object { $_.ProcessName -match 'Code|ripr|node|electron' } | Select-Object Id, ProcessName, CPU, WorkingSet64, Responding | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i-processes.json")
             }
             Save-HostLogs (Join-Path $artifactRoot 'vscode-test-user-data\logs') (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i-host-logs")
+            Save-HostLogs (Join-Path $artifactRoot 'vscode-test-user-data\multiroot\logs') (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i-multiroot-host-logs")
             if ($hung) {
               taskkill /T /F /PID $p.Id 2>&1 | Out-Null
               Get-Process | Where-Object { $_.ProcessName -match '^(Code|ripr)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
             }
+            Copy-Redacted $out (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.log")
+            Copy-Redacted $err (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.err.log")
             $exit = if ($hung) { 'hung' } else { $p.ExitCode }
             $summary += [ordered]@{ shard = $env:SHARD; iteration = $i; result = $exit; seconds = [int]((Get-Date) - $started).TotalSeconds }
             Write-Host ("shard {0} iteration {1}: {2} in {3}s" -f $env:SHARD, $i, $exit, [int]((Get-Date) - $started).TotalSeconds)
           }
           $summary | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-summary.json")
+          $bad = @($summary | Where-Object { $_.result -ne 0 })
+          if ($bad.Count -gt 0) { Write-Host "$($bad.Count) of $($summary.Count) iterations failed or hung"; exit 1 }
         env:
           SHARD: ${{ matrix.shard }}
 
