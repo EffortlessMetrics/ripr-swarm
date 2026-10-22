@@ -6,6 +6,10 @@
 //! machinery reads assertions out of a test's own body, so such a test read as
 //! "0 related tests" and abstained.
 //!
+//! Unlike `helper_assertions` (#9419, #9711), this is a same-file,
+//! literal-argument, multi-assert source rewrite that runs first, so
+//! `helper_assertions` then sees no call to resolve.
+//!
 //! This pass rewrites the file's source before extraction: each straight-line
 //! helper-call statement of a plain test becomes the helper's asserts with the
 //! literal arguments substituted, on the same physical line (`;`-joined), so

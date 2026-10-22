@@ -988,6 +988,10 @@ test files, and only when all of these hold; otherwise the call reads as before:
 A helper in another file (#9419), a call under `if`/loop/`with`, a computed
 argument or a helper with control flow stays `no_static_path`.
 
+This differs from `helper_assertions` (#9419, #9711): it is a same-file,
+literal-argument, multi-assert source rewrite that runs first, so
+`helper_assertions` then sees no call to resolve.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python
