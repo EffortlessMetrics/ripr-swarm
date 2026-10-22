@@ -1,3 +1,4 @@
+use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
@@ -98,6 +99,23 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A route decorator edit changes where the handler is registered, which
+    // only a client call to a route observes; a test that calls the function
+    // directly never sees it (#9756).
+    if is_route_decorator_edit(trimmed)
+        && !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: "static_limit decorator_indirection: route registration edit".to_string(),
+            missing: format!(
+                "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
+                owner.qualified_name
+            ),
+        });
+    }
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
@@ -170,7 +188,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
+    if related_candidates_have_opaque_custom_assertion_limit(owner, related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -433,6 +451,14 @@ fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[Pytho
         .iter()
         .any(|import| import.alias == decorator && import.source_module != "functools");
     from_functools && !competing_alias
+}
+
+/// A changed line that is itself a static route decorator (`@app.get("/a")`).
+fn is_route_decorator_edit(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix('@')
+        .and_then(|rest| rest.split('(').next())
+        .is_some_and(is_static_route_decorator)
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
@@ -872,6 +898,7 @@ fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(
+    owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> bool {
@@ -887,6 +914,14 @@ fn related_candidates_have_opaque_custom_assertion_limit(
             .assertions
             .iter()
             .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            // No assertion was read, but the admission scan found assertion-like
+            // code it cannot resolve and the owner is called inside a `lambda`
+            // handed to another call (`logged(lambda: must_equal(f(3), 9))`):
+            // the callback may well assert, so a gap that asks for an assertion
+            // is not honest. A bare call with no assertion keeps its gap.
+            || (candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == PythonAssertionAdmission::Unresolved
+                && owner_called_inside_lambda(&candidate.test.body_text, owner))
         {
             has_opaque_helper = true;
         }
@@ -896,6 +931,33 @@ fn related_candidates_have_opaque_custom_assertion_limit(
     }
 
     has_opaque_helper && !has_known_strong_oracle
+}
+
+/// Whether a line of the test body calls the owner inside a `lambda` body.
+/// Same-line only: a lambda body spanning lines is not read. A `key=lambda`
+/// sort key is inert, a lambda after an odd number of quotes sits in a string,
+/// and the body ends at the first `;`.
+fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
+    body_text.lines().any(|line| {
+        line.match_indices("lambda").any(|(index, _)| {
+            let before = &line[..index];
+            let rest = &line[index + "lambda".len()..];
+            let quotes = before.chars().filter(|ch| matches!(ch, '"' | '\'')).count();
+            before
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+                && rest
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_python_identifier_char(ch))
+                && quotes % 2 == 0
+                && !before.trim_end().ends_with("key=")
+                && rest.split_once(':').is_some_and(|(_, body)| {
+                    body_calls_owner(body.split(';').next().unwrap_or(body), owner)
+                })
+        })
+    })
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
@@ -983,6 +1045,43 @@ pub(super) fn heuristic_only_relation_limit(
     None
 }
 
+/// An equality dunder (`__eq__`, `__ne__`) whose operator entries bind to the
+/// owner but whose related tests credit no assertion (#9421).
+///
+/// An equality method's behavior turns on the operand's type as much as its
+/// value: an `isinstance` guard, a `NotImplemented` fallback or an attribute
+/// read on a foreign operand fails (or answers) by raising or by type, which a
+/// weak `==` / `!=` read cannot tell from the edit. Grading that as a gap
+/// would be a wrong actionable signal when the test does catch the edit
+/// (`assert Money(1) != 1` against a removed type guard), so an uncredited
+/// equality owner abstains. A credited assertion keeps its ordinary verdict.
+pub(super) fn unpinned_equality_dunder_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: bool,
+) -> Option<PythonStaticLimit> {
+    if credited
+        || !matches!(owner.name.as_str(), "__eq__" | "__ne__")
+        || !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ProtocolEntryCall)
+    {
+        return None;
+    }
+    let class = dunder_method_class(owner)?;
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::DynamicDispatch,
+        evidence: format!(
+            "static_limit dynamic_dispatch: equality dunder `{}` is invoked through an operator and no assertion pins its result",
+            owner.qualified_name
+        ),
+        missing: format!(
+            "Static limit `dynamic_dispatch`: `{}` is an equality dunder Python invokes through `==` / `!=` on `{class}` instances; related tests compare instances, but a weak equality read does not establish whether an operand-type guard or fallback path is exercised, so it does not grade this edit as a gap.",
+            owner.qualified_name
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,6 +1129,7 @@ mod tests {
             module_callees: Vec::new(),
             class_path: String::new(),
             term_facts: Default::default(),
+            class_facts: Default::default(),
         }
     }
 

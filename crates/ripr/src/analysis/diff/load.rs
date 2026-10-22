@@ -2066,21 +2066,37 @@ fn run_git_diff_bytes(
         }
     };
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        let hint = if stderr.contains("no merge base") {
+        let raw_stderr = String::from_utf8_lossy(&output.stderr);
+        let raw_stderr = raw_stderr.trim();
+        let hint = if raw_stderr.contains("no merge base") {
             no_merge_base_hint(root, range, git_timeout)
-        } else if stderr.contains("unknown revision or path not in the working tree") {
+        } else if raw_stderr.contains("unknown revision or path not in the working tree") {
             format!(
                 " The range `{}` names a revision Git cannot resolve: HEAD may be unborn or \
                  point at a missing branch, or the base is absent. Check `git rev-parse HEAD` \
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
-        } else if git_stderr_names_object_damage(stderr) {
+        } else if git_stderr_names_object_damage(raw_stderr) {
             format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
-            String::new()
+            // Unclassified failure: name the manual probe so the reader is not
+            // left with raw git output and no next step (#9604 batch E).
+            format!(
+                ". Re-run `git -C {} diff {range}` to see Git's full error.",
+                crate::terminal_text::terminal_safe(root.display().to_string())
+            )
+        };
+        // Bound and escape the displayed stderr: it is user-visible, and an
+        // unbounded raw dump can flood the terminal (same cap family as
+        // `git_reason_line` below).
+        let escaped = crate::terminal_text::terminal_safe(raw_stderr.to_string());
+        let stderr = if escaped.chars().count() <= GIT_REASON_MAX_CHARS {
+            escaped
+        } else {
+            let mut bounded: String = escaped.chars().take(GIT_REASON_MAX_CHARS).collect();
+            bounded.push('…');
+            bounded
         };
         return Err(format!("git diff failed: {stderr}{hint}").into());
     }
@@ -3469,6 +3485,41 @@ mod tests {
         assert!(
             top.contains("+++ b/crates/core/src/lib.rs") && top.contains("+++ b/other.rs"),
             "the repository top level keeps every path: {top}"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn unclassified_git_diff_failure_names_the_manual_probe() -> std::io::Result<()> {
+        // `diff.renames` is validated only when git runs diff, so the failure
+        // classifies no hint branch; the message must stay prefixed and name
+        // the manual probe instead of leaving raw stderr as the only text
+        // (#9604 batch E).
+        let dir = unique_fixture_root("unclassified-diff-tail")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base"])?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 >= 0 }\n")?;
+        run_git_checked(&dir, &["commit", "-am", "change"])?;
+        run_git_checked(&dir, &["config", "diff.renames", "not-a-boolean"])?;
+
+        let err = load_diff(&dir, Some("HEAD~1"), None, None)
+            .expect_err("a diff-time config failure must surface");
+        assert!(
+            err.starts_with("git diff failed:"),
+            "the consumer-facing prefix must stay intact, got: {err}"
+        );
+        assert!(
+            err.contains("Re-run `git -C ") && err.contains("to see Git's full error"),
+            "an unclassified failure must name the manual probe, got: {err}"
+        );
+        assert!(
+            !err.contains("not-a-boolean") || err.chars().count() < 1200,
+            "the displayed stderr must stay bounded, got {len} chars",
+            len = err.chars().count()
         );
         ignore_remove_dir_all(&dir);
         Ok(())

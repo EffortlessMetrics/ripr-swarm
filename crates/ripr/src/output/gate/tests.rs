@@ -5411,3 +5411,23 @@ fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Res
     assert!(reason.contains("not parsed"), "{reason}");
     Ok(())
 }
+
+#[test]
+fn gate_and_baseline_fallback_identities_normalize_paths_identically() {
+    for path in [
+        "src/a/B.rs",
+        "src\\a\\B.rs",
+        "./src/a/B.rs",
+        ".\\src\\a\\B.rs",
+    ] {
+        let gate = fallback_identity_for(Some(path), Some(7), Some("weakly_gripped"));
+        let baseline =
+            crate::output::baseline::fallback_identity(Some(path), Some(7), Some("weakly_gripped"));
+        assert_eq!(gate, baseline, "{path}");
+        assert_eq!(gate.as_deref(), Some("src/a/B.rs:7:weakly_gripped"));
+    }
+    assert_eq!(
+        fallback_identity_for(Some("./a.rs"), Some(1), None).as_deref(),
+        Some("a.rs:1:unknown")
+    );
+}

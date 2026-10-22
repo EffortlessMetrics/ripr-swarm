@@ -71,12 +71,14 @@ mod deleted_lines;
 mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
+mod enum_member_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_eval;
 mod literal_matcher_guard;
 mod lookup_table_guard;
 mod loop_bound_guard;
@@ -101,6 +103,7 @@ pub(crate) use package::detect_framework_for_root;
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_rows;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -132,6 +135,7 @@ mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod rethrow_wrapper;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]

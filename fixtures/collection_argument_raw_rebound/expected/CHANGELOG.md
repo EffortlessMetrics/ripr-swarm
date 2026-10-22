@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — collection_argument_raw_rebound (8)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless collection_argument_raw_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

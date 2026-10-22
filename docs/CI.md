@@ -2294,6 +2294,21 @@ on a `dependabot/` branch without the template claim lines: the claim is this
 dependency policy and the acceptance delta is the update branch. Any other PR
 still has to state its own claim.
 
+A security update that bumps a lockfile inside a blind-journey installed
+fixture (`fixtures/blind_journey_installed_*`) trips the fixture bindings: file
+digests, snapshot commit/tree ids and the scripted corpus's candidate
+identities are all recorded. Check out the update branch and run
+`cargo xtask fixtures refresh-identity <typescript|python>`. It re-derives the
+digests from the bytes, the ids from the manifest's own `construction_recipe`
+(the rebuild `check-fixture-contracts` verifies with), rebinds the same ids in
+`fixtures/blind_journey_execute/corpus.json`, and moves the TypeScript
+`runner_identity` to the vitest version the head lockfile selects. It refuses
+to add or drop a bound file and does not touch prose. It lists the lines that
+still name the old runner version; those, the frozen transcripts and the
+journeys themselves are re-checked by hand under the new runner
+(`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
+before the update lands.
+
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
