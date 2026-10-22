@@ -388,46 +388,122 @@ fn is_windows_console_form(command: &str) -> bool {
     !in_double
 }
 
+/// The executable that must produce a regenerated artifact: the running
+/// binary, so a stale `ripr` earlier on `PATH` cannot satisfy the recovery
+/// (#9500). `None` only when the OS cannot name the running executable; the
+/// recovery then falls back to bare `ripr` and says so.
+fn running_executable() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| existing_executable_path(&path))
+}
+
+/// The path as text only while it still names a file. Linux reports a binary
+/// replaced under a long-lived process (LSP, MCP) as `/path/ripr (deleted)`,
+/// which a recovery command must not name (#9665 item 1).
+fn existing_executable_path(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    path.to_str().map(ToString::to_string)
+}
+
+/// Rendered regeneration guidance shared by every refusal that tells the
+/// caller to regenerate a repo-exposure artifact (#9500): the legacy
+/// no-envelope diagnosis and the foreign-producer-version diagnosis.
+fn repo_exposure_regeneration_guidance(root: &Path) -> String {
+    regeneration_guidance_for(root, running_executable())
+}
+
+fn regeneration_guidance_for(root: &Path, program: Option<String>) -> String {
+    let bash_recovery = super::loop_commands::check_repo_exposure_command_with_program_and_base(
+        program.as_deref().unwrap_or("ripr"),
+        &super::loop_commands::bound_root(&root.to_string_lossy()),
+        None,
+        "draft",
+        "recovered.repo-exposure.json",
+    );
+    // Host-aware first-form label (#7729): off Windows the recovery
+    // command is bash source; on Windows it is double-quoted for the
+    // Windows console, so naming it "Bash" would be false. #8152
+    // review: a command with single-quoted segments (`$`/backtick
+    // values, or the printf escape segments of control characters)
+    // is literal in Git Bash and PowerShell but not cmd.exe, so the
+    // label must not advertise cmd.exe for it.
+    let first_form = if cfg!(windows) {
+        if is_windows_console_form(&bash_recovery) {
+            "cmd.exe"
+        } else {
+            "Git Bash/PowerShell"
+        }
+    } else {
+        "Bash/Git Bash"
+    };
+    let recovery = match crate::output::markdown::powershell_command(&bash_recovery) {
+        Some(powershell) => {
+            format!("{first_form}: `{bash_recovery}`; PowerShell: `{powershell}`")
+        }
+        None => format!("{first_form} only: `{bash_recovery}` (PowerShell recovery unavailable)"),
+    };
+    // The command names the running binary, so a stale PATH `ripr` cannot
+    // re-produce the refused artifact (#9500). When the OS cannot name it,
+    // the fallback is bare `ripr` and the caller is told how to check it.
+    let binding = if program.is_some() {
+        format!(
+            "The command runs the executable that issued this refusal ({}).",
+            crate::build_identity::version_line()
+        )
+    } else {
+        format!(
+            "The running executable could not be named, so the command uses `ripr` from PATH; confirm `ripr --version` prints `{}` before running it.",
+            crate::build_identity::version_line()
+        )
+    };
+    format!("{recovery}. {binding}")
+}
+
+/// Subject label for the before snapshot retained by a repair attempt.
+pub(crate) const RETAINED_BEFORE_SUBJECT: &str = "repair attempt before";
+
+/// What to do about an unacceptable repo-exposure input. A retained before
+/// snapshot is historical evidence: regenerating at the current tree would
+/// not reproduce it and replacing it would break the attempt's commitment, so
+/// the advice is to start a new attempt instead (#9665 item 3).
+fn recovery_advice(root: &Path, subject: &str) -> String {
+    if subject == format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact") {
+        return "This is the before snapshot retained by a repair attempt, so regenerating at the current tree would not reproduce it and it must not be replaced. Start a new repair attempt with the current installed RIPR executable".to_string();
+    }
+    format!(
+        "Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact",
+        repo_exposure_regeneration_guidance(root)
+    )
+}
+
+fn legacy_repo_exposure_refusal(root: &Path, subject: &str) -> String {
+    format!(
+        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. {}; the legacy artifact was not accepted",
+        env!("CARGO_PKG_VERSION"),
+        recovery_advice(root, subject),
+    )
+}
+
+fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> String {
+    format!(
+        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). {}; the foreign-producer artifact was not accepted",
+        env!("CARGO_PKG_VERSION"),
+        recovery_advice(root, subject),
+    )
+}
+
 pub(crate) fn validate_repo_exposure_artifact(
     root: &Path,
     raw: &str,
     label: &str,
 ) -> Result<ValidatedArtifact, String> {
+    let subject = format!("agent verify {label} artifact");
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
         if is_unversioned_repo_exposure(raw) {
-            let bash_recovery = super::loop_commands::check_repo_exposure_command(
-                &super::loop_commands::bound_root(&root.to_string_lossy()),
-                "draft",
-                "recovered.repo-exposure.json",
-            );
-            // Host-aware first-form label (#7729): off Windows the recovery
-            // command is bash source; on Windows it is double-quoted for the
-            // Windows console, so naming it "Bash" would be false. #8152
-            // review: a command with single-quoted segments (`$`/backtick
-            // values, or the printf escape segments of control characters)
-            // is literal in Git Bash and PowerShell but not cmd.exe, so the
-            // label must not advertise cmd.exe for it.
-            let first_form = if cfg!(windows) {
-                if is_windows_console_form(&bash_recovery) {
-                    "cmd.exe"
-                } else {
-                    "Git Bash/PowerShell"
-                }
-            } else {
-                "Bash/Git Bash"
-            };
-            let recovery = match crate::output::markdown::powershell_command(&bash_recovery) {
-                Some(powershell) => {
-                    format!("{first_form}: `{bash_recovery}`; PowerShell: `{powershell}`")
-                }
-                None => format!(
-                    "{first_form} only: `{bash_recovery}` (PowerShell recovery unavailable)"
-                ),
-            };
-            return format!(
-                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {recovery}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
-                env!("CARGO_PKG_VERSION")
-            );
+            return legacy_repo_exposure_refusal(root, &subject);
         }
         format!("agent verify {label} artifact is not a canonical repo-exposure artifact: {err}")
     })?;
@@ -563,6 +639,86 @@ pub(crate) fn validate_check_findings_artifact(
     Ok(ValidatedCheckFindings { artifact, gaps })
 }
 
+/// Prefix of every typed refusal from [`evaluate_gap_closure`]; the CLI maps
+/// a message with this prefix to the decision exit code rather than a failure.
+pub(crate) const GAP_BINDING_REFUSAL_PREFIX: &str = "agent verify gap binding refused";
+
+/// The classification a gap reads when the checked test discriminates it.
+const GAP_CLOSED_CLASSIFICATION: &str = "exposed";
+
+/// One named gap, closed between a validated before and after findings
+/// artifact: open in `before_classification`, `exposed` in the after artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GapClosure {
+    pub(crate) gap_id: String,
+    pub(crate) before_classification: String,
+    pub(crate) after_classification: String,
+    pub(crate) file: String,
+    pub(crate) line: u64,
+}
+
+/// Decide whether the named gap closed between two validated findings
+/// artifacts. Closure is positive evidence only: the gap must be present and
+/// open in the before artifact and present and `exposed` in the after
+/// artifact. Absence from the after artifact is never closure, because a
+/// shrunk diff or a moved base also removes a gap (RIPR-SPEC-0310).
+pub(crate) fn evaluate_gap_closure(
+    gap_id: &str,
+    before: &[CheckFindingsGap],
+    after: &[CheckFindingsGap],
+) -> Result<GapClosure, String> {
+    let refuse = |reason: String| format!("{GAP_BINDING_REFUSAL_PREFIX}: gap `{gap_id}` {reason}");
+    let find = |gaps: &[CheckFindingsGap]| gaps.iter().find(|gap| gap.gap_id == gap_id).cloned();
+    let Some(before_gap) = find(before) else {
+        return Err(refuse("is absent from the before artifact".to_string()));
+    };
+    if before_gap.classification == GAP_CLOSED_CLASSIFICATION {
+        return Err(refuse(format!(
+            "already reads `{GAP_CLOSED_CLASSIFICATION}` in the before artifact, so there is nothing to close"
+        )));
+    }
+    let Some(after_gap) = find(after) else {
+        return Err(refuse(
+            "is absent from the after artifact; absence is not closure evidence, because a shrunk diff or a moved base also removes a gap"
+                .to_string(),
+        ));
+    };
+    if after_gap.classification != GAP_CLOSED_CLASSIFICATION {
+        return Err(refuse(format!(
+            "still reads `{}` in the after artifact",
+            after_gap.classification
+        )));
+    }
+    Ok(GapClosure {
+        gap_id: gap_id.to_string(),
+        before_classification: before_gap.classification,
+        after_classification: after_gap.classification,
+        file: after_gap.file,
+        line: after_gap.line,
+    })
+}
+
+/// The gap-bound half of `agent verify --gap-id`: both snapshots must be
+/// `check-findings-json` artifacts (a repo-exposure snapshot has no gaps to
+/// bind), validated by the same authority as the unbound path.
+pub(crate) fn verify_gap_closure(
+    root: &Path,
+    before_raw: &str,
+    after_raw: &str,
+    gap_id: &str,
+) -> Result<GapClosure, String> {
+    for (raw, label) in [(before_raw, "before"), (after_raw, "after")] {
+        if declared_artifact_kind(raw).as_deref() != Some("check_findings") {
+            return Err(format!(
+                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one"
+            ));
+        }
+    }
+    let before = validate_check_findings_artifact(root, before_raw, "before")?;
+    let after = validate_check_findings_artifact(root, after_raw, "after")?;
+    evaluate_gap_closure(gap_id, &before.gaps, &after.gaps)
+}
+
 /// A run that analyzed only a partition of the diff, or disclosed any run
 /// limitation, cannot show a gap's absence as closure: the gap may sit in the
 /// part that was not analyzed.
@@ -643,6 +799,7 @@ fn validate_artifact_identity(
     identity: ArtifactIdentity,
     spec: &ArtifactIdentitySpec,
 ) -> Result<ValidatedArtifact, String> {
+    let subject = format!("agent verify {label} artifact");
     if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
@@ -660,6 +817,18 @@ fn validate_artifact_identity(
     {
         return Err(format!(
             "agent verify {label} artifact has invalid or unknown producer identity"
+        ));
+    }
+    // #9500: the envelope's producer version must be this executable's. A
+    // forged or foreign version used to pass because only non-emptiness and
+    // before/after equality were checked. Fail closed on any other version
+    // (conservative: an artifact from another RIPR build, even a patch
+    // release, is regenerated rather than trusted).
+    if identity.producer.version != env!("CARGO_PKG_VERSION") {
+        return Err(foreign_producer_refusal(
+            root,
+            &subject,
+            &identity.producer.version,
         ));
     }
     // #7369: a present stamp must carry the same `unix_ms:` millisecond
@@ -1644,6 +1813,88 @@ mod tests {
         })
     }
 
+    fn gap(id: &str, classification: &str) -> CheckFindingsGap {
+        CheckFindingsGap {
+            gap_id: id.to_string(),
+            classification: classification.to_string(),
+            file: "src/pricing.ts".to_string(),
+            line: 7,
+        }
+    }
+
+    #[test]
+    fn gap_closure_requires_the_gap_open_before_and_exposed_after() -> Result<(), String> {
+        let closed = evaluate_gap_closure(
+            "gap:a",
+            &[
+                gap("gap:a", "weakly_exposed"),
+                gap("gap:b", "weakly_exposed"),
+            ],
+            &[gap("gap:a", "exposed"), gap("gap:b", "weakly_exposed")],
+        )?;
+        assert_eq!(closed.before_classification, "weakly_exposed");
+        assert_eq!(closed.after_classification, "exposed");
+        assert_eq!((closed.file.as_str(), closed.line), ("src/pricing.ts", 7));
+        Ok(())
+    }
+
+    #[test]
+    fn gap_binding_over_a_non_findings_snapshot_is_operational_not_a_typed_refusal() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+                .to_string())
+        );
+        assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
+    }
+
+    #[test]
+    fn gap_closure_refuses_absence_other_gaps_and_unmoved_classes() -> Result<(), String> {
+        let open = [gap("gap:a", "weakly_exposed")];
+        let refusals = [
+            (
+                "absent before",
+                evaluate_gap_closure("gap:a", &[], &[gap("gap:a", "exposed")]),
+                "is absent from the before artifact",
+            ),
+            (
+                "already exposed before",
+                evaluate_gap_closure("gap:a", &[gap("gap:a", "exposed")], &open),
+                "nothing to close",
+            ),
+            (
+                "absent after (shrunk diff)",
+                evaluate_gap_closure("gap:a", &open, &[]),
+                "absence is not closure evidence",
+            ),
+            (
+                "a different gap closed instead",
+                evaluate_gap_closure("gap:a", &open, &[gap("gap:b", "exposed")]),
+                "is absent from the after artifact",
+            ),
+            (
+                "still open after",
+                evaluate_gap_closure("gap:a", &open, &[gap("gap:a", "reachable_unrevealed")]),
+                "still reads `reachable_unrevealed`",
+            ),
+        ];
+        for (case, result, expected) in refusals {
+            let Err(error) = result else {
+                return Err(format!("{case}: accepted"));
+            };
+            if !error.starts_with(GAP_BINDING_REFUSAL_PREFIX) || !error.contains(expected) {
+                return Err(format!("{case}: unexpected refusal `{error}`"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_findings_gaps_key_typescript_findings_by_derived_gap_id() -> Result<(), String> {
         let (outcome, findings) = findings_fixture(serde_json::json!({
@@ -1755,17 +2006,28 @@ mod tests {
         assert!(!is_windows_console_form("ripr check --root \"unbalanced"));
     }
 
+    /// The recovery command production renders: the running binary (#9500),
+    /// built from the same command owner with the same root binding.
+    fn expected_recovery_command(root: &str) -> Result<String, String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        Ok(
+            super::super::loop_commands::check_repo_exposure_command_with_program_and_base(
+                &exe.to_string_lossy(),
+                &super::super::loop_commands::bound_root(root),
+                None,
+                "draft",
+                "recovered.repo-exposure.json",
+            ),
+        )
+    }
+
     #[test]
     fn legacy_repo_exposure_has_actionable_rooted_recovery() -> Result<(), String> {
         // Released v0.10.0 (c08d474a) renders schema 0.3, scope repo and
         // seams, without the later producer-owned artifact envelope.
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
         let root = Path::new("selected root");
-        let expected = super::super::loop_commands::check_repo_exposure_command(
-            &super::super::loop_commands::bound_root("selected root"),
-            "draft",
-            "recovered.repo-exposure.json",
-        );
+        let expected = expected_recovery_command("selected root")?;
         let error = validate_repo_exposure_artifact(root, raw, "before")
             .err()
             .ok_or("legacy artifact was accepted")?;
@@ -1785,22 +2047,140 @@ mod tests {
         Ok(())
     }
 
+    /// #9500 (b): the recovery command must run the binary that issued the
+    /// refusal, not whatever `ripr` wins `PATH` resolution (a stale PATH
+    /// binary re-produces the same legacy artifact and loops).
+    #[test]
+    fn legacy_recovery_command_names_the_running_executable_not_bare_ripr() -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let error = validate_repo_exposure_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("legacy artifact was accepted")?;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = super::super::loop_commands::shell_arg(&exe.to_string_lossy());
+        if !error.contains(&format!("{exe} check --root")) {
+            return Err(format!("recovery does not run the running binary: {error}"));
+        }
+        if error.contains("`ripr check --root") {
+            return Err(format!("recovery is a bare PATH `ripr`: {error}"));
+        }
+        if !error.contains(&crate::build_identity::version_line()) {
+            return Err(format!("recovery omitted the executable identity: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_or_missing_executable_path_is_never_named_in_recovery() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        if existing_executable_path(&exe).is_none() {
+            return Err("the running test binary was not reported as an existing file".to_string());
+        }
+        let mut deleted = exe.clone().into_os_string();
+        deleted.push(" (deleted)");
+        let deleted = PathBuf::from(deleted);
+        if existing_executable_path(&deleted).is_some() {
+            return Err("a `(deleted)` executable path was accepted".to_string());
+        }
+        let guidance = regeneration_guidance_for(Path::new("."), None);
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "fallback is not bare `ripr` with the version check: {guidance}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The production path (`running_executable` into the regeneration
+    /// guidance) under the real Linux stimulus: a process whose executable was
+    /// unlinked reports `current_exe()` as `/path (deleted)` (#9665 item 1).
+    /// The test re-runs itself as a copied, self-unlinking child so the parent
+    /// binary stays intact; the child writes the guidance it rendered.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_running_executable_renders_bare_ripr_through_production_path() -> Result<(), String>
+    {
+        const CHILD_OUT: &str = "RIPR_TEST_UNLINKED_EXE_OUT";
+        if let Ok(out) = std::env::var(CHILD_OUT) {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
+            let guidance = repo_exposure_regeneration_guidance(Path::new("."));
+            return std::fs::write(out, guidance).map_err(|e| e.to_string());
+        }
+        let dir = std::env::temp_dir().join(format!("ripr-unlinked-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let copy = dir.join("ripr-lib-test-copy");
+        let out = dir.join("guidance.txt");
+        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &copy)
+            .map_err(|e| e.to_string())?;
+        let status = std::process::Command::new(&copy)
+            .args([
+                "--exact",
+                "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
+                "--test-threads=1",
+            ])
+            .env(CHILD_OUT, &out)
+            .status()
+            .map_err(|e| e.to_string())?;
+        let guidance = std::fs::read_to_string(&out).map_err(|e| format!("no child output: {e}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        if !status.success() {
+            return Err(format!("child test run failed: {status}"));
+        }
+        let guidance = guidance?;
+        if guidance.contains("(deleted)") {
+            return Err(format!("recovery names a deleted executable: {guidance}"));
+        }
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "no bare-ripr fallback with version check: {guidance}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn legacy_recovery_binds_relative_root_and_does_not_invent_label_flags() -> Result<(), String> {
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
-        let bound = super::super::loop_commands::bound_root("selected root");
-        let expected = super::super::loop_commands::check_repo_exposure_command(
-            &bound,
-            "draft",
-            "recovered.repo-exposure.json",
-        );
-        for label in ["receipt before", "repair attempt before", "packet input"] {
+        let expected = expected_recovery_command("selected root")?;
+        for label in ["receipt before", "packet input"] {
             let error = validate_repo_exposure_artifact(Path::new("selected root"), raw, label)
                 .err()
                 .ok_or("legacy artifact was accepted")?;
             if !error.contains(&expected) || error.contains(&format!("--{label}")) {
                 return Err(format!("invalid rooted/shared-consumer recovery: {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_before_snapshot_refusal_advises_a_new_attempt_not_regeneration()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let legacy = validate_repo_exposure_artifact(Path::new("."), raw, RETAINED_BEFORE_SUBJECT)
+            .err()
+            .ok_or("legacy retained snapshot was accepted")?;
+        let foreign = foreign_producer_refusal(
+            Path::new("."),
+            &format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact"),
+            "0.10.9",
+        );
+        for (kind, error) in [("legacy", legacy), ("foreign", foreign)] {
+            if !error.contains("Start a new repair attempt")
+                || !error.contains("must not be replaced")
+                || error.contains("Regenerate with")
+                || error.contains("Replace this input")
+            {
+                return Err(format!("{kind} retained-snapshot advice is lossy: {error}"));
+            }
+        }
+        // Other subjects keep the regeneration advice.
+        let other = foreign_producer_refusal(Path::new("."), "after", "0.10.9");
+        if !other.contains("Regenerate with the current installed RIPR executable") {
+            return Err(format!(
+                "non-retained subject lost regeneration advice: {other}"
+            ));
         }
         Ok(())
     }
@@ -1838,11 +2218,7 @@ mod tests {
         // host's quoting form (#7729: single-quoted off Windows, double-quoted
         // on it), so the expectation comes from the same builders production
         // uses rather than a hardcoded quote character.
-        let expected_form = crate::agent::loop_commands::check_repo_exposure_command(
-            &crate::agent::loop_commands::bound_root("selected's $root"),
-            "draft",
-            "recovered.repo-exposure.json",
-        );
+        let expected_form = expected_recovery_command("selected's $root")?;
         if !error.contains(&expected_form) {
             return Err(format!(
                 "shell-labeled literal recovery omitted the rendered form {expected_form:?}: {error}"
@@ -4370,6 +4746,90 @@ mod tests {
                         "well-formed identity with a stale snapshot must be rejected by the snapshot check, not accepted"
                             .to_string(),
                     );
+                }
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    /// #9500 (c): a self-consistent envelope (content commitment recomputed)
+    /// whose `producer.version` is not this executable's used to pass
+    /// validation. It must be refused, while the genuine producer version
+    /// still validates (positive control).
+    #[test]
+    fn repo_exposure_validation_rejects_forged_producer_version() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            let genuine = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["producer"]["version"] = json!(env!("CARGO_PKG_VERSION"));
+            })?;
+            if let Err(error) = genuine {
+                return Err(format!("genuine producer version must validate: {error}"));
+            }
+            for forged in ["0.10.9", "99.0.0", "0.11.0-forged"] {
+                let mutated = validate_mutated_identity(&root, &document, |document| {
+                    document["artifact"]["producer"]["version"] = json!(forged);
+                })?;
+                match mutated {
+                    Err(error)
+                        if error.contains(&format!("produced by RIPR {forged}"))
+                            && error.contains(env!("CARGO_PKG_VERSION")) => {}
+                    Err(error) => {
+                        return Err(format!("forged {forged}: unexpected rejection: {error}"));
+                    }
+                    Ok(_) => {
+                        return Err(format!("forged producer version {forged} was accepted"));
+                    }
+                }
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    /// #9665: rewriting `producer.tool` is refused by the producer-identity
+    /// gate whether or not the version is also forged, and that gate runs
+    /// before the version-equality gate. A genuine version under a foreign
+    /// tool is therefore not accepted, and a forged version under a foreign
+    /// tool reports the identity refusal rather than the version refusal.
+    #[test]
+    fn repo_exposure_validation_rejects_rewritten_producer_tool() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            for version in [env!("CARGO_PKG_VERSION"), "0.10.9"] {
+                let mutated = validate_mutated_identity(&root, &document, |document| {
+                    document["artifact"]["producer"]["tool"] = json!("not-ripr");
+                    document["artifact"]["producer"]["version"] = json!(version);
+                })?;
+                match mutated {
+                    Err(error) if error.contains("invalid or unknown producer identity") => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "foreign tool with version {version}: unexpected rejection: {error}"
+                        ));
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "foreign producer tool with version {version} was accepted"
+                        ));
+                    }
                 }
             }
             Ok(())

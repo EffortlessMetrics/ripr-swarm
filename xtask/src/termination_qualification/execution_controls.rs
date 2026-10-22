@@ -33,7 +33,7 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
     use std::fs;
     use std::time::Duration;
 
-    use super::corpus::Route;
+    use super::corpus::{Expect, Route};
     use super::exec::{self, Binary, CHILD_PATH, ROOT_TOKEN};
     use super::model::RowResult;
     use crate::blind_journey::sha256_hex;
@@ -99,6 +99,45 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
     }
     out.push(cwd_control);
 
+    let mut decoy_control = control(
+        "execution-decoy-repository",
+        "a repository above the owned case root is not discovered by the child",
+    );
+    let decoy = work_root.join("decoy-above");
+    let planted = ["objects", "refs"]
+        .iter()
+        .try_for_each(|dir| fs::create_dir_all(decoy.join(".git").join(dir)))
+        .and_then(|()| fs::write(decoy.join(".git").join("HEAD"), "ref: refs/heads/main\n"))
+        .map_err(|error| error.to_string());
+    match planted.and_then(|()| {
+        write(
+            "decoy-probe",
+            "#!/bin/sh\ncommand -v git >/dev/null 2>&1 || { echo no-git; exit 0; }\ngit rev-parse --show-toplevel 2>/dev/null || echo none\n",
+        )
+    }) {
+        Ok(binary) => {
+            let (matched, row) = stdout_is(&binary, "decoy-above/probe", "none\n");
+            decoy_control.observed = Some(
+                if matched {
+                    "decoy_not_found"
+                } else {
+                    "decoy_or_git_missing"
+                }
+                .to_string(),
+            );
+            decoy_control.discriminated = matched;
+            if !matched {
+                decoy_control.detail = format!(
+                    "probe row {} (stdout digest {}); a probe without `git` on the child PATH cannot establish this control",
+                    row.result.as_str(),
+                    row.stdout_sha256
+                );
+            }
+        }
+        Err(error) => decoy_control.detail = error,
+    }
+    out.push(decoy_control);
+
     let mut stale_control = control(
         "execution-stale-artifact",
         "an artifact left in the workspace before launch is not read as the run's output",
@@ -157,5 +196,55 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
         Err(error) => snapshot_control.detail = error,
     }
     out.push(snapshot_control);
+
+    let mut cleanup_control = control(
+        "execution-cleanup-failure",
+        "a row whose workspace cannot be removed does not pass",
+    );
+    if let Some(supported) = cases
+        .iter()
+        .find(|case| case.route == Route::Check && matches!(case.expect, Expect::Supported))
+    {
+        let json = format!(
+            "{{\"findings\":[{{\"canonical_gap\":{{\"file\":\"{}\"}}}}],\"analysis_outcome\":{{\"analysis_complete\":true}}}}",
+            supported.changed
+        );
+        match write(
+            "clean-probe",
+            &format!("#!/bin/sh\nprintf '%s\\n' '{json}'\n"),
+        ) {
+            Ok(binary) => {
+                let (baseline, _) =
+                    exec::run_case(&binary, &work_root.join("clean-ok"), supported, deadline);
+                // The remover fails the way a permission error would; a root
+                // user ignores directory mode bits, so it is injected.
+                let denied = |root: &Path| {
+                    exec::cleanup_with(root, &|_| {
+                        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                    })
+                };
+                let (failed, _) = exec::run_case_with(
+                    &binary,
+                    &work_root.join("clean-denied"),
+                    supported,
+                    deadline,
+                    &denied,
+                );
+                cleanup_control.observed = Some(format!(
+                    "baseline={}, denied={} ({})",
+                    baseline.result.as_str(),
+                    failed.result.as_str(),
+                    failed.cleanup
+                ));
+                cleanup_control.discriminated = baseline.result.is_pass()
+                    && failed.result == RowResult::InstrumentFailure
+                    && failed.cleanup.starts_with("retained");
+            }
+            Err(error) => cleanup_control.detail = error,
+        }
+    } else {
+        cleanup_control.detail = "no supported check row in the selected corpus".to_string();
+    }
+    out.push(cleanup_control);
     out
 }

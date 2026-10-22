@@ -57,6 +57,7 @@ use std::{
     path::{Path, PathBuf},
 };
 mod arm_activation;
+mod bool_oracle;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -143,6 +144,7 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod helper_assertions;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -202,6 +204,12 @@ struct PythonOwner {
     /// segment is redefined at module level. Transparent-decorator rules must
     /// not trust the import for these.
     unplain_decorators: Vec<String>,
+    /// First and last source line of a function owner's decorator list. The
+    /// `def` line starts the owner, so a changed decorator argument
+    /// (`@retry(3)`) would otherwise fall to the module owner and never see
+    /// the owner's decorator-indirection limit. `None` without decorators and
+    /// for class and module owners.
+    decorator_lines: Option<(usize, usize)>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
@@ -377,6 +385,24 @@ struct PythonAssertion {
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     oracle_shape: PythonOracleShape,
+    /// Set for a bare `assert f(lit, ..)` / `assert not f(lit, ..)`: an
+    /// assertion on a call whose arguments are all literals. Extraction reads
+    /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
+    /// boolean pin once the callee is known to return `bool`.
+    bare_bool_call: Option<PythonBareBoolCall>,
+}
+
+/// The call under a bare boolean assertion (`bool_oracle.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonBareBoolCall {
+    /// The bare callee name; dotted callees are never resolved.
+    callee: String,
+    /// The call's source text, without the `not`.
+    call_text: String,
+    /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
+    /// literal, by position.
+    bool_arguments: Vec<Option<bool>>,
+    negated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -712,6 +738,8 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut helper_modules_by_file: BTreeMap<PathBuf, helper_assertions::PythonHelperModule> =
+            BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -750,6 +778,7 @@ impl PythonAdapter {
             if !facts.fixtures.is_empty() {
                 fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
             }
+            helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
             // A conftest with implicit setup, or one that only partly parsed,
             // may assert around every test below it.
             if facts.conftest_implicit_setup
@@ -765,12 +794,16 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
+        helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
         fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
             // A chain conftest that exists but was never read (capped,
             // excluded or unreadable) cannot be ruled out.
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         });
         reexports::apply_package_reexports(&mut all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         related_tests::apply_src_module_ambiguity(
@@ -1100,6 +1133,9 @@ mod arm_activation_tests;
 mod assertion_selection_tests;
 
 #[cfg(test)]
+mod bool_oracle_tests;
+
+#[cfg(test)]
 mod conftest_admission_tests;
 
 #[cfg(test)]
@@ -1107,6 +1143,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod helper_assertions_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

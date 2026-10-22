@@ -95,9 +95,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -357,7 +357,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
       - name: Check selector storage boundaries without a product build
         shell: pwsh
@@ -542,8 +542,8 @@ jobs:
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
                   section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):]
-                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
-                  self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
+                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'))
+                  self.assertLess(section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'), section.index('cargo test -p ripr'))
                   self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
                   self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
                   self.assertIn('cache-targets: false', section)
@@ -838,7 +838,7 @@ jobs:
       # different target subsets, and GitHub cache keys are immutable, so one
       # shared key would let whichever job saves first on `main` starve the
       # other of its artifacts.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # v2 joins target to workspace root; cross-drive absolute targets cannot
           # be mapped directly. Prune through the junction, archive the real path

@@ -1,0 +1,3 @@
+case = "py-trap-empty-table"
+issue = 9691
+reason = "False-credit trap case graded wrongly; the Python corpus lane fixes these (#9691)."

@@ -600,7 +600,7 @@ fn cache_help_is_positional_free_and_prints_the_subcommand_help() -> Result<(), 
     remove_base(&base)?;
 
     if !(status_help.status.success()
-        && status_help_stdout.contains("Usage: ripr cache status [--json]"))
+        && status_help_stdout.contains("Usage: ripr cache status [--root PATH] [--json]"))
     {
         return Err(format!(
             "cache status --json --help must print the status help and exit 0\nstatus: {}\nstdout:\n{status_help_stdout}",
@@ -608,14 +608,16 @@ fn cache_help_is_positional_free_and_prints_the_subcommand_help() -> Result<(), 
         ));
     }
     if !(clear_help.status.success()
-        && clear_help_stdout.contains("Usage: ripr cache clear [--dry-run] [--force]"))
+        && clear_help_stdout
+            .contains("Usage: ripr cache clear [--root PATH] [--dry-run] [--force]"))
     {
         return Err(format!(
             "cache clear --dry-run --help must print the clear help and exit 0\nstatus: {}\nstdout:\n{clear_help_stdout}",
             clear_help.status
         ));
     }
-    if !(family_help.status.success() && family_help_stdout.contains("ripr cache status [--json]"))
+    if !(family_help.status.success()
+        && family_help_stdout.contains("ripr cache status [--root PATH] [--json]"))
     {
         return Err(format!(
             "cache --help status must print the family usage and exit 0\nstatus: {}\nstdout:\n{family_help_stdout}",
@@ -657,6 +659,382 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
     }
     Ok(())
 }
+/// Spawn the exact `ripr` binary with `RIPR_CACHE_DIR` removed, so the default
+/// `<root>/target/ripr/cache` resolution is the one under test (#9503).
+fn run_ripr_default_cache(
+    cwd: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env_remove(CACHE_DIR_ENV);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("run exact ripr binary {args:?}: {error}"))
+}
+
+fn root_flag_fixture(label: &str) -> Result<PathBuf, String> {
+    let root = temp_dir(label);
+    fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='root_flag_fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn shipping(kilos: i32) -> i32 { kilos * 4 }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+#[test]
+fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd()
+-> Result<(), String> {
+    // #9503 / audit C1: `check --root X` from another cwd wrote X's cache but
+    // `cache status`/`clear` reported (and cleared) the cwd project's.
+    let root = root_flag_fixture("root-flag-target")?;
+    let elsewhere = temp_dir("root-flag-cwd");
+    fs::create_dir_all(&elsewhere).map_err(|error| error.to_string())?;
+    let root_arg = root.to_str().ok_or("fixture root must be UTF-8")?;
+    let check = run_ripr_default_cache(
+        &elsewhere,
+        &[
+            "check",
+            "--root",
+            root_arg,
+            "--format",
+            "repo-exposure-json",
+            "--quiet",
+        ],
+        &[],
+    )?;
+    if !check.status.success() {
+        return Err(format!(
+            "check failed: {}",
+            String::from_utf8_lossy(&check.stderr)
+        ));
+    }
+    let real_cache = fs::canonicalize(&root)
+        .map_err(|error| error.to_string())?
+        .join("target/ripr/cache");
+    if !real_cache.is_dir() {
+        return Err(format!(
+            "check --root did not write {}",
+            real_cache.display()
+        ));
+    }
+
+    // Negative control: without --root, the different cwd reports a different
+    // directory (the reported defect) and must not name the checked root.
+    let without = run_ripr_default_cache(&elsewhere, &["cache", "status", "--json"], &[])?;
+    let without_json: serde_json::Value =
+        serde_json::from_slice(&without.stdout).map_err(|error| error.to_string())?;
+    if without_json["cache_dir"].as_str() == real_cache.to_str() {
+        return Err("cwd without --root unexpectedly resolved the checked root".to_string());
+    }
+
+    // Positive: --root reports the checked root's populated cache.
+    let with = run_ripr_default_cache(
+        &elsewhere,
+        &["cache", "status", "--root", root_arg, "--json"],
+        &[],
+    )?;
+    let with_json: serde_json::Value =
+        serde_json::from_slice(&with.stdout).map_err(|error| error.to_string())?;
+    if !(with.status.success()
+        && with_json["cache_dir"].as_str() == real_cache.to_str()
+        && with_json["entry_count"].as_u64().unwrap_or(0) > 0
+        && with_json["status"] != "not_found")
+    {
+        return Err(format!(
+            "status --root did not report the checked cache: {with_json}"
+        ));
+    }
+    // The hint repeats --root so the printed recovery acts on the same cache.
+    let hint = String::from_utf8_lossy(
+        &run_ripr_default_cache(&elsewhere, &["cache", "status", "--root", root_arg], &[])?.stderr,
+    )
+    .into_owned();
+    if !hint.contains(&format!("`ripr cache clear --root {root_arg} --force`")) {
+        return Err(format!("hint must carry --root: {hint}"));
+    }
+
+    // clear --dry-run, then --force, through --root act on the checked cache.
+    let dry = run_ripr_default_cache(
+        &elsewhere,
+        &["cache", "clear", "--root", root_arg, "--dry-run"],
+        &[],
+    )?;
+    let dry_stdout = String::from_utf8_lossy(&dry.stdout).into_owned();
+    if !(dry.status.success() && dry_stdout.contains("Dry run: would remove")) {
+        return Err(format!(
+            "clear --root --dry-run did not target the cache: {dry_stdout}"
+        ));
+    }
+    let forced = run_ripr_default_cache(
+        &elsewhere,
+        &["cache", "clear", "--root", root_arg, "--force"],
+        &[],
+    )?;
+    let after = run_ripr_default_cache(
+        &elsewhere,
+        &["cache", "status", "--root", root_arg, "--json"],
+        &[],
+    )?;
+    let after_json: serde_json::Value =
+        serde_json::from_slice(&after.stdout).map_err(|error| error.to_string())?;
+    remove_base(&root)?;
+    remove_base(&elsewhere)?;
+    if !(forced.status.success() && after_json["entry_count"] == 0) {
+        return Err(format!(
+            "clear --root --force left entries: {after_json}\n{}",
+            String::from_utf8_lossy(&forced.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn cache_root_flag_rejects_missing_repeated_and_unresolvable_values() -> Result<(), String> {
+    let base = temp_dir("root-flag-errors");
+    fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+    for (args, cause, env) in [
+        (
+            &["cache", "status", "--root"][..],
+            "--root requires a path",
+            &[][..],
+        ),
+        (
+            &["cache", "clear", "--root", "--force"][..],
+            "--root requires a path",
+            &[][..],
+        ),
+        (
+            &["cache", "status", "--root", "a", "--root", "b"][..],
+            "repeats --root",
+            &[][..],
+        ),
+        (&["cache", "status", "--root=a"][..], "--root", &[][..]),
+        (
+            &["cache", "status", "--root", "/definitely/not/a/dir"][..],
+            "/definitely/not/a/dir",
+            &[][..],
+        ),
+        // A nonexistent --root is an error even when RIPR_CACHE_DIR governs.
+        (
+            &["cache", "status", "--root", "/definitely/not/a/dir"][..],
+            "/definitely/not/a/dir",
+            &[(CACHE_DIR_ENV, "/tmp/ripr-cache-env-governs")][..],
+        ),
+    ] {
+        let output = run_ripr_default_cache(&base, args, env)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() || !stderr.contains(cause) {
+            return Err(format!("{args:?} must fail naming {cause:?}: {stderr}"));
+        }
+    }
+    remove_base(&base)
+}
+
+#[test]
+fn cache_status_hint_is_conditional_on_why_clear_would_refuse() -> Result<(), String> {
+    // #9503 / audit F-C1-2: the hint recommended `clear --force` even for a
+    // relative RIPR_CACHE_DIR, where that command exits 2.
+    let base = temp_dir("hint-refusal");
+    let relative_cache = base.join("relcache");
+    fs::create_dir_all(relative_cache.join("repo-file-facts"))
+        .map_err(|error| error.to_string())?;
+    fs::write(relative_cache.join("repo-file-facts/entry.json"), b"{}")
+        .map_err(|error| error.to_string())?;
+    let relative =
+        run_ripr_default_cache(&base, &["cache", "status"], &[(CACHE_DIR_ENV, "relcache")])?;
+    let relative_hint = String::from_utf8_lossy(&relative.stderr).into_owned();
+    let refused = run_ripr_default_cache(
+        &base,
+        &["cache", "clear", "--force"],
+        &[(CACHE_DIR_ENV, "relcache")],
+    )?;
+    if !(relative.status.success()
+        && !refused.status.success()
+        && relative_hint.contains("would refuse to clear it")
+        && relative_hint.contains("absolute path")
+        && !relative_hint.contains("`ripr cache clear --force`"))
+    {
+        return Err(format!(
+            "relative-root hint must carry the refusal reason: {relative_hint}"
+        ));
+    }
+    // Control: an absolute, clearable root keeps the generic hint.
+    let absolute = base.join("abscache");
+    fs::create_dir_all(absolute.join("repo-file-facts")).map_err(|error| error.to_string())?;
+    let ok = run_ripr_default_cache(
+        &base,
+        &["cache", "status"],
+        &[(CACHE_DIR_ENV, absolute.to_str().ok_or("utf-8")?)],
+    )?;
+    let ok_hint = String::from_utf8_lossy(&ok.stderr).into_owned();
+    remove_base(&base)?;
+    if !ok_hint.contains("`ripr cache clear --force`") || ok_hint.contains("would refuse") {
+        return Err(format!(
+            "clearable root must keep the generic hint: {ok_hint}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), String> {
+    // #9503 / audit C4: the failure rows reached only the opt-in trace; ordinary
+    // rerun JSON carried an anonymous `store_errors` count.
+    let root = root_flag_fixture("store-failure-rows")?;
+    fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("tests/t.rs"),
+        "#[test]\nfn four_per_kilo() { assert_eq!(root_flag_fixture::shipping(3), 12); }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let root_arg = root.to_str().ok_or("fixture root must be UTF-8")?;
+    let rerun = |cache: &Path| -> Result<(serde_json::Value, String), String> {
+        let cache_arg = cache.to_str().ok_or("utf-8 cache path")?;
+        let output = run_ripr_default_cache(
+            &root,
+            &[
+                "rerun",
+                "--root",
+                root_arg,
+                "--changed-test",
+                "tests/t.rs",
+                "--json",
+            ],
+            &[(CACHE_DIR_ENV, cache_arg)],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "rerun failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok((
+            serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    };
+
+    // Negative control: a healthy cache reports an empty row list.
+    let healthy = root.join("healthy-cache");
+    let (healthy_report, healthy_stderr) = rerun(&healthy)?;
+    if healthy_report["cache"]["store_errors"] != 0
+        || healthy_report["cache"]["store_failures"] != serde_json::json!([])
+        || healthy_report["cache"]["store_failures_dropped"] != 0
+        || healthy_stderr.contains("store failure")
+    {
+        return Err(format!(
+            "healthy run must be silent: {healthy_report}\n{healthy_stderr}"
+        ));
+    }
+
+    // Positive: a regular file where the file-fact layer directory belongs
+    // makes every store fail at create_dir.
+    let broken = root.join("broken-cache");
+    fs::create_dir_all(broken.join("repo-file-facts")).map_err(|error| error.to_string())?;
+    fs::write(broken.join("repo-file-facts/1.45"), b"blocker")
+        .map_err(|error| error.to_string())?;
+    let (report, _) = rerun(&broken)?;
+    let cache = &report["cache"];
+    let rows = cache["store_failures"].as_array().ok_or("rows array")?;
+    let errors = cache["store_errors"].as_u64().ok_or("store_errors")?;
+    let dropped = cache["store_failures_dropped"].as_u64().ok_or("dropped")?;
+    let row_ok = rows.iter().all(|row| {
+        row["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(".rs"))
+            && row["stage"] == "create_dir"
+            && row["error"].as_str().is_some_and(|error| !error.is_empty())
+    });
+    // The full-index analysis path (`check`) prints the bounded summary on
+    // ordinary stderr, without RIPR_REPO_EXPOSURE_LATENCY_TRACE.
+    let check_cache = root.join("broken-check-cache");
+    fs::create_dir_all(check_cache.join("repo-file-facts")).map_err(|error| error.to_string())?;
+    fs::write(check_cache.join("repo-file-facts/1.45"), b"blocker")
+        .map_err(|error| error.to_string())?;
+    let check = run_ripr_default_cache(
+        &root,
+        &[
+            "check",
+            "--root",
+            root_arg,
+            "--format",
+            "repo-exposure-json",
+            "--quiet",
+        ],
+        &[(
+            CACHE_DIR_ENV,
+            check_cache.to_str().ok_or("utf-8 cache path")?,
+        )],
+    )?;
+    let check_stderr = String::from_utf8_lossy(&check.stderr).into_owned();
+    remove_base(&root)?;
+    if !check.status.success()
+        || !check_stderr.contains("store failure(s)")
+        || !check_stderr.contains("[create_dir]")
+    {
+        return Err(format!(
+            "ordinary stderr must name store failures: {check_stderr}"
+        ));
+    }
+    if errors == 0 || rows.is_empty() || !row_ok || rows.len() as u64 + dropped != errors {
+        return Err(format!(
+            "ordinary rerun JSON must name store failures: {cache}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_root_flag_keeps_symlink_spelling_so_clear_refuses_alias_roots() -> Result<(), String> {
+    // #9503 review: canonicalizing --root erased the alias refusal that
+    // `check --root alias` / RIPR_CACHE_DIR through an alias already get.
+    let real = root_flag_fixture("alias-real")?;
+    let holder = temp_dir("alias-holder");
+    fs::create_dir_all(&holder).map_err(|error| error.to_string())?;
+    let leaf = holder.join("leaf-alias");
+    std::os::unix::fs::symlink(&real, &leaf).map_err(|error| error.to_string())?;
+    let parent_link = holder.join("ancestor-alias");
+    std::os::unix::fs::symlink(&holder, &parent_link).map_err(|error| error.to_string())?;
+    let ancestor = parent_link.join("leaf-alias");
+    let layer = real.join("target/ripr/cache/repo-file-facts");
+    fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+    fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+    for alias in [&leaf, &ancestor] {
+        let alias_arg = alias.to_str().ok_or("utf-8 alias")?;
+        let output = run_ripr_default_cache(
+            &holder,
+            &["cache", "clear", "--root", alias_arg, "--force"],
+            &[],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success()
+            || !stderr.contains("symlink")
+            || !layer.join("entry.json").is_file()
+        {
+            return Err(format!(
+                "alias root {alias:?} must be refused intact: {stderr}"
+            ));
+        }
+    }
+    remove_base(&holder)?;
+    remove_base(&real)
+}
+
 #[cfg(target_os = "linux")]
 fn directory_swap_cache_snapshot(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut snapshots = Vec::new();
