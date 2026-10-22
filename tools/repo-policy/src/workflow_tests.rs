@@ -1681,7 +1681,7 @@ fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
         ("flow read", "permissions: { contents: read }\n"),
         (
             "job level",
-            "permissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: write\n",
+            "permissions:\n  contents: read\njobs:\n  build:\n    permissions:\n      contents: write\n",
         ),
         ("other scope", "permissions:\n  pull-requests: write\n"),
     ] {
