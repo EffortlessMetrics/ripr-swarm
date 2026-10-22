@@ -65,6 +65,7 @@ mod capability_disposition_tests;
 mod catch_arm_guard;
 mod classifier;
 mod committed_snapshot;
+mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
@@ -153,6 +154,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;

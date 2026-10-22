@@ -277,6 +277,25 @@ clauses are not modeled; each can leave a reachable arm read as
 `weakly_exposed`. Rule 6 only removes credit and runs
 after the #8569 unentered-guard rule.
 
+**Rule 7. An edit to a ternary condition's comparison needs a tested input the
+two comparisons treat differently.** (Added 2026-10-22, #9437.) When the
+changed line is a return-value change and its removed and added text differ
+only in one `param <op> <number> ?` condition (`<op>` one of `===`, `!==`,
+`==`, `!=`, `<`, `<=`, `>`, `>=`; the operator, the literal, or both change; the
+comparison is the whole condition, so it follows `(`, `{`, `,`, `:`, `?`, a
+lone `=`, `return` or the start of the line, and ends at a single `?`, and it
+is code, not text inside a string or comment), the edit decides the result only
+for a value of `param` where the two comparisons disagree. The rule reads every
+observed owner call: each related test passes literal arguments, every owner
+parameter is never rebound or written (the rule 3 stability check), and the
+compared parameter's argument is a plain signed numeric literal. If any
+observed value separates the two comparisons, or any call cannot be read (a
+variable or expression argument, an omitted argument, a test file that feeds
+the owner another way), the ladder result stands. Otherwise an `exposed` ladder
+result reads `weakly_exposed`, and the missing line names a whole number where
+the comparisons differ. Rule 7 runs after RIPR-SPEC-0248 rule 2 and removes
+credit only.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -338,6 +357,13 @@ and the rejected alternative.
    with a differing value; anything unreadable fails open. Rejected: also
    reading `||` chains, whose falsy semantics need a separate input model.
    Recorded on #9437.
+
+9. **Condition comparison (rule 7, 2026-10-22).** Adopted: demote only when
+   every observed argument is a numeric literal that both comparisons treat
+   alike; anything unreadable fails open. Limited to a bare `param <op> number`
+   condition so no other operand can change the answer. Rejected: also
+   reading predicate-family changes, whose boundary evidence the RIPR-SPEC-0027
+   witness already owns. Recorded on #9437.
 
 ## Required Evidence
 
@@ -418,6 +444,11 @@ and the rejected alternative.
     (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
     outside the `catch` arm: the ladder result.
 
+16. `return \`${n} item${n === 1 ? "" : "s"}\`` becomes `n <= 1`, tests
+    `expect(plural(1)).toBe("1 item")` and `expect(plural(3)).toBe("3 items")`:
+    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`, or any
+    argument that is not a numeric literal: `exposed`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -431,6 +462,10 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
   `catch_arm_guard.rs` unit tests pin rule 6 (example 15); corpus case
   `shape-async-catch-fallback-unexercised` pins the row.
+- `crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs`
+  pins rule 7 (example 16): the reader's shapes and refusals and the
+  classifier verdicts; corpus case `shape-template-plural-boundary` pins the
+  row.
 
 ## Implementation Mapping
 
@@ -451,6 +486,9 @@ and the rejected alternative.
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
+- `crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs`,
+  `rounding_mode_guard.rs`: `observed_numeric_calls`; `classifier.rs`: the
+  rule 7 hook in `ts_apply_post_ladder_rules`.
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

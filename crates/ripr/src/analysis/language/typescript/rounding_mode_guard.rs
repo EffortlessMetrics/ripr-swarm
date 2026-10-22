@@ -160,6 +160,40 @@ fn witness_or_keep(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<RoundingWitness> {
+    let mut all_whole = true;
+    for bindings in observed_numeric_calls(owner, candidates, all_tests, alias_map, workspace_root)?
+    {
+        let value = fold_numeric_expression(&swap.operand, &bindings)?;
+        if !value.is_finite() {
+            return None;
+        }
+        let old = apply_rounding(swap.old_function, value)?;
+        let new = apply_rounding(swap.new_function, value)?;
+        if (old - new).abs() >= 0.5 {
+            return Some(RoundingWitness::Discriminates);
+        }
+        all_whole &= value.fract() == 0.0;
+    }
+    Some(if all_whole {
+        RoundingWitness::AllWhole
+    } else {
+        RoundingWitness::SameResult
+    })
+}
+
+/// The numeric-literal arguments of every owner call in every related test,
+/// one binding list per call (a parameter whose argument is not a plain
+/// signed numeric literal has no binding). `None` when any piece cannot be
+/// read: an unmapped relation, an unstable parameter, a test file that feeds
+/// the owner an input this reader never sees, or no call at all. Callers keep
+/// the ladder verdict on `None`.
+pub(crate) fn observed_numeric_calls(
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<Vec<Vec<(String, f64)>>> {
     let root = workspace_root?;
     let source = owner.source_text.as_deref()?;
     if candidates.is_empty()
@@ -178,8 +212,7 @@ fn witness_or_keep(
     {
         return None;
     }
-    let mut calls = 0usize;
-    let mut all_whole = true;
+    let mut observed = Vec::new();
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -223,7 +256,6 @@ fn witness_or_keep(
                 return None;
             }
             for arguments in owner_call_arguments(&test.body_text, name, &receivers) {
-                calls += 1;
                 let arguments = substitute_constant_arguments(
                     arguments,
                     test,
@@ -240,25 +272,9 @@ fn witness_or_keep(
                         bindings.push((param.clone(), value));
                     }
                 }
-                let value = fold_numeric_expression(&swap.operand, &bindings)?;
-                if !value.is_finite() {
-                    return None;
-                }
-                let old = apply_rounding(swap.old_function, value)?;
-                let new = apply_rounding(swap.new_function, value)?;
-                if (old - new).abs() >= 0.5 {
-                    return Some(RoundingWitness::Discriminates);
-                }
-                all_whole &= value.fract() == 0.0;
+                observed.push(bindings);
             }
         }
     }
-    if calls == 0 {
-        return None;
-    }
-    Some(if all_whole {
-        RoundingWitness::AllWhole
-    } else {
-        RoundingWitness::SameResult
-    })
+    (!observed.is_empty()).then_some(observed)
 }
