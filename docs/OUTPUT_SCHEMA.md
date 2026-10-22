@@ -10117,7 +10117,10 @@ Field contract:
   brief cap) and `omitted_by_policy` (working-set seams dropped by policy, such
   as configured off), both always emitted with 0 when none; a nonzero or missing
   value makes absent baseline entries `not_evaluated`. Only
-  `changed_production_files` counts as coverage. A gate decision without `analysis_scope` (a build before #9301),
+  `changed_production_files` counts as coverage; changed production files the
+  parser declined (nesting budget, parse error, non-UTF-8: the lexical fallback
+  extracts no seams) are excluded from it and listed in the optional
+  `parser_declined_files` (present only when non-empty). A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`

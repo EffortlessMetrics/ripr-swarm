@@ -1567,6 +1567,24 @@ pub(super) fn absence_not_evaluated_reason(
             covered = true;
         }
     }
+    let declined_hit = match scope.get("parser_declined_files") {
+        None => false,
+        Some(Value::Array(items)) => items.iter().any(|item| {
+            item.as_str()
+                .is_none_or(|f| normalize_scope_path(f) == path)
+        }),
+        Some(_) => {
+            return Some(
+                "the current gate decision's analysis scope has a malformed `parser_declined_files`, so coverage is not established"
+                    .to_string(),
+            );
+        }
+    };
+    if declined_hit {
+        return Some(format!(
+            "`{path}` was not parsed (nesting budget, parse error or non-UTF-8; lexical fallback extracts no seams), so absence is not evidence of resolution"
+        ));
+    }
     let absent_hit = match scope.get("absent_changed_files") {
         None => false,
         Some(Value::Array(items)) => items.iter().any(|item| {
@@ -3927,6 +3945,29 @@ mod tests {
         assert!(
             reason(
                 &scope(json!({"changed_production_files": "src/a.rs"})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        // A parser-declined file is not coverage even if listed elsewhere;
+        // malformed disclosure fails closed; absence of the key reads as before.
+        assert!(
+            reason(
+                &scope(json!({"parser_declined_files": ["src/a.rs"]})),
+                Some("src/a.rs")
+            )
+            .is_some_and(|r| r.contains("not parsed"))
+        );
+        assert!(
+            reason(
+                &scope(json!({"parser_declined_files": ["src/other.rs"]})),
+                Some("src/a.rs")
+            )
+            .is_none()
+        );
+        assert!(
+            reason(
+                &scope(json!({"parser_declined_files": "src/a.rs"})),
                 Some("src/a.rs")
             )
             .is_some()

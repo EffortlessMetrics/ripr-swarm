@@ -275,7 +275,9 @@ bucket:
   seam analysis never read), or whose current decision
   discloses no, a malformed, or an unrecognized scope, skipped seams
   (`unevaluated_seams`), brief-cap-omitted or policy-omitted seams (`cap_omitted_seams`,
-  `omitted_by_policy`; a missing key means an older producer), or
+  `omitted_by_policy`; a missing key means an older producer), lists the path in
+  `parser_declined_files` (a file whose parse was declined extracts no seams, so
+  `changed_production_files` excludes it), or
   lists the path in `absent_changed_files`, is also `stale_baseline_entry` and
   carries `"evaluation": "not_evaluated"` plus `not_evaluated_reason`
   (issue #9301). It is never `resolved`, and `baseline update

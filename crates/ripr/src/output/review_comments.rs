@@ -1247,6 +1247,9 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
     if scope.unevaluated_seams > 0 {
         value["unevaluated_seams"] = json!(scope.unevaluated_seams);
     }
+    if !scope.parser_declined_files.is_empty() {
+        value["parser_declined_files"] = json!(scope.parser_declined_files);
+    }
     if !scope.absent_changed_files.is_empty() {
         value["absent_changed_files"] = json!(scope.absent_changed_files);
     }

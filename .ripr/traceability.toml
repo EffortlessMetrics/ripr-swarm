@@ -2347,6 +2347,7 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated",
   "crates/ripr/src/output/gate/tests.rs::e2e_non_rust_changed_files_are_not_covered_by_seam_analysis",
   "crates/ripr/src/output/gate/tests.rs::e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated",
+  "crates/ripr/src/output/gate/tests.rs::e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

@@ -4974,6 +4974,7 @@ fn e2e_review_comments_doc(
         changed_lines: 1,
         changed_owner_functions: 0,
         changed_production_files: changed.iter().map(|f| f.to_string()).collect(),
+        parser_declined_files: Vec::new(),
         immediate_caller_files: Vec::new(),
         scoped_production_files: changed.iter().map(|f| f.to_string()).collect(),
         total_rust_files: Some(10),
@@ -5271,5 +5272,107 @@ fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), Stri
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(after, 2);
     assert!(updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+/// Run the real inventory -> selection -> review-comments renderer for a
+/// one-file project, then gate evaluate, baseline delta and update against a
+/// baseline holding one reviewed gap at `src/lib.rs:2`.
+fn e2e_real_pipeline(lib_source: &str) -> Result<(Value, usize, String), String> {
+    use crate::app::agent_brief::{
+        AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    };
+    use crate::output::review_comments::{
+        ReviewCommentsAnalysisScope, ReviewCommentsRenderContext,
+        render_review_comments_json_with_scope,
+    };
+    let root = temp_dir("gate-e2e-real-9301")?;
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    let config = crate::config::RiprConfig::default();
+    let inventory = crate::analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        &root,
+        &config,
+        &[PathBuf::from("src/lib.rs")],
+        &[],
+    )?;
+    let working_set = AgentBriefResolvedWorkingSet::diff(
+        "change.diff",
+        vec![AgentBriefLine::new("src/lib.rs", 1)],
+    );
+    let selection = select_agent_brief_seams(
+        &inventory.classified,
+        &working_set,
+        10,
+        AgentBriefPolicy::from_config(&config),
+    );
+    let scope = ReviewCommentsAnalysisScope::limited_diff_scope(&working_set, &inventory);
+    let context = ReviewCommentsRenderContext {
+        root: &root,
+        base: "main",
+        head: "HEAD",
+        mode: &crate::app::Mode::Draft,
+        config: &config,
+    };
+    let doc =
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    ignore_remove_dir_all(root);
+    let baseline = r#"{
+      "schema_version": "0.1",
+      "kind": "gate_baseline",
+      "entries": [
+        {"identity": {"canonical_gap_id": "gap:early"}, "path": "src/lib.rs", "line": 2, "static_class": "weakly_gripped", "decision": "advisory"}
+      ]
+    }"#;
+    e2e_delta_and_update_with(Some(&doc), None, baseline)
+}
+
+#[test]
+fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Result<(), String> {
+    // Control: the file parses and no longer contains the baselined seam, so
+    // the real analysis covers it and the gap is genuinely resolved.
+    let fixed = "pub fn early(n: i32) -> i32 { n }\n";
+    let (delta, after, updated) = e2e_real_pipeline(fixed)?;
+    assert!(
+        delta["analysis_scope"]["parser_declined_files"].is_null(),
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(after, 0);
+    assert!(!updated.contains("gap:early"), "{updated}");
+
+    // Same file, but deeply nested code elsewhere exceeds the parse budget:
+    // the lexical fallback extracts no seams (including the unchanged
+    // earlier one), so absence must not read as resolved.
+    let declined = format!(
+        "pub fn early(n: i32) -> bool {{ n >= 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let (delta, after, updated) = e2e_real_pipeline(&declined)?;
+    assert_eq!(
+        delta["analysis_scope"]["parser_declined_files"],
+        json!(["src/lib.rs"]),
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
+    assert_eq!(after, 1);
+    assert!(updated.contains("gap:early"), "{updated}");
+    let reason = delta["items"][0]["not_evaluated_reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(reason.contains("not parsed"), "{reason}");
     Ok(())
 }

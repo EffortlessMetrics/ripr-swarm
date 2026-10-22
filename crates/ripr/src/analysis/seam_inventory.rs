@@ -885,7 +885,13 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) total_rust_files: usize,
     pub(crate) total_production_files: usize,
     pub(crate) scoped_production_files: Vec<PathBuf>,
+    /// Changed production files whose seams were actually extracted. A file
+    /// the parser declined (nesting budget, parse error, non-UTF-8) is not
+    /// listed here: its lexical fallback yields no seams, so absence of a
+    /// seam in it is not evidence of resolution (#9301).
     pub(crate) changed_production_files: Vec<PathBuf>,
+    /// Changed production files that fell back to lexical summarization.
+    pub(crate) parser_declined_files: Vec<PathBuf>,
     pub(crate) immediate_caller_files: Vec<PathBuf>,
     /// Scoped seams left without evidence because the first
     /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
@@ -1359,6 +1365,7 @@ fn try_no_impact_fast_path(
             total_production_files,
             scoped_production_files: Vec::new(),
             changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             unevaluated_seams: 0,
             absent_changed_files: Vec::new(),
@@ -2029,11 +2036,18 @@ fn inventory_diff_scoped_classified_seams_inner(
         .filter(|path| scoped_file_set.contains(&inventory_scope_key(path)))
         .cloned()
         .collect::<Vec<_>>();
-    let changed_production_files = production_files
-        .iter()
-        .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
-        .cloned()
-        .collect::<Vec<_>>();
+    let (parser_declined_files, changed_production_files): (Vec<PathBuf>, Vec<PathBuf>) =
+        production_files
+            .iter()
+            .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
+            .cloned()
+            .partition(|path| {
+                cached
+                    .index
+                    .files()
+                    .get(path)
+                    .is_none_or(|facts| facts.used_lexical_fallback)
+            });
     let immediate_caller_files = production_files
         .iter()
         .filter(|path| caller_file_set.contains(&inventory_scope_key(path)))
@@ -2070,6 +2084,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         total_production_files,
         scoped_production_files,
         changed_production_files,
+        parser_declined_files,
         immediate_caller_files,
         unevaluated_seams,
         absent_changed_files,
