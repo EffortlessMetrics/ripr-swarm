@@ -99,14 +99,37 @@ fn project_text_with_prefix(text: &str, prefix: &str) -> String {
 
 #[cfg(test)]
 fn project_text_with_placeholder(text: &str, prefix: &str, placeholder: &str) -> String {
+    // Both of `shell_arg`'s quoting forms (#7729): POSIX single quotes with
+    // `'\''` for an embedded quote, and the Windows console double quotes
+    // with `""`. Mirroring the escaping lets a prefix that itself carries a
+    // quote still open the needle identically.
+    let mut out = text.to_string();
+    for (quote, escaped) in [('\'', r"'\''"), ('"', "\"\"")] {
+        out = project_quoted_redirects(&out, prefix, placeholder, quote, escaped);
+    }
+    project_bound_root_token(
+        &out.replace(prefix, &format!("{placeholder}/")),
+        prefix,
+        placeholder,
+    )
+}
+
+/// Project every `> <quote><prefix>tail<quote>` redirect target in one
+/// quoting form, unquoting the placeholder when the tail would render bare.
+#[cfg(test)]
+fn project_quoted_redirects(
+    text: &str,
+    prefix: &str,
+    placeholder: &str,
+    quote: char,
+    escaped: &str,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    // Mirror `shell_arg`'s single-quote escaping so a prefix that itself
-    // carries a quote still opens the needle identically.
-    let quoted_open = format!("> '{}", prefix.replace('\'', r"'\''"));
+    let quoted_open = format!("> {quote}{}", prefix.replace(quote, escaped));
     while let Some(at) = rest.find(quoted_open.as_str()) {
         let after = &rest[at + quoted_open.len()..];
-        let Some(end) = after.find('\'') else {
+        let Some(end) = after.find(quote) else {
             break;
         };
         let tail = &after[..end];
@@ -115,18 +138,14 @@ fn project_text_with_placeholder(text: &str, prefix: &str, placeholder: &str) ->
             out.push_str(&format!("> {placeholder}/"));
             out.push_str(tail);
         } else {
-            out.push_str(&format!("> '{placeholder}/"));
+            out.push_str(&format!("> {quote}{placeholder}/"));
             out.push_str(tail);
-            out.push('\'');
+            out.push(quote);
         }
-        rest = &after[end + 1..];
+        rest = &after[end + quote.len_utf8()..];
     }
     out.push_str(rest);
-    project_bound_root_token(
-        &out.replace(prefix, &format!("{placeholder}/")),
-        prefix,
-        placeholder,
-    )
+    out
 }
 
 /// Project the bound `--root` token itself (#3999): generated commands name
@@ -141,8 +160,11 @@ fn project_bound_root_token(text: &str, prefix: &str, placeholder: &str) -> Stri
     if bare.is_empty() {
         return text.to_string();
     }
-    let quoted = format!("'{}'", bare.replace('\'', r"'\''"));
-    let text = text.replace(&quoted, placeholder);
+    let single = format!("'{}'", bare.replace('\'', r"'\''"));
+    let double = format!("\"{}\"", bare.replace('"', "\"\""));
+    let text = text
+        .replace(&single, placeholder)
+        .replace(&double, placeholder);
     let mut out = String::with_capacity(text.len());
     let mut rest = text.as_str();
     while let Some(at) = rest.find(bare) {
@@ -162,22 +184,33 @@ fn project_bound_root_token(text: &str, prefix: &str, placeholder: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::project_text_with_prefix;
-    use crate::agent::loop_commands::shell_arg;
+    use crate::agent::loop_commands::shell_arg_for;
+
+    /// `shell_arg`'s two host forms (#7729): POSIX single quotes and the
+    /// Windows console double quotes. Both are projected on every host, so
+    /// a Windows renderer's goldens and this Linux lane agree.
+    const HOST_FORMS: [(bool, char); 2] = [(false, '\''), (true, '"')];
 
     #[test]
     fn quoted_anchored_target_projects_to_unquoted_placeholder() {
         // Synthetic `/srv` prefixes: hostile enough to quote, with no real
         // machine path for the local-context policy to flag.
         let prefix = "/srv/checkout with space/repo/";
-        let rendered = format!("> {}", shell_arg(&format!("{prefix}target/ripr/out.json")));
-        assert_eq!(
-            rendered, "> '/srv/checkout with space/repo/target/ripr/out.json'",
-            "the hostile checkout path must reach the test quoted"
-        );
-        assert_eq!(
-            project_text_with_prefix(&rendered, prefix),
-            "> <cwd>/target/ripr/out.json"
-        );
+        for (windows, quote) in HOST_FORMS {
+            let rendered = format!(
+                "> {}",
+                shell_arg_for(&format!("{prefix}target/ripr/out.json"), windows)
+            );
+            assert_eq!(
+                rendered,
+                format!("> {quote}/srv/checkout with space/repo/target/ripr/out.json{quote}"),
+                "the hostile checkout path must reach the test quoted"
+            );
+            assert_eq!(
+                project_text_with_prefix(&rendered, prefix),
+                "> <cwd>/target/ripr/out.json"
+            );
+        }
     }
 
     #[test]
@@ -203,18 +236,21 @@ mod tests {
         // The quote here comes from the tail (`repo root`), not the machine
         // prefix: the quoted placeholder is the stable golden shape.
         let prefix = "/srv/checkout/";
-        let rendered = format!(
-            "> {}",
-            shell_arg(&format!("{prefix}repo root/target/out.json"))
-        );
-        assert_eq!(
-            rendered, "> '/srv/checkout/repo root/target/out.json'",
-            "the hostile tail must reach the test quoted"
-        );
-        assert_eq!(
-            project_text_with_prefix(&rendered, prefix),
-            "> '<cwd>/repo root/target/out.json'"
-        );
+        for (windows, quote) in HOST_FORMS {
+            let rendered = format!(
+                "> {}",
+                shell_arg_for(&format!("{prefix}repo root/target/out.json"), windows)
+            );
+            assert_eq!(
+                rendered,
+                format!("> {quote}/srv/checkout/repo root/target/out.json{quote}"),
+                "the hostile tail must reach the test quoted"
+            );
+            assert_eq!(
+                project_text_with_prefix(&rendered, prefix),
+                format!("> {quote}<cwd>/repo root/target/out.json{quote}")
+            );
+        }
     }
 
     #[test]
@@ -239,6 +275,10 @@ mod tests {
         let spaced = "/srv/checkout with space/";
         assert_eq!(
             project_text_with_prefix("--root '/srv/checkout with space' --json", spaced),
+            "--root <cwd> --json"
+        );
+        assert_eq!(
+            project_text_with_prefix("--root \"/srv/checkout with space\" --json", spaced),
             "--root <cwd> --json"
         );
     }

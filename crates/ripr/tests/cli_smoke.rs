@@ -2700,8 +2700,8 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
     // #6762: split as the shell would, so a checkout path that needs
     // quoting (a space, an apostrophe) replays as one argument.
-    let explain_words = shell_words::posix_words(explain_line)?;
-    let context_words = shell_words::posix_words(context_line)?;
+    let explain_words = shell_words::printed_words(explain_line)?;
+    let context_words = shell_words::printed_words(context_line)?;
     let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
     let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
@@ -2753,7 +2753,7 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
         .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
-    let next_args = shell_words::posix_words(next_line)?;
+    let next_args = shell_words::printed_words(next_line)?;
     if next_args
         != [
             "--root",
@@ -2777,6 +2777,26 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     Ok(())
 }
 
+/// The printed spelling of a value that needs quoting but carries no quote,
+/// `$` or backtick: `shell_arg`'s host form (#7729), single quotes on Unix
+/// and the Windows console double-quote form on Windows.
+fn host_quoted(value: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{value}\"")
+    } else {
+        format!("'{value}'")
+    }
+}
+
+/// How the printed form spells the apostrophe in `ripr it's a repo`: the
+/// POSIX close-escape-reopen run, or the end of the Windows console
+/// double-quoted root token (#7729).
+const QUOTED_APOSTROPHE: &str = if cfg!(windows) {
+    "it's a repo\""
+} else {
+    r"'\''"
+};
+
 fn posix_flag_value<'a>(words: &'a [String], flag: &str) -> Result<&'a str, String> {
     words
         .iter()
@@ -2798,7 +2818,7 @@ fn path_matches_printed(printed: &str, expected: &Path) -> bool {
 }
 
 fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
-    let words = shell_words::posix_words(command.trim())?;
+    let words = shell_words::printed_words(command.trim())?;
     let args: Vec<&str> = words.iter().map(String::as_str).collect();
     if args.first() != Some(&"ripr") {
         return Err(format!("printed command is not a ripr command: {command}"));
@@ -2808,7 +2828,7 @@ fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
 }
 
 /// #6942: `check_human_navigation_commands_replay_custom_scope` and the other
-/// posix_words replay sites run on roots with no space or apostrophe, so they
+/// printed_words replay sites run on roots with no space or apostrophe, so they
 /// still pass if reverted to `split_whitespace`. This copies a small fixture
 /// under `ripr it's a repo/` and replays the printed explain, context, and
 /// agent-stub lines from a foreign directory.
@@ -2854,13 +2874,13 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
             .lines()
             .find(|line| line.trim_start().starts_with("ripr context "))
             .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-        if !explain_line.contains(r"'\''") || !context_line.contains(r"'\''") {
+        if !explain_line.contains(QUOTED_APOSTROPHE) || !context_line.contains(QUOTED_APOSTROPHE) {
             return Err(format!(
-                "printed commands must POSIX-quote the apostrophe in the checkout path:\n{explain_line}\n{context_line}"
+                "printed commands must host-quote the apostrophe in the checkout path:\n{explain_line}\n{context_line}"
             ));
         }
-        let explain_words = shell_words::posix_words(explain_line)?;
-        let context_words = shell_words::posix_words(context_line)?;
+        let explain_words = shell_words::printed_words(explain_line)?;
+        let context_words = shell_words::printed_words(context_line)?;
         let printed_root = posix_flag_value(&explain_words, "--root")?;
         if !printed_root.contains(' ') || !printed_root.contains('\'') {
             return Err(format!(
@@ -2897,7 +2917,7 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
                     "explain output omitted its scope-preserving context command:\n{explain_stdout}"
                 )
             })?;
-        let next_words = shell_words::posix_words(next_line)?;
+        let next_words = shell_words::printed_words(next_line)?;
         if posix_flag_value(&next_words, "--root")? != printed_root {
             return Err(format!(
                 "explain Next: command lost the quoted root: {next_line}"
@@ -2907,12 +2927,12 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
             .lines()
             .find(|line| line.trim_start().starts_with("ripr agent stub "))
         {
-            if !stub_line.contains(r"'\''") {
+            if !stub_line.contains(QUOTED_APOSTROPHE) {
                 return Err(format!(
-                    "agent stub command must POSIX-quote the apostrophe:\n{stub_line}"
+                    "agent stub command must host-quote the apostrophe:\n{stub_line}"
                 ));
             }
-            let stub_words = shell_words::posix_words(stub_line)?;
+            let stub_words = shell_words::printed_words(stub_line)?;
             if posix_flag_value(&stub_words, "--root")? != printed_root {
                 return Err(format!(
                     "agent stub command lost the quoted root: {stub_line}"
@@ -5513,7 +5533,7 @@ fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = shell_words::posix_words(line)?;
+    let mut args = shell_words::printed_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -7963,7 +7983,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let next_words = shell_words::posix_words(
+    let next_words = shell_words::printed_words(
         next_command
             .strip_prefix("ripr ")
             .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
@@ -15990,7 +16010,7 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     let retry_args = if cfg!(windows) {
         printed_ripr_args(retry)?
     } else {
-        let words = shell_words::posix_words(retry)?;
+        let words = shell_words::printed_words(retry)?;
         if words.first().map(String::as_str) != Some("ripr") {
             return Err(format!("unexpected recovery program: {retry}"));
         }
@@ -16394,7 +16414,7 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     // a drift between pilot's identity and the command it prints is the bug.
     // Split the redirect after POSIX words so a quoted root that contains
     // ` > ` stays one argument (#6942).
-    let (after_words, redirect_word) = shell_words::posix_words_with_redirect(after_command)?;
+    let (after_words, redirect_word) = shell_words::printed_words_with_redirect(after_command)?;
     let check_args: Vec<&str> = after_words
         .iter()
         .map(String::as_str)
@@ -17492,7 +17512,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let repair_words = shell_words::posix_words(repair_line)?;
+    let repair_words = shell_words::printed_words(repair_line)?;
     let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
@@ -25973,7 +25993,11 @@ fn agent_status_routes_a_fresh_workspace_to_pilot() -> Result<(), Box<dyn std::e
     // directory, so the route names the pilot directory under the root.
     assert_eq!(
         command,
-        format!("ripr pilot --root '{root_display}' --out '{root_display}/target/ripr/pilot'")
+        format!(
+            "ripr pilot --root {} --out {}",
+            host_quoted(&root_display),
+            host_quoted(&format!("{root_display}/target/ripr/pilot"))
+        )
     );
     assert!(!command.contains('>'), "no redirect expected: {command}");
     assert!(!root.join("target/ripr/workflow").exists());
@@ -26241,7 +26265,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
 
 /// The attempt ID inside a printed `--attempt <id> --phase after` command.
 fn repair_route_attempt_id(command: &str) -> Result<String, String> {
-    let words = shell_words::posix_words(command)?;
+    let words = shell_words::printed_words(command)?;
     words
         .iter()
         .position(|word| word == "--attempt")
