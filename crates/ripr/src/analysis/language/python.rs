@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod arm_activation;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -1087,6 +1088,9 @@ impl PythonAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod arm_activation_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;
