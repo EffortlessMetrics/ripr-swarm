@@ -16761,7 +16761,9 @@ metrics = [
 id = "RIPR-SPEC-0237"
 name = "Pilot seam ranking"
 spec = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
-tests = []
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_discloses_actionable_total_and_max_seams_escape",
+]
 fixtures = []
 code = [
   "crates/ripr/src/output/pilot/ranking.rs",

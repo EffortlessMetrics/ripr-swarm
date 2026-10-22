@@ -882,10 +882,13 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
 }
 
 /// #9368: the terminal shows the top 1 seam; it must also disclose the
-/// actionable total and the `--max-seams` escape so one unexplained pick out
-/// of an undisclosed count does not read as arbitrariness.
+/// #9368: the terminal shows the top 1 seam; it must also disclose the
+/// actionable total and where the full ranked list lives, so one unexplained
+/// pick out of an undisclosed count does not read as arbitrariness.
 #[test]
 fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
+    use crate::domain::LanguageId;
+
     let entries = [
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::f", 1),
         classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 2),
@@ -893,15 +896,56 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
+    let ranked =
+        "more ranked in target/ripr/pilot/pilot-summary.md; pass --max-seams N to rank more";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
-        terminal
-            .contains("  actionable seams: 3 total, showing 1 (pass --max-seams N to see more)\n"),
+        terminal.contains(&format!(
+            "  actionable seams: 3 total, showing 1 ({ranked})\n"
+        )),
         "{terminal}"
     );
 
-    // A single actionable seam needs no escape hatch.
+    // A seam limit cut the classified seams, so the total is a lower bound,
+    // mirroring the JSON summary's predicate (#6739).
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let limited = PilotSummaryContext {
+        seam_limit: Some(&limit),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains(&format!(
+            "  actionable seams: at least 3, showing 1 ({ranked})\n"
+        )),
+        "{terminal}"
+    );
+
+    // Declined Rust files also under-credit the run, so the total stays a
+    // lower bound without a seam limit.
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let declined_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, declined_context);
+    assert!(
+        terminal.contains("  actionable seams: at least 3, showing 1"),
+        "{terminal}"
+    );
+
+    // A single actionable seam needs no pointer.
     let single = [classified_in_owner(
         SeamGripClass::WeaklyGripped,
         "src/a.rs",
@@ -914,7 +958,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         "{terminal}"
     );
     assert!(
-        !terminal.contains("--max-seams N to see more"),
+        !terminal.contains("--max-seams N to rank more"),
         "{terminal}"
     );
 }

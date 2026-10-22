@@ -592,18 +592,23 @@ pub(crate) fn render_pilot_terminal(
             limit.analyzed, limit.total
         ));
     }
-    // #9368: the terminal shows the top 1 seam; without the total and the
-    // --max-seams escape, one unexplained pick out of an undisclosed count
-    // reads as arbitrariness on large repos.
+    // #9368: the terminal shows the top 1 seam; without the total and a
+    // pointer to the ranked list, one unexplained pick out of an undisclosed
+    // count reads as arbitrariness on large repos. The lower-bound predicate
+    // mirrors the JSON summary (#6739): a seam limit cut the classified
+    // seams, and declined Rust files emitted no probe shapes, so either way
+    // the terminal total understates the repo.
     let actionable = actionable_total(classified);
     if actionable >= 1 {
-        let totals = match context.seam_limit {
-            Some(_) => format!("at least {actionable}"),
-            None => format!("{actionable} total"),
+        let totals = if context.seam_limit.is_some() || !declined_rust_files(context).is_empty() {
+            format!("at least {actionable}")
+        } else {
+            format!("{actionable} total")
         };
         if actionable > 1 {
             out.push_str(&format!(
-                "  actionable seams: {totals}, showing 1 (pass --max-seams N to see more)\n"
+                "  actionable seams: {totals}, showing 1 (more ranked in {brief}; pass --max-seams N to rank more)\n",
+                brief = display_path(&context.artifacts.pilot_summary_md)
             ));
         } else {
             out.push_str(&format!("  actionable seams: {totals}, showing 1\n"));
