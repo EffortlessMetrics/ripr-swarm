@@ -3757,6 +3757,7 @@ fn helper_transferred_rows(
                     value: cell.value.clone(),
                     line: cell.line,
                     text: cell.text.clone(),
+                    file: cell.file.clone(),
                 });
             }
             bound_rows.push(bound);
