@@ -491,18 +491,26 @@ fn baseline_document_defect(value: &Value, current_root: &str) -> Option<String>
             crate::output::baseline_delta::BASELINE_SCHEMA_VERSION
         ));
     }
-    let entry_roots = object
-        .get("entries")
-        .and_then(Value::as_array)
-        .into_iter()
+    // JSON null is absent: `ripr baseline create` writes `"root": null` when
+    // the source gate decision recorded no root. Any other non-string value
+    // (number, bool, object) is refused. Every array the gate indexes is
+    // checked, not only `entries`.
+    let item_roots = BASELINE_IDENTITY_ARRAYS
+        .iter()
+        .filter_map(|field| object.get(*field).and_then(Value::as_array))
         .flatten()
-        .filter_map(|entry| entry.get("root"));
-    for root in object.get("root").into_iter().chain(entry_roots) {
-        let recorded = root.as_str().unwrap_or_default();
-        if root.as_str().is_none()
-            || crate::output::baseline_delta::normalize_root_for_comparison(recorded)
-                != crate::output::baseline_delta::normalize_root_for_comparison(current_root)
-        {
+        .filter_map(|item| item.get("root"));
+    for root in object
+        .get("root")
+        .into_iter()
+        .chain(item_roots)
+        .filter(|root| !root.is_null())
+    {
+        let matches_own_root = root.as_str().is_some_and(|recorded| {
+            crate::output::baseline_delta::normalize_root_for_comparison(recorded)
+                == crate::output::baseline_delta::normalize_root_for_comparison(current_root)
+        });
+        if !matches_own_root {
             return Some(format!(
                 "baseline root {root} does not match the gate root \"{current_root}\" (foreign repository baseline)"
             ));

@@ -1091,6 +1091,17 @@ fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_er
             "foreign repository baseline",
         ),
         (
+            "root-decisions.json",
+            r#"{"schema_version":"0.1","decisions":[{"root":"/elsewhere/other","seam_id":"a"}]}"#
+                .to_string(),
+            "foreign repository baseline",
+        ),
+        (
+            "root-numeric.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":7,"entries":[]}"#.to_string(),
+            "foreign repository baseline",
+        ),
+        (
             "root-entry.json",
             r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"root":"/elsewhere/other","canonical_gap_id":"a"}]}"#
                 .to_string(),
@@ -1117,6 +1128,41 @@ fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_er
         r#"{{"schema_version":"0.1","kind":"gate_baseline","root":{own_root:?},"entries":[{{"root":{own_root:?},"canonical_gap_id":"a"}}]}}"#
     );
     let baseline = write_temp_json(&dir, "own.json", &contents)?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn rootless_gate_decision_baseline_create_round_trips_through_gate_evaluate() -> Result<(), String>
+{
+    // Real production path: `baseline create` writes `"root": null` for a
+    // rootless gate decision; the gate must accept that baseline (#9301).
+    let decision = r#"{"schema_version":"0.1","mode":"visible-only","decisions":[{
+      "decision":"advisory","id":"ripr-gate-old","seam_id":"old","source_id":"ripr-review-old",
+      "static_class":"weakly_gripped","placement":{"path":"src/old.rs","line":7},
+      "evidence_record":{"canonical_gap_id":"pricing::discount::threshold_equality"},
+      "evidence":{"missing_discriminator":"amount == threshold"}}]}"#;
+    let report = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        decision,
+    )?;
+    let rendered = crate::output::baseline::render_baseline_create_json(&report)?;
+    let parsed: Value = serde_json::from_str(&rendered).map_err(|e| e.to_string())?;
+    assert!(
+        parsed["root"].is_null(),
+        "premise: created baseline carries root null"
+    );
+    let dir = temp_dir("gate-baseline-roundtrip")?;
+    let baseline = write_temp_json(&dir, "created.json", &rendered)?;
     let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
     input.baseline = Some(baseline);
     let report = build_gate_decision_report(&input)?;
