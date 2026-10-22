@@ -87,6 +87,14 @@ const BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // Retained captures of past `ripr check` runs inside real-repo eval
+            // fixtures. They validate against the schema, but they are not
+            // bytes the candidate's build produced, so they stay edge fixtures.
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-corrected.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-original.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-weak.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
         ],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",
@@ -151,14 +159,20 @@ const BINDINGS: &[Binding] = &[
         pointer: Some("/$defs/command_spec"),
         corpus: Corpus::CommandSpecs { verify: false },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/verification_command_spec"),
         corpus: Corpus::CommandSpecs { verify: true },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
