@@ -2031,5 +2031,25 @@ fn an_owner_called_in_a_lambda_over_unresolved_code_abstains() -> Result<(), Str
         scale_class("def test_scale():\n    scale(3, 7)\n")?,
         ExposureClass::StaticUnknown
     );
+    // An unrelated lambda, a sort key, and a lambda inside a string do not
+    // hide an assertion, even beside unresolved code.
+    for body in [
+        "def test_scale(client):\n    f = lambda: 0; scale(3, 7)\n",
+        "def test_scale(client):\n    sorted(xs, key=lambda x: scale(x, 2))\n",
+        "def test_scale(client):\n    note = \"lambda: \"; scale(3, 7)\n",
+    ] {
+        assert_ne!(scale_class(body)?, ExposureClass::StaticUnknown, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder() -> Result<(), String> {
+    let owner = "def area(a, b, c):\n    return b * a, d\n";
+    let table = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(3, 7, 1, (21, 1))])\ndef test_area(a, b, c, want):\n    assert area(a, b, c) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return a * b, c", table)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

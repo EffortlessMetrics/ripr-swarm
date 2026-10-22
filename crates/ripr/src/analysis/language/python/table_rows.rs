@@ -133,7 +133,12 @@ fn unvaried_arithmetic_operand(
     let (old_arith, new_arith) = changed_simple_arithmetic(old_line, line_text)?;
     // Reordering the factors of a product changes no value, so rows that
     // agree on both sides say nothing about an unvaried operand.
-    if is_factor_reorder(&old_arith, &new_arith) {
+    // Only when the whole returned value is the product: a reorder beside a
+    // sibling edit (`a * b, c` -> `b * a, d`) still needs the row reading.
+    let whole = |line: &str| line_value_expr(line).and_then(|text| parse_expr(&text));
+    if let (Some(old_whole), Some(new_whole)) = (whole(old_line), whole(line_text))
+        && is_factor_reorder(&old_whole, &new_whole)
+    {
         return None;
     }
     let operand = arithmetic_operand_name(&old_arith)?;

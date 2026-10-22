@@ -908,16 +908,29 @@ fn related_candidates_have_opaque_custom_assertion_limit(
     has_opaque_helper && !has_known_strong_oracle
 }
 
-/// Whether a line of the test body calls the owner after a `lambda` keyword.
-/// Same-line only: a lambda body spanning lines is not read.
+/// Whether a line of the test body calls the owner inside a `lambda` body.
+/// Same-line only: a lambda body spanning lines is not read. A `key=lambda`
+/// sort key is inert, a lambda after an odd number of quotes sits in a string,
+/// and the body ends at the first `;`.
 fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
     body_text.lines().any(|line| {
         line.match_indices("lambda").any(|(index, _)| {
-            let before = line[..index].chars().next_back();
-            let after = line[index + "lambda".len()..].chars().next();
-            before.is_none_or(|ch| !is_python_identifier_char(ch))
-                && after.is_none_or(|ch| !is_python_identifier_char(ch))
-                && body_calls_owner(&line[index + "lambda".len()..], owner)
+            let before = &line[..index];
+            let rest = &line[index + "lambda".len()..];
+            let quotes = before.chars().filter(|ch| matches!(ch, '"' | '\'')).count();
+            before
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+                && rest
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_python_identifier_char(ch))
+                && quotes % 2 == 0
+                && !before.trim_end().ends_with("key=")
+                && rest.split_once(':').is_some_and(|(_, body)| {
+                    body_calls_owner(body.split(';').next().unwrap_or(body), owner)
+                })
         })
     })
 }
