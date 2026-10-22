@@ -2296,6 +2296,16 @@ impl RustAdapter {
                 })
                 .map(|file| file.path.as_path()),
         )?;
+        // #9308: a file outside the diff that a parse budget declined also
+        // loses its probe shapes and its tests, so the related-test search for
+        // the changed code can miss evidence there. One aggregate limitation
+        // keeps the run from reading complete by omission.
+        limitations.extend(declined_unchanged_file_limitation(
+            &index,
+            analyzable_changed_files
+                .iter()
+                .map(|file| file.path.as_path()),
+        )?);
 
         // Files whose probes became findings: only their evidence can be
         // missing a related test, so only they earn an unresolved-route
@@ -2790,6 +2800,71 @@ fn lexical_fallback_limitations<'a>(
         limitations.push(limitation);
     }
     Ok(limitations)
+}
+
+/// One aggregate limitation for Rust files outside the diff that a typed
+/// static limit declined (#9308). Changed files already carry their own
+/// per-file limitation from [`lexical_fallback_limitations`].
+fn declined_unchanged_file_limitation<'a>(
+    index: &RustIndex,
+    changed_paths: impl Iterator<Item = &'a Path>,
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let portable = |path: &Path| path.to_string_lossy().replace('\\', "/");
+    let changed = changed_paths
+        .map(portable)
+        .collect::<std::collections::BTreeSet<_>>();
+    let declined = rust_index::declined_rust_files(index)
+        .into_iter()
+        .filter(|file| !changed.contains(&portable(&file.path)))
+        .collect::<Vec<_>>();
+    if declined.is_empty() {
+        return Ok(None);
+    }
+    const MAX_NAMED: usize = 3;
+    let mut listed = declined
+        .iter()
+        .take(MAX_NAMED)
+        .map(|file| {
+            let token = file
+                .reason
+                .strip_prefix("static limit ")
+                .and_then(|reason| reason.split(':').next())
+                .unwrap_or("parse_declined");
+            format!(
+                "{} ({token})",
+                file.path.to_string_lossy().replace('\\', "/")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if declined.len() > MAX_NAMED {
+        listed.push_str(&format!(" and {} more", declined.len() - MAX_NAMED));
+    }
+    let detail = format!(
+        "{} Rust file(s) outside the diff were declined by a parse limit and read lexically: \
+         {listed}; lexical fallback emits no probe shapes and can lose these files' tests, so \
+         related-test evidence for the changed code may be incomplete.",
+        declined.len()
+    )
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Split the listed file(s) below the parse budget, or save them as UTF-8, then re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(declined.len() as u64)?
+        .with_detail(detail)?,
+    ))
 }
 
 impl LanguageAdapter for RustAdapter {
@@ -7823,6 +7898,89 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_discloses_an_unchanged_file_a_parse_limit_declined() -> Result<(), String> {
+        // #9308: `src/deep.rs` is over the nesting budget and outside the
+        // diff. The changed file analyzes normally, but the run must not read
+        // complete: lexical fallback gave the declined file no probe shapes.
+        let root = temp_root("declined-unchanged-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\npub mod deep;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("src/deep.rs"),
+            &format!(
+                "pub fn deep() -> i32 {{ {}1{} }}\n",
+                "(".repeat(5_000),
+                ")".repeat(5_000)
+            ),
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let declined = result
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("declined by a parse limit"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(declined.len(), 1, "{:?}", result.limitations);
+        let detail = declined[0].bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("src/deep.rs (rust_nesting_budget)"),
+            "{detail}"
+        );
+        assert!(!detail.contains("src/used.rs"), "{detail}");
+        assert_eq!(
+            declined[0].kind,
+            crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_gives_a_declined_changed_file_only_its_own_limitation() -> Result<(), String> {
+        // The changed declined file already carries the per-file #4722
+        // limitation, so the unchanged-file aggregate must not name it again.
+        let root = temp_root("declined-changed-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod deep;\n")?;
+        let deep = format!(
+            "pub fn deep(total: u32) -> u32 {{\n    if total > 100 {{ {}1{} }} else {{ 0 }}\n}}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        write(&root.join("src/deep.rs"), &deep)?;
+        let diff = "diff --git a/src/deep.rs b/src/deep.rs\n\
+                    --- a/src/deep.rs\n\
+                    +++ b/src/deep.rs\n\
+                    @@ -2,1 +2,1 @@\n\
+                    -    if total >= 100 { 1 } else { 0 }\n\
+                    +    if total > 100 { 1 } else { 0 }\n";
+
+        let result = module_graph_diff(&root, diff)?;
+
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("outside the diff"))),
+            "{:?}",
+            result.limitations
+        );
         Ok(())
     }
 

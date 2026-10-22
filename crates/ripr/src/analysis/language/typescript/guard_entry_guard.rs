@@ -143,11 +143,50 @@ pub(crate) fn enclosing_conditions(
     if parens != 0 || stack.is_empty() {
         return None;
     }
+    // A braceless `if (c)` / `else if (c)` / `else` head that directly
+    // precedes the line makes the line that arm's one-statement body. Any
+    // other text before the line (a loop head, a nested braceless `if`, a
+    // continued expression) reads no extra condition, which only withdraws
+    // exclusions.
+    // A braceless head guards one statement, not a whole line: a line that
+    // holds a second statement (`a = 1; b = 2;`) is left unguarded.
+    let pending: String = masked_chars[segment_start..target].iter().collect();
+    if !pending.trim().is_empty() && is_one_statement(&masked, index) {
+        let pending_original: String = original[segment_start..target].iter().collect();
+        let (conditions, _) = block_conditions(
+            &pending,
+            &pending_original,
+            chain.take().unwrap_or_default(),
+        );
+        if !conditions.is_empty() {
+            stack.push(Block { conditions });
+        }
+    }
     let conditions: Vec<GuardCondition> = stack
         .into_iter()
         .flat_map(|block| block.conditions)
         .collect();
     (!conditions.is_empty()).then_some(conditions)
+}
+
+/// Whether the masked line at `index` holds at most one statement: no `;`
+/// outside parentheses other than a final one.
+fn is_one_statement(masked: &str, index: usize) -> bool {
+    let Some(line) = masked.lines().nth(index) else {
+        return false;
+    };
+    let line = line.trim();
+    let body = line.strip_suffix(';').unwrap_or(line);
+    let mut parens = 0usize;
+    for c in body.chars() {
+        match c {
+            '(' | '[' | '{' => parens += 1,
+            ')' | ']' | '}' => parens = parens.saturating_sub(1),
+            ';' if parens == 0 => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// The conditions a block with `header` needs, and the chain a directly
@@ -2015,6 +2054,47 @@ mod tests {
         let assigning = "function run(items, { flag = true, other = (flag = false) } = {}) {\n  if (flag) {\n    a();\n  } else {\n    b();\n  }\n}\n";
         assert!(!excludes(assigning, 5, "b();", &["[]", "{}"]));
         assert!(parameter_shapes(assigning).is_none());
+    }
+
+    #[test]
+    fn braceless_arms_read_their_head_and_nothing_else() {
+        let conditions = |source: &str, line: usize, text: &str| {
+            enclosing_conditions(source, 1, line, text)
+                .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>())
+        };
+        let plain = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 3;\n  return total;\n}\n";
+        assert_eq!(
+            conditions(plain, 4, "total = total / 3;"),
+            Some(vec!["coupon === 'HALF'".to_string()])
+        );
+        // The statement after the arm is no longer under it.
+        assert_eq!(conditions(plain, 5, "return total;"), None);
+        let chain = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF') {\n    total = 1;\n  } else if (qty > 100)\n    total = 2;\n  else\n    total = 3;\n  return total;\n}\n";
+        assert_eq!(
+            conditions(chain, 6, "total = 2;"),
+            Some(vec![
+                "!(coupon === 'HALF')".to_string(),
+                "qty > 100".to_string()
+            ])
+        );
+        // An `else` after a braceless arm has no known head to invert, so it
+        // keeps only the enclosing conditions.
+        let bare_else = "function run(qty, coupon) {\n  if (coupon === 'HALF')\n    qty = 1;\n  else\n    qty = 2;\n  return qty;\n}\n";
+        assert_eq!(conditions(bare_else, 5, "qty = 2;"), None);
+        // A loop head or nested braceless `if` reads no condition of its own.
+        let looped = "function run(items, flag) {\n  for (const item of items)\n    flag = item;\n  return flag;\n}\n";
+        assert_eq!(conditions(looped, 3, "flag = item;"), None);
+        let nested = "function run(a, b) {\n  if (a)\n    if (b)\n      a = 1;\n  return a;\n}\n";
+        assert_eq!(conditions(nested, 4, "a = 1;"), None);
+        // A second statement on the line is not the arm's body.
+        let two = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+        assert_eq!(conditions(two, 4, "total = total / 2; total += 2;"), None);
+        // A continued condition is not a head.
+        let continued = "function run(a, b) {\n  if (a &&\n    b)\n    a = 1;\n  return a;\n}\n";
+        assert_eq!(
+            conditions(continued, 4, "a = 1;"),
+            Some(vec!["a &&\n    b".to_string()])
+        );
     }
 
     #[test]

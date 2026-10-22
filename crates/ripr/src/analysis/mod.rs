@@ -15,6 +15,7 @@ pub(crate) use generated_rust_corpus::{
 };
 pub(crate) mod harness_projection;
 mod language;
+pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
@@ -94,6 +95,7 @@ pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
+pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 pub use seam_cache::cache_layer_names;
@@ -114,9 +116,9 @@ pub(crate) use seam_inventory::{
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
+    inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
-    inventory_diff_scoped_with_seam_limit_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
     repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
     workspace_cache_key_at_with_config,

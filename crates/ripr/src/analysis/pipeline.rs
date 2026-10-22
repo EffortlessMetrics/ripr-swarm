@@ -15,6 +15,8 @@ use super::{
 use crate::analysis::cancellation;
 use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
+
+use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -1796,16 +1798,20 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             let result =
                 RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)?;
             cancellation::checkpoint()?;
-            if result.skipped_files > 0 {
-                language_runs.push(LanguageRun {
-                    language: LanguageId::Rust.as_str().to_string(),
-                    status: LanguageRunStatus::Partial,
-                    reason: Some(format!(
-                        "{} generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns",
-                        result.skipped_files
-                    )),
-                });
-            }
+            let skipped_reason = (result.skipped_files > 0).then(|| {
+                format!(
+                    "{} generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns",
+                    result.skipped_files
+                )
+            });
+            language_runs.extend(
+                LanguageAnalysisOutcomeV1::from_repo_result(
+                    LanguageId::Rust,
+                    &result,
+                    skipped_reason,
+                )
+                .compat_run(),
+            );
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
@@ -1834,13 +1840,10 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 // `Partial` language run on the shared channel, so human
                 // and JSON output render the limitation and gates fail
                 // closed on the partial denominator (#3554, #2109).
-                if let Some(reason) = &result.partial_reason {
-                    language_runs.push(LanguageRun {
-                        language: language.as_str().to_string(),
-                        status: LanguageRunStatus::Partial,
-                        reason: Some(reason.clone()),
-                    });
-                }
+                language_runs.extend(
+                    LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None)
+                        .compat_run(),
+                );
                 findings.extend(result.findings);
                 files_by_language.push((*language, result.production_files));
             }
@@ -4485,13 +4488,11 @@ mod tests {
             .find(|run| run.language == "rust")
             .ok_or_else(|| "a vendored skip must record the Rust run".to_string())?;
         assert_eq!(rust_run.status, LanguageRunStatus::Partial);
-        assert!(
-            rust_run
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.starts_with("1 generated or vendored Rust file(s)")),
-            "{:?}",
-            rust_run.reason
+        assert_eq!(
+            rust_run.reason.as_deref(),
+            Some(
+                "1 generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns"
+            )
         );
         Ok(())
     }
