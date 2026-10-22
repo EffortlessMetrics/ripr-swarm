@@ -337,6 +337,13 @@ the only word about a live finding:
   `diagnostic_profile = "full"` escape hatch — so the status reconciles
   with `analysis_outcome.finding_count` on the wire. No snapshot renders
   `null`; the `full` profile renders a zero count with no route.
+- `ripr/analysisStatus` carries `unavailable_languages` — typed
+  `language`, skipped changed-file `file_count` and `recovery` rows for
+  changed files whose language adapter is not enabled or compiled in
+  (empty when none). Clients without the `riprEditor` integration get one
+  bounded `window/showMessage` warning per such language (shown again only
+  after the language leaves the set); the VS Code status bar renders the
+  typed rows, never the limitation's detail text.
 - The pull channel (`textDocument/diagnostic`, `workspace/diagnostic`)
   emits the same one-line disclosure naming the count and the escape
   hatch when items are withheld, and the completion log carries

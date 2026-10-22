@@ -92,7 +92,7 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     }
   ],
   "oracles": [
@@ -240,8 +240,8 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Ledger::fee(100), 0, 'fees are charged')",
-      "kind": "exact_return_assertion",
-      "observed_sink": "0.01 * $amount",
+      "kind": "smoke_ok",
+      "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:isnt:469-514",
       "provenance_refs": [
         "prov:oracle_extraction:file:t/ledger.t"
@@ -252,7 +252,7 @@
         "start_column": 0,
         "start_line": 15
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
       "test_id": "test:t/ledger.t"
     },
@@ -472,7 +472,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:90993daf3a9eb32b9e26522eaab521ba4cad190f6c293a724cd9fd823ff32622",
+  "packet_fingerprint": "sha256:e2d0fac2574114d10bcd3ac248edd285c1bc137f91bcfee33b072b2c86b1db2a",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {

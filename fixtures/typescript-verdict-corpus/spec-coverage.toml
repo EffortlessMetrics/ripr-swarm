@@ -531,6 +531,12 @@ id = "RIPR-SPEC-0279"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust doc examples and diffs, so a TypeScript case cannot label them"
 
+# Rust mock call-count side flip
+[[spec]]
+id = "RIPR-SPEC-0305"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # TypeScript strict custom matcher
 [[spec]]
 id = "RIPR-SPEC-0262"
@@ -591,6 +597,9 @@ reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdic
 id = "RIPR-SPEC-0282"
 scope = "out"
 reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
 [[spec]]
 id = "RIPR-SPEC-0285"
 scope = "out"
@@ -599,3 +608,39 @@ reason = "doctor/repo-input framework-scan admission, ordering, and string-aware
 id = "RIPR-SPEC-0289"
 scope = "out"
 reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+# Release ledger direct-main contract
+[[spec]]
+id = "RIPR-SPEC-0301"
+scope = "out"
+reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"

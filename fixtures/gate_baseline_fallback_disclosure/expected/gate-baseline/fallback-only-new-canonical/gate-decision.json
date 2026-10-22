@@ -2,9 +2,8 @@
   "config_errors": [],
   "decisions": [
     {
-      "baseline_match_kind": "legacy_path_line_class",
       "canonical_gap_id": "gap:newboundary0000002",
-      "decision": "advisory",
+      "decision": "blocking",
       "evidence": {
         "assertion_shape": "assert_eq!(discounted_total(/* boundary input for amount == discount_threshold */), /* expected */)",
         "candidate_values": [
@@ -27,7 +26,7 @@
         "suppressed": false
       },
       "gap_state": "actionable",
-      "gate_reason": "candidate identity is already present in the explicit baseline",
+      "gate_reason": "new policy-eligible gap blocks under baseline-check",
       "id": "ripr-gate-gap-newboundary0000002",
       "placement": {
         "line": 88,
@@ -83,7 +82,7 @@
   "mode": "baseline-check",
   "new_unsuppressed": {
     "basis": "baseline",
-    "count": 0,
+    "count": 1,
     "reason": null
   },
   "policy": {
@@ -96,7 +95,7 @@
   },
   "root": ".",
   "schema_version": "0.1",
-  "status": "advisory",
+  "status": "blocked",
   "subject": {
     "analyzer_version": "0.0.0+pinned-golden-analyzer-version",
     "inputs": {
@@ -110,15 +109,13 @@
   },
   "summary": {
     "acknowledged": 0,
-    "advisory": 1,
-    "blocking": 0,
+    "advisory": 0,
+    "blocking": 1,
     "evaluated": 1,
     "not_applicable": 0,
     "suppressed": 0,
-    "unknown_confidence": 1
+    "unknown_confidence": 0
   },
   "tool": "ripr",
-  "warnings": [
-    "gate candidate ripr-review-newseam00002 matched baseline evidence by fallback path/line/static_class identity `src/pricing.rs:88:weakly_gripped`; disclosed as baseline_match_kind=legacy_path_line_class — a legacy compatibility match, not a canonical identity match"
-  ]
+  "warnings": []
 }

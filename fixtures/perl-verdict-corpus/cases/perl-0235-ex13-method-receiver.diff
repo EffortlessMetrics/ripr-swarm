@@ -1,13 +1,13 @@
-diff --git a/lib/Shop/Cart.pm b/lib/Shop/Cart.pm
-index 7330a50..4a37d77 100644
---- a/lib/Shop/Cart.pm
-+++ b/lib/Shop/Cart.pm
-@@ -17,7 +17,7 @@ sub add {
- sub total {
-     my ($self) = @_;
-     my $total = 0;
--    $total += $_->{price} * $_->{qty} for @{ $self->{items} };
-+    $total += $_->{qty} * $_->{price} for @{ $self->{items} };
-     return $total;
- }
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..8fc836f 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -28,7 +28,7 @@ sub shipping_fee {
  
+ sub tier_label {
+     my ($points) = @_;
+-    return 'gold' if $points >= 1000;
++    return 'gold' if 1000 <= $points;
+     return 'silver' if $points >= 500;
+     return 'bronze';
+ }

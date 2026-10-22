@@ -2373,6 +2373,16 @@ mod tests {
             let _ = fs::remove_file(&marker);
             return Err("timed-out process tree should not run its continuation".to_string());
         }
+        // The marker is written by the parent, so a direct-child-only kill
+        // also leaves it absent. The descendant is what holds the captured
+        // pipes: when the job ends it the readers reach EOF, and when it
+        // survives the bounded drain gives up with a truncation diagnostic.
+        for (stream, text) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+            assert!(
+                !text.contains("output truncated"),
+                "{stream} drain was abandoned, so the pipe-holding descendant outlived the timeout: {text:?}"
+            );
+        }
         Ok(())
     }
 

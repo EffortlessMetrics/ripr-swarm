@@ -498,6 +498,66 @@ mod tests {
     }
 
     #[test]
+    fn bounded_findings_document_discloses_document_complete_in_analysis_outcome()
+    -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+        // #9010: analysis_complete stays the analysis verdict; only a
+        // budget-bounded document adds `document_complete: false` + counts.
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 3,
+                candidate_line_count: 3,
+                probe_count: 3,
+                finding_count: 3,
+            },
+            Vec::new(),
+        )?;
+        let mut output = three_finding_output();
+        output.analysis_outcome = Some(outcome);
+        let parse = |raw: &str| -> Result<serde_json::Value, String> {
+            serde_json::from_str(raw).map_err(|error| error.to_string())
+        };
+
+        let bounded = parse(&render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((1, FindingsBudgetSource::Configured)),
+        ))?;
+        let envelope = &bounded["analysis_outcome"];
+        assert_eq!(envelope["analysis_complete"], true);
+        assert_eq!(envelope["outcome"]["kind"], "complete_with_findings");
+        assert_eq!(envelope["document_complete"], false);
+        assert_eq!(envelope["findings_rendered"], 1);
+        assert_eq!(envelope["findings_total"], 3);
+        assert_eq!(
+            bounded["findings"].as_array().map(Vec::len),
+            Some(1),
+            "the disclosed rendered count matches the array"
+        );
+
+        let unbounded = parse(&render_with_config(&output, &RiprConfig::default(), None))?;
+        assert!(unbounded["analysis_outcome"]["analysis_complete"] == true);
+        assert!(
+            unbounded["analysis_outcome"]
+                .get("document_complete")
+                .is_none(),
+            "unbounded runs stay byte-identical: no document_complete member"
+        );
+        // A budget that does not engage is unbounded output too.
+        let roomy = parse(&render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((usize::MAX / 2, FindingsBudgetSource::Configured)),
+        ))?;
+        assert!(roomy["analysis_outcome"].get("document_complete").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn check_findings_completeness_at_byte_boundary() -> Result<(), String> {
         use super::report::{FindingsBudgetSource, render_with_config};
         use crate::config::RiprConfig;

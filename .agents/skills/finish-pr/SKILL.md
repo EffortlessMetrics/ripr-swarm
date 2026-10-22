@@ -46,6 +46,25 @@ change settings to obtain a merge.
    - limitations and non-claims;
    - rollback boundary;
    - exact candidate SHA.
+   Agent-authored bodies must also include, verbatim and with real values
+   (not empty, `TBD`, or `<...>` placeholders), every
+   `.github/pull_request_template.md` Source-of-truth Links line
+   (`Proposal:`, `Spec:`, `ADR:`, `Plan item:`,
+   `Governing issue or accepted claim:`,
+   `Acceptance delta (one sentence):`) and Candidate Relationships line
+   (`Candidate branch (GitHub PR head is authoritative after publication):`,
+   `Stack parent or prerequisite PR (if any):`,
+   `Proposed replacement of PR (if any; not yet accepted):`,
+   `Acceptance retained from a replaced candidate (if any):`,
+   `Accepted winner and losing candidate disposition (when decided):`)
+   before first Ready. Where a line does not apply, state that explicitly
+   (for example `none`) instead of deleting or leaving it blank; the two
+   admission-gated lines (`Governing issue or accepted claim:` and
+   `Acceptance delta (one sentence):`) always need a real value. Before
+   first Ready, validate the body offline and fix every line it names:
+   `gh pr view <number> --json body > pr-body.json` then
+   `cargo xtask check-pr-shape --body-file pr-body.json` (or
+   `--body-env <var>` holding the raw body or that JSON).
 3. Publish as Draft and inspect current reviews, inline threads, required and advisory checks, mergeability, and head identity. Keep the candidate Draft through the review, repair and composition steps below.
 4. Locate the current-head `review-pr` record. If it is missing, stale, covers only automated comments/CI, or is anchored to another head, run `review-pr` before treating the candidate as merge-ready.
 5. Classify every automated or human finding as:
