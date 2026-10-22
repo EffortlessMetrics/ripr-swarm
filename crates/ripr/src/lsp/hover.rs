@@ -516,7 +516,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         .as_ref()
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
-    let mut lines = vec![format!("**ripr** `{classification}`"), String::new()];
+    let mut lines = vec![
+        format!("**ripr** finding: {}", class_header_label(&classification)),
+        String::new(),
+    ];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
     lines.extend([
