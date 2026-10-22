@@ -107,7 +107,11 @@ and every condition below holds. Anything else keeps the pre-0265 reading.
   - `map` + `collect()` into a `Result<Vec<..>, ..>` (same spelling rules,
     #9490): the first `Err` is the owner's result, and otherwise every
     closure value is kept in order. Rules 1 and 2 read such a tail only
-    while the owner's file binds no other item to `Vec` or `Result`. A
+    while the owner's file binds no other item to `Vec` or `Result`. Only
+    an `Ok(..)` pin (or a `.unwrap()` of the call) reaches every element: an
+    `Err(..)` pin stops at the first `Err`, so a test whose only pins are
+    `Err(..)` is withheld under `rust_pinned_shape_unresolved` and the file
+    binding `Ok` or `Err` as a value refuses the pin. A
     `filter` + `collect` into a `Result` is not read;
   - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
     arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
