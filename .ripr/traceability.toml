@@ -17019,7 +17019,7 @@ tests = [
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
-  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_is_credited",
   "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::a_returned_closure_the_test_applies_reads_as_a_shape_limit",
   "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
