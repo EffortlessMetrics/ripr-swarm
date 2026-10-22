@@ -62,6 +62,9 @@ pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: b
         && mock_payload_guard::identifier_offsets(code, root)
             .into_iter()
             .all(|at| {
+                if !enum_member_prefix_is_read_only(&code[..at]) {
+                    return false;
+                }
                 let mut rest = &code[at + root.len()..];
                 // A namespace's first member is the enum object itself.
                 // Only its next member is a scalar enum value; handing the
@@ -89,9 +92,15 @@ pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: b
 /// grouped scalar remains safe. Cast/generic-call tails are unknown rather
 /// than an opportunity to infer a scalar value through another grammar.
 fn enum_member_tail_is_read_only(rest: &str) -> bool {
-    let rest = enum_after_grouping_wrappers(rest);
+    let rest = enum_after_invocation_wrappers(rest);
+    // Normalize a member target to an identifier for the existing write
+    // reader. Five operator characters distinguish assignments/updates from
+    // comparisons without copying the remaining module or its operator law.
+    let operator: String = rest.chars().take(5).collect();
+    if tests_extract::identifier_written_in(&format!("enum_member {operator}"), "enum_member") {
+        return false;
+    }
     !rest.starts_with('(')
-        && !rest.starts_with("?.(")
         && !rest.starts_with('`')
         && !enum_generic_invocation_tail(rest)
         && !["as", "satisfies"].iter().any(|keyword| {
@@ -99,6 +108,28 @@ fn enum_member_tail_is_read_only(rest: &str) -> bool {
                 !tail.starts_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'))
             })
         })
+}
+
+fn enum_member_prefix_is_read_only(mut before: &str) -> bool {
+    loop {
+        before = before.trim_end();
+        if let Some(prefix) = before.strip_suffix('(') {
+            before = prefix;
+        } else {
+            break;
+        }
+    }
+    !before.ends_with("++")
+        && !before.ends_with("--")
+        && !before.strip_suffix("delete").is_some_and(|head| {
+            !head.ends_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'))
+                && !head.trim_end().ends_with('.')
+        })
+}
+
+fn enum_after_invocation_wrappers(rest: &str) -> &str {
+    let rest = enum_after_grouping_wrappers(rest);
+    rest.strip_prefix("?.").map_or(rest, str::trim_start)
 }
 
 fn enum_after_grouping_wrappers(mut rest: &str) -> &str {
@@ -133,10 +164,8 @@ fn enum_generic_invocation_tail(rest: &str) -> bool {
             '>' => {
                 depth -= 1;
                 if depth == 0 {
-                    let tail = enum_after_grouping_wrappers(&arguments[at + 1..]);
-                    return tail.starts_with('(')
-                        || tail.starts_with("?.(")
-                        || tail.starts_with('`');
+                    let tail = enum_after_invocation_wrappers(&arguments[at + 1..]);
+                    return tail.starts_with('(') || tail.starts_with('`');
                 }
             }
             _ => {}

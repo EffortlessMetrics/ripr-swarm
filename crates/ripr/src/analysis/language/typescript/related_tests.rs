@@ -781,8 +781,10 @@ fn module_export_facts(
 ) -> ModuleExportFacts {
     // intermediate module path (normalized, no extension)
     let module = normalized_module_path(relative);
-    let mut facts = ModuleExportFacts::default();
-    facts.enum_imports = extract_imports_for_test_file(body);
+    let mut facts = ModuleExportFacts {
+        enum_imports: extract_imports_for_test_file(body),
+        ..ModuleExportFacts::default()
+    };
     for statement in body {
         let declaration = match statement {
             Statement::TSEnumDeclaration(declaration) => Some(declaration.as_ref()),

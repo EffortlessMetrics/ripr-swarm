@@ -743,6 +743,10 @@ prove its condition costs an abstention or a gap, never a credit.
    are possible receiver escapes; cast
    and generic-call tails also remain unknown. Grouping a scalar member
    read alone does not withdraw a separate canonical witness. The test check
+   also rejects grouped member updates, assignments and deletion. Whitespace
+   or comments after an optional-call token do not establish read-only use,
+   and optional generic invocation is still invocation. Scalar unary minus,
+   logical not and ordinary comparisons remain reads. The test check
    covers the whole file, including setup hooks. Distinct source files
    collapsed by extension
    stripping (for example `constants.ts` and `constants.mts`) make that

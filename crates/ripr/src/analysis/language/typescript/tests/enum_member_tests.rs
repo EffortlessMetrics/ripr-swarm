@@ -45,6 +45,26 @@ fn grouped_enum_member_callees_never_establish_read_only_identity() -> Result<()
             "(Level.valueOf)?.()",
         ),
         (
+            "optional-space",
+            "import { Level } from './constants';",
+            "(Level.valueOf)?. ()",
+        ),
+        (
+            "optional-comment",
+            "import { Level } from './constants';",
+            "(Level.valueOf)?. /* call */ ()",
+        ),
+        (
+            "optional-generic-direct",
+            "import { Level } from './constants';",
+            "Level.valueOf?.<unknown>()",
+        ),
+        (
+            "optional-generic-grouped",
+            "import { Level } from './constants';",
+            "(Level.valueOf)?.<unknown>()",
+        ),
+        (
             "generic-call",
             "import { Level } from './constants';",
             "(Level.valueOf)<unknown>()",
@@ -95,12 +115,41 @@ fn grouped_scalar_enum_reads_preserve_a_canonical_witness() -> Result<(), String
         ("namespace-scalar", "const high = (levels.Level.High);"),
         ("scalar-comparison", "const low = Level.High < 3;"),
         ("namespace-comparison", "const low = levels.Level.High < 3;"),
+        ("scalar-unary-minus", "const low = -(Level.High);"),
+        ("scalar-logical-not", "const low = !(Level.High);"),
+        ("namespace-unary-minus", "const low = -(levels.Level.High);"),
+        ("namespace-logical-not", "const low = !(levels.Level.High);"),
     ] {
         let test = format!(
             "import {{ expect, it }} from 'vitest';\nimport {{ weight, Level }} from '../src/level';\nimport * as levels from '../src/level';\n{setup}\nit('high', () => {{ expect(weight(Level.High)).toBe(10); }});\n"
         );
         let finding = classify_enum_source(label, ENUM, &test, &[])?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn grouped_enum_member_mutations_withhold_canonical_credit() -> Result<(), String> {
+    for (label, mutation) in [
+        ("post-decrement", "(Level.High)--;"),
+        ("nested-post-decrement", "((Level.High))--;"),
+        ("pre-decrement", "--(Level.High);"),
+        ("nested-pre-decrement", "--((Level.High));"),
+        ("post-increment", "(Level.High)++;"),
+        ("pre-increment", "++(Level.High);"),
+        ("delete", "delete (Level.High);"),
+        ("nested-delete", "delete ((Level.High));"),
+        ("assignment", "(Level.High) = 1;"),
+        ("compound-assignment", "((Level.High)) -= 1;"),
+        ("namespace-pre-decrement", "--(levels.Level.High);"),
+        ("namespace-delete", "delete (levels.Level.High);"),
+    ] {
+        let test = format!(
+            "import {{ expect, it }} from 'vitest';\nimport {{ weight, Level }} from '../src/level';\nimport * as levels from '../src/level';\n{mutation}\nit('high', () => {{ expect(weight(Level.High)).toBe(10); }});\n"
+        );
+        let finding = classify_enum_source(label, ENUM, &test, &[])?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
     }
     Ok(())
 }
