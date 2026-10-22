@@ -1006,3 +1006,29 @@ test("optional", (t) => {
     let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
     assert_eq!(names, ["computed", "optional"], "{tests:?}");
 }
+
+#[test]
+fn bare_parameter_callbacks_attribute_a_nested_subtest_skip_to_the_subtest() {
+    let source = r#"
+import test from "node:test";
+test("async parent", async t => {
+    await t.test("sub", t => {
+        t.skip();
+    });
+    assert.equal(price(150), 130);
+});
+test("plain parent", t => {
+    t.test("sub", async t => {
+        t.todo();
+    });
+    assert.equal(price(150), 130);
+});
+test("own skip", async t => {
+    t.skip();
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
+}

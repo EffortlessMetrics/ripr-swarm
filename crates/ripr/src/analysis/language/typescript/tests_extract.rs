@@ -3038,6 +3038,18 @@ fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<u
         while head > 0 && bytes[head - 1].is_ascii_whitespace() {
             head -= 1;
         }
+        // A bare single parameter may follow `async` (`async t => {...}`).
+        if masked[..head].ends_with("async")
+            && !masked[..head - 5]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        {
+            head -= 5;
+            while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+                head -= 1;
+            }
+        }
         let prev = if head > 0 { bytes[head - 1] } else { 0 };
         let body_from = if masked[end..].starts_with("=>") && (prev == b'(' || prev == b',') {
             // `t => { ... }` (bare single parameter)
