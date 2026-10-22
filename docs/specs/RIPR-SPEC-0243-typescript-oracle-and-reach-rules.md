@@ -999,6 +999,21 @@ rejected alternative. Any can be reversed later without touching the rest.
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
     computed arguments, strings, and calls inside expressions.
+20. **Failures a handler rethrows (2026-10-22, #9685).** Adopted. (a) A
+    `try` whose handler is exactly `catch (e) { throw e; }` (one statement,
+    throwing the very binding it caught, no `finally` that can replace the
+    completion) passes the body's failure through, so the body's assertions
+    count as if the `try` were absent. A bare `catch`, an empty handler, a
+    different thrown value, any other statement in the handler, a destructured
+    catch binding, or a `finally` that returns or throws still withholds them
+    (#8242, #8508). (b) A same-file top-level `function w(fn) { try { fn(); }
+    catch (e) { throw e; } }` (synchronous, one plain parameter, nothing else
+    in the body) is transparent: a call that is its own statement,
+    `w(() => <expression>);` on one line, reads as `<expression>;`, and every
+    mention of `w` must be such a call. A wrapper that swallows, wraps,
+    logs, awaits or adds a statement keeps its calls unread. Rejected:
+    crediting any handler on the strength of its name, and following wrappers
+    across files.
 
 ## Required Evidence
 
@@ -1391,8 +1406,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `pw-tothrow-anchored-regex` and `pw-loop-registered-rounding-mode` keep
   their `known_false` entries under #9651, #9652 and #9653.
 
+- #9685 (decision 20): `tests/rethrow_catch_tests.rs` pins the rethrowing
+  handler against nine swallowing or replacing handlers, and
+  `rethrow_wrapper.rs` unit tests pin the wrapper shape and every call form it
+  refuses. Corpus rows `ts-trap-rethrown-assert` and `ts-trap-wrapped-through`
+  move from `gap` to `credited`; `ts-trap-swallowed-assert` and
+  `ts-trap-wrapped-swallow` stay `gap`.
+
 ## Implementation Mapping
 
+- #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
+  the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,
+  run before the assertion-helper expansion in `extract_tests_with_expansion`).
 - #9434 (rule 16): `oracle.rs` (`call_expression_is_expect` for
   `expect.soft`, the `step` arm of `collect_nested_callback_assertions` with
   `TypeScriptAssertionBindings::playwright_tests`, and the `ThrowsRegex` /

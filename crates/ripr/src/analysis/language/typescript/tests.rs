@@ -17442,6 +17442,7 @@ mod out_dir_specifier_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
+mod rethrow_catch_tests;
 mod returned_dataflow_tests;
 mod rounding_mode_tests;
 mod scope_receiver_tests;
