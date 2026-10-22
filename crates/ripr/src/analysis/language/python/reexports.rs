@@ -129,6 +129,9 @@ fn apply_with<'s>(
         declared: HashMap::new(),
     };
     for owner in owners.iter_mut() {
+        owner.star_exported = !owner.name.starts_with('_')
+            && !owner.is_module_owner()
+            && star_exports.exports(&owner.file, &owner.name);
         owner.reexport_modules =
             package_reexport_modules(owner, &exporters, definitions, &mut star_exports);
     }
