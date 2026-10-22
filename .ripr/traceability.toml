@@ -1696,6 +1696,7 @@ tests = [
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_awaiting_and_missing_commands_retain_literal_unix_root",
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root",
   "crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_receipt",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_verify_packet_or_brief",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_warns_when_verify_or_receipt_look_stale",
