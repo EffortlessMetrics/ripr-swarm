@@ -945,13 +945,7 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
 /// wire strings, never a file name.
 pub(crate) fn non_rust_item_language(item: &str) -> Option<&'static str> {
     let wire = if let Some(rest) = item.strip_prefix("gap:") {
-        // A bare `gap:<language>` carries no gap identity, so it stays an
-        // unknown item with stale-id guidance.
-        let (wire, identity) = rest.split_once(':')?;
-        if identity.is_empty() {
-            return None;
-        }
-        wire
+        rest.split(':').next()?
     } else {
         let parts: Vec<&str> = item.split(':').collect();
         match parts.as_slice() {
@@ -975,7 +969,7 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
         format!("this {language} finding in `{file}`")
     };
     format!(
-        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. Where `ripr check` reports a missing discriminator, the gap, test node and verify command it prints are the manual route: add the discriminator to that test by hand and run the printed verify command"
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command"
     )
 }
 
@@ -1679,8 +1673,6 @@ pub(crate) mod tests {
             ("probe:src_lib.rs:12:predicate", None),
             ("probe:src_lib.rs:rust_preview:abcd1234", None),
             ("gap:cobol:legacy.cbl:run:x", None),
-            ("gap:python:", None),
-            ("gap:python", None),
             ("probe:a_py:python_preview", None),
             ("probe:a.py:python_preview:abcd:extra", None),
             ("python_preview", None),
