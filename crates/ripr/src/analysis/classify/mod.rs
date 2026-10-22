@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
+mod caller_loop_selector;
 mod changed_span;
 mod context;
 mod decision;
@@ -49,6 +50,7 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
+pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
