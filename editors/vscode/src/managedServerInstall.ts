@@ -155,7 +155,13 @@ export async function installManagedServer(
     }
 
     const heartbeat = setInterval(() => {
-      fs.promises.utimes(lockPath, new Date(), new Date()).catch(() => undefined);
+      void (async () => {
+        // Only touch a lock this installer still owns (#9304): a lock taken
+        // over after a stale reclaim must not be kept alive by the old holder.
+        if (await ownsLock(lockPath, lockToken)) {
+          await fs.promises.utimes(lockPath, new Date(), new Date());
+        }
+      })().catch(() => undefined);
     }, LOCK_HEARTBEAT_MS);
     heartbeat.unref();
     try {
@@ -164,11 +170,25 @@ export async function installManagedServer(
         return converged;
       }
       await sweepOrphanInstallDirs(request.serversRoot, finalDir);
-      return await stageAndPromote(request, operations, finalDir);
+      const installed = await stageAndPromote(request, operations, finalDir);
+      // A displaced `.replaced-*` directory may be the only recoverable copy
+      // until a new install succeeds, so it is swept only now.
+      await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
+      return installed;
     } finally {
       clearInterval(heartbeat);
-      await fs.promises.rm(lockPath, { recursive: true, force: true });
+      if (await ownsLock(lockPath, lockToken)) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+      }
     }
+  }
+}
+
+async function ownsLock(lockPath: string, lockToken: string): Promise<boolean> {
+  try {
+    return (await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim() === lockToken;
+  } catch {
+    return false;
   }
 }
 
@@ -179,7 +199,12 @@ export async function installManagedServer(
  * only one contender wins, and the moved directory's owner is re-checked so a
  * lock freshly taken by someone else is put back rather than destroyed.
  */
-export async function reclaimStaleLock(lockPath: string, serversRoot: string, now: number = Date.now()): Promise<boolean> {
+export async function reclaimStaleLock(
+  lockPath: string,
+  serversRoot: string,
+  now: number = Date.now(),
+  hooks: { beforeMove?: () => Promise<void>; afterMove?: () => Promise<void> } = {}
+): Promise<boolean> {
   assertDescendantPath(serversRoot, lockPath, 'install lock');
   let owner: string | undefined;
   let mtimeMs: number;
@@ -199,6 +224,7 @@ export async function reclaimStaleLock(lockPath: string, serversRoot: string, no
   if (!ownerDead && !heartbeatStale) {
     return false;
   }
+  await hooks.beforeMove?.();
   const aside = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
   assertDescendantPath(serversRoot, aside, 'stale install lock');
   try {
@@ -206,6 +232,7 @@ export async function reclaimStaleLock(lockPath: string, serversRoot: string, no
   } catch {
     return false;
   }
+  await hooks.afterMove?.();
   let movedOwner: string | undefined;
   try {
     movedOwner = (await fs.promises.readFile(path.join(aside, 'owner'), 'utf8')).trim();
@@ -213,15 +240,17 @@ export async function reclaimStaleLock(lockPath: string, serversRoot: string, no
     movedOwner = undefined;
   }
   if (movedOwner !== owner) {
-    // Raced with a new owner: restore it unless yet another lock appeared.
+    // Raced with a new owner: put it back. If the restore fails, leave the
+    // aside directory for the `.install.lock.stale-*` sweep rather than
+    // deleting a possibly live lock.
     try {
       await fs.promises.rename(aside, lockPath);
-      return false;
     } catch {
-      // Fall through and discard; the restored-lock race is best effort.
+      // Best effort.
     }
+    return false;
   }
-  await fs.promises.rm(aside, { recursive: true, force: true });
+  await fs.promises.rm(aside, { recursive: true, force: true }).catch(() => undefined);
   return true;
 }
 
@@ -240,7 +269,11 @@ function isProcessAlive(pid: number): boolean {
  * a hard kill (#9304). Called only while holding the install lock, so no live
  * installer owns any of them. The active install directory is never touched.
  */
-export async function sweepOrphanInstallDirs(serversRoot: string, finalDir: string): Promise<void> {
+export async function sweepOrphanInstallDirs(
+  serversRoot: string,
+  finalDir: string,
+  kinds: readonly string[] = ['.install-', '.install.lock.stale-']
+): Promise<void> {
   const parent = path.dirname(finalDir);
   const base = path.basename(finalDir);
   let entries: string[];
@@ -250,7 +283,7 @@ export async function sweepOrphanInstallDirs(serversRoot: string, finalDir: stri
     return;
   }
   for (const entry of entries) {
-    if (!(entry.startsWith(`${base}.install-`) || entry.startsWith(`${base}.replaced-`) || entry.startsWith(`${base}.install.lock.stale-`))) {
+    if (!kinds.some((kind) => entry.startsWith(`${base}${kind}`))) {
       continue;
     }
     const orphan = path.join(parent, entry);

@@ -84,15 +84,23 @@ probed as cache candidates. When a release-admitted manifest digest exists for
 the requested distribution generation, the receipt must also record that exact
 manifest SHA-256 (`manifestSha256`); a receipt recorded under another digest,
 or a legacy receipt with none, is a cache miss and the install re-verifies.
-With no admitted digest the cache is explicitly offline-trusted on version and
-local byte integrity alone. A failed install for a new version leaves an
+The binding takes effect once a release descriptor admits a digest; today none
+is admitted, so cache hits are offline-trusted on version and local byte
+integrity alone. A failed install for a new version leaves an
 already completed prior version unchanged.
 
 A contender reclaims an install lock only when its owner pid is no longer
 running or its heartbeat is older than five minutes; a live owner with a fresh
-heartbeat is never reclaimed, and a lock whose owner changed during the move is
-restored. The lock holder removes orphaned `.install-*` and `.replaced-*`
-siblings of its own target, never the active install directory. Reclaim by pid
+heartbeat is never reclaimed. A live owner whose heartbeat went stale (for
+example a suspended laptop) is reclaimed too. The lock is moved aside to
+`.install.lock.stale-*`; if its owner changed during the move it is restored on
+a best-effort basis, and if the restore fails the moved directory is left for
+the `.install.lock.stale-*` sweep instead of being deleted. A lock with a
+missing or unparseable owner is reclaimed only on a stale heartbeat. The holder
+heartbeats and releases only while the lock still carries its own token. The
+holder sweeps `.install-*` and `.install.lock.stale-*` siblings of its own
+target before installing, and `.replaced-*` only after a successful install,
+never the active install directory. Reclaim by pid
 probe is local-host only; the Windows branch relies on Node's `process.kill(pid, 0)`
 and has no Windows-capable proof here.
 

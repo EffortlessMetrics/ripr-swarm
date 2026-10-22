@@ -246,12 +246,92 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(new Set(results.map((r) => r.executablePath)).size, 1);
   });
 
-  test('orphan sweep never removes the active install directory (#9304)', async () => {
+  test('orphan sweep removes orphans beside the active directory but never the active one (#9304)', async () => {
     const request = installRequest(root, '8.3.0');
     const installed = await installManagedServer(request, operations('keep', '8.3.0'));
     const finalDir = path.dirname(installed.executablePath);
+    const orphan = `${finalDir}.install-9-z`;
+    const stale = `${finalDir}.install.lock.stale-9-z`;
+    const replaced = `${finalDir}.replaced-9-z`;
+    for (const dir of [orphan, stale, replaced]) {
+      await fs.promises.mkdir(dir);
+    }
     await sweepOrphanInstallDirs(request.serversRoot, finalDir);
+    assert.strictEqual(fs.existsSync(orphan), false);
+    assert.strictEqual(fs.existsSync(stale), false);
+    assert.strictEqual(fs.existsSync(replaced), true, '.replaced-* is not swept by default');
     assert.ok(await readManagedServerInstallation(request));
+  });
+
+  test('a recoverable .replaced-* is kept when the fetch fails and swept after success (#9304)', async () => {
+    const request = installRequest(root, '8.4.0');
+    const finalDir = path.join(request.serversRoot, request.version, request.platformTarget);
+    const replaced = `${finalDir}.replaced-1-r`;
+    await fs.promises.mkdir(replaced, { recursive: true });
+    const failing = operations('x', '8.4.0');
+    failing.resolveArchive = async () => {
+      throw new Error('offline');
+    };
+    await assert.rejects(installManagedServer(request, failing), /offline/);
+    assert.strictEqual(fs.existsSync(replaced), true);
+    await installManagedServer(request, operations('ok', '8.4.0'));
+    assert.strictEqual(fs.existsSync(replaced), false);
+  });
+
+  test('reclaim restores a lock whose owner changed during the move, or leaves it aside (#9304)', async () => {
+    const request = installRequest(root, '8.5.0');
+    const versionDir = path.join(request.serversRoot, request.version);
+    const lockPath = path.join(versionDir, `${request.platformTarget}.install.lock`);
+    await fs.promises.mkdir(lockPath, { recursive: true });
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${deadPid()}:dead\n`);
+    const swap = async () => {
+      await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:new-owner\n`);
+    };
+    assert.strictEqual(await reclaimStaleLock(lockPath, request.serversRoot, Date.now(), { beforeMove: swap }), false);
+    assert.strictEqual((await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim(), `${process.pid}:new-owner`);
+
+    // Restore failure: a new lock appears at the path; the moved-aside live lock is kept.
+    await fs.promises.rm(lockPath, { recursive: true });
+    await fs.promises.mkdir(lockPath);
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${deadPid()}:dead\n`);
+    const blocker = async () => {
+      await fs.promises.mkdir(lockPath);
+      await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:blocker\n`);
+    };
+    assert.strictEqual(
+      await reclaimStaleLock(lockPath, request.serversRoot, Date.now(), { beforeMove: swap, afterMove: blocker }),
+      false
+    );
+    const asides = (await fs.promises.readdir(versionDir)).filter((e) => e.includes('.install.lock.stale-'));
+    assert.strictEqual(asides.length, 1, 'the possibly live lock is left for the stale sweep');
+  });
+
+  test('missing or unparseable owner is reclaimed only when the heartbeat is stale (#9304)', async () => {
+    const request = installRequest(root, '8.6.0');
+    const versionDir = path.join(request.serversRoot, request.version);
+    const old = new Date(Date.now() - 60 * 60_000);
+    for (const owner of [undefined, 'garbage\n']) {
+      const lockPath = path.join(versionDir, `${request.platformTarget}.install.lock`);
+      await fs.promises.mkdir(lockPath, { recursive: true });
+      if (owner !== undefined) {
+        await fs.promises.writeFile(path.join(lockPath, 'owner'), owner);
+      }
+      assert.strictEqual(await reclaimStaleLock(lockPath, request.serversRoot), false, 'fresh mtime is not stale');
+      await fs.promises.utimes(lockPath, old, old);
+      assert.strictEqual(await reclaimStaleLock(lockPath, request.serversRoot), true);
+      assert.strictEqual(fs.existsSync(lockPath), false);
+    }
+  });
+
+  test('release does not delete a lock taken over by another owner mid-install (#9304)', async () => {
+    const request = installRequest(root, '8.7.0');
+    const finalDir = path.join(request.serversRoot, request.version, request.platformTarget);
+    const lockPath = `${finalDir}.install.lock`;
+    const takeover = operations('takeover', '8.7.0', async () => {
+      await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:other\n`);
+    });
+    await installManagedServer(request, takeover);
+    assert.strictEqual((await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim(), `${process.pid}:other`);
   });
 
   test('prerelease requests admit the generation-keyed manifest version through staging and cache read-back', async () => {
