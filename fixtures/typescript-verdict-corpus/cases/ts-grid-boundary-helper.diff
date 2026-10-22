@@ -1,0 +1,12 @@
+diff --git a/src/boundary.ts b/src/boundary.ts
+--- a/src/boundary.ts
++++ b/src/boundary.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function passes(score: number): boolean {
+-  return score >= 50;
++  return 50 <= score;
+ }
+ 
+ export function overweight(grams: number): boolean {

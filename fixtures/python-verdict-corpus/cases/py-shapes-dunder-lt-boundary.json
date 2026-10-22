@@ -1,0 +1,44 @@
+{
+  "case_id": "py-shapes-dunder-lt-boundary",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-dunder-lt-boundary.diff",
+  "anchor": {
+    "file": "shapes/money.py",
+    "line": 15
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_dunder_ordering_equal_values_untested",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return self.cents <= other.cents",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: equal amounts compare as less than"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The ordering tests use distinct amounts only, so equal amounts never meet the boundary.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

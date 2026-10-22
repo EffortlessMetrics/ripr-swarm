@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus
   Changed behavior: total = base - bonus
   Missing discriminator: A strong Python oracle reaches `compute`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_calc.py:4 test_base_unchanged
+  Related test: tests/test_calc.py:4 test_base_unchanged (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_calc.py
   Suggested test: test_base_unchanged
   Test node: tests/test_calc.py::test_base_unchanged
@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast probe:src_calc.py:python_preview:3ddbe784
   ripr context --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast --at probe:src_calc.py:python_preview:3ddbe784
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_calc.py:python_preview:3ddbe784 --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/calc.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full
