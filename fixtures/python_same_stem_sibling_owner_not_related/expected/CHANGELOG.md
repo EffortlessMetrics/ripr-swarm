@@ -313,3 +313,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (27)
+
+Reason:
+RIPR-SPEC-0224: Python related-test row gains missing_input when its own calls never reach the changed predicate boundary (#5491)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -225,30 +225,66 @@ fn hidden_call_shapes_never_get_no_call_path() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn off_boundary_strong_predicate_row_is_never_missing_input_here() -> Result<(), String> {
-    // `missing_input` is pending follow-up (#5491): a strong row that the
-    // alignment credits keeps no miss, never a boundary claim, and its weak
-    // sibling keeps its own reason. A mutant that marks every strong row
-    // `observation_unconfirmed` fails the first assertion.
-    let finding = classify(
-        "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n",
-        "from src.subject import can_reserve\n\ndef test_off():\n    assert can_reserve(5, 3) == True\n\ndef test_w():\n    assert can_reserve(4, 4)\n",
+const RESERVE: &str = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+
+fn reserve_case(tests: &str) -> Result<Finding, String> {
+    classify(
+        RESERVE,
+        &format!("from src.subject import can_reserve\n{tests}"),
         2,
         "    if qty > on_hand:",
         "    if qty >= on_hand:",
+    )
+}
+
+#[test]
+fn off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not() -> Result<(), String> {
+    let finding = reserve_case(
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.related_tests.len(), 2, "{:?}", misses(&finding));
     assert_eq!(
-        miss_of(&finding, "test_off"),
+        miss_of(&finding, "test_off_boundary"),
+        Some(RelatedTestMiss::MissingInput)
+    );
+    // The weak sibling sits on the boundary but earns only its own reason; it
+    // neither lends its input to the strong row nor takes missing_input.
+    assert_eq!(
+        miss_of(&finding, "test_weak_on_boundary"),
+        Some(RelatedTestMiss::WeakAssertion)
+    );
+    Ok(())
+}
+
+#[test]
+fn unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact() -> Result<(), String> {
+    let finding = reserve_case(
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        miss_of(&finding, "test_off_boundary"),
+        Some(RelatedTestMiss::MissingInput)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_unresolved"),
         None,
         "{:?}",
         misses(&finding)
     );
-    assert_eq!(
-        miss_of(&finding, "test_w"),
-        Some(RelatedTestMiss::WeakAssertion)
+    Ok(())
+}
+
+#[test]
+fn boundary_input_row_makes_the_finding_exposed_with_no_row_miss() -> Result<(), String> {
+    let finding = reserve_case(
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(
+        finding.related_tests.iter().all(|row| row.miss.is_none()),
+        "{:?}",
+        misses(&finding)
     );
     Ok(())
 }
@@ -302,6 +338,7 @@ fn helper_owner_call_row_keeps_no_miss_inside_a_weak_finding() -> Result<(), Str
 // the classifier would have chosen.
 mod direct {
     use super::super::assertion_selection::PythonAssertionFocus;
+    use super::super::boundary::python_row_boundary_omission;
     use super::super::owners_tests::{extract_owners, extract_tests};
     use super::super::probe_shape::classify_probe_shape;
     use super::super::related_tests::{
@@ -379,6 +416,7 @@ mod direct {
                 owner: &case.owner,
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
+                focus: &focus,
             },
             &case.tests,
         );
@@ -465,6 +503,128 @@ mod direct {
         Ok(())
     }
 
+    fn omission(case: &Case, index: usize) -> bool {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        python_row_boundary_omission(
+            &case.after,
+            Some(&case.before),
+            &case.owner,
+            &candidates[index],
+            &candidates,
+            &focus,
+        )
+    }
+
+    #[test]
+    fn same_name_function_from_another_module_is_not_an_owner_call() -> Result<(), String> {
+        let source =
+            "def bulk(quantity):\n    if quantity > 100:\n        return 1\n    return 0\n";
+        let before = "    if quantity >= 100:";
+        let after = "    if quantity > 100:";
+        // Positive control: the import resolves to the owner's module.
+        let resolved = case_in(
+            "src/pricing/legacy.py",
+            "tests/test_bulk.py",
+            source,
+            "from pricing.legacy import bulk\n\ndef test_bulk():\n    assert bulk(101) == 1\n",
+            2,
+            before,
+            after,
+        )?;
+        assert!(
+            omission(&resolved, 0),
+            "import-resolved call is an owner call"
+        );
+        // Same name, different module: not the owner's call.
+        let other = case_in(
+            "src/pricing/legacy.py",
+            "tests/test_bulk.py",
+            source,
+            "from pricing.discounts import bulk\n\ndef test_bulk():\n    assert bulk(101) == 1\n",
+            2,
+            before,
+            after,
+        )?;
+        for index in 0..related_test_candidates(&other.owner, &other.tests).len() {
+            assert!(!omission(&other, index), "row {index}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_predicate_family_never_gets_missing_input() -> Result<(), String> {
+        let case = case(
+            "def score(value):\n    return 8\n",
+            "from src.subject import score\n\ndef test_score():\n    assert score(0) == 9\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        let rows = run(&case, &ExposureClass::WeaklyExposed, false);
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter()
+                .all(|(_, miss)| *miss != Some(RelatedTestMiss::MissingInput)),
+            "{rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn single_row_unresolved_or_computed_operand_gets_no_missing_input() -> Result<(), String> {
+        let source = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+        for body in [
+            "def test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+            "def test_computed():\n    assert can_reserve(2 + 3, 3) == True\n",
+        ] {
+            let case = case(
+                source,
+                &format!("from src.subject import can_reserve\n{body}"),
+                2,
+                "    if qty > on_hand:",
+                "    if qty >= on_hand:",
+            )?;
+            let rows = run(&case, &ExposureClass::WeaklyExposed, false);
+            assert_eq!(rows.len(), 1, "{body}");
+            assert_ne!(rows[0].1, Some(RelatedTestMiss::MissingInput), "{body}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn old_equality_operands_count_as_the_boundary() -> Result<(), String> {
+        // `level == 2` -> `level == 3`: a call at 2 or 3 separates old from new.
+        let case = case(
+            "def is_pro(level):\n    if level == 3:\n        return True\n    return False\n",
+            "from src.subject import is_pro\n\ndef test_a_off_both():\n    assert is_pro(1) == False\n\ndef test_b_on_old():\n    assert is_pro(2) == False\n\ndef test_c_on_new():\n    assert is_pro(3) == True\n",
+            2,
+            "    if level == 2:",
+            "    if level == 3:",
+        )?;
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        let mut names: Vec<_> = candidates.iter().map(|c| c.test.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["test_a_off_both", "test_b_on_old", "test_c_on_new"],
+            "fixture rows must parse"
+        );
+        let index = |name: &str| candidates.iter().position(|c| c.test.name == name);
+        let at = |name: &str| index(name).ok_or_else(|| format!("missing {name}"));
+        assert!(omission(&case, at("test_a_off_both")?), "off both pairs");
+        assert!(
+            !omission(&case, at("test_b_on_old")?),
+            "a call on the OLD pair separates old from new"
+        );
+        assert!(
+            !omission(&case, at("test_c_on_new")?),
+            "a call on the NEW pair"
+        );
+        Ok(())
+    }
+
     #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
@@ -500,6 +660,7 @@ mod direct {
                     owner: &case.owner,
                     line_text: &case.after,
                     old_line_text: Some(&case.before),
+                    focus: &focus,
                 },
                 &case.tests,
             );
@@ -536,6 +697,8 @@ mod direct {
     }
 
     fn annotate(case: &Case, rows: &mut [crate::domain::RelatedTest]) {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
         let candidates = related_test_candidates(&case.owner, &case.tests);
         annotate_row_misses(
             rows,
@@ -546,6 +709,7 @@ mod direct {
                 owner: &case.owner,
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
+                focus: &focus,
             },
             &case.tests,
         );
