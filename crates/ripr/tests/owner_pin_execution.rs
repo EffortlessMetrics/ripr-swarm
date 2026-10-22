@@ -1900,6 +1900,141 @@ fn tokio_test_regains_the_exact_oracle_but_not_the_boundary() -> Result<(), Stri
     Ok(())
 }
 
+/// RIPR-SPEC-0197: an assertion inside `tokio::spawn(async { .. })` counts only
+/// where the awaited handle's `JoinError` is re-raised on the test task.
+#[test]
+fn tokio_spawned_task_counts_only_when_joined_and_unwrapped() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
+    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let direct = "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);";
+    assert!(
+        source.contains(direct),
+        "the fixture must hold the exact input"
+    );
+    let variant = |label: &str, body: &str, prelude: &str| -> Result<ExposureClass, String> {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("src/lib.rs"),
+            source
+                .replace(
+                    "    use super::*;\n",
+                    &format!("    use super::*;\n{prelude}"),
+                )
+                .replace(direct, body),
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{label}: retain the async owner");
+        Ok(report.findings[0].class.clone())
+    };
+    let spawned = |tail: &str| {
+        format!(
+            "tokio::spawn(async {{\n            assert_eq!(fetch_limit(50, 50).await, 50);\n        }}){tail}"
+        )
+    };
+    for (label, tail) in [
+        ("unwrap", ".await.unwrap();"),
+        ("expect", ".await.expect(\"task panicked\");"),
+    ] {
+        assert_eq!(
+            variant(label, &spawned(tail), "")?,
+            ExposureClass::Exposed,
+            "{label}: the joined task's panic reaches the test"
+        );
+    }
+    for (label, body, prelude) in [
+        ("detached task", spawned(";"), ""),
+        (
+            "handle kept in a binding",
+            format!("let _handle = {}", spawned(";")),
+            "",
+        ),
+        ("await result converted", spawned(".await.ok();"), ""),
+        (
+            "await result dropped",
+            format!("let _ = {}", spawned(".await;")),
+            "",
+        ),
+        ("handle awaited without a check", spawned(".await;"), ""),
+        (
+            "return before the assertion",
+            spawned(".await.unwrap();").replacen(
+                "assert_eq!(fetch_limit(50, 50)",
+                "if std::env::var(\"X\").is_ok() { return; }\n            assert_eq!(fetch_limit(50, 50)",
+                1,
+            ),
+            "",
+        ),
+        (
+            "question mark before the assertion",
+            spawned(".await.unwrap();")
+                .replacen(
+                    "assert_eq!(fetch_limit(50, 50)",
+                    "let _v = std::env::var(\"X\").ok()?;\n            assert_eq!(fetch_limit(50, 50)",
+                    1,
+                )
+                .replacen("}).await", "Some(())\n        }).await", 1),
+            "",
+        ),
+        (
+            "a spawn that is a shadowing local item",
+            spawned(".await.unwrap();"),
+            "    fn spawn() {}\n",
+        ),
+        (
+            "rebound tokio",
+            spawned(".await.unwrap();"),
+            "    use core as tokio;\n",
+        ),
+        (
+            "a glob import that may supply tokio",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::*;\n",
+        ),
+        (
+            "an imported tokio from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::tokio;\n",
+        ),
+        (
+            "an imported spawn from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::{spawn};\n",
+        ),
+        (
+            "an expect message that can return",
+            spawned(".await.expect(if std::env::var(\"X\").is_ok() { return; } else { \"failed\" });"),
+            "",
+        ),
+        (
+            "a spawn that is not tokio's",
+            spawned(".await.unwrap();").replace("tokio::spawn", "spawn"),
+            "    fn spawn<F>(task: F) -> std::future::Ready<Result<(), ()>> { drop(task); std::future::ready(Ok(())) }\n",
+        ),
+    ] {
+        let class = variant(label, &body, prelude)?;
+        assert!(
+            !matches!(class, ExposureClass::Exposed | ExposureClass::WeaklyExposed),
+            "{label}: no oracle credit, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
 fn source_runtime_control(
     source: &str,
     label: &str,
@@ -2121,6 +2256,26 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             false,
         ),
         ("below_side_only", "assert!(!gate(9));", false),
+        (
+            "crate_qualified_call",
+            "assert!(crate::gate(10));\n        assert!(!crate::gate(9));",
+            true,
+        ),
+        (
+            "let_bound_disjunction",
+            "let hit = gate(10);\n        assert!(hit || gate(50));\n        assert!(!gate(9));",
+            false,
+        ),
+        (
+            "let_bound_mutable_reassigned",
+            "let mut hit = gate(10);\n        hit = true;\n        assert!(hit);\n        assert!(!gate(9));",
+            false,
+        ),
+        (
+            "let_bound_results",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit);\n        assert!(!miss);",
+            true,
+        ),
         (
             "shadowed_owner",
             "let gate = |value: u32| value >= 10;\n        assert!(gate(10));\n        assert!(!gate(9));",
@@ -2685,7 +2840,7 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
     let assertion = "assert_eq!(weight(4), 12)";
     let fake_thread = "mod thread {\n        pub struct Handle;\n        impl Handle {\n            pub fn join(self) -> Result<(), ()> {\n                Ok(())\n            }\n        }\n        pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n            Handle\n        }\n    }\n";
-    let fake_module = "pub mod thread {\n    pub struct Handle;\n    impl Handle {\n        pub fn join(self) -> Result<(), ()> {\n            Ok(())\n        }\n    }\n    pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n        Handle\n    }\n}\npub mod std {\n    pub use super::thread;\n}\n#[allow(unused_macros)]\nmacro_rules! setup {\n    () => {\n        use crate::fake::*;\n    };\n}\n";
+    let fake_module = "pub mod thread {\n    pub struct Handle;\n    impl Handle {\n        pub fn join(self) -> Result<(), ()> {\n            Ok(())\n        }\n    }\n    pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n        Handle\n    }\n}\npub mod std {\n    pub use super::thread;\n}\npub fn scope<F: FnOnce(&())>(_f: F) {}\n#[allow(unused_macros)]\nmacro_rules! setup {\n    () => {\n        use crate::fake::*;\n    };\n}\n";
     for (case, prelude, items, body, exposed, kills) in [
         (
             "joined_unwrap",
@@ -2856,6 +3011,64 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
             format!(
                 "std::thread::scope(|ref s| {{\n            s.spawn(|| {assertion});\n        }});"
             ),
+            false,
+            true,
+        ),
+        (
+            // #8999: `use std::thread::scope;` binds the same std function the
+            // qualified spelling names, so the bare call runs its closure.
+            "bare_scope_import",
+            "",
+            "use std::thread::scope;",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            true,
+            true,
+        ),
+        (
+            "bare_spawn_import_joined",
+            "",
+            "use std::thread::spawn;",
+            format!("spawn(|| {assertion}).join().unwrap();"),
+            true,
+            true,
+        ),
+        (
+            "bare_scope_local_fn",
+            "",
+            "fn scope<F: FnOnce(&())>(_f: F) {}",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            false,
+        ),
+        (
+            "bare_scope_other_import",
+            "mod fake;\n",
+            "use crate::fake::scope;",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            false,
+        ),
+        (
+            "bare_scope_import_list_with_other",
+            "",
+            "use std::thread::{spawn, scope};",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            true,
+        ),
+        (
+            "bare_scope_renamed_import",
+            "",
+            "use std::thread::scope as run;",
+            format!("run(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            true,
+        ),
+        (
+            "bare_scope_import_in_other_module",
+            "use std::thread::scope;\n",
+            "",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
             false,
             true,
         ),

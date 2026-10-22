@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Seven small authored Python projects under `subjects/`, our own code under
+Ten small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -39,6 +39,20 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
+- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 5, one module
+  per example so the guard, the observed input and the edited arm are the only
+  variables (an `or` guard, a rebound parameter, `True == 1`).
+- `authored-py-pytest-self-reach`: RIPR-SPEC-0201 examples 1 to 6, the
+  same-class transitive-reach limitation, including the six-hop chain, a class
+  of the same name in another module and a test that calls the helper
+  directly. Every module and class name is unique across the subject, because
+  a shared name makes the analyzer relate the wrong module's tests.
+- `authored-py-pytest-shapes`: language shapes. Dataclass defaults, `@property`,
+  `@classmethod` and `@staticmethod`; decorator factories and wrappers;
+  `asyncio.run` coroutines; list, dict and generator comprehensions and a
+  generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
+  `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
+  statements; and relative imports through a package `__init__` re-export.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -46,6 +60,8 @@ own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under
 Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
+The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
+and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
 
 ## When
 

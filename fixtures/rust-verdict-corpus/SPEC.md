@@ -84,6 +84,14 @@ examples and the uncovered example numbers per spec; `validate` and `check`
 fail when covered falls below `floor`; in CI the xtask test
 `committed_ledger_is_valid_and_meets_its_floor` enforces it.
 
+A case may also carry `axes`, tags for the coverage axes declared as `[[axis]]`
+in `spec-coverage.toml` (`test_library_idiom`, `language_shape`,
+`hostile_input`). `validate` and `check` fail when a tag is not declared or an
+axis holds fewer cases than its `floor`, so a side of the language or the test
+ecosystem cannot lose its cases silently. `authored-shape-kit` carries the
+language-shape and hostile-input cases: one owner and one isolated test per
+case, so a verdict never rests on a neighbour's test.
+
 A case may also carry `expected_oracle` (`kind`, `strength`, optional
 `test`, `spec`): the related-test oracle kind and strength a spec adopts.
 The report's `oracle_accuracy` section scores ripr's strongest reported

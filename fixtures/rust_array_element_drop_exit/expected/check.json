@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/rust_array_element_drop_exit/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f4a6785d710ee4e2c8082507ddf76034a9e4263c13aa71b922a474287f6bb142","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -138,9 +138,9 @@
         "normalized_discriminator": "[row_total_0_row_total_a+b]"
 
       },
-      "classification": "exposed",
-      "severity": "info",
-      "confidence": 1.00,
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
       "probe": {
         "id": "probe:src_lib.rs:return_value:3877e241",
         "family": "return_value",
@@ -154,14 +154,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: [Row { total: 0 }, Row { total: a + b }] (line 12)", "related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 21", "source function argument value b = 3 at line 21", "source assertion argument value 33 at line 22"],
+      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "local flow reaches returned value: [Row { total: 0 }, Row { total: a + b }] (line 12)", "related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 21", "source function argument value b = 3 at line 21", "source assertion argument value 33 at line 22"],
       "flow_sinks": [
         {"kind":"return_value","text":"[Row { total: 0 }, Row { total: a + b }]","line":12}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row", "Strong oracle found: exact value or pattern assertion"],
-      "missing": [],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]", "Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row"],
+      "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "21": "let rows = rows(30, 3);",
         "22": "assert_eq!(rows[1].total, 33);"
@@ -216,14 +216,16 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(rows[1].total, 33);",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "The related test `pins_second_row` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `pins_second_row` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -26,7 +26,8 @@ suite('Server resolver compatibility fallback', () => {
         if (source === 'bundled') {
           return {
             message: `${detail} is not LSP compatible.`,
-            detail: '[missing_required_capability] hoverProvider'
+            detail: '[missing_required_capability] hoverProvider',
+            kind: 'other'
           };
         }
         return {
@@ -60,6 +61,64 @@ suite('Server resolver compatibility fallback', () => {
     assert.ok(!missingServerRemedy(true).includes('autoDownload'), missingServerRemedy(true));
     assert.ok(missingServerRemedy(true).includes('cargo install ripr'));
     assert.ok(missingServerRemedy(false).includes('Enable ripr.server.autoDownload'));
+  });
+
+  test('a disabled download keeps a PATH probe failure kind instead of missing_binary', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-path-kind-'));
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (_command, _source, detail) => ({
+        message: `${detail} failed version check.`,
+        detail: `${detail} exited with code 1.`,
+        kind: 'other'
+      })
+    };
+    try {
+      const result = await resolveServer(stubContext(root), config(), stubOutput(), runtime);
+      assert.ok(!('command' in result), JSON.stringify(result));
+      if ('command' in result) {
+        return;
+      }
+      assert.strictEqual(result.kind, 'other', JSON.stringify(result));
+      assert.ok(
+        !result.detail.includes('cargo install ripr'),
+        `an unusable PATH binary must not recommend cargo install: ${result.detail}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a disabled download with a missing PATH server remains a missing binary', async function () {
+    if (!currentRiprPlatform()) {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-missing-kind-'));
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (_command, _source, detail) => ({
+        message: `${detail} could not start.`,
+        detail: `spawn ${detail} ENOENT`,
+        kind: 'missing_binary'
+      })
+    };
+    try {
+      const result = await resolveServer(stubContext(root), config(), stubOutput(), runtime);
+      assert.ok(!('command' in result), JSON.stringify(result));
+      if ('command' in result) {
+        return;
+      }
+      assert.strictEqual(result.kind, 'missing_binary', JSON.stringify(result));
+      assert.ok(
+        result.detail.includes('cargo install ripr'),
+        `missing-binary diagnostic still names cargo install: ${result.detail}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('a configured path that cannot start fails as could-not-start, not LSP-incompatible', async function () {
@@ -96,6 +155,7 @@ suite('Server resolver compatibility fallback', () => {
       assert.ok('message' in result, `expected a version-check failure, got ${JSON.stringify(result)}`);
       if ('message' in result) {
         assert.ok(result.message.includes('could not start'), result.message);
+        assert.strictEqual(result.kind, 'missing_binary', JSON.stringify(result));
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -132,7 +192,8 @@ suite('Server resolver compatibility fallback', () => {
     const runtime: ServerResolverRuntime = {
       probeCandidate: async () => ({
         message: `configured ripr.server.path ${configured} could not start.`,
-        detail: 'fixture start failure'
+        detail: 'fixture start failure',
+        kind: 'other'
       })
     };
     try {
@@ -146,6 +207,7 @@ suite('Server resolver compatibility fallback', () => {
       if ('command' in result) {
         return;
       }
+      assert.strictEqual(result.kind, 'other', JSON.stringify(result));
       const remedy = (result as { remedy?: string }).remedy;
       assert.ok(remedy, 'the configured-path failure carried no remedy');
       assert.match(remedy, /^Fix or clear ripr\.server\.path/, remedy);
@@ -232,7 +294,7 @@ suite('Server resolver compatibility fallback', () => {
     const runtime: ServerResolverRuntime = {
       probeCandidate: async (_command, source, detail) => {
         attempts.push(source);
-        return { message: 'ripr on PATH is not compatible.', detail: `${detail} rejected` };
+        return { message: 'ripr on PATH is not compatible.', detail: `${detail} rejected`, kind: 'other' };
       }
     };
     try {
@@ -243,6 +305,21 @@ suite('Server resolver compatibility fallback', () => {
         runtime
       );
       assert.ok('message' in result, JSON.stringify(result));
+      if ('message' in result) {
+        assert.notStrictEqual(
+          result.kind,
+          'missing_binary',
+          `download fall-through must keep the download failure kind, got ${JSON.stringify(result)}`
+        );
+        assert.ok(
+          result.kind === 'download' || result.kind === 'http' || result.kind === 'manifest',
+          `expected a download-family kind, got ${result.kind}`
+        );
+        assert.ok(
+          !result.detail.includes('cargo install ripr'),
+          `download-family diagnostic must not append cargo install: ${result.detail}`
+        );
+      }
       assert.deepStrictEqual(attempts, ['path']);
       assert.ok(
         outputLines.some((line) => line.includes('download failed')),

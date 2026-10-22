@@ -217,6 +217,7 @@ mod tests {
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: Default::default(),
         }
     }
 
@@ -530,6 +531,13 @@ mod tests {
                 ),
                 "seam_id_unknown",
                 "analysis/seam-inventory",
+            ),
+            (
+                CoreError::analysis_timeout(
+                    "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
+                ),
+                "analysis_timeout",
+                "analysis/timeout",
             ),
         ];
         for (error, identity, route) in cases {

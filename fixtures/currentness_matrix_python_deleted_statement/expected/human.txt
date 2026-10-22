@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/currentness_matrix_python_deleted_statement/input
 config: <cwd>/fixtures/currentness_matrix_python_deleted_statement/input/ripr.toml
 
-Summary: 3 probes (3 exposed, 0 weak, 0 unrevealed, 0 no path); 3 of 3 findings unsuppressed
+Summary: 3 probes (3 exposed, 0 weak, 0 unrevealed, 0 no path); 3 of 3 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Changed file(s) by language: python = 1
 
@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/currentness_matrix_python_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_python_deleted_statement/diff.patch --mode fast probe:src_cart.py:python_preview:30b8d627
   ripr context --root <cwd>/fixtures/currentness_matrix_python_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_python_deleted_statement/diff.patch --mode fast --at probe:src_cart.py:python_preview:30b8d627
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/cart.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (Python preview: 2).

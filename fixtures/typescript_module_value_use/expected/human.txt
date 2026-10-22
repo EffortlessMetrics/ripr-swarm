@@ -1,0 +1,40 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_module_value_use/input
+config: <cwd>/fixtures/typescript_module_value_use/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (related-test link is heuristic-only and cannot safely borrow extracted assertions as proof); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: src/sentinel.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: export const stop = Symbol('stop');
+  Missing discriminator: Only heuristic TypeScript test links were found for `stop`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Related test: tests/sentinel.test.ts:3 collect halts at the stop sentinel
+  Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
+    - reach weak: 1 related test(s) found for owner `stop`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_module_value_use/input --diff <cwd>/fixtures/typescript_module_value_use/diff.patch --mode fast probe:src_sentinel.ts:typescript_preview:54306095
+  ripr context --root <cwd>/fixtures/typescript_module_value_use/input --diff <cwd>/fixtures/typescript_module_value_use/diff.patch --mode fast --at probe:src_sentinel.ts:typescript_preview:54306095
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_sentinel.ts:typescript_preview:54306095 --root <cwd>/fixtures/typescript_module_value_use/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

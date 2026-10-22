@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f89deef..74e3477 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ impl Drop for Cfg {
+ }
+ 
+ pub fn parse(x: u32) -> Result<u32, Cfg> {
+-    Err(Cfg { n: x * 2 })
++    Err(Cfg { n: x * 3 })
+ }
+ 
+ #[cfg(test)]

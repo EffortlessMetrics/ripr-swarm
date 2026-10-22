@@ -41,7 +41,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: let n = rdr.read(&mut buf)?", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)", "related test src/lib.rs:21 reports_read_failure uses none unknown oracle"],
+      "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: let n = rdr.read(&mut buf)?", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)", "related test src/lib.rs:21 reports_read_failure uses no oracle"],
       "flow_sinks": [
         {"kind":"error_variant","text":"let n = rdr.read(&mut buf)?","line":5}
       ],
@@ -114,7 +114,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:21 reports_read_failure uses none unknown oracle"],
+      "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:21 reports_read_failure uses no oracle"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":5}
       ],

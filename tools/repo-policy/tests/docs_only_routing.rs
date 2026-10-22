@@ -250,8 +250,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -305,6 +305,8 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
     );
     let production = shell("detect-docs-only")?;
     assert!(fixture.detect(&production, "pull_request", &base, &head, None)?);
+    // The merge queue classifies the queued commit the same way.
+    assert!(fixture.detect(&production, "merge_group", &base, &head, None)?);
     let range = "\"$BASE_SHA\"...\"$HEAD_SHA\"";
     assert_eq!(
         production.matches(range).count(),
@@ -487,6 +489,26 @@ fn routed_result(
     docs_gate: &str,
     heavy: &str,
 ) -> TestResult<bool> {
+    routed_result_admitted(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        ("success", "admitted"),
+    )
+}
+
+fn routed_result_admitted(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status): (&str, &str),
+) -> TestResult<bool> {
     let source = job("result")?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
@@ -501,12 +523,34 @@ fn routed_result(
     assert!(env.len() >= 20, "actual result env is initialized");
     env.extend([
         ("EVENT_NAME", event),
+        // A pull_request result is a qualification only for an explicit
+        // merge-ready request; other labels are exercised separately.
+        (
+            "LABEL_NAME",
+            if event == "pull_request" {
+                "merge-ready"
+            } else {
+                ""
+            },
+        ),
+        // Manual/push positives represent the independent main authority;
+        // diagnostic branch/tag refusal is exercised by routed_dispatch_result.
+        (
+            "WORKFLOW_REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
         ("DOCS_GATE_RESULT", docs_gate),
         ("TARGET", "github"),
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
+        ("ADMISSION_RESULT", admission_result),
+        ("ADMISSION_STATUS", admission_status),
     ]);
     let output = fixture.run(&shell("result")?, &env, None)?;
     let summary = fs::read_to_string(fixture.root.join(".git/actions-summary"))?;
@@ -520,6 +564,25 @@ fn routed_result(
         "{summary}"
     );
     Ok(output.status.success())
+}
+
+#[test]
+fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies() -> TestResult {
+    let source = job("result")?;
+    // The step keeps the label-aware nonrequest branch ahead of every
+    // qualification decision; the job name (policy-pinned) then differs from
+    // the required context, so this pass can never satisfy branch protection.
+    let (_, run) = source.split_once("        run: |\n").ok_or("result step")?;
+    let first_decision = run
+        .lines()
+        .find(|line| line.trim_start().starts_with("if ["))
+        .ok_or("first decision")?;
+    assert!(
+        first_decision.contains("\"${LABEL_NAME,,}\" != \"merge-ready\""),
+        "{first_decision}"
+    );
+    assert!(source.contains("'Merge-ready Nonrequest'"));
+    Ok(())
 }
 
 #[test]
@@ -551,6 +614,33 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             "success"
         )?);
     }
+    // Candidate admission is a required input: a refused, missing or failed
+    // admission cannot be rescued by a green selected proof.
+    for (result, status) in [
+        ("success", "refused"),
+        ("success", ""),
+        ("failure", "admitted"),
+        ("skipped", "admitted"),
+    ] {
+        assert!(!routed_result_admitted(
+            &fixture,
+            "pull_request",
+            "success",
+            "false",
+            "skipped",
+            "success",
+            (result, status)
+        )?);
+    }
+    assert!(routed_result_admitted(
+        &fixture,
+        "pull_request",
+        "success",
+        "false",
+        "skipped",
+        "success",
+        ("success", "not_applicable")
+    )?);
     for event in ["push", "workflow_dispatch"] {
         for docs in ["false", "true"] {
             assert!(!routed_result(

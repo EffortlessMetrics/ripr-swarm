@@ -1,0 +1,42 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_predicate_returned_drop_plain/input
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+INFO ./src/lib.rs:15
+  id: probe:src_lib.rs:predicate:bca747dd
+
+Changed
+  before: x > 10
+  after:  x >= 10
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::make
+  canonical gap: gap:rust:src/lib.rs:make:predicate_boundary:predicate:x==10
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach make: boundary, far
+  - infection yes: Detected related test input at the changed boundary
+  - propagation yes: Changed behavior appears to influence returned value: high
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: whole-object equality assertion
+  - local flow reaches returned value: high (line 15)
+  - related test src/lib.rs:23 boundary uses strong whole object equality oracle: assert_eq!(make(10), Cfg { n: 1 });
+  - related test src/lib.rs:28 far uses strong whole object equality oracle: assert_eq!(make(11), Cfg { n: 1 });
+  - source assertion argument value 1 at line 24
+  - source function argument value x = 10 at line 24
+  - source function argument value x == 10 at line 24
+  - source assertion argument value 1 at line 29
+  - source function argument value x = 11 at line 29
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast probe:src_lib.rs:predicate:bca747dd
+  ripr context --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:predicate:bca747dd

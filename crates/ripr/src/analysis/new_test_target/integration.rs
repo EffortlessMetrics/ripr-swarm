@@ -103,6 +103,32 @@ fn try_admit_new_integration_test(
     })
 }
 
+/// Library crate name of the Cargo package whose library root is exactly
+/// `owner_file`, so an integration test can `use` crate-root items of that
+/// file. `None` when the file is not a package's library root. When
+/// `target_file` is given it must be exactly `<package_dir>/tests/<stem>.rs` of that same package, so
+/// `use <crate>::*` and `cargo test --test <stem>` both resolve.
+pub(crate) fn library_crate_name_for_root_file(
+    root: &Path,
+    owner_file: &Path,
+    target_file: Option<&Path>,
+) -> Option<String> {
+    let package = owning_package(root, owner_file).ok()?;
+    if !(package.has_library_target && normalize_relative(owner_file) == package.library_root) {
+        return None;
+    }
+    if let Some(target) = target_file {
+        let target = normalize_relative(target);
+        let tests_dir = package.package_dir.join("tests");
+        let in_tests_dir = target.parent() == Some(tests_dir.as_path());
+        let is_rs = target.extension().and_then(|ext| ext.to_str()) == Some("rs");
+        if !(in_tests_dir && is_rs) {
+            return None;
+        }
+    }
+    Some(package.library_crate_name)
+}
+
 struct PackageFacts {
     package_dir: PathBuf,
     library_root: PathBuf,

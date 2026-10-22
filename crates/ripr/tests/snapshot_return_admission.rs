@@ -198,3 +198,50 @@ fn same_line_rebind_cannot_carry_the_owner_result_snapshot() -> Result<(), Strin
     assert_weak(&fixture.seam()?);
     Ok(())
 }
+
+#[test]
+fn owner_call_inside_a_vec_index_is_not_the_owner_result() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = vec![make_count(2)][0];\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn owner_call_inside_an_invoked_closure_is_not_the_owner_result() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = (|| make_count(2))();\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_weak(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn compared_or_short_circuited_owner_call_is_not_the_owner_result() -> Result<(), String> {
+    for initializer in ["make_count(2) == 0", "make_count(2) == 0 || flag"] {
+        let fixture = Fixture::new(&format!(
+            "let flag = true;\n        let count = {initializer};\n        insta::assert_json_snapshot!(count);"
+        ))?;
+        assert_weak(&fixture.seam()?);
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapped_let_initializer_keeps_owner_result_credit() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count =\n            make_count(2);\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_strong(&fixture.seam()?);
+    Ok(())
+}
+
+#[test]
+fn stray_brace_inside_a_multiline_string_does_not_withdraw_credit() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "let count = make_count(2);\n        let _note = \"\n}\n\";\n        insta::assert_json_snapshot!(count);",
+    )?;
+    assert_strong(&fixture.seam()?);
+    Ok(())
+}

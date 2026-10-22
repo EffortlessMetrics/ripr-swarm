@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -2,7 +2,7 @@
+ 
+ pub fn word_len_untested_else(s: &str) -> usize {
+     let Some(w) = s.split_whitespace().next() else {
+-        return 0;
++        return 0usize;
+     };
+     w.len()
+ }

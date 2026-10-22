@@ -1,8 +1,9 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
-    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
+    is_partial_eq_method, missing_evidence, recommended_next_step, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -23,7 +24,29 @@ pub(in crate::analysis) fn build_finding(
         &evidence.discriminate,
         &evidence.activation,
     );
-    let test_summaries = context.related_test_summaries();
+    // #8999: for a user `PartialEq::eq`/`ne` owner only, a fixture/builder
+    // word in a test that merely shares a file or a name token with the owner
+    // says nothing about the inputs that reach it. When some related test
+    // establishes reach, only those tests can make the fixture opaque; with
+    // none, and for every other owner, every related test is read as before.
+    let owner_is_function = context.owner_fn.is_some();
+    let narrow_fixture_scan = context
+        .owner_fn
+        .is_some_and(|owner| is_partial_eq_method(owner, context.index));
+    let reaching_summaries: Vec<&TestSummary> = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| {
+            reason.establishes_reach(owner_is_function)
+                || *reason == crate::domain::RelationReason::FixtureOwnerAffinity
+        })
+        .map(|(test, _)| *test)
+        .collect();
+    let test_summaries = if !narrow_fixture_scan || reaching_summaries.is_empty() {
+        context.related_test_summaries()
+    } else {
+        reaching_summaries
+    };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
@@ -130,6 +153,11 @@ pub(in crate::analysis) fn build_finding(
     {
         Some(refused_assertion_next_step(
             evidence.assertion_refusal.as_ref(),
+            if context.probe.family == ProbeFamily::MatchArm {
+                "assert"
+            } else {
+                "assert_eq"
+            },
         ))
     } else if class == ExposureClass::WeaklyExposed
         && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
@@ -171,6 +199,24 @@ pub(in crate::analysis) fn build_finding(
         && evidence.refusals_are_analyzer_limits
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
+    }
+    // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
+    // which consumes the marker.
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) {
+        evidence_lines.extend(evidence.debug_assert_eq_pins.iter().map(|label| {
+            format!(
+                "{}{label}",
+                crate::analysis::classify::DEBUG_ASSERT_EQ_PIN_PREFIX
+            )
+        }));
+    }
+    // #8600: the render cap trims related rows, so the saturation of every
+    // matched test is handed to the call-budget post-pass, which consumes it.
+    if evidence.related_call_budget_saturated {
+        evidence_lines.push(crate::analysis::classify::CALL_BUDGET_SATURATED.to_string());
     }
     if invalid_propagation_witness {
         evidence_lines
@@ -579,7 +625,7 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
 }
 
 /// The next step for a gap whose oracle rests on a refused `assert_eq!`.
-fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
+fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>, macro_name: &str) -> String {
     match note {
         Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
             "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
@@ -589,7 +635,7 @@ fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
         // not a limit of ripr's reading, so offering a static-limit
         // reading would let the reader dismiss a real gap.
         Some(note) if note.calls_owner => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `{macro_name}!`, in a test expected to pass.",
             note.location
         ),
         _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
@@ -944,6 +990,8 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            debug_assert_eq_pins: Vec::new(),
+            related_call_budget_saturated: false,
         }
     }
 
@@ -1294,14 +1342,14 @@ mod tests {
             calls_owner,
             is_analyzer_limit,
         };
-        let limit = refused_assertion_next_step(Some(&note(true, true)));
+        let limit = refused_assertion_next_step(Some(&note(true, true)), "assert_eq");
         assert!(
             limit.contains("this is a static limit, not a missing test"),
             "{limit}"
         );
 
         // #6903: an `#[ignore]`d, cfg-off, conditional or rebound assertion.
-        let not_limit = refused_assertion_next_step(Some(&note(true, false)));
+        let not_limit = refused_assertion_next_step(Some(&note(true, false)), "assert_eq");
         assert!(
             not_limit.contains("this is not a static limit"),
             "{not_limit}"
@@ -1313,7 +1361,7 @@ mod tests {
 
         for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
             assert!(
-                refused_assertion_next_step(unrelated.as_ref())
+                refused_assertion_next_step(unrelated.as_ref(), "assert_eq")
                     .starts_with("Establish that the test is collected")
             );
         }

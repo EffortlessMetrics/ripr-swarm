@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_path_oracle_execution_no_assertion/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
@@ -30,7 +30,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses none unknown oracle; misses: has no assertion
+  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: has no assertion
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect
@@ -66,8 +66,8 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
-  - local flow reaches unknown sink (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses none unknown oracle; misses: has no assertion
+  - local flow reaches unknown sink (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: has no assertion
 
 Weakness
   - No relevant oracle was detected

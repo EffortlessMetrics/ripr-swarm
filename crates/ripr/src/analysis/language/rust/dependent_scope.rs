@@ -42,7 +42,9 @@
 //! direct discriminator beside an unresolved macro route (#7542);
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
-//! when that widening would exceed the narrowing threshold.
+//! when that widening would exceed the narrowing threshold. Past
+//! [`REACH_INDEX_CAPACITY`] distinct closures the scope builds one index over
+//! the whole full selection and shares it (#9278).
 //!
 //! Every admission test is a lexical superset of the parser fact it stands
 //! for: a call, definition or mention the index records is spelled in the
@@ -168,11 +170,14 @@ std::thread_local! {
     // Thread-owned so parallel tests never see each other's mode or files.
     static FORCED_MODE: std::cell::Cell<Option<DependentScopeMode>> =
         const { std::cell::Cell::new(None) };
+    static FORCED_HARD_LIMIT: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
     static FORCED_REACH_LIMIT: std::cell::Cell<Option<usize>> =
         const { std::cell::Cell::new(None) };
     static OBSERVED_REACH_FILES: std::cell::RefCell<Vec<PathBuf>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static OBSERVED_REACH_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static OBSERVED_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static OBSERVED_MAIN_FILES: std::cell::RefCell<Option<Vec<PathBuf>>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -183,6 +188,7 @@ pub(super) fn with_forced_mode<T>(mode: DependentScopeMode, work: impl FnOnce() 
     FORCED_MODE.with(|forced| forced.set(Some(mode)));
     OBSERVED_REACH_FILES.with(|files| files.borrow_mut().clear());
     OBSERVED_REACH_PARSES.with(|parses| parses.set(0));
+    OBSERVED_REACH_BUILDS.with(|builds| builds.set(0));
     OBSERVED_MAIN_FILES.with(|files| *files.borrow_mut() = None);
     let result = work();
     FORCED_MODE.with(|forced| forced.set(None));
@@ -199,6 +205,16 @@ pub(super) fn with_forced_reach_limit<T>(limit: usize, work: impl FnOnce() -> T)
     result
 }
 
+/// Run `work` with the hard index limit forced to `limit` on this thread,
+/// so a small fixture can exercise the oversized shared-index path.
+#[cfg(test)]
+pub(super) fn with_forced_hard_limit<T>(limit: usize, work: impl FnOnce() -> T) -> T {
+    FORCED_HARD_LIMIT.with(|forced| forced.set(Some(limit)));
+    let result = work();
+    FORCED_HARD_LIMIT.with(|forced| forced.set(None));
+    result
+}
+
 /// The main-index files of the last narrowed run on this thread; `None`
 /// when no run narrowed.
 #[cfg(test)]
@@ -211,6 +227,13 @@ pub(super) fn observed_main_files() -> Option<Vec<PathBuf>> {
 #[cfg(test)]
 pub(super) fn observed_reach_parses() -> usize {
     OBSERVED_REACH_PARSES.with(std::cell::Cell::get)
+}
+
+/// How many reach indexes (closure-specific or full-selection) this thread
+/// built since the last forced-mode run began.
+#[cfg(test)]
+pub(super) fn observed_reach_builds() -> usize {
+    OBSERVED_REACH_BUILDS.with(std::cell::Cell::get)
 }
 
 /// The withheld files the last reach widening on this thread admitted.
@@ -417,14 +440,17 @@ impl AdmissionQuery {
 
 /// The admission query for one diff run: the changed packages' index
 /// (`core_files`, which holds every changed probe file) evaluated at the
-/// changed lines. Reads are recorded in `consumed`.
+/// changed lines. Reads are recorded in `consumed`. The built core index
+/// is returned with the query (#8547): the main build reuses it instead
+/// of decoding the fact cache and re-running post-processing a second
+/// time over the same files.
 pub(super) fn admission_query(
     root: &Path,
     core_files: &[PathBuf],
     changed_files: &[&crate::analysis::diff::ChangedFile],
     test_harnesses: &[crate::config::TestHarnessRegistration],
     consumed: &mut ConsumedRustSources,
-) -> Result<AdmissionQuery, String> {
+) -> Result<(AdmissionQuery, crate::analysis::facts::CachedRustIndex), String> {
     let changed_lines = changed_files
         .iter()
         .map(|changed| {
@@ -443,8 +469,9 @@ pub(super) fn admission_query(
             (changed.path.clone(), lines)
         })
         .collect::<Vec<_>>();
-    let index = build_index(root, core_files, test_harnesses, consumed)?;
-    Ok(AdmissionQuery::from_core_index(&index, &changed_lines))
+    let cached = build_index(root, core_files, test_harnesses, consumed)?;
+    let query = AdmissionQuery::from_core_index(&cached.index, &changed_lines);
+    Ok((query, cached))
 }
 
 /// The witness search for this finding's owner would need more files than
@@ -511,11 +538,38 @@ pub(super) struct NarrowedScope {
     /// Owners alternate between a few closures, so a single slot rebuilt
     /// the same index repeatedly (#5363).
     reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
+    /// Closure-specific index builds so far (cache misses). Past
+    /// [`REACH_INDEX_CAPACITY`] builds the run is alternating among more
+    /// owners than the cache holds, and narrowing costs more than it saves
+    /// (#9278).
+    widened_builds: usize,
+    /// The full selection exceeded the hard index limit, so the run keeps
+    /// the bounded per-closure cache instead of indexing everything.
+    full_declined: bool,
+    /// One index over every selected file, built once the widened builds
+    /// pass the cache capacity and then shared by all remaining owners.
+    /// It holds a superset of each closure, and the witness walks are
+    /// bounded by the closure, so verdicts match the per-closure index.
+    full_reach: Option<std::sync::Arc<RustIndex>>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
     /// `false` only for the test-only core-only control.
     widen: bool,
+    /// The main index's files tokenized like [`Self::tokens`], built on the
+    /// first closure search: every owner's seed scan reads the whole main
+    /// index, and scanning it once per owner dominated large diffs (#8629).
+    /// Like [`Self::closures`], it assumes one scope serves one main index,
+    /// which its only caller holds borrowed for the scope's run; the file
+    /// count is a cheap guard, not an identity.
+    main_tokens: Option<MainTokens>,
+}
+
+/// [`WithheldTokens`] over the main index's files, with the file count it
+/// was built from.
+struct MainTokens {
+    files: usize,
+    tokens: WithheldTokens,
 }
 
 /// Which withheld files spell each identifier, and the `macro_rules!`
@@ -781,9 +835,13 @@ pub(super) fn admit_dependents(
             tokens,
             closures: std::collections::BTreeMap::new(),
             reach_index: Vec::new(),
+            widened_builds: 0,
+            full_declined: false,
+            full_reach: None,
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
+            main_tokens: None,
         }),
         withheld_macro_bindings,
     })
@@ -809,6 +867,10 @@ pub(super) enum ReachIndex<'a> {
     Main,
     /// A wider index holding the owner's caller closure.
     Widened(&'a RustIndex),
+    /// The scope's one full-selection index ([`NarrowedScope::shared_reach`]).
+    /// It carries no borrow so the caller can derive per-index lookups from
+    /// it once and reuse them for every finding.
+    Shared,
     /// The caller closure would exceed the index file limit; the witness
     /// search cannot run over every file that can take part in it.
     OverLimit { files: usize, limit: usize },
@@ -831,10 +893,15 @@ impl NarrowedScope {
         owner: &str,
         main_index: &RustIndex,
         limit: usize,
+        hard_limit: usize,
     ) -> Result<ReachIndex<'_>, String> {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
+        #[cfg(test)]
+        let hard_limit = FORCED_HARD_LIMIT
+            .with(std::cell::Cell::get)
+            .unwrap_or(hard_limit);
         #[cfg(test)]
         let limit = FORCED_REACH_LIMIT
             .with(std::cell::Cell::get)
@@ -885,15 +952,67 @@ impl NarrowedScope {
                 limit,
             });
         }
+        let cached = self.reach_index.iter().any(|(held, _)| *held == files);
+        if self.full_reach.is_none()
+            && !self.full_declined
+            && !cached
+            && self.widened_builds >= REACH_INDEX_CAPACITY
+        {
+            let everything = self.full_selection_files();
+            // The main index refuses a selection past the hard limit before
+            // building it; narrowing may have admitted it only because it
+            // shrank that selection, so the shared index must not exceed it.
+            if everything.len() > hard_limit {
+                self.full_declined = true;
+            } else {
+                #[cfg(test)]
+                OBSERVED_REACH_BUILDS.with(|builds| builds.set(builds.get() + 1));
+                let index = build_index(
+                    &self.root,
+                    &everything,
+                    &self.test_harnesses,
+                    &mut self.consumed,
+                )?
+                .index;
+                self.reach_index.clear();
+                self.full_reach = Some(std::sync::Arc::new(index));
+            }
+        }
+        if self.full_reach.is_some() {
+            return Ok(ReachIndex::Shared);
+        }
         let consumed = &mut self.consumed;
+        let builds = &mut self.widened_builds;
         let (root, harnesses) = (&self.root, &self.test_harnesses);
         let index = most_recent_or_build(
             &mut self.reach_index,
             REACH_INDEX_CAPACITY,
             files,
-            |files| build_index(root, files, harnesses, consumed),
+            |files| {
+                *builds += 1;
+                #[cfg(test)]
+                OBSERVED_REACH_BUILDS.with(|count| count.set(count.get() + 1));
+                build_index(root, files, harnesses, consumed).map(|cached| cached.index)
+            },
         )?;
         Ok(ReachIndex::Widened(index))
+    }
+
+    /// The pre-#5320 selection: the main files and every withheld dependent,
+    /// which is what `RIPR_DIFF_DEPENDENT_SCOPE=full` indexes.
+    fn full_selection_files(&self) -> Vec<PathBuf> {
+        let selected = self
+            .main_files
+            .iter()
+            .chain(&self.withheld)
+            .cloned()
+            .collect::<Vec<_>>();
+        crate::analysis::workspace::with_module_context_files(&self.all_files, selected)
+    }
+
+    /// The full-selection index once the run switched to it, else `None`.
+    pub(super) fn shared_reach(&self) -> Option<std::sync::Arc<RustIndex>> {
+        self.full_reach.clone()
     }
 
     /// The bytes the reach widening read.
@@ -916,13 +1035,7 @@ impl NarrowedScope {
         let mut names = HashSet::from([owner.to_string()]);
         // Seeds: the owner, then every macro defined in a file that spells
         // it (a superset of the macros whose definition mentions it).
-        let owner_bytes = byte_names(&BTreeSet::from([owner.to_string()]));
-        let mut seed_macros = BTreeSet::new();
-        for facts in main_index.files().values() {
-            if spells_any(facts.source.as_bytes(), &owner_bytes) {
-                seed_macros.extend(macro_rules_names(facts.source.as_bytes()));
-            }
-        }
+        let mut seed_macros = self.main_macros_spelling(owner, main_index)?;
         let Some((index, macros)) = self.admit_spelling(
             &BTreeSet::from([owner.to_string()]),
             &mut admitted_now,
@@ -973,6 +1086,56 @@ impl NarrowedScope {
             admitted.extend(index);
         }
         Ok(Closure::Files(admitted_now))
+    }
+
+    /// The `macro_rules!` names defined in main-index files that spell
+    /// `owner` as a whole identifier.
+    fn main_macros_spelling(
+        &mut self,
+        owner: &str,
+        main_index: &RustIndex,
+    ) -> Result<BTreeSet<String>, String> {
+        let files = main_index.files();
+        if self
+            .main_tokens
+            .as_ref()
+            .is_none_or(|main| main.files != files.len())
+        {
+            #[cfg(test)]
+            MAIN_TOKEN_BUILDS.with(|builds| builds.set(builds.get() + 1));
+            let mut tokens = WithheldTokens::default();
+            for (id, facts) in files.values().enumerate() {
+                cancellation::checkpoint()?;
+                let id = u32::try_from(id)
+                    .map_err(|err| format!("dependent scope: too many main files: {err}"))?;
+                tokens.insert_scanned(id, FileTokens::scan(facts.source.as_bytes()));
+            }
+            self.main_tokens = Some(MainTokens {
+                files: files.len(),
+                tokens,
+            });
+        }
+        let Some(main) = self.main_tokens.as_ref() else {
+            return Ok(BTreeSet::new());
+        };
+        // The postings are exact for an ASCII name; for a non-ASCII one they
+        // are a superset, so confirm each candidate against its source.
+        let owner_bytes = byte_names(&BTreeSet::from([owner.to_string()]));
+        let sources = files.values().collect::<Vec<_>>();
+        Ok(main
+            .tokens
+            .spelling(&BTreeSet::from([owner.to_string()]))
+            .into_iter()
+            .filter(|id| {
+                owner.is_ascii()
+                    || sources
+                        .get(*id as usize)
+                        .is_some_and(|facts| spells_any(facts.source.as_bytes(), &owner_bytes))
+            })
+            .filter_map(|id| main.tokens.macros.get(id as usize))
+            .flatten()
+            .cloned()
+            .collect())
     }
 
     fn over(&self, reached: &BTreeSet<PathBuf>) -> Closure {
@@ -1108,14 +1271,13 @@ fn build_index(
     files: &[PathBuf],
     test_harnesses: &[crate::config::TestHarnessRegistration],
     consumed: &mut ConsumedRustSources,
-) -> Result<RustIndex, String> {
+) -> Result<crate::analysis::facts::CachedRustIndex, String> {
     let loaded = load(root, files, consumed)?;
-    let cached = crate::analysis::rust_index::build_analysis_index_from_loaded_files(
+    crate::analysis::rust_index::build_analysis_index_from_loaded_files(
         root,
         &loaded,
         test_harnesses,
-    )?;
-    Ok(cached.index)
+    )
 }
 
 /// The same bytes the index loads: committed content for a committed-history
@@ -1158,6 +1320,40 @@ fn identifier_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// strings included (a superset of every parser fact). A non-ASCII name is
 /// also matched at ASCII word boundaries, which the runs do not split at.
 fn spells_any(bytes: &[u8], names: &HashSet<Vec<u8>>) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    if names.iter().all(|name| is_plain_ascii_identifier(name)) {
+        return ascii_word_runs(bytes).any(|run| names.contains(run));
+    }
+    identifier_runs(bytes).any(|run| names.contains(run))
+        || names
+            .iter()
+            .filter(|name| !name.is_ascii())
+            .any(|name| spells_at_ascii_boundary(bytes, name))
+}
+
+/// A non-empty ASCII identifier that does not start with a digit.
+fn is_plain_ascii_identifier(name: &[u8]) -> bool {
+    name.first().is_some_and(|first| !first.is_ascii_digit())
+        && name
+            .iter()
+            .all(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+/// Maximal runs of ASCII word bytes. For a plain ASCII name, being one of
+/// these runs is the same as being one of [`identifier_runs`]: a run
+/// bounded by non-identifier bytes, or the ASCII part of a Unicode run.
+/// This is the hot loop of every reach-closure scan, so it skips the
+/// Unicode bookkeeping.
+fn ascii_word_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bytes
+        .split(|byte| !(*byte == b'_' || byte.is_ascii_alphanumeric()))
+        .filter(|run| !run.is_empty())
+}
+
+#[cfg(test)]
+fn spells_any_slow(bytes: &[u8], names: &HashSet<Vec<u8>>) -> bool {
     !names.is_empty()
         && (identifier_runs(bytes).any(|run| names.contains(run))
             || names
@@ -1275,8 +1471,90 @@ fn macro_rules_names(bytes: &[u8]) -> Vec<String> {
 }
 
 #[cfg(test)]
+thread_local! {
+    static MAIN_TOKEN_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The seed scan reads the main index once per scope, and for every
+    /// owner (ASCII, Unicode, absent) it finds the macros the old per-owner
+    /// scan of every file found.
+    #[test]
+    fn seed_macros_index_main_files_once_and_match_the_full_scan() -> Result<(), String> {
+        use crate::analysis::facts::{FileFacts, OwnedRustIndex};
+        let sources = [
+            (
+                "src/a.rs",
+                "macro_rules! call_owner { () => { owner() } }\npub fn owner() {}\n",
+            ),
+            (
+                "src/b.rs",
+                "macro_rules! unrelated { () => {} }\nfn owner_x() {}\n",
+            ),
+            ("src/c.rs", "/// “größe”\nmacro_rules! sized { () => {} }\n"),
+            ("src/d.rs", "macro_rules! digit { () => { 1größe } }\n"),
+            ("src/e.rs", "macro_rules! late { () => {} }\n// see owner\n"),
+        ];
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: sources
+                .iter()
+                .map(|(path, source)| {
+                    let path = PathBuf::from(path);
+                    let facts = FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string().into(),
+                        ..FileFacts::default()
+                    };
+                    (path, facts)
+                })
+                .collect(),
+            ..Default::default()
+        });
+        let mut scope = NarrowedScope {
+            root: PathBuf::new(),
+            all_files: Vec::new(),
+            main_files: Vec::new(),
+            withheld: Vec::new(),
+            tokens: WithheldTokens::default(),
+            closures: std::collections::BTreeMap::new(),
+            reach_index: Vec::new(),
+            widened_builds: 0,
+            full_declined: false,
+            full_reach: None,
+            test_harnesses: Vec::new(),
+            consumed: ConsumedRustSources::default(),
+            widen: true,
+            main_tokens: None,
+        };
+        let before = MAIN_TOKEN_BUILDS.with(std::cell::Cell::get);
+        for owner in ["owner", "größe", "owner_x", "missing", "sized"] {
+            let full_scan = index
+                .files()
+                .values()
+                .filter(|facts| {
+                    spells_any_slow(
+                        facts.source.as_bytes(),
+                        &byte_names(&BTreeSet::from([owner.to_string()])),
+                    )
+                })
+                .flat_map(|facts| macro_rules_names(facts.source.as_bytes()))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                scope.main_macros_spelling(owner, &index)?,
+                full_scan,
+                "{owner}"
+            );
+        }
+        assert_eq!(
+            scope.main_macros_spelling("owner", &index)?,
+            BTreeSet::from(["call_owner".to_string(), "late".to_string()])
+        );
+        assert_eq!(MAIN_TOKEN_BUILDS.with(std::cell::Cell::get) - before, 1);
+        Ok(())
+    }
 
     fn names(list: &[&str]) -> HashSet<Vec<u8>> {
         list.iter().map(|name| name.as_bytes().to_vec()).collect()
@@ -1356,6 +1634,55 @@ mod tests {
         assert!(!spells_any(b"fn parser() {}", &set));
         assert!(!spells_any(b"fn reparse() {}", &set));
         assert!(!spells_any(b"let parse_x = 1;", &set));
+    }
+
+    /// The plain-ASCII fast path answers exactly as the identifier-run scan
+    /// on every boundary the runs treat specially: Unicode neighbours, a
+    /// leading digit, raw identifiers, paths and macro bangs.
+    #[test]
+    fn ascii_fast_path_matches_the_identifier_run_scan() {
+        let haystacks: [&[u8]; 17] = [
+            b"parse",
+            b"x.parse()",
+            b"1parse",
+            b"parse1",
+            b"_parse",
+            b"r#parse",
+            b"parse!(x)",
+            b"crate::parse::go",
+            "éparse".as_bytes(),
+            "parseé".as_bytes(),
+            "é1parse".as_bytes(),
+            "“parse”".as_bytes(),
+            "größe_parse".as_bytes(),
+            b"",
+            b"1parse go",
+            "é1parse parse".as_bytes(),
+            b"a::b",
+        ];
+        for wanted in [
+            &["parse"][..],
+            &["parse", "go"][..],
+            &["_parse"][..],
+            &["parse1"][..],
+            &["x"][..],
+            // Not plain ASCII identifiers: these take the full scan, so the
+            // answer must still match it (a digit-led name never matches a
+            // run, `a::b` is never one run, and a mixed set has a Unicode name).
+            &["1parse"][..],
+            &["a::b"][..],
+            &["parse", "größe"][..],
+        ] {
+            let set = names(wanted);
+            for haystack in haystacks {
+                assert_eq!(
+                    spells_any(haystack, &set),
+                    spells_any_slow(haystack, &set),
+                    "{wanted:?} in {:?}",
+                    String::from_utf8_lossy(haystack)
+                );
+            }
+        }
     }
 
     #[test]

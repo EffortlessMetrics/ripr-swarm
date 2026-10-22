@@ -192,6 +192,11 @@ pub(crate) struct Case {
     /// compares untyped values, where a missing key differs from `[]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) spec_examples: Vec<String>,
+    /// Coverage axes this case counts toward (`[[axis]]` in
+    /// `spec-coverage.toml`): the sides of the Rust language and test
+    /// ecosystem the corpus is held to cover, apart from spec examples.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) axes: Vec<String>,
     /// The fact packet ripr reads for a Perl case; absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) perl_facts: Option<PerlFacts>,
@@ -2649,7 +2654,7 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
 /// must carry its spec-example ledger (#6686 review for Rust, #7650 for
 /// Python and TypeScript), so a deleted or renamed ledger fails instead of
 /// silently dropping the coverage floor. Ledgerless operation is reserved
-/// for the Perl corpus, which has not opted in yet.
+/// for the Perl corpus, which carries a ledger but is not yet required to (#8775).
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
     if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
         return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
@@ -3066,6 +3071,9 @@ fn score_loaded_corpus(
             coverage.coverage.denominator,
             coverage.floor
         );
+    }
+    if let Some(note) = coverage::axis_note(dir, &corpus, cases.is_some())? {
+        println!("verdict-corpus: {note}");
     }
     if let Some(note) = &floor_note {
         println!("{note}");

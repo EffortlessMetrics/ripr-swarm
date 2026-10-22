@@ -3,6 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
@@ -168,18 +169,19 @@ use super::{
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
     parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
-    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
-    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
+    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
+    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
     repo_exposure_summary_report_timeout_ms_from_env, repo_root,
@@ -1319,6 +1321,102 @@ Evidence
         report.contains("oracle projection `exact_value/strong`"),
         "{report}"
     );
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording() {
+    let line = "- related test tests/a.ts:3 t uses smoke only oracle: t.truthy(x)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "smoke"
+    ));
+    // The stutter is no longer the rendered form, and other pairs keep the
+    // full "<strength> <kind>" spelling.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.ts:3 t uses smoke smoke only oracle: t.truthy(x)",
+        "smoke_only",
+        "smoke"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "smoke"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "unknown"
+    ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
 }
 
 #[test]
@@ -8888,6 +8986,9 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
@@ -9816,6 +9917,18 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // #3798: the RC manifest sits under the RC tag but is named for the
+    // X.Y.Z generation, as the editor's rcManifestUrl expects; waiting on a
+    // manifest named after the full RC version never succeeds.
+    if !extension.contains("generation=\"${version%%[-+]*}\"")
+        || !extension.contains("/v${version}/ripr-server-manifest-v${generation}.json")
+        || extension.contains("ripr-server-manifest-v${version}.json")
+    {
+        return Err(
+            "publish-extension.yml must wait for the generation-keyed manifest under the release tag"
+                .to_string(),
+        );
+    }
     // One dispatch authorizes exactly one channel: zero or two must fail
     // before anything packages, publishes or touches the Release.
     if !extension.contains("true/false | false/true) ;;") {
@@ -9896,6 +10009,8 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
             || !candidate.contains("candidate_sha: ${{ github.sha }}")
             || !candidate.contains("version: ${{ inputs.version }}")
+            || !candidate.contains("candidate_ref: ${{ inputs.candidate_ref }}")
+            || candidate.contains("candidate_tag")
             || candidate.contains("contents: write")
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
@@ -9917,6 +10032,10 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
         workflow.replace(
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
+        ),
+        workflow.replace(
+            "candidate_ref: ${{ inputs.candidate_ref }}",
+            "candidate_ref: \"\"",
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -9963,8 +10082,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
-            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
-            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+            || !candidate.contains(
+                "test \"${CANDIDATE_REF}\" = \"refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}\"",
+            )
+            || !candidate.contains("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
             return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
         }
@@ -10139,8 +10260,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "tag syntax",
             workflow.replacen(
-                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
-                "^ripr-release-.*$",
+                "refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}",
+                "refs/tags/ripr-release-${candidate_sha}",
                 1,
             ),
         ),
@@ -10659,6 +10780,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -10795,6 +10921,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -11253,9 +11384,21 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let cases = [
         (
             "pull_request",
+            Some("labeled"),
+            Some("merge-ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("Merge-Ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
             Some("ready_for_review"),
             None,
-            RoutedRustEventRoute::LaunchFullGate,
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         (
             "pull_request",
@@ -11279,18 +11422,30 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "pull_request",
             Some("labeled"),
             Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
             Some("labeled"),
             Some("windows-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
             Some("unlabeled"),
             Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
@@ -11309,50 +11464,46 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         );
     }
 
-    let draft_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, synchronize]",
-    );
+    let draft_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, synchronize]");
     assert!(
         routed_rust_ready_event_contract_violations(&draft_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("synchronize")
             }),
-        "re-admitting synchronize must fail the Ready-only contract: {:?}",
+        "re-admitting synchronize must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&draft_resurrected)
     );
 
-    let label_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, labeled]",
+    let ready_resurrected = workflow.replace(
+        "    types: [labeled]",
+        "    types: [labeled, ready_for_review]",
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
             .iter()
             .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("labeled")
+                violation.contains("must be exactly") && violation.contains("ready_for_review")
             }),
-        "re-admitting label events must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        "re-admitting the Ready transition must fail the merge-ready contract: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
     );
 
-    let edited_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, edited]",
-    );
+    let edited_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, edited]");
     assert!(
         routed_rust_ready_event_contract_violations(&edited_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("edited")
             }),
-        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        "re-admitting the edited activity type must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&edited_resurrected)
     );
 
     let ready_dropped = workflow.replace(
-        "    types: [ready_for_review]",
+        "    types: [labeled]",
         "    types: [opened, synchronize, reopened]",
     );
     assert!(
@@ -11363,7 +11514,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&ready_dropped)
     );
 
-    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
+    let missing_types = workflow.replace("    types: [labeled]\n", "");
     assert!(
         routed_rust_ready_event_contract_violations(&missing_types)
             .iter()
@@ -11372,6 +11523,93 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&missing_types)
     );
 
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+    );
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
+    );
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+    );
+
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     let cancellation_disabled = workflow.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
@@ -11380,7 +11618,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
             .iter()
             .any(|violation| violation.contains("cancel-in-progress")),
-        "disabling Ready-run cancellation must fail: {:?}",
+        "disabling merge-ready cancellation must fail: {:?}",
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
@@ -11420,9 +11658,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let shared_group = workflow.replace(
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+        "format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name)",
+        "format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)",
     );
+    assert_ne!(shared_group, workflow, "fixture must rewrite the group");
     assert!(
         routed_rust_ready_event_contract_violations(&shared_group)
             .iter()
@@ -11444,8 +11683,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let pseudo_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+        "'Merge-ready Nonrequest' }}",
+        "'Ripr Rust Small Ignored Label Event' }}",
+    );
+    assert_ne!(
+        pseudo_result, workflow,
+        "fixture must rewrite the nonrequest name"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&pseudo_result)
@@ -11456,16 +11699,89 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let renamed_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: Ripr Rust Small Draft Result",
+        "&& 'Ripr Rust Small Result' ||",
+        "&& 'Ripr Rust Small Draft Result' ||",
+    );
+    assert_ne!(
+        renamed_result, workflow,
+        "fixture must rename the required context"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&renamed_result)
             .iter()
-            .any(|violation| violation.contains("must post the static")),
+            .any(|violation| violation.contains("result job must be named by exactly")),
         "renaming the required result context must fail: {:?}",
         routed_rust_ready_event_contract_violations(&renamed_result)
     );
+
+    // Negative experiments for the skipped-required-job hazard: each mutation
+    // would let a nonrequest event produce, or a request skip, the required
+    // context, and must be rejected by name.
+    let static_required_name = workflow.replace(
+        "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}",
+        "    name: Ripr Rust Small Result",
+    );
+    assert_ne!(
+        static_required_name, workflow,
+        "fixture must rewrite the result name"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&static_required_name)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "a static result name posts the required context for ordinary labels: {:?}",
+        routed_rust_ready_event_contract_violations(&static_required_name)
+    );
+    let any_label_request = workflow.replace(
+        "github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result'",
+        "github.event.label.name != '') && 'Ripr Rust Small Result'",
+    );
+    assert_ne!(
+        any_label_request, workflow,
+        "fixture must widen the request label"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&any_label_request)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "any label must not earn the required context: {:?}",
+        routed_rust_ready_event_contract_violations(&any_label_request)
+    );
+    let skippable_result = workflow.replace(
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+    );
+    assert_ne!(
+        skippable_result, workflow,
+        "fixture must make the result skippable"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&skippable_result)
+            .iter()
+            .any(|violation| violation.contains("job-level `if: always()`")),
+        "a skippable result reports success when skipped: {:?}",
+        routed_rust_ready_event_contract_violations(&skippable_result)
+    );
+    for job in ["route", "detect-docs-only", "admission"] {
+        let unguarded = workflow.replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
+            "true\n",
+        )
+        .replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')\n",
+            "true)\n",
+        );
+        assert_ne!(
+            unguarded, workflow,
+            "fixture must remove the request guards"
+        );
+        let violations = routed_rust_ready_event_contract_violations(&unguarded);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains(&format!("job `{job}` must carry the request guard"))),
+            "job {job} must be guarded against nonrequest labels: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -12519,6 +12835,195 @@ fn pr_shape_warnings_flag_analysis_without_evidence() {
         },
     ];
     assert!(pr_shape_warnings(&with_evidence).is_empty());
+}
+
+const COMPLETE_PR_BODY: &str = "\
+Proposal: none, issue-driven
+Spec: none, no spec governs this surface
+ADR: none
+Plan item: none
+Governing issue or accepted claim: #8601
+Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.
+Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check
+Stack parent or prerequisite PR (if any): none
+Proposed replacement of PR (if any; not yet accepted): none
+Acceptance retained from a replaced candidate (if any): none
+Accepted winner and losing candidate disposition (when decided): not decided
+";
+
+#[test]
+fn pr_body_template_complete_body_passes() -> Result<(), String> {
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    // The `gh pr view --json body` shape unwraps to the same body.
+    let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
+    let body = pr_body_from_input_text(&json)?;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    Ok(())
+}
+
+#[test]
+fn pr_body_template_missing_governing_issue_line_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace("Governing issue or accepted claim: #8601\n", "");
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Governing issue or accepted claim:"]);
+    assert!(
+        pr_body_template_missing_error(&missing).contains("Governing issue or accepted claim:")
+    );
+}
+
+#[test]
+fn pr_body_template_missing_acceptance_delta_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace(
+        "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.\n",
+        "",
+    );
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Acceptance delta (one sentence):"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Acceptance delta (one sentence):"));
+}
+
+#[test]
+fn pr_body_template_placeholder_values_fail() {
+    for placeholder in ["", "TBD", "n/a", "<issue or claim>"] {
+        let body = COMPLETE_PR_BODY.replace(
+            "Governing issue or accepted claim: #8601",
+            &format!("Governing issue or accepted claim: {placeholder}"),
+        );
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&"Governing issue or accepted claim:"),
+            "placeholder {placeholder:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).starts_with("claim_identity_missing:"));
+    }
+}
+
+#[test]
+fn pr_body_template_non_gated_placeholder_values_fail_naming_line() {
+    // Findings 1/6: every template line rejects unfilled placeholders,
+    // not only the two admission-gated lines.
+    for (filled, placeholder_line, expected) in [
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: TBD",
+            "Spec:",
+        ),
+        ("Plan item: none", "Plan item: TBD", "Plan item:"),
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: <link>",
+            "Spec:",
+        ),
+        (
+            "Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check",
+            "Candidate branch (GitHub PR head is authoritative after publication): <branch>",
+            "Candidate branch (GitHub PR head is authoritative after publication):",
+        ),
+        (
+            "Proposed replacement of PR (if any; not yet accepted): none",
+            "Proposed replacement of PR (if any; not yet accepted): pending",
+            "Proposed replacement of PR (if any; not yet accepted):",
+        ),
+        (
+            "Accepted winner and losing candidate disposition (when decided): not decided",
+            "Accepted winner and losing candidate disposition (when decided): <winner>",
+            "Accepted winner and losing candidate disposition (when decided):",
+        ),
+    ] {
+        let body = COMPLETE_PR_BODY.replace(filled, placeholder_line);
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&expected),
+            "placeholder {placeholder_line:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).contains(expected));
+    }
+    // Explicit non-applicable values remain legitimate on non-gated lines.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface", "Spec: none");
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_body_template_bulleted_gated_lines_fail_like_admission() {
+    // Finding 2: admission (`extract_fields`) only matches `label:` at
+    // the start of a whitespace-stripped line, so bulleted or spaced
+    // gated lines are refused there and must fail locally too.
+    let bulleted = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "- Governing issue or accepted claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing",
+            "- Acceptance delta (one sentence): A PR body missing",
+        );
+    let missing = pr_body_template_missing_lines(&bulleted);
+    assert!(missing.contains(&"Governing issue or accepted claim:"));
+    assert!(missing.contains(&"Acceptance delta (one sentence):"));
+
+    let spaced = COMPLETE_PR_BODY.replace(
+        "Governing issue or accepted claim: #8601",
+        "Governing issue or accepted claim : #8601",
+    );
+    assert!(
+        pr_body_template_missing_lines(&spaced).contains(&"Governing issue or accepted claim:")
+    );
+
+    // The non-bulleted, admission-accepted forms pass, including the
+    // alternate labels admission accepts (`LABELS` in admission).
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    let alternate = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "Owner / governing claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.",
+            "Acceptance delta: A PR body missing the template lines fails a cheap local check naming the missing line.",
+        );
+    assert!(pr_body_template_missing_lines(&alternate).is_empty());
+}
+
+#[test]
+fn pr_body_template_traceability_spec_does_not_hide_missing_source_spec() {
+    // Finding 3: the bulleted traceability `- Spec:` line must not
+    // satisfy the unbulleted Source-of-truth `Spec:` line.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface\n", "")
+        + "\n## Spec-Test-Code Traceability\n\n- Spec: RIPR-SPEC-0001\n";
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Spec:"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Spec:"));
+}
+
+#[test]
+fn pr_body_template_blank_label_before_filled_value_passes_like_admission() {
+    // Finding 4: admission skips blank occurrences (`if found[key]:
+    // continue` only after a non-empty value), so a blank label before
+    // a completed claim/delta does not mask the later value.
+    let body = "Governing issue or accepted claim:\nAcceptance delta (one sentence):\n".to_string()
+        + COMPLETE_PR_BODY;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    // A filled first occurrence likewise wins over a later blank one.
+    let body = COMPLETE_PR_BODY.to_string()
+        + "\nGoverning issue or accepted claim:\nAcceptance delta (one sentence):\n";
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_shape_report_body_status_agrees_with_body_check_failure() {
+    // Finding 5: a missing body line fails the check, so the report
+    // must record `fail`, not an advisory `warn`/`pass`.
+    let failed = pr_shape_report_body(&[String::from(
+        "PR body is missing or has a placeholder value for `Spec:`; add the line from .github/pull_request_template.md with a real value.",
+    )]);
+    assert!(failed.contains("Status: fail"));
+    assert!(!failed.contains("Status: pass"));
+    assert!(!failed.contains("Status: warn"));
+    assert!(pr_shape_report_body(&[]).contains("Status: pass"));
+    assert!(
+        pr_shape_report_body(&[String::from("Production code changed without evidence.")])
+            .contains("Status: warn")
+    );
 }
 
 #[test]
@@ -31126,12 +31631,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31178,6 +31700,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
@@ -54477,52 +55023,74 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]

@@ -51,6 +51,11 @@ through the reverse path-dependency adjacency:
 - the walk is transitive (a change in `a` reaches `b` when `b` depends on
   `a` and `c` when `c` depends on `b`) and deterministic (`BTreeMap`/
   `BTreeSet`-ordered);
+- scope expansion shares traversal across changed roots: each connected
+  reverse edge is examined at most twice, independent of the number of
+  changed roots (ordered-map lookup costs still apply). The connected
+  traversal result remains the union of single-root walks, each excluding only its own seed; a seed
+  reached from another seed stays included;
 - cycles are cut by the walk and disclosed on the graph surfaces; the
   reachable set itself stays exact for the walked edges;
 - selections without package narrowing are unchanged: Instant stays
@@ -151,6 +156,9 @@ schema. No registry or external dependency resolution.
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_shared_tail_visits_each_edge_at_most_twice`
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs`
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_preserves_overlapping_seeds_and_cycle_roots`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states`

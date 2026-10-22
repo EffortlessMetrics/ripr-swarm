@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A bare local accumulator update whose right-hand side calls something (`count += line.split_whitespace().count();`, `count = count + f(x);`) no longer reads as a `call_deletion` probe that the test could not confirm; it reads `static_unknown` like the call-free `sum += w;`, so a table test asserting the owner's exact result no longer shows a false weak gap (RIPR-SPEC-0228) (#8027).

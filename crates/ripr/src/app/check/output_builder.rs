@@ -28,6 +28,10 @@ pub(super) fn check_output_from_analysis(
         // #5258: name the untracked subset so the note can offer the real
         // repair; `--worktree` covers only the tracked remainder.
         untracked_working_tree_source_paths: analysis.untracked_source_paths,
+        // #7467: name the gitignored subset the same way; neither diff
+        // analyzes it, and `git add -N` refuses it, so the note must offer
+        // the force intent-to-add repair instead.
+        ignored_working_tree_source_paths: analysis.ignored_source_paths,
         unlinked_python_tests: None,
         suppression: None,
         partial_scope: analysis.partial_scope,
