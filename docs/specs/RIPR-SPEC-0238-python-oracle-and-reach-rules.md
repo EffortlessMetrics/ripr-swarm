@@ -728,15 +728,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     evaluate whether the module is installed, so `importorskip` of a present
     module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
     `py-trap-module-loaded`, #9691).
-25. **A property check pins no value.** An `==` assertion that compares the
-    owner with itself (`f(f(x)) == f(x)`, either order, at any nesting) or
-    compares an owner call with a `for` loop variable it was passed
-    (`for n in range(1, 5): assert f(1, n) == n`) is a weak relational
-    check, as a tautology is (rule 1). Idempotence holds for any constant
-    return and an identity over a loop variable holds for `n / 1`, so neither
-    notices an edit. An independent expected value (a literal, or a name
-    bound outside a loop) still pins (`py-grid-returns-property`,
-    `py-grid-arithmetic-property`, #9594).
+25. **A property check pins no value.** A single `==` in an `assert`
+    statement is a weak relational check, as a tautology is (rule 1), when
+    one side is a call and the other side is either a call that appears in
+    that call's arguments (`f(f(x)) == f(x)`, either order, at any depth,
+    keyword and container arguments included) or a `for` loop variable that
+    appears in them (`for n in range(1, 5): assert f(1, n) == n`; `async for`
+    and tuple or list targets count, `while` loops and names bound outside a
+    loop do not). The calls need not be the changed owner. Idempotence holds
+    for any constant return and an identity over a loop variable holds for
+    `n / 1`, so neither notices an edit. An independent expected value (a
+    literal, `n * 3`, a name bound outside a loop) still pins, and so does a
+    chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
+    `assertEqual` and helper forms keep their strength
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
 
 ### Verdict ladder
 
@@ -1269,6 +1274,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
   module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
   the `py-trap-*` corpus cases.
+- `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
+  checks, rule 25), pinned by `property_assertion_tests.rs` and the
+  `py-grid-*-property` corpus cases.
 
 ## Metrics
 

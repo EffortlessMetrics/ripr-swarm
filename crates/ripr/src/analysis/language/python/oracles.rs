@@ -655,10 +655,11 @@ fn loop_names(outer: &[String], target: &Expr) -> Vec<String> {
     names
 }
 
-/// RIPR-SPEC-0238 rule 25: `owner(owner(x)) == owner(x)` compares the owner
-/// with itself, and `owner(1, n) == n` over a loop variable `n` compares it
-/// with a value it was handed. Either holds for many wrong implementations
-/// (any constant is idempotent; `n / 1` equals `n`), so neither pins a value.
+/// RIPR-SPEC-0238 rule 25: `f(f(x)) == f(x)` compares a call with itself, and
+/// `f(1, n) == n` over a loop variable `n` compares a call with a value it
+/// was handed. Either holds for many wrong implementations (any constant is
+/// idempotent; `n / 1` equals `n`), so neither pins a value. The shared
+/// operand may sit anywhere in the call's arguments, keywords included.
 fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &str) -> bool {
     let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
     else {
@@ -671,25 +672,30 @@ fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &st
             let Expr::Call(call) = call else {
                 return false;
             };
+            let arguments = text_for_range(
+                source,
+                TextRange::new(call.func.range().end(), call.range.end()),
+            );
             match other {
                 Expr::Name(name) => {
                     loops.iter().any(|loop_name| loop_name == name.id.as_str())
-                        && call.args.iter().any(
-                            |arg| matches!(arg, Expr::Name(arg_name) if arg_name.id == name.id),
-                        )
+                        && super::mentions_python_name(&arguments, name.id.as_str())
                 }
-                Expr::Call(_) => call_nests_expr(call, other, source),
+                Expr::Call(_) => {
+                    let inner = code_without_spacing(&text_for_range(source, other.range()));
+                    let arguments = code_without_spacing(&arguments);
+                    // The shared call must start at an identifier boundary,
+                    // so `f(1)` is not found inside `xf(1)`.
+                    arguments.match_indices(&inner).any(|(start, _)| {
+                        !arguments[..start]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
+                    })
+                }
                 _ => false,
             }
         })
-}
-
-/// Whether `inner` appears as an argument, at any depth, of `call`.
-fn call_nests_expr(call: &ast::ExprCall, inner: &Expr, source: &str) -> bool {
-    call.args.iter().any(|arg| {
-        same_tokens(source, arg, inner)
-            || matches!(arg, Expr::Call(nested) if call_nests_expr(nested, inner, source))
-    })
 }
 
 fn oracle_for_compare(
