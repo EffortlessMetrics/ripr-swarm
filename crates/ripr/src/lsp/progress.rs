@@ -197,7 +197,8 @@ struct TokenNotifications {
     /// client's `create` answer (#9362). They are queued behind `Begin` and
     /// flushed in producer order once it is sent, never dropped. Consecutive
     /// duplicates collapse and the queue is capped at
-    /// `MAX_PENDING_STAGE_REPORTS`.
+    /// `MAX_PENDING_STAGE_REPORTS`; past the cap the newest repeats are
+    /// dropped, which the three-stage producer vocabulary never reaches.
     pending_stages: Vec<AnalysisProgressStage>,
 }
 
@@ -512,8 +513,10 @@ impl AnalysisProgressTracker {
     ///
     /// Reports are message-only: no percentage is ever attached, so unknown
     /// totals stay unknown. No-ops (never an error, never analysis-relevant):
-    /// unsupported clients, unknown generations, unstarted tokens, tokens
-    /// still queued, terminal stages, and consecutive duplicate stages.
+    /// unsupported clients, unknown generations, tokens still queued,
+    /// terminal stages, and consecutive duplicate stages. A stage issued while
+    /// the detached announce is still waiting for `create` is queued behind
+    /// `Begin` (#9362); a token that never starts drops it with the record.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
         let Some(notifications) = self.notification_state(generation) else {
             return;
@@ -1339,6 +1342,58 @@ mod tests {
                 return Err(format!(
                     "pre-Begin stage was dropped or reordered: {messages:?}"
                 ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stages_queued_before_begin_stop_at_the_cap_in_producer_order() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(15), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            for index in 0..(MAX_PENDING_STAGE_REPORTS + 4) {
+                let stage = if index % 2 == 0 {
+                    AnalysisProgressStage::LoadingInput
+                } else {
+                    AnalysisProgressStage::Analyzing
+                };
+                tracker.report_stage(15, stage).await;
+            }
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            tracker.end(15, AnalysisProgressEnd::Complete).await;
+            let reports: Vec<String> = recorder
+                .events()
+                .into_iter()
+                .filter_map(|event| match event {
+                    ProgressEvent::Report { message, .. } => Some(message),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<String> = (0..MAX_PENDING_STAGE_REPORTS)
+                .map(|index| {
+                    if index % 2 == 0 {
+                        "loading input".to_string()
+                    } else {
+                        "analyzing workspace".to_string()
+                    }
+                })
+                .collect();
+            if reports != expected {
+                return Err(format!("queue did not stop at the cap: {reports:?}"));
             }
             Ok(())
         })
