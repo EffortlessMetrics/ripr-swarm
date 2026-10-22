@@ -1863,6 +1863,19 @@ pub(crate) fn test_file_names_owner_only_in_test_bodies(
     names: &[&str],
     root: &Path,
 ) -> bool {
+    test_file_names_owner_only_outside_inert_text(test, sibling_tests, names, root, &[])
+}
+
+/// [`test_file_names_owner_only_in_test_bodies`] with `inert_text` (a
+/// resolved loop header and its literal table, from `loop_rows`) removed
+/// from the file first, as the statements the reader already folded.
+pub(crate) fn test_file_names_owner_only_outside_inert_text(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    names: &[&str],
+    root: &Path,
+    inert_text: &[String],
+) -> bool {
     let Ok(mut source) = std::fs::read_to_string(root.join(&test.file)) else {
         return false;
     };
@@ -1880,6 +1893,12 @@ pub(crate) fn test_file_names_owner_only_in_test_bodies(
     }
     for body in bodies {
         source = source.replace(body, "");
+    }
+    for text in inert_text {
+        if source.matches(text.as_str()).count() != 1 {
+            return false;
+        }
+        source = source.replace(text.as_str(), "");
     }
     // Each import statement is gathered whole and must be exactly one named,
     // default or namespace import with nothing after its terminator; a

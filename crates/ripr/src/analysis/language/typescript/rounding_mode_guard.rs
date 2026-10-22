@@ -10,6 +10,7 @@
 //! unless some observed owner call folds the operand to a value where the two
 //! functions differ, or some call cannot be folded at all.
 
+use super::loop_rows::{LoopRows, ts_enclosing_loop_rows};
 use super::*;
 
 const ROUNDING_FUNCTIONS: [&str; 4] = ["round", "floor", "ceil", "trunc"];
@@ -214,7 +215,17 @@ fn witness_or_keep(
             .collect();
         // No hook, file-level helper or other test-file code may feed the
         // owner an input this reader never sees.
-        if !test_file_names_owner_only_in_test_bodies(test, all_tests, &file_names, root) {
+        let loop_rows = std::fs::read_to_string(root.join(&test.file))
+            .ok()
+            .and_then(|file| ts_enclosing_loop_rows(&file, &test.body_text));
+        let inert_text = loop_rows.as_ref().map_or(&[][..], LoopRows::inert_text);
+        if !test_file_names_owner_only_outside_inert_text(
+            test,
+            all_tests,
+            &file_names,
+            root,
+            inert_text,
+        ) {
             return None;
         }
         let masked_body = ts_mask_literals_and_comments(&test.body_text);
@@ -223,7 +234,6 @@ fn witness_or_keep(
                 return None;
             }
             for arguments in owner_call_arguments(&test.body_text, name, &receivers) {
-                calls += 1;
                 let arguments = substitute_constant_arguments(
                     arguments,
                     test,
@@ -231,25 +241,33 @@ fn witness_or_keep(
                     alias_map,
                     workspace_root,
                 );
-                let mut bindings = Vec::new();
-                for (index, param) in owner.params.iter().enumerate() {
-                    if let Some(value) = arguments
-                        .get(index)
-                        .and_then(|a| signed_literal_argument(a))
-                    {
-                        bindings.push((param.clone(), value));
+                // A call fed by loop variables runs once per table row.
+                let argument_sets = match &loop_rows {
+                    Some(rows) => rows.expand(&arguments),
+                    None => vec![arguments],
+                };
+                for arguments in argument_sets {
+                    calls += 1;
+                    let mut bindings = Vec::new();
+                    for (index, param) in owner.params.iter().enumerate() {
+                        if let Some(value) = arguments
+                            .get(index)
+                            .and_then(|a| signed_literal_argument(a))
+                        {
+                            bindings.push((param.clone(), value));
+                        }
                     }
+                    let value = fold_numeric_expression(&swap.operand, &bindings)?;
+                    if !value.is_finite() {
+                        return None;
+                    }
+                    let old = apply_rounding(swap.old_function, value)?;
+                    let new = apply_rounding(swap.new_function, value)?;
+                    if (old - new).abs() >= 0.5 {
+                        return Some(RoundingWitness::Discriminates);
+                    }
+                    all_whole &= value.fract() == 0.0;
                 }
-                let value = fold_numeric_expression(&swap.operand, &bindings)?;
-                if !value.is_finite() {
-                    return None;
-                }
-                let old = apply_rounding(swap.old_function, value)?;
-                let new = apply_rounding(swap.new_function, value)?;
-                if (old - new).abs() >= 0.5 {
-                    return Some(RoundingWitness::Discriminates);
-                }
-                all_whole &= value.fract() == 0.0;
             }
         }
     }
