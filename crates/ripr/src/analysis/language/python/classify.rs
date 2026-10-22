@@ -1,3 +1,4 @@
+use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
     strength_only_assertion,
@@ -11,7 +12,7 @@ use super::no_behavior::{
     is_structural_def_header_text,
 };
 use super::probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, python_flow_sink_for,
+    canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
@@ -284,7 +285,7 @@ pub(super) fn classify_change_for_owner(
     {
         return None;
     }
-    let (family, delta) = classify_probe_shape(line_text);
+    let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
     // The changed line's probe family (and, for a field change, its changed
     // field) selects which assertion of each related test this finding judges
     // (#5572). Every consumer below — the public rows, sink alignment, the
@@ -457,6 +458,19 @@ pub(super) fn classify_change_for_owner(
                     &related_candidates,
                     &focus,
                 )
+                .or_else(|| {
+                    // #9429: a `match` arm or a `.get` default that no
+                    // observed input reaches reads the same way.
+                    arm_activation::python_unreached_arm_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();
