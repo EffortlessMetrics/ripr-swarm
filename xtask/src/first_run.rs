@@ -1363,9 +1363,16 @@ mod tests {
             assert_eq!(resolve_ripr("weird\\name")?, "weird\\name");
         }
         let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        // `std::path::absolute` normalizes separators on Windows, so the
+        // expected spelling is built from components rather than joining the
+        // slash-separated input verbatim.
         assert_eq!(
             resolve_ripr("target/debug/ripr")?,
-            cwd.join("target/debug/ripr").display().to_string()
+            cwd.join("target")
+                .join("debug")
+                .join("ripr")
+                .display()
+                .to_string()
         );
         Ok(())
     }

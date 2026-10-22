@@ -175,7 +175,7 @@ fn human_full_shared_real_git_diff_keeps_every_finding_and_replays_commands() ->
             .collect();
         assert_eq!(commands.len(), 14);
         for (ordinal, command) in commands.iter().enumerate() {
-            let args = shell_words::posix_words(command)?;
+            let args = shell_words::printed_words(command)?;
             let borrowed: Vec<_> = args.iter().map(String::as_str).collect();
             let replay = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &borrowed)?;
             assert!(
