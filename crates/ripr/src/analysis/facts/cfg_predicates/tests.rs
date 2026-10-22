@@ -653,3 +653,24 @@ fn cfg_attr_introduces_test_only_under_a_predicate_known_true() {
         assert_eq!(attribute_introduces_only_test(text), only_test, "{text}");
     }
 }
+
+#[test]
+fn cfg_attr_introduces_a_bare_sibling_only_under_a_predicate_known_true() {
+    for (text, word, expected) in [
+        ("#[cfg_attr(all(), ignore)]", "ignore", true),
+        ("#[cfg_attr(all(), test, ignore)]", "ignore", true),
+        ("#[cfg_attr(all(), should_panic)]", "should_panic", true),
+        ("#[cfg_attr(any(), ignore)]", "ignore", false),
+        ("#[cfg_attr(feature = \"x\", ignore)]", "ignore", false),
+        ("#[cfg_attr(all(), ignore = \"slow\")]", "ignore", true),
+        (
+            "#[cfg_attr(all(), should_panic(expected = \"x\"))]",
+            "should_panic",
+            true,
+        ),
+        ("#[cfg_attr(all(), should_panic)]", "ignore", false),
+        ("#[ignore]", "ignore", false),
+    ] {
+        assert_eq!(attribute_introduces_bare(text, word), expected, "{text}");
+    }
+}

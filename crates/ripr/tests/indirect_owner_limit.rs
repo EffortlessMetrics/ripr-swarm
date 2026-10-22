@@ -464,6 +464,14 @@ fn a_cfg_attr_that_introduces_test_beside_should_panic_does_not_credit() -> Resu
 }
 
 #[test]
+fn a_separate_cfg_attr_ignore_beside_a_cfg_attr_test_does_not_credit() -> Result<(), String> {
+    assert_no_credit_for_cfg_attr("cfg_attr(all(), test)]\n    #[cfg_attr(all(), ignore)")?;
+    assert_no_credit_for_cfg_attr(
+        "cfg_attr(all(), test)]\n    #[cfg_attr(all(), ignore = \"slow\")",
+    )
+}
+
+#[test]
 fn a_cfg_attr_with_an_unevaluated_predicate_does_not_credit() -> Result<(), String> {
     let lib = CFG_ATTR_OWNER.replace(
         "cfg_attr(all(), test)",
