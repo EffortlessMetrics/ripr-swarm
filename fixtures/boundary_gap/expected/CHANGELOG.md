@@ -1,5 +1,22 @@
 # Golden Output Changes
 
+## Pending — boundary_gap (9478)
+
+Reason:
+RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.92
+for bounded typed function-pointer owner pins. Regenerated the portable
+unchanged-attempt snapshots from the native producer using the existing CLI
+test's normalization, then regenerated verify and refreshed the existing portable
+receipt's file commitments against native receipt output. Its portable envelope
+is retained. Only the cache identifier and dependent content/file commitments change. Historical
+currentness, incomplete receipt status, unchanged weak grip and fail-closed
+first-action routing are preserved.
+
+Updated:
+- `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+- `first-useful-action/unchanged-after-attempt/agent-verify.json`
+- `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
 ## Pending — boundary_gap (9)
 
 Reason:

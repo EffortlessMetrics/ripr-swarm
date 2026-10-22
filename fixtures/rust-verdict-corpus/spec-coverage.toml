@@ -879,11 +879,6 @@ issue = 9442
 reason = "Owner referenced as a path value is not followed (#9442)."
 
 [[known_false]]
-case = "shape-hostile-owner-through-fn-pointer"
-issue = 9442
-reason = "Owner reached through a fn pointer is not followed (#9442)."
-
-[[known_false]]
 case = "shape-hostile-cfg-attr-test"
 issue = 9442
 reason = "cfg_attr-wrapped test is not recognized (#9442)."
