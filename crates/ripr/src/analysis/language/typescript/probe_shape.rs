@@ -68,7 +68,11 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     if return_predicate_condition(leading).is_some() {
         return TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control);
     }
-    if leading.starts_with("return ") || leading == "return;" || leading.starts_with("return;") {
+    if leading.starts_with("return ")
+        || leading == "return;"
+        || leading.starts_with("return;")
+        || declared_arrow_value_body(leading)
+    {
         return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
     }
     if leading.starts_with("if (")
@@ -436,7 +440,7 @@ fn parameters_close_before_annotation(parameters: &str) -> bool {
 /// declared concise arrow (`export const f = (n) => <expr>`). A callback
 /// arrow nested in a call (`xs.map((x) => x > 1 ? a : b)`) is not a declared
 /// body, and a block body (`=> {`) returns nothing here.
-fn returned_expression(leading: &str) -> Option<&str> {
+pub(super) fn returned_expression(leading: &str) -> Option<&str> {
     if let Some(expression) = leading.strip_prefix("return ") {
         return Some(expression.trim_start());
     }
@@ -472,11 +476,74 @@ fn returned_expression(leading: &str) -> Option<&str> {
     // A block body returns nothing here, and a curried arrow's body is
     // another function, not the conditional.
     let body = body.trim_start();
-    let curried = body
-        .split_once(" ? ")
-        .map_or(body, |(before, _)| before)
-        .contains(" => ");
+    let curried = match body.split_once(" ? ") {
+        Some((before, _)) => before.contains(" => "),
+        // A body that merely calls with a callback (`xs.reduce((a, b) => a + b, 0)`)
+        // is a value; only a body that is itself an arrow head is a function.
+        None => starts_with_arrow_head(body),
+    };
     (!body.starts_with('{') && !curried).then_some(body)
+}
+
+/// A declared concise arrow (`export const f = (n) => n * 2;`) returns its
+/// body, so the changed body is the returned value. A body with a comparison
+/// operator or a type argument (`<`, `>`, outside the `=>` of a callback) may
+/// be a predicate whose boundary an exact value does not witness, so it keeps
+/// the unrecognised-shape fallback.
+pub(crate) fn declared_arrow_value_body(leading: &str) -> bool {
+    returned_expression(leading).is_some_and(|body| {
+        let masked = ts_mask_literals_and_comments(body);
+        !masked.replace("=>", "").contains(['<', '>'])
+    })
+}
+
+/// The name a declared concise arrow line binds (`double` for
+/// `export const double = (n) => n * 2;`), or `None` when the line is not a
+/// declared arrow value. A nested local arrow binds another name than the
+/// owner it sits in.
+pub(crate) fn declared_arrow_value_name(line_text: &str) -> Option<&str> {
+    let trimmed = line_text.trim_start();
+    let leading = trimmed.strip_prefix("} ").unwrap_or(trimmed).trim_start();
+    if leading.starts_with("return ") || !declared_arrow_value_body(leading) {
+        return None;
+    }
+    let declaration = leading.strip_prefix("export ").unwrap_or(leading);
+    let declaration = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| declaration.strip_prefix(keyword))?;
+    let (head, _) = declaration.split_once(" = ")?;
+    let name = head.split(':').next()?.trim();
+    (!name.is_empty()).then_some(name)
+}
+
+/// `x => ...`, `(a, b) => ...` or `async (a): T => ...` at the start of `text`.
+fn starts_with_arrow_head(text: &str) -> bool {
+    let text = text.strip_prefix("async ").unwrap_or(text).trim_start();
+    if text.starts_with('(') {
+        let mut depth = 0usize;
+        for (idx, ch) in text.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let rest = text.get(idx + 1..).unwrap_or("").trim_start();
+                        return rest.starts_with("=>")
+                            || (rest.starts_with(':') && rest.contains("=>"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        return false;
+    }
+    let ident_len = text
+        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+        .unwrap_or(text.len());
+    ident_len > 0
+        && text
+            .get(ident_len..)
+            .is_some_and(|rest| rest.trim_start().starts_with("=>"))
 }
 
 pub(crate) fn typescript_return_value_discriminator(line_text: &str) -> Option<String> {
