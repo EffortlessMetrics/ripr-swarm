@@ -230,7 +230,10 @@ the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate o
 the same checkout). With it, an absent baseline entry on a normalized relative
 Rust path outside `target`/`fixtures`/`.git`-style directories resolves; a
 filtered, edited or stale ledger, a limited run, and other paths stay
-`not_evaluated` (#9599). The digest is tamper-evident, not authentication. Without it, use a
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication. Accepted limits: a ledger rewritten by someone who recomputes the digest on a
+matching current tree still earns the scope (no producer authentication);
+`baseline diff`/`update` trust a hand-edited gate-decision; symlinked paths are
+not distinguished. Without it, use a
 `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.

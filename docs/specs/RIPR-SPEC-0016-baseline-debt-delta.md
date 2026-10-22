@@ -301,6 +301,12 @@ bucket:
   spelling) outside the directories the producer's walk skips; every other path
   stays `not_evaluated`. The digest is tamper-evident, not authentication, and a
   hand-edited gate-decision is out of scope for this contract.
+  Accepted limits, stated plainly: the contract does not authenticate the
+  producer. A ledger rewritten by someone who recomputes `records_digest` on a
+  tree whose corpus still matches earns the scope; `baseline diff` and `baseline
+  update` trust a hand-edited gate-decision file; and symlinked paths are not
+  distinguished from the files they point at (the walk and the path rule are
+  textual).
   Coverage is file-level by construction: the seam selector matches every seam in
   a working-set file (changed line, changed owner, related test, else same-file),
   so a seam in a covered file is either present in the decisions or counted in

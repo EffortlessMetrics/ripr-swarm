@@ -5049,9 +5049,21 @@ fn e2e_gate_json_in(
     gap_ledger: Option<&str>,
     project_lib_source: Option<&str>,
 ) -> Result<String, String> {
+    e2e_gate_json_with_files(pr_guidance, gap_ledger, project_lib_source, &[])
+}
+
+fn e2e_gate_json_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<String, String> {
     let dir = temp_dir("gate-e2e-9301")?;
     if let Some(lib_source) = project_lib_source {
         e2e_write_project(&dir, lib_source)?;
+    }
+    for (path, text) in extra_files {
+        fs::write(dir.join(path), text).map_err(|err| err.to_string())?;
     }
     let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
         let path = write_temp_json(&dir, name, body)?;
@@ -5665,13 +5677,21 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(after, captured);
 
-    // A tampered ledger (same ids and count, one record field edited) loses
-    // its coverage even on the matching tree.
+    // A tampered digest loses its coverage even on the matching tree.
     let mut tampered: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
     tampered["analysis_coverage"]["records_digest"] = json!("sha256:00");
     let tampered = serde_json::to_string(&tampered).map_err(|err| err.to_string())?;
     let (delta, after, _) =
         e2e_delta_and_update_in(None, Some(&tampered), &baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A real record edited in place (same ids and count) while the original
+    // digest is kept: the full-record digest no longer matches.
+    let mut edited: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    edited["records"][0]["gap_state"] = json!("edited_after_coverage");
+    let edited = serde_json::to_string(&edited).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&edited), &baseline, Some(shallow))?;
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
     assert_eq!(after, captured);
 
@@ -5696,5 +5716,31 @@ fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<()
         delta["analysis_scope"]["scope"], "rust_workspace_complete",
         "{delta}"
     );
+    Ok(())
+}
+
+/// #9599: a `ripr.toml` that fails to load means the gated tree's corpus cannot
+/// be established, so a coverage disclosure that is otherwise current is not
+/// upgraded.
+#[test]
+fn e2e_unloadable_config_keeps_gap_ledger_artifact_scope() -> Result<(), String> {
+    let unrelated = "pub fn unrelated() {}\n";
+    let ledger = e2e_real_ledger(unrelated)?;
+    let fresh: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(fresh["analysis_scope"]["scope"], "rust_workspace_complete");
+    let broken: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[("ripr.toml", "this is = = not toml [")],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(broken["analysis_scope"]["scope"], "gap_ledger_artifact");
     Ok(())
 }
