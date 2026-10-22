@@ -235,6 +235,8 @@ impl<'a> BoundedAgentBrief<'a> {
                 })
                 .collect(),
             warnings,
+            omitted_by_cap: omitted,
+            omitted_by_policy: self.omission_counts.iter().map(|item| item.count).sum(),
         })
     }
 }
@@ -313,6 +315,51 @@ mod tests {
         assert_eq!(
             sink.observe(3, visible).err().as_deref(),
             Some("streamed review candidate count overflow")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_counts_every_policy_omission_and_keeps_unmatched_hunk_seam() -> Result<(), String> {
+        let config =
+            crate::config::tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
+        let working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/changed.rs")]);
+        let mut sink =
+            BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
+        // More omissions than the named limit: named ones are subtracted
+        // when rendering "more" warnings, but the total must still count all.
+        let total = AGENT_BRIEF_MAX_NAMED_OMISSIONS + 3;
+        for index in 0..total {
+            sink.observe(
+                index,
+                classified(
+                    "src/changed.rs",
+                    10 + index,
+                    &format!("changed::off_{index}"),
+                    &format!("n > {index}"),
+                    SeamGripClass::WeaklyGripped,
+                ),
+            )?;
+        }
+        // A visible seam in the changed file that no hunk/owner matches is
+        // retained via the same-file match, never silently skipped.
+        sink.observe(
+            total,
+            classified(
+                "src/changed.rs",
+                500,
+                "changed::visible",
+                "n > 500",
+                SeamGripClass::Ungripped,
+            ),
+        )?;
+        let selection = sink.selection()?;
+        assert_eq!(selection.omitted_by_policy, total);
+        assert_eq!(selection.returned, 1);
+        assert_eq!(
+            selection.top_seams[0].why_now.reason,
+            AgentBriefWhyNowReason::SameFileSeam
         );
         Ok(())
     }

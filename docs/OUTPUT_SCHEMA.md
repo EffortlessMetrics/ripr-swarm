@@ -9032,7 +9032,10 @@ Field contract:
   route. When seams on changed lines and in changed owners fill every review
   slot, the rest of the scope is skipped: `classified_seams_considered` counts
   only the evaluated seams, the optional `unevaluated_seams` (present only
-  then) counts the skipped ones, a warning says the same, and the brief-cap
+  then) counts the skipped ones, `cap_omitted_seams` and `omitted_by_policy` (always emitted, 0 when none; #9301) count
+  visible seams dropped by the brief cap and working-set seams dropped by policy
+  (configured off, static limitation), which baseline diff must not read as
+  resolved, a warning says the same, and the brief-cap
   warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
@@ -10136,6 +10139,20 @@ Field contract:
 - `inputs.gap_ledger` - optional explicit gap decision ledger input. When
   supplied, gate candidates come from GapRecord gate-candidate projection
   targets instead of raw PR guidance candidates.
+- `analysis_scope` - additive (#9301). The candidate source's `analysis_scope`
+  copied verbatim: from the `--pr-guidance` review-comments document, or the
+  `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
+  is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
+  whether a baseline entry absent from `decisions` was actually analyzed. A
+  review-comments scope also carries `cap_omitted_seams` (seams dropped by the
+  brief cap) and `omitted_by_policy` (working-set seams dropped by policy, such
+  as configured off), both always emitted with 0 when none; a nonzero or missing
+  value makes absent baseline entries `not_evaluated`. Only
+  `changed_production_files` counts as coverage; changed production files the
+  parser declined (nesting budget, parse error, non-UTF-8: the lexical fallback
+  extracts no seams) are excluded from it and listed in the optional
+  `parser_declined_files` (present only when non-empty). A gate decision without `analysis_scope` (a build before #9301),
+  or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
   records) plus one entry per consumed input keyed by input name — every
@@ -10721,6 +10738,15 @@ Field contract:
   recording the same build keep the legacy `resolved` classification. The
   same set is exhaustive in the Markdown `Analyzer-version identity
   discontinuities` section, and each entry also emits a warning.
+- `items[].evaluation`, `items[].not_evaluated_reason` - additive (#9301),
+  present only on a `stale_baseline_entry` item whose baseline entry is absent
+  from current evidence but whose file the current `analysis_scope` does not
+  cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
+  is a `gap_ledger_artifact` scope, tracked in #9599). `evaluation` is
+  `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
+  item is never `resolved` and `baseline update --remove-resolved` keeps it. The
+  same set is exhaustive in the Markdown `Not evaluated by the current analysis`
+  section.
 - `items[].review` - optional reviewed baseline metadata copied from the
   baseline ledger when the item is baseline-derived. It preserves
   `reviewed`, `owner`, `reason`, `created_at`, `review_after`, and `source`
