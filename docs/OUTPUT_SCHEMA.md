@@ -19165,7 +19165,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "1.94",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -19247,16 +19247,26 @@ targeted-rerun receipt shape:
 }
 ```
 
-`input_fingerprint.analyzer_version` names the build, not only the package
-version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
-appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
-when no commit is recorded. Two builds of one version therefore report
-`input_changed:analyzer_version` against each other's receipts.
+`input_fingerprint.analyzer_version` names the source build and its compiled
+language features, not only the package version. Its source prefix is
+`<version>+<commit>` for a clean build,
+`<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
+`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
+commit-less build has no source digest, `process:<pid>:<nanos>` replaces
+`src:<digest>` so persisted entries are not reused across processes.
+Every form ends with
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
+features; `cfg_features_hash` separately identifies the analyzed workspace's
+feature configuration. Different source or language-feature identities report
+`input_changed:analyzer_version` against each other's receipts, even when the
+package version and cache generations match. Treat the complete identity as
+opaque when comparing receipts.
 
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
-the file-fact cache and its input identity, not this report. They move
-whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque. Nested
+the file-fact cache and its input identity, not this report. They change with
+those cache contracts, independently of analyzer identity. A consumer dispatches
+on the top-level `schema_version` and treats the nested values as opaque. Nested
 `analyzer_version` is the producing build identity described above and also
 moves.
 

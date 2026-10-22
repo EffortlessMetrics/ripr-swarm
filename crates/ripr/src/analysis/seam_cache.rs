@@ -980,6 +980,8 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod export;
+#[cfg(test)]
+mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
 
