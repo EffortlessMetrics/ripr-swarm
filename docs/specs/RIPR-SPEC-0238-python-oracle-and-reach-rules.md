@@ -312,7 +312,11 @@ Relations, first match wins (rank, oracle-eligible):
   `alias.name(`, or a submodule receiver by full dotted path;
 - R3: `api_client_route_call` (4, eligible): `client.<verb>(` whose first
   argument is a string literal equal to one of the owner's static route
-  paths;
+  paths, ignoring any query string. A whole-segment path parameter
+  (braces or angle brackets, with or without a converter) matches one
+  concrete segment the router accepts for its converter: untyped and
+  `str` take any non-empty segment, `int`, `float` and `uuid` validate
+  the value, and `path` or any unknown converter stays unmatched;
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -411,6 +415,18 @@ is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could
 credit an unrelated strong assertion. Ordinary module-import links retain their
 heuristic relation and do not gain oracle eligibility from this change.
+
+A name, alias or changed-sink credit also requires that the asserted value can
+depend on the owner's result (#6585). When every call of the owner in the
+assertion sits inside a call that is not a known value-preserving wrapper
+(`bool(x)`, `isinstance(x, t)`, a user helper such as `always_true(x)`, or an
+expression callee such as `(f)(x)` or a subscripted callee), the finding is not
+`exposed`. Value-preserving builtins (`str`, `len`, `sorted`, `round`, ...) and
+grouping parentheses stay transparent. A receiver-qualified call (`other.parse(x)`)
+is not counted as an owner call unless it is itself wrapped, so a foreign
+same-named call neither supplies nor cancels the refusal. Pinned by the
+`opaque_wrapper_*` and `value_preserving_wrapper_*` classify tests and the
+`wrapped_call` unit table.
 
 9. **A method owner's class token is not identity alone.** For a method
    or class-method owner, the class name in the assertion does not

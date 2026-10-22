@@ -536,6 +536,21 @@ pub(crate) fn artifact_root_pathspec(root: &Path) -> String {
         .join("/")
 }
 
+/// A root-anchored, directory-only Gitignore rule for one literal artifact
+/// root. Gitignore escaping is separate from shell quoting and Git pathspec
+/// mode: the latter is unsupported by `check-ignore` and does not escape rules.
+pub(crate) fn artifact_root_gitignore_entry(root: &Path) -> String {
+    let mut entry = String::from("/");
+    for ch in artifact_root_pathspec(root).chars() {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']') {
+            entry.push('\\');
+        }
+        entry.push(ch);
+    }
+    entry.push('/');
+    entry
+}
+
 /// Whether a repository-relative diff path names content under one of
 /// ripr's own artifact roots (#7663, relocated bases #8751). Python
 /// `.gitignore` templates do not cover `target/`, so a routine `git add -A`
@@ -557,6 +572,28 @@ pub(crate) fn is_ripr_artifact_path_under(path: &Path, roots: &[PathBuf]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_root_gitignore_entry_escapes_patterns_separately_from_paths() {
+        assert_eq!(
+            artifact_root_gitignore_entry(Path::new("target/ripr")),
+            "/target/ripr/"
+        );
+        for (root, expected) in [
+            ("build/cache*", r"/build/cache\*/"),
+            ("build/cache?", r"/build/cache\?/"),
+            ("build/cache[1]", r"/build/cache\[1\]/"),
+            ("build/cache space", "/build/cache space/"),
+        ] {
+            assert_eq!(artifact_root_gitignore_entry(Path::new(root)), expected);
+            assert_eq!(artifact_root_pathspec(Path::new(root)), root);
+        }
+        #[cfg(unix)]
+        assert_eq!(
+            artifact_root_gitignore_entry(Path::new(r"build/cache\one")),
+            r"/build/cache\\one/"
+        );
+    }
 
     /// The default artifact-root list the pipeline builds when nothing is
     /// relocated.

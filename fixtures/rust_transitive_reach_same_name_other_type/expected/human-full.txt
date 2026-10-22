@@ -44,9 +44,6 @@ Evidence
 
 Weakness
   - No detected boundary input for the changed predicate
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name

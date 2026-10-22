@@ -1,0 +1,9 @@
+diff --git a/shapes/decorators.py b/shapes/decorators.py
+--- a/shapes/decorators.py
++++ b/shapes/decorators.py
+@@ -47,4 +47,4 @@
+ 
+ @logged
+ def double(x):
+-    return x * 2
++    return x * 3

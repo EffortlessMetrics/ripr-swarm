@@ -204,6 +204,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
         analysis_outcome,
         analysis_outcome_required,
         PacketCommandContext::Portable,
+        &[],
     )
 }
 
@@ -216,6 +217,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
     limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
+    declined: &[crate::analysis::DeclinedRustFile],
 ) -> String {
     render_agent_seam_packets_json_with_root(
         classified,
@@ -224,6 +226,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
         None,
         false,
         PacketCommandContext::Standalone { root },
+        declined,
     )
 }
 
@@ -264,6 +267,7 @@ fn render_agent_seam_packets_json_with_root(
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
     context: PacketCommandContext<'_>,
+    declined: &[crate::analysis::DeclinedRustFile],
 ) -> String {
     let canonical_gaps = canonical_gap_identities(classified);
     let mut out = String::new();
@@ -281,31 +285,51 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
-    // was capped, "seam_limit_applied" when either cap fired.
-    match limit_info {
-        None => out.push_str("  \"run_status\": \"complete\",\n"),
-        Some(_) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
+    // was capped, "seam_limit_applied" when either cap fired, and
+    // "limited_declined_files" when only a parse-limit decline applies (#9308).
+    match (limit_info, declined.is_empty()) {
+        (None, true) => out.push_str("  \"run_status\": \"complete\",\n"),
+        (None, false) => out.push_str("  \"run_status\": \"limited_declined_files\",\n"),
+        (Some(_), _) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
+    let mut limitations = Vec::new();
     if let Some(limit) = limit_info {
         let info = limit.info();
         let repair_route = limit.repair_route();
-        out.push_str("  \"limitations\": [\n");
-        out.push_str("    {\n");
-        out.push_str(&format!("      \"category\": \"{}\",\n", limit.category()));
-        out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
-        out.push_str(&format!("      \"seams_total\": {},\n", info.total));
-        out.push_str(&format!(
-            "      \"limit_source\": \"{}\",\n",
-            info.source.as_str()
-        ));
-        out.push_str(&format!("      \"control\": \"{}\",\n", limit.control()));
-        out.push_str(&format!(
-            "      \"repair_route\": \"{}\"\n",
+        limitations.push(format!(
+            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            limit.category(),
+            info.analyzed,
+            info.total,
+            info.source.as_str(),
+            limit.control(),
             crate::output::json::escape(repair_route)
         ));
-        out.push_str("    }\n");
-        out.push_str("  ],\n");
+    }
+    if !declined.is_empty() {
+        let files = declined
+            .iter()
+            .take(3)
+            .map(|file| {
+                format!(
+                    "{{\"path\": \"{}\", \"reason\": \"{}\"}}",
+                    crate::output::json::escape(&file.path.to_string_lossy().replace('\\', "/")),
+                    crate::output::json::escape(&file.reason)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        limitations.push(format!(
+            "    {{\n      \"category\": \"rust_files_declined\",\n      \"declined_file_count\": {},\n      \"declined_files\": [{}],\n      \"repair_route\": \"Split the listed file(s) below the Rust parse budget, or save them as UTF-8, then re-run; until then their seams are under-credited and packets may be missing.\"\n    }}",
+            declined.len(),
+            files
+        ));
+    }
+    if !limitations.is_empty() {
+        out.push_str("  \"limitations\": [\n");
+        out.push_str(&limitations.join(",\n"));
+        out.push_str("\n  ],\n");
     }
 
     let actionable: Vec<&ClassifiedSeam> = classified
@@ -522,6 +546,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
         None,
         false,
         context,
+        &[],
     )
 }
 
@@ -7629,7 +7654,7 @@ mod tests {
             };
             let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
             let rendered =
-                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".");
+                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".", &[]);
             let doc: serde_json::Value =
                 serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
             assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");

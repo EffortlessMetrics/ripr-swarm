@@ -242,6 +242,11 @@ that ineligibility and remains the sole packet-readiness authority.
   boundary's argument (`discount(50, 100)` becomes `discount(100, 100)`).
   Without that evidence, or without literal arguments at both positions, the
   packet fails closed with the boundary placeholder.
+  A dotted member-path boundary (`pricingConfig.discountThreshold`,
+  `DiscountTier.Volume`, #9107) is a mutable property or enum member that this
+  projection never resolves, so it fails closed with the same placeholder. A
+  member path opposite a literal or constant is the receiver, not the
+  boundary, and keeps its previous verdict.
 
 - **G-H. Refused strong effect observer (#7514).** For `SideEffect` and
   `CallDeletion`, a selected strong oracle whose typed observation state is
