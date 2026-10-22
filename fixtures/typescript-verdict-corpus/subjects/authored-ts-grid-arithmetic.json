@@ -19,7 +19,7 @@
     },
     {
       "path": "test/arithmetic.test.ts",
-      "sha256": "897b1109544963fc78c7d8973d45d6512cb4ead892da541bf0308fae06e2cf17"
+      "sha256": "adfdbec70fdf9dc2583c7bb7803a285459093513c3cfa517f35ee6ff702be721"
     },
     {
       "path": "tsconfig.json",

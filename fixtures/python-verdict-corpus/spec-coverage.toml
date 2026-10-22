@@ -643,11 +643,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 [[known_false]]
-case = "py-shapes-async-default"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-shapes-context-exit-record"
 issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
@@ -678,16 +673,6 @@ issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
-case = "py-shapes-match-wildcard-arm"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-relative-import-missing-tier"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-idioms-caplog-message"
 issue = 9424
 reason = "caplog text assertions pin log messages but are graded weak (#9424)."
@@ -701,11 +686,6 @@ reason = "caplog level edit; abstain with a typed limit (#9424)."
 case = "py-idioms-approx-constant-within-tolerance"
 issue = 9428
 reason = "pytest.approx credited as an exact-value oracle for a within-tolerance edit (#9428)."
-
-[[known_false]]
-case = "py-idioms-unittest-setup-sign"
-issue = 9412
-reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
 
 [[known_false]]
 case = "py-grid-boundary-exact"
@@ -741,11 +721,6 @@ reason = "False actionable: module-level edit related only by a same-stem heuris
 case = "py-hostile-module-constant-pinned"
 issue = 9423
 reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
-
-[[known_false]]
-case = "py-hostile-star-import-exported"
-issue = 9415
-reason = "False actionable: `from m import *` is not resolved to public names (#9415)."
 
 [[known_false]]
 case = "py-grid-arithmetic-property"

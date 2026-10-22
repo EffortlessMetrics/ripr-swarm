@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
+mod caller_loop_selector;
 mod changed_span;
 mod context;
 mod decision;
@@ -49,6 +50,7 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
+pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
@@ -88,8 +90,7 @@ pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection_for_probe, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target,
-    mutexed_assertion_observes_collection_argument, owner_may_exit_before_line,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
     retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
