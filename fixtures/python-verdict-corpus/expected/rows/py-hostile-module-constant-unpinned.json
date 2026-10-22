@@ -1,0 +1,22 @@
+{
+  "case_id": "py-hostile-module-constant-unpinned",
+  "subject_id": "authored-py-pytest-hostile",
+  "origin": "authored",
+  "anchor": "hostile/settings.py:1",
+  "behavior_family": "constructor_field",
+  "test_shape": "pytest_module_constant_boundary_unpinned",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

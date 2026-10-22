@@ -216,6 +216,14 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+The same applies to a return value whose integer literals only changed
+spelling to the same value (`"ftp" => Some(0x15)` from `"ftp" => Some(21)`,
+a `_` separator, a radix): the arm finding stays and decides whether a test
+notices the arm, so a listed row is credited and an allowlisted one stays a
+gap, but no `return_value` finding asks for a discriminator of a value that
+did not change (#6578). Text holding a string, character or macro, a
+changed suffix, or a float is never a respelling.
+
 ### A guard-only edit is the guard's predicate
 
 When an edit lies wholly inside one comparison of an arm's guard
@@ -331,6 +339,21 @@ rejected alternative. Any can be reversed later without touching the rest.
    the direct path's owner-identity gates: every owner mention a readable
    call, no owner result bound with `let`, and no local shadow of the
    owner. Rejected: keep loop bindings unresolved.
+   One opening skip guard is read (cluster 12b, #6578): the loop body's first
+   statement `if SKIPPED.contains(&key) { continue; }`, with no `else` and no
+   label, where `key` is a name the loop pattern binds and `SKIPPED` is a
+   `const` slice of plain string literals declared exactly once in the test
+   file, with no attribute, named by no `use`, and with no glob import in the
+   file (except `super::*` inside an inline `mod`) that could bring in another
+   `SKIPPED`. The guard is read in its rustfmt spelling (`contains(&key)`);
+   any other spacing leaves the table unread. The assertion then runs only
+   for the rows the guard lets through, so a row whose key cell is listed
+   never selects an arm, and an unlisted row keeps the same standing as in a
+   loop without the guard. A key cell that is not a plain string literal
+   (no escape, no raw form), any other early exit, and any other shape of
+   guard leave the table unread, as before. Rejected: read every `continue`
+   as skipping nothing, which credits the listed row the harness never runs
+   (`mined-allowlisted-row-gopher`).
 
 ### Implementation Status
 
@@ -625,6 +648,10 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
+- `crates/ripr/src/analysis/probes/diff.rs` unit tests: a respelled arm
+  value drops the return value; a changed, suffixed, float or string value
+  keeps it. Verdict corpus cases `mined-allowlist-listed-row-ftp` and
+  `mined-allowlisted-row-gopher`.
 - `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for
   ranges and moved-input credit (examples 7 to 9):
   `integer_range_arms_select_by_value`,

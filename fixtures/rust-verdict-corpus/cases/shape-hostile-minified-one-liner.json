@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-hostile-minified-one-liner",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-minified-one-liner.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 44
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_and_body_on_one_line",
+  "hard_case": "The signature, body and closing brace share one line, and the test below is also a single line.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub fn minified(x: u32) -> u32 { x + 2 }",
+        "mutated_line": "pub fn minified(x: u32) -> u32 { x + 2 }",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::minified_owner",
+        "equivalence_review": "not equivalent: `pub fn minified(x: u32) -> u32 { 1 + x }` becomes `pub fn minified(x: u32) -> u32 { x + 2 }`"
+      },
+      {
+        "replacement": "pub fn minified(x: u32) -> u32 { x - 1 }",
+        "mutated_line": "pub fn minified(x: u32) -> u32 { x - 1 }",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::minified_owner",
+        "equivalence_review": "not equivalent: `pub fn minified(x: u32) -> u32 { 1 + x }` becomes `pub fn minified(x: u32) -> u32 { x - 1 }`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "minified_owner pins minified(1) to 2; both mutants fail. Hostile input: minified layout.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}
