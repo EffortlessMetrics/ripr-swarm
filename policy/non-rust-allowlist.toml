@@ -974,7 +974,9 @@ surface = "ci"
 classification = "tooling"
 reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
 # The result-policy test target is cfg(target_os = "linux"); on Windows it
-# enumerates zero tests, which the covered-by check rejects.
+# enumerates zero tests, which the covered-by check rejects, so the shared
+# product proof covers every host and the policy test covers Unix.
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
 covered_by_unix = ["cargo test -p xtask --test contabo_result_policy"]
 
 [[allow]]
