@@ -213,8 +213,9 @@ fn truncated_inventory_refusal(
             format!(
                 "agent card seam_id {seam_id} was refused: the seam candidate inventory was \
                  truncated by the repo seam limit ({} of {} seams analyzed), so nested same-kind \
-                 siblings may be missing and the card cannot be produced safely. Raise or clear \
-                 RIPR_REPO_EXPOSURE_SEAM_LIMIT and re-run, or retrieve the full packet: {}.",
+                 siblings may be missing and the card cannot be produced safely. Raise \
+                 RIPR_REPO_EXPOSURE_SEAM_LIMIT (0 removes the cap) and re-run, or retrieve the \
+                 full packet: {}.",
                 limit.analyzed,
                 limit.total,
                 crate::app::repair_card_handoff::bound_packet_command(root, seam_id)
