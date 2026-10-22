@@ -741,8 +741,3 @@ reason = "False actionable: module-level edit related only by a same-stem heuris
 case = "py-hostile-module-constant-pinned"
 issue = 9423
 reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
-
-[[known_false]]
-case = "py-hostile-star-import-exported"
-issue = 9415
-reason = "False actionable: `from m import *` is not resolved to public names (#9415)."

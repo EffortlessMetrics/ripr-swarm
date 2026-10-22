@@ -1790,7 +1790,11 @@ fn star_import_binds_a_public_owner_for_the_strong_oracle() -> Result<(), String
 fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
     let body = "def test_fee():\n    assert fee(2) == 6\n";
     for (all, expected, why) in [
-        ("", ExposureClass::Exposed, "no __all__ exports every public name"),
+        (
+            "",
+            ExposureClass::Exposed,
+            "no __all__ exports every public name",
+        ),
         (
             "__all__ = ['fee']\n\n\n",
             ExposureClass::Exposed,
@@ -1810,7 +1814,12 @@ fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
         let owner = format!("{all}{FEE}");
         let line = 2 + all.matches('\n').count();
         assert_eq!(
-            classify(&owner, line, FEE_OLD, &test_module("from src.shop import *", body))?,
+            classify(
+                &owner,
+                line,
+                FEE_OLD,
+                &test_module("from src.shop import *", body)
+            )?,
             expected,
             "{why}"
         );
@@ -1823,10 +1832,7 @@ fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
             &owner,
             5,
             FEE_OLD,
-            &test_module(
-                "from src.shop import *\nfrom src.other import fee",
-                body
-            )
+            &test_module("from src.shop import *\nfrom src.other import fee", body)
         )?,
         ExposureClass::WeaklyExposed,
         "fee comes from src.other, not the starred module"
