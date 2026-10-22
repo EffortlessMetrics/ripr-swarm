@@ -1,0 +1,3 @@
+case = "py-grid-arithmetic-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9594)."

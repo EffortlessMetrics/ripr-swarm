@@ -1,0 +1,3 @@
+case = "py-shapes-dunder-eq-type-guard"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
