@@ -16,7 +16,9 @@ use crate::analysis::cancellation;
 use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
 
-use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+use crate::analysis::language_outcome::{
+    DiffLanguageAggregate, LanguageAnalysisOutcomeV1, diff_scope_label,
+};
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -45,6 +47,21 @@ fn is_preview_language(language: LanguageId) -> bool {
 static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, usize>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Test-only capture of the last internal per-language aggregate for a root,
+/// so tests can inspect it without any production field exposing it.
+#[cfg(test)]
+static DIFF_AGGREGATES: std::sync::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Typed limitation kinds as stable wire labels, in adapter order.
+fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
+    limitations
+        .iter()
+        .map(|limitation| limitation.kind.as_str().to_string())
+        .collect()
+}
 
 #[cfg(test)]
 pub(crate) fn diff_pipeline_entry_count(root: &std::path::Path) -> Result<usize, String> {
@@ -677,11 +694,13 @@ fn rust_excluded_by_config_limitation(
 /// the diff changed no analyzable source (see [`is_script_language`]). `None` when the diff has none. Without it
 /// a Go-only diff read as `no_behavioral_candidates (analysis complete)` and a
 /// Rust + Go diff reported only the Rust half as a complete analysis.
-fn unanalyzed_source_language_limitation(
+/// Changed files in languages no ripr adapter reads, counted per router
+/// label with their paths in diff order. Shared by the typed limitation and
+/// the per-language `unsupported` outcomes so the two cannot drift.
+fn unanalyzed_source_files(
     changed_files: &[diff::ChangedFile],
-) -> Result<Option<AnalysisLimitation>, String> {
-    const MAX_NAMED_PATHS: usize = 3;
-    let mut by_language = std::collections::BTreeMap::<&str, usize>::new();
+) -> (std::collections::BTreeMap<&'static str, usize>, Vec<String>) {
+    let mut by_language = std::collections::BTreeMap::<&'static str, usize>::new();
     let mut paths = Vec::new();
     // Scripts do not downgrade a run that analyzed other source; they are
     // named by `unanalyzed_script_disclosure_message` instead. A diff with no
@@ -696,6 +715,14 @@ fn unanalyzed_source_language_limitation(
             paths.push(file.path.to_string_lossy().replace('\\', "/"));
         }
     }
+    (by_language, paths)
+}
+
+fn unanalyzed_source_language_limitation(
+    changed_files: &[diff::ChangedFile],
+) -> Result<Option<AnalysisLimitation>, String> {
+    const MAX_NAMED_PATHS: usize = 3;
+    let (by_language, paths) = unanalyzed_source_files(changed_files);
     if paths.is_empty() {
         return Ok(None);
     }
@@ -1094,6 +1121,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut rust_changed_files: usize = 0;
     let mut changed_files_by_language: Vec<(LanguageId, usize)> = Vec::new();
     let mut language_runs: Vec<LanguageRun> = Vec::new();
+    // Internal per-language accounting (#6468). Recorded at each disposition
+    // below without changing control flow; `language_runs` stays the public
+    // non-success compatibility projection.
+    let mut diff_outcomes: Vec<LanguageAnalysisOutcomeV1> = Vec::new();
     let mut partial_scope: Option<PartialDiffScope> = None;
     let mut candidate_line_count = 0usize;
 
@@ -1159,6 +1190,15 @@ fn run_pipeline_for_diff_text_with_language_config(
                 ))?,
             );
         }
+        diff_outcomes.push(LanguageAnalysisOutcomeV1::from_diff_result(
+            LanguageId::Rust,
+            &result,
+            &limitation_kind_labels(&result.limitations),
+            analysis_changed_files
+                .iter()
+                .any(|file| route(&file.path) == Some(LanguageId::Rust)),
+            &diff_scope_label(result.partial_scope.as_ref()),
+        ));
         limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
         harness_projections.extend(result.harness_projections);
@@ -1176,9 +1216,26 @@ fn run_pipeline_for_diff_text_with_language_config(
         // advisory below covers only preview languages, so the reference
         // adapter's exclusion is recorded here as a typed limitation.
         limitations.push(limitation);
+        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+            LanguageId::Rust.as_str(),
+            analysis_changed_files
+                .iter()
+                .filter(|file| route(&file.path) == Some(LanguageId::Rust))
+                .count(),
+            "rust is not in the effective [languages].enabled set",
+            &diff_scope_label(None),
+        ));
     }
+    let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
+        for (label, count) in unanalyzed_source_files(&analysis_changed_files).0 {
+            diff_outcomes.push(LanguageAnalysisOutcomeV1::unsupported(
+                label,
+                count,
+                &scope_label,
+            ));
+        }
     }
     // When the Rust adapter returned a partial partition, preview adapters
     // analyze only the selected files; uninspected accounting lives on the
@@ -1234,7 +1291,6 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .candidate_line_count
                     .max(candidate_lines_from_findings(&result.findings));
                 let produced_findings = !result.findings.is_empty();
-                findings.extend(result.findings);
                 // A preview adapter indexes its whole language across the
                 // workspace even when the diff touches none of it. Its
                 // refusals (parse budget, read caps, walk cap) then concern
@@ -1258,6 +1314,20 @@ fn run_pipeline_for_diff_text_with_language_config(
                 let diff_touches_language = preview_changed_files
                     .iter()
                     .any(|file| route(&file.path) == Some(adapter_language));
+                let keeps_limitations =
+                    reads_only_supplied_evidence || diff_touches_language || produced_findings;
+                diff_outcomes.push(LanguageAnalysisOutcomeV1::from_diff_result(
+                    *language,
+                    &result,
+                    &if keeps_limitations {
+                        limitation_kind_labels(&result.limitations)
+                    } else {
+                        Vec::new()
+                    },
+                    diff_touches_language,
+                    &scope_label,
+                ));
+                findings.extend(result.findings);
                 if reads_only_supplied_evidence {
                     supplied_evidence_limitations += result.limitations.len();
                     limitations.extend(result.limitations);
@@ -1273,11 +1343,17 @@ fn run_pipeline_for_diff_text_with_language_config(
                     changed_files_by_language.extend(result.changed_files_by_language);
                 }
             }
-            Err(reason) => language_runs.push(LanguageRun {
-                language: language.as_str().to_string(),
-                status: perl_run_status_for_err(&reason),
-                reason: Some(reason),
-            }),
+            Err(reason) => {
+                let status = perl_run_status_for_err(&reason);
+                let outcome = LanguageAnalysisOutcomeV1::from_diff_err(
+                    *language,
+                    reason,
+                    status,
+                    &scope_label,
+                );
+                language_runs.extend(outcome.compat_run());
+                diff_outcomes.push(outcome);
+            }
         }
     }
 
@@ -1324,6 +1400,34 @@ fn run_pipeline_for_diff_text_with_language_config(
             // only and other-language wording is unchanged.
             let javascript_present =
                 advisory.language == "typescript" && advisory.javascript_file_count > 0;
+            // The same disposition as a per-language outcome. JavaScript
+            // files keep their own label even though the TypeScript adapter
+            // would have read them. Not projected into `language_runs`: the
+            // typed limitation below already carries it.
+            let not_selected_reason = if advisory.unavailable_adapter_recovery().is_some() {
+                "adapter not compiled into this ripr binary"
+            } else {
+                "language not in the effective [languages].enabled set"
+            };
+            let typescript_files = advisory
+                .file_count
+                .saturating_sub(advisory.javascript_file_count);
+            if typescript_files > 0 || !javascript_present {
+                diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+                    &advisory.language,
+                    typescript_files,
+                    not_selected_reason,
+                    &scope_label,
+                ));
+            }
+            if javascript_present {
+                diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+                    LanguageId::JavaScript.as_str(),
+                    advisory.javascript_file_count,
+                    not_selected_reason,
+                    &scope_label,
+                ));
+            }
             let (adapter_name, files_name) = advisory.prose_names();
             let recovery = match advisory.unavailable_adapter_recovery() {
                 Some(recovery) => recovery,
@@ -1684,6 +1788,21 @@ fn run_pipeline_for_diff_text_with_language_config(
         },
         limitations,
     )?);
+
+    // Seal and self-check the internal per-language accounting. It is derived
+    // from the same dispositions as the public projection above but is not
+    // read by `AnalysisOutcome.kind` or any output in this slice; a
+    // contradiction here is an internal accounting bug, not an input failure.
+    let mut diff_language_aggregate = DiffLanguageAggregate::new(scope_label);
+    for outcome in diff_outcomes {
+        diff_language_aggregate.record(outcome);
+    }
+    let diff_language_aggregate = diff_language_aggregate.finish();
+    diff_language_aggregate.validate()?;
+    #[cfg(test)]
+    if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
+        aggregates.insert(options.root.clone(), diff_language_aggregate);
+    }
 
     Ok(AnalysisResult {
         harness_projections,
@@ -5158,6 +5277,185 @@ mod tests {
             "Rust (successful) must not appear in language_runs"
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    fn aggregate_options(root: PathBuf, diff_file: PathBuf) -> AnalysisOptions {
+        AnalysisOptions {
+            root,
+            base: None,
+            diff_file: Some(diff_file),
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    fn captured_aggregate(root: &std::path::Path) -> Result<DiffLanguageAggregate, String> {
+        super::DIFF_AGGREGATES
+            .lock()
+            .map_err(|_poisoned| "aggregate capture lock poisoned".to_string())?
+            .get(root)
+            .cloned()
+            .ok_or_else(|| "the diff pipeline recorded no aggregate".to_string())
+    }
+
+    /// #6468: Rust plus changed Go source. The Go change is a typed
+    /// `unsupported` child, so the aggregate cannot read as whole-diff
+    /// complete, while Rust keeps its own findings and the public
+    /// `language_runs` projection stays silent about Go.
+    #[test]
+    fn diff_pipeline_aggregate_rust_with_unsupported_go_is_incomplete() -> Result<(), String> {
+        let root = temp_root("aggregate-go")?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn discount(price: u32) -> u32 { price / 2 }\n\
+             diff --git a/cmd/main.go b/cmd/main.go\n\
+             --- /dev/null\n\
+             +++ b/cmd/main.go\n\
+             @@ -0,0 +1 @@\n\
+             +package main\n",
+        )?;
+        let analysis = run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(aggregate.validate(), Ok(()));
+        assert_eq!(aggregate.completeness(), aggregate.claimed);
+        assert_eq!(aggregate.blockers(), vec![("go", "unsupported")]);
+        let rust = aggregate.outcomes.get("rust").ok_or("rust child missing")?;
+        assert_eq!(rust.finding_count(), analysis.findings.len());
+        assert!(
+            analysis.language_runs.is_empty(),
+            "unsupported must not project into language_runs: {:?}",
+            analysis.language_runs
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #6468: a Rust-only diff with Rust enabled is whole-diff complete, and a
+    /// Rust change under a language set that excludes Rust is `not_selected`,
+    /// distinct from both.
+    #[test]
+    fn diff_pipeline_aggregate_distinguishes_complete_from_not_selected() -> Result<(), String> {
+        let root = temp_root("aggregate-not-selected")?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        let diff_file = root.join("rust.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file.clone()),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )
+        .map_err(|error| error.to_string())?;
+        let enabled = captured_aggregate(&root)?;
+        assert_eq!(enabled.validate(), Ok(()));
+        assert!(enabled.blockers().is_empty(), "{:?}", enabled.blockers());
+
+        run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+        )
+        .map_err(|error| error.to_string())?;
+        let excluded = captured_aggregate(&root)?;
+        assert_eq!(excluded.validate(), Ok(()));
+        assert_eq!(excluded.blockers(), vec![("rust", "not_selected")]);
+        assert_ne!(enabled.semantic_digest, excluded.semantic_digest);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #6468: Rust complete plus a Perl packet that fails its integrity check.
+    /// The aggregate names Perl as `invalid`, keeps Rust's evidence, and the
+    /// public projection carries exactly the Perl `invalid` run.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn diff_pipeline_aggregate_names_invalid_perl_and_keeps_rust() -> Result<(), String> {
+        let root = temp_root("aggregate-perl-invalid")?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        let facts = root.join("bad-facts.json");
+        write(
+            &facts,
+            r#"{
+  "schema_version": "ripr-perl-facts-v1",
+  "packet_id": "perl-facts:repo:bad",
+  "packet_status": "complete",
+  "packet_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "producer": {"name": "perl-lsp", "version": "0.0.0", "capabilities": ["syntax"]},
+  "root": {"repo_relative": ".", "vcs_head": "abc", "path_style": "repo_relative"},
+  "input": {"base": "origin/main", "head": "HEAD", "diff_id": null, "requested_fact_classes": []},
+  "files": [], "owners": [], "changes": [], "tests": [], "oracles": [],
+  "relations": [], "dynamic_boundaries": [], "verify_commands": [],
+  "limitations": [], "provenance": []
+}"#,
+        )?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn discount(price: u32) -> u32 { price / 2 }\n\
+             diff --git a/lib/App.pm b/lib/App.pm\n\
+             --- /dev/null\n\
+             +++ b/lib/App.pm\n\
+             @@ -0,0 +1 @@\n\
+             +sub discount { return 0 }\n",
+        )?;
+        let mut options = aggregate_options(root.clone(), diff_file);
+        options.perl_facts_path = Some(facts);
+        let analysis = run_diff_pipeline_with_oracle_policy(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(aggregate.validate(), Ok(()));
+        assert_eq!(aggregate.blockers(), vec![("perl", "invalid")]);
+        let rust = aggregate.outcomes.get("rust").ok_or("rust child missing")?;
+        assert_eq!(rust.finding_count(), analysis.findings.len());
+        assert!(rust.finding_count() > 0, "Rust evidence must survive");
+        assert_eq!(analysis.language_runs.len(), 1);
+        assert_eq!(analysis.language_runs[0].language, "perl");
+        assert_eq!(analysis.language_runs[0].status, LanguageRunStatus::Invalid);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
