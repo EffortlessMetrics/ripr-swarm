@@ -245,6 +245,44 @@ pub(super) fn is_gap_diagnostic(diagnostic: &Diagnostic) -> bool {
         == Some("gap_decision_ledger")
 }
 
+/// The governed exposure-classification tokens. Diagnostics whose code is one
+/// of these are exposure findings and lead with the plain word (#9367).
+const EXPOSURE_CLASSIFICATIONS: [&str; 7] = [
+    "exposed",
+    "weakly_exposed",
+    "reachable_unrevealed",
+    "no_static_path",
+    "infection_unknown",
+    "propagation_unknown",
+    "static_unknown",
+];
+
+/// The hover header for a diagnostic. Exposure findings lead with the plain
+/// word for the class, not the raw schema token (#9367): the token stays
+/// available on `Diagnostic.code` for the Problems panel and LLM consumers,
+/// while a human reading the hover meets governed vocabulary
+/// (`ExposureClass::plain_label`). Diagnostics that are not exposure findings
+/// (seam grips, gap decisions, scope or budget limitations) keep their stable
+/// code in the header — calling a budget omission a "finding: unknown" would
+/// misdescribe a delivery limitation as an unknown-class exposure.
+fn hover_header(classification: &str) -> String {
+    if EXPOSURE_CLASSIFICATIONS.contains(&classification) {
+        format!("**ripr** finding: {}", class_header_label(classification))
+    } else {
+        format!("**ripr** `{classification}`")
+    }
+}
+
+fn class_header_label(classification: &str) -> &'static str {
+    match classification {
+        "exposed" => "exposed",
+        "weakly_exposed" => "weak",
+        "reachable_unrevealed" => "unrevealed",
+        "no_static_path" => "no path",
+        _ => "unknown",
+    }
+}
+
 fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
     if is_gap_diagnostic(diagnostic)
         && let Some(data) = &diagnostic.data
@@ -257,7 +295,7 @@ fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
     let mut lines = vec![
-        format!("**ripr** `{classification}`"),
+        hover_header(&classification),
         String::new(),
         diagnostic.message.clone(),
     ];
@@ -502,7 +540,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         .as_ref()
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
-    let mut lines = vec![format!("**ripr** `{classification}`"), String::new()];
+    let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
     lines.extend([
@@ -1615,6 +1653,33 @@ mod seam_hover_tests {
         }
         if !md.contains("Probe:") && !md.contains("**ripr**") {
             return Err(format!("expected generic diagnostic hover in:\n{md}"));
+        }
+        Ok(())
+    }
+
+    /// A scope or budget limitation is not an exposure finding: its hover must
+    /// keep the stable diagnostic code in the header instead of claiming an
+    /// `unknown`-class finding (#9367 review).
+    #[test]
+    fn limitation_diagnostic_hover_keeps_its_code_instead_of_finding_unknown() -> Result<(), String>
+    {
+        let mut diagnostic = sample_diagnostic();
+        diagnostic.code = Some(NumberOrString::String(
+            "ripr-diagnostic-budget-omitted".to_string(),
+        ));
+        diagnostic.message =
+            "Some current diagnostics were omitted; re-run with --verbose.".to_string();
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if md.contains("finding: unknown") || md.contains("finding:") {
+            return Err(format!(
+                "limitation diagnostic must not masquerade as a finding:\n{md}"
+            ));
+        }
+        if !md.contains("`ripr-diagnostic-budget-omitted`") {
+            return Err(format!(
+                "limitation diagnostic hover must keep its stable code:\n{md}"
+            ));
         }
         Ok(())
     }

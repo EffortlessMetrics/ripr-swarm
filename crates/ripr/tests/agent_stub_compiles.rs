@@ -335,13 +335,12 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         match expect {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
-                let (envelope, _) = split_refusal_envelope(&stderr)?;
+                let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
                 assert_eq!(envelope["schema_version"], "0.2");
                 assert_eq!(envelope["state"], "refused");
-                assert!(output.stdout.is_empty());
                 assert!(
-                    stderr.contains(&format!("\"kind\": \"{kind}\"")),
-                    "{needle}: {stderr}"
+                    stdout.contains(&format!("\"kind\": \"{kind}\"")),
+                    "{needle}: {stdout}"
                 );
                 assert_eq!(
                     std::fs::read_to_string(root.join("src/lib.rs"))
@@ -682,6 +681,91 @@ fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<()
     scratch.cleanup()
 }
 
+/// #8444: a finding on a continuation line holds no seam of its own, so
+/// `agent stub --at` stubs the nearest gap. `check` must print the line that
+/// stub is for, not the finding's line, and the printed command must run as
+/// printed with no substitution note.
+#[test]
+fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Result<(), String> {
+    const LIB: &str = "pub fn whole(total: u64, unit: u64) -> Option<u64> {\n    Some(\n        total / (unit + 1),\n    )\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(whole(4, 2).is_some());\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_continuation\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("continuation.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-        total / unit,\n+        total / (unit + 1),\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:3"),
+        "the finding is on line 3: {stdout}"
+    );
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
+    assert!(
+        args.iter().any(|arg| arg == "src/lib.rs:2"),
+        "the route names the line the stub targets: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|arg| arg == "src/lib.rs:3"),
+        "the route must not name the finding line, which stubs another gap: {args:?}"
+    );
+    let mut stub = ripr_command();
+    stub.args(&args).arg("--json");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "{stub_stdout}");
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    let substituted = document["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings.iter().any(|w| w.to_string().contains("nearest")));
+    assert!(
+        !substituted,
+        "the printed line needs no substitution: {stub_stdout}"
+    );
+    scratch.cleanup()
+}
+
+/// #8444: when the nearest gap cannot be named by its own line (two seams
+/// share it, so `--at` refuses), `check` prints no stub command rather than
+/// one that fails or stubs a different gap.
+#[test]
+fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), String> {
+    const LIB: &str = "pub fn pair(a: u64, b: u64) -> (Option<u64>, Option<u64>) {\n    (Some(a + 1), Some(\n        b + 2,\n    ))\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(pair(1, 2).0.is_some());\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_ambiguous\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("ambiguous.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-        b + 1,\n+        b + 2,\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:3"),
+        "the finding is on line 3: {stdout}"
+    );
+    assert!(
+        printed_stub_args(&stdout).is_none(),
+        "an ambiguous nearest gap must not print a stub command: {stdout}"
+    );
+    scratch.cleanup()
+}
+
 /// `check` output for a one-line change to line 2 of a scratch crate.
 fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
     let scratch = Scratch::new()?;
@@ -696,6 +780,23 @@ fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String,
     let stdout = check_human(&root, &diff)?;
     scratch.cleanup()?;
     Ok(stdout)
+}
+
+/// #8444: the consumer's reference to a changed constant can sit on a line
+/// that holds no seam (`let cap = CAP;`); the route must name the line of the
+/// seam the stub targets, and the printed command must run with no
+/// substitution note.
+#[test]
+fn check_routes_a_changed_constant_to_the_consumer_seam_line() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5;\n\npub fn billed() -> u64 {\n    let cap = CAP;\n    cap + 1\n}\n";
+    let stdout = check_for_changed_line_two(LIB, "const CAP: u64 = 10;", "const CAP: u64 = 5;")?;
+    assert!(stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(
+        stdout.contains("--at src/lib.rs:6 --kind return_value"),
+        "the route names the seam line, not the `let cap = CAP;` reference: {stdout}"
+    );
+    assert!(!stdout.contains("--at src/lib.rs:5 "), "{stdout}");
+    Ok(())
 }
 
 /// #8361: a changed `const` has no seam of its own, so `check` routes it to
@@ -888,17 +989,19 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
-/// #7390: under `--json` a not-found refusal leads stderr with the typed
-/// `rust_test_stub` `state: "refused"` envelope (pretty-printed), followed by
-/// the prose refusal line; stdout stays empty. Returns the parsed envelope
-/// and the prose tail.
-fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
-    let prose_at = stderr
-        .find("ripr: agent stub: ")
-        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
-    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
-        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stderr}"))?;
-    Ok((envelope, &stderr[prose_at..]))
+/// #7390: under `--json` a not-found refusal puts the typed `rust_test_stub`
+/// `state: "refused"` envelope (pretty-printed) on stdout and the prose
+/// refusal line on stderr. Returns the parsed envelope and the prose.
+fn split_refusal_envelope<'a>(
+    stdout: &str,
+    stderr: &'a str,
+) -> Result<(serde_json::Value, &'a str), String> {
+    if !stderr.starts_with("ripr: agent stub: ") {
+        return Err(format!("the refusal prose must be on stderr: {stderr}"));
+    }
+    let envelope: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stdout}"))?;
+    Ok((envelope, stderr))
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
@@ -978,9 +1081,9 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         }
         let output = run_bounded(command, root, "absent-selector", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_eq!(envelope["schema_version"], "0.2");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1038,7 +1141,6 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         command.arg("--write");
         let output = run_bounded(command, root, "ambiguous-files", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let mut repeat = kind_refusal_command(root, "src/lib.rs:2", kind);
         repeat.arg("--write");
         let repeated = run_bounded(
@@ -1052,7 +1154,8 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         assert_eq!(repeated.stderr, output.stderr);
         assert_eq!(fixture_files(root)?, before);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_selector_refusal(&envelope, "selector_ambiguous");
         assert_eq!(
             envelope["refusal"]["reason"],
@@ -1100,7 +1203,6 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     command.arg("--write");
     let output = run_bounded(command, root, "ambiguous-seams", Duration::from_mins(2))?;
     assert_eq!(output.status.code(), Some(3));
-    assert!(output.stdout.is_empty());
     let mut repeat = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
     repeat.arg("--write");
     let repeated = run_bounded(
@@ -1114,7 +1216,8 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     assert_eq!(repeated.stderr, output.stderr);
     assert_eq!(fixture_files(root)?, before);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_selector_refusal(&envelope, "selector_ambiguous");
     let reason = envelope["refusal"]["reason"]
         .as_str()
@@ -1208,12 +1311,9 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1370,12 +1470,9 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")
@@ -1468,12 +1565,9 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")

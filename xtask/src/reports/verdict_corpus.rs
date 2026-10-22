@@ -192,6 +192,11 @@ pub(crate) struct Case {
     /// compares untyped values, where a missing key differs from `[]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) spec_examples: Vec<String>,
+    /// Coverage axes this case counts toward (`[[axis]]` in
+    /// `spec-coverage.toml`): the sides of the Rust language and test
+    /// ecosystem the corpus is held to cover, apart from spec examples.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) axes: Vec<String>,
     /// The fact packet ripr reads for a Perl case; absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) perl_facts: Option<PerlFacts>,
@@ -2612,6 +2617,12 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
     violations.extend(oracle::oracle_ledger_violations(&corpus, &ledger, &specs));
+    let case_ids: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    violations.extend(known_false::known_false_ledger_violations(
+        &case_ids,
+        &ledger,
+        &coverage::ledger_label(dir),
+    ));
     if violations.is_empty() {
         let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
         coverage.ledger = coverage::ledger_label(dir);
@@ -3067,6 +3078,9 @@ fn score_loaded_corpus(
             coverage.floor
         );
     }
+    if let Some(note) = coverage::axis_note(dir, &corpus, cases.is_some())? {
+        println!("verdict-corpus: {note}");
+    }
     if let Some(note) = &floor_note {
         println!("{note}");
     }
@@ -3099,6 +3113,8 @@ fn score_loaded_corpus(
         Ok(None) => None,
         Err(failure) => Some(failure),
     };
+    let gate_failure =
+        known_false::apply_known_false_gate(dir, cases.is_some(), &report.rows, gate_failure)?;
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
         return gate_failure.map_or(Ok(()), Err);
@@ -3327,6 +3343,9 @@ pub(crate) mod coverage;
 
 #[path = "verdict_corpus_oracle.rs"]
 pub(crate) mod oracle;
+
+#[path = "verdict_corpus_known_false.rs"]
+pub(crate) mod known_false;
 
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]

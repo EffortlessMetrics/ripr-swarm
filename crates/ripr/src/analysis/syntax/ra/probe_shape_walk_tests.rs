@@ -1,6 +1,15 @@
 //! Frozen nine-walk oracle from main 14afcde1c; do not optimize this oracle.
 use super::*;
 
+#[test]
+fn arm_geometry_refuses_macro_arrows_and_invalid_source() {
+    assert!(
+        match_arm_source_ranges("macro_rules! m { ($x:expr) => { $x }; } pub fn f() { m!(1); }")
+            .is_empty()
+    );
+    assert!(match_arm_source_ranges("fn f() { match x { 0 =>").is_empty());
+}
+
 pub(super) fn reference_probe_shapes(
     function: &ast::Fn,
     text: &str,

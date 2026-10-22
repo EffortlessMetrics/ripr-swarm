@@ -5,6 +5,7 @@ use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_
 use crate::output::gate::{GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR};
 
 const SCHEMA_VERSION: &str = "0.1";
+pub(crate) const BASELINE_SCHEMA_VERSION: &str = SCHEMA_VERSION;
 const REPORT_KIND: &str = "baseline_debt_delta";
 const STATUS: &str = "advisory";
 /// Identity authority recorded on a delta item whose current candidate matched
@@ -612,6 +613,12 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         out.push_str(&format!(
             "Analysis complete: `{complete}`; analysis outcome: `{kind}`\n"
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n",
+            );
+        }
     }
     if let Some(scope) = report
         .analysis_scope
@@ -1118,10 +1125,19 @@ fn match_current_decision(identity: &Identity, indexes: &CurrentIndexes) -> Matc
 /// canonical identity change (issue #1964). `None` unless both sides carry a
 /// canonical gap id and they differ.
 fn canonical_divergence(baseline: &BaselineRecord, current: &CurrentDecision) -> Option<String> {
-    match (
+    canonical_identity_divergence(
         baseline.identity.canonical_gap_id.as_deref(),
         current.identity.canonical_gap_id.as_deref(),
-    ) {
+    )
+}
+
+/// The single owner of the fallback-join divergence rule, shared by the delta
+/// and by the gate's baseline comparison so they cannot disagree (issue #1964).
+pub(super) fn canonical_identity_divergence(
+    baseline: Option<&str>,
+    current: Option<&str>,
+) -> Option<String> {
+    match (baseline, current) {
         (Some(old), Some(new)) if old != new => Some(format!("{old} -> {new}")),
         _ => None,
     }
@@ -1737,7 +1753,7 @@ fn fallback_identity(
     }
 }
 
-fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
+pub(super) fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
     string_field(value.get("canonical_gap_id"))
         .or_else(|| string_field(value.pointer("/identity/canonical_gap_id")))
         .or_else(|| string_field(value.pointer("/evidence_record/canonical_gap_id")))
@@ -1754,6 +1770,19 @@ pub(crate) use crate::output::path::display_path;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn canonical_identity_divergence_matrix_is_pinned_for_gate_and_delta() {
+        use super::canonical_identity_divergence as div;
+        // The gate and `baseline diff` both call this one rule (issue #1964).
+        assert_eq!(div(Some("a"), Some("a")), None);
+        assert_eq!(div(Some("a"), Some("b")).as_deref(), Some("a -> b"));
+        // A side without a canonical id carries no divergence evidence, so a
+        // legacy/identityless side keeps the disclosed fallback join.
+        assert_eq!(div(Some("a"), None), None);
+        assert_eq!(div(None, Some("b")), None);
+        assert_eq!(div(None, None), None);
+    }
+
     use super::{
         BaselineDeltaInput, build_baseline_delta_report, render_baseline_delta_json,
         render_baseline_delta_markdown,
@@ -2925,6 +2954,32 @@ mod tests {
         assert!(markdown.contains("limited_findings_bound"), "{markdown}");
         assert!(markdown.contains("diff_scope_oversized"), "{markdown}");
         Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_markdown_renders_document_complete_line_only_when_bounded() {
+        // #9010: the propagated bounded-document disclosure is visible in the
+        // human surface; the unbounded control carries no such line.
+        let render = |outcome: &str| {
+            let current = format!(
+                r#"{{"schema_version": "0.1", "decisions": [], "analysis_outcome": {outcome}}}"#
+            );
+            render_baseline_delta_markdown(&build_baseline_delta_report(BaselineDeltaInput {
+                root: ".".to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: Ok(r#"{"schema_version": "0.1", "entries": []}"#.to_string()),
+                current_gate_decision_json: Ok(current),
+            }))
+        };
+        let bounded = render(
+            r#"{"analysis_complete": true, "document_complete": false, "outcome": {"kind": "complete_with_findings"}}"#,
+        );
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control =
+            render(r#"{"analysis_complete": true, "outcome": {"kind": "complete_with_findings"}}"#);
+        assert!(!control.contains("Document complete"), "{control}");
     }
 
     #[test]

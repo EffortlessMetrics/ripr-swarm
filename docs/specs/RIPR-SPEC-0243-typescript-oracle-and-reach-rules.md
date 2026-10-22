@@ -27,7 +27,10 @@ Linked issues:
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
+- #9138 (assertion after an always-exiting try/finally)
+- #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9435 (exact oracle ignored on five changed-line shapes)
 
 Linked PRs:
 
@@ -676,6 +679,75 @@ from owner credit when a body-local destructuring names it
 `ImportAliasOwnerCall` relation; a default import keeps its
 `ImportedOwnerCall` relation, which the import record proves.
 
+### Changed-line shapes
+
+**Rule 15. A changed line whose value reaches the owner's return reads as a
+return-value change (#9435, 2026-10-22).** Four shapes carry no `return`
+keyword, so the probe-shape classifier reads them as unrecognised and a
+strong exact assertion on the owner stays `weakly_exposed` with
+`preview_advisory_only`. Each now reads as `ReturnValue` when the structure
+below holds, and keeps the old reading otherwise. A shape that does not
+prove its condition costs an abstention or a gap, never a credit.
+
+1. **Declared concise arrow.** `export const f = (n) => n * 2;`, when `f` is
+   the owner itself (a local arrow nested in the owner binds another name
+   and returns nothing), returns its body, including a body that passes a callback
+   (`xs.reduce((a, b) => a + b, 0)`). A body with a comparison operator or
+   a type argument (`<`, `>` outside the `=>` of a callback), a curried
+   arrow (the body is itself an arrow head) and a block body keep the old
+   reading: a comparison is a predicate boundary that an exact value does
+   not witness.
+2. **Compound assignment to the returned state.** `this.balance += amount;`
+   or `t += i * 2;` (any of `+= -= *= /= %= **= <<= >>= >>>= &= |= ^= &&=
+   ||= ??=`) where the target is a plain name or `this.name`, the old
+   statement wrote the same target, and the owner body has exactly one
+   `return`, at its top level and after the assignment, whose whole
+   expression is the target. Every block enclosing the assignment is a
+   `for`, `while` or `do` loop (a branch may skip it; a loop over an empty
+   input may run zero times, the same limit every return-value credit has
+   when the test's inputs never reach the changed line), the body has no
+   nested function, class or method, and no other statement writes the
+   target between the declaration and the return. For a `this.name` target
+   no call may sit between the assignment and the return, because a method
+   (`this.reset()`) can rewrite the field unseen. The changed span is the
+   statement between the common prefix and suffix of the old and new line,
+   widened to the nearest `;`, `{` or `}`, so one statement of a minified
+   line is read alone.
+3. **Edited arm of an unchanged conditional.** `return c ? a : b` where old
+   and new differ in exactly one arm and `c` is one comparison of an owner
+   parameter the body never writes (`===`, `!==`, `==`, `!=`, `<`, `<=`,
+   `>`, `>=`, either operand order) with a number, a plain string (no quote
+   or backslash inside), a boolean, `null`, `undefined` or a member path
+   (`Level.High`). It is
+   credited when a strong, pinned, exact-value assertion of an oracle
+   relation calls the owner with a literal argument that provably selects
+   the edited arm: numbers compare by value; strings, booleans and
+   `null`/`undefined` by equality; a member path only by the same text, and
+   not when the test body rebinds the path's root (`const Level = ...`). The
+   assertion must observe the owner's whole result (not `price(150) > 0`),
+   through the owner's name or an import alias, and an expected value that
+   provably equals neither the old nor the new arm is dead and credits
+   nothing. Two
+   different member paths decide nothing, because enum members may share a
+   value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
+   rule.
+4. **Generator loop bound.** `for (let i = 0; i <= n; i++)` against
+   `i < n` (or the descending `>=`/`>` with `i--`; the header is
+   `let`/`var i = <integer literal>` stepping by one, and the bound is a
+   read-only owner parameter or an integer literal), in a generator whose
+   loop is a direct child of the generator body with no `return` or `throw`
+   before it, and whose loop body has a plain `yield` at its own top level
+   (no `if`, `?`, `&&` or `||` before it there) and no `break`,
+   `continue`, `return`, `throw` or write to the counter. The extra
+   iteration yields one more element when the counter reaches the bound,
+   so an exact assertion on the whole drained sequence (`[...gen(3)]` or
+   `Array.from(gen(3))`) from a call whose literal argument satisfies
+   `init <= n` (`init >= n` descending) sees it. An assertion on a prefix
+   (`gen(3).next().value`), a call whose counter cannot reach the bound,
+   a conditional `yield` and a non-generator owner keep the old reading:
+   an extra iteration of a search or accumulation need not change the
+   result.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -921,7 +993,33 @@ to `amount - 20`, and `tests/lib.test.ts` has
     env read) keeps the credited assertion but the result now carries the
     `typescript_conditional_assertion_credit` limitation, naming the
     unevaluated condition and recording that the credited oracle may never
-    execute (classification-neutral disclosure, #8714).
+    execute (classification-neutral disclosure, #8714). Statements after an
+    unconditional exit in the same statement list (`return`, `throw`,
+    `break`, `continue`, a block holding one, an `if (true)` whose
+    consequent exits, an `if (false)` whose alternate exits, or an `if`
+    whose branches both exit) are dead code: their assertions are withheld
+    at collection and cannot credit `exposed`, and the conditional-credit
+    probe and walker stop at the same point so a dead `if (flag)` after
+    `return;` produces no limitation. An undecidable one-sided exit
+    (`if (skip) { return; }`) keeps the later assertion credited (#9003).
+    A `try` is an unconditional exit too (#9138) when its finalizer
+    exits, or when its block exits and it has no `catch` or its `catch`
+    exits as well (`try { return; } finally { cleanup(); }`,
+    `try { throw e; } finally {}`, `try { return; } catch (e) { return; }`);
+    the assertion after it is withheld. Undecidable shapes keep the later
+    credit: `try { if (x) { return; } } finally {}`, a `catch` that falls
+    through (`try { return; } catch (e) {}`), and a finalizer whose exit is
+    conditional. When the `try` block's FIRST statement is a non-throwing
+    exit (a bare `return;`, a `return` of a plain literal, `break` or
+    `continue`), nothing can throw into the `catch`, so the `catch` never
+    runs and the `try` exits regardless of it (`try { return; } catch (e)
+    {}`, #9150). Assertions inside that unreachable `catch` are withheld too, and
+    its conditionals raise no credit gap. Any other first statement keeps the fail-closed catch
+    requirement: `try { work(); return; } catch (e) {}`, `try { return f();
+    } catch (e) {}` and `try { throw e; } catch (e) {}` stay credited.
+    Assertions before the `try` and in its finalizer stay
+    credited. The one shared predicate also bounds the conditional-credit
+    probe and walker.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
@@ -1049,6 +1147,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
+  pins each shape's credit and the fallbacks that reach the rule (a weak
+  oracle, a curried or comparing arrow, a branch, a second return, another
+  write, an unselected or aliased arm, a prefix or unreached generator
+  sequence). Corpus rows `shape-arrow-const-export`,
+  `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
+  `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
+  gap to credited.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture
@@ -1097,6 +1203,54 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
+- #8569: `crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs`
+  and `guard_entry_guard.rs` unit tests pin the unentered-guard rule: an
+  `exposed` non-predicate result whose changed line sits under an `if` /
+  `else if` / `else` arm that every related test call provably leaves untaken
+  reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
+  rebound parameter, helper or member call, file-level call, CRLF, deleted
+  line) keeps the ladder verdict.
+  The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
+  `comments_before_if_do_not_shift_the_condition_text`,
+  `mock_module_loaders_and_call_result_chains_are_unreadable`,
+  `indexed_and_parenthesized_receivers_are_not_readable`,
+  `bracket_indexed_calls_are_unreadable`, `deeply_nested_conditions_give_up`
+  and `nested_methods_and_comments_inside_conditions`) pin the reader, and
+  `bracket_calls_and_loaders_keep_exposed` is the production-path negative
+  for bracket-indexed calls and `jest.requireActual(..)` chains.
+- #8569: the same rule reads a guard on a property destructured from an
+  options-object parameter (`{ preserveOrder = true } = {}`) against the
+  object-literal argument of every related test call: an omitted key or an
+  explicit `undefined` applies the literal default, and a spread, computed
+  key, accessor, method, duplicate key, shorthand or non-literal value, a
+  non-object argument, an omitted argument without a `= {}` default, or a
+  default that is not a literal keeps the ladder verdict.
+  `reads_destructured_options_parameters`,
+  `option_defaults_and_literal_objects_decide_the_guard` and
+  `a_reassigned_or_shadowed_option_local_is_not_read` pin the reader, and
+  `an_options_object_guard_no_test_input_enters_withdraws_exposed` and
+  `an_options_object_guard_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
+- #8569: a braceless `if (c)` / `else if (c)` head that directly precedes the
+  changed line makes that line the arm's one statement, read with the same
+  rule. Any other text before the line (a loop head, a nested braceless `if`,
+  a continued condition, an `else` after a braceless arm, or a second
+  statement on the changed line, which the head does not guard) reads no
+  extra condition and only withdraws exclusions.
+  `braceless_arms_read_their_head_and_nothing_else` pins the reader, and
+  `a_braceless_arm_no_test_input_enters_withdraws_exposed` and
+  `a_braceless_arm_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
+- #8569: a line inside a lone `case <literal>:` clause of `switch (identifier)`
+  reads `identifier === literal` when the clause above ends in `break`,
+  `return`, `throw` or `continue`, so only dispatch can enter it. Stacked
+  labels, `default`, a clause reachable by fall-through (including after a
+  braced clause), a computed discriminant, a non-literal label, and a label on
+  the changed line itself read no condition.
+  `switch_clauses_read_a_lone_case_label_and_nothing_else` pins the reader,
+  and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
+  `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
+  production-path positive and negative.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -1105,6 +1259,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #9435 (rule 15): `probe_shape.rs` (`declared_arrow_value_body`),
+  `returned_state_guard.rs` (`ts_returned_state_change`),
+  `ternary_arm_guard.rs` (`ts_ternary_arm_change`),
+  `loop_bound_guard.rs` (`ts_loop_bound_change`), and the witnesses
+  `ts_arm_change_witnessed` and `ts_loop_bound_witnessed` in
+  `classifier.rs`, which promote the probe shape to `ReturnValue` before the
+  verdict ladder runs.
 - #7315: `expect_assertion_from_expression` reads the rejection modifier and
   concrete expected argument; `TypeScriptAssertionBindings` supplies the
   explicit runner import and existing scope filter. The existing
@@ -1141,6 +1302,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
+- #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
+  reads the enclosing conditions and evaluates literal call inputs;
+  `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
+  `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

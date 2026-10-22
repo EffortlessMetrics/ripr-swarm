@@ -51,7 +51,7 @@ fixtures/perl-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
 fixtures/perl-verdict-corpus/subjects/** -whitespace
 fixtures/typescript-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
 fixtures/typescript-verdict-corpus/subjects/** -whitespace
-fixtures/python-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
+fixtures/python-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 fixtures/python-verdict-corpus/subjects/** -whitespace
 
 # Append-only logs: entries are self-contained blocks added at the head of
@@ -76,3 +76,18 @@ docs/LEARNINGS.md merge=union
 # `git merge` uses this driver; GitHub web merge, squash merge and the
 # "Update branch" button ignore merge drivers and still conflict.
 .ripr/traceability.toml merge=union
+
+# Generated files (#5391 follow-up, size envelope). This is the one source of
+# truth for what candidate admission does not count as review burden; it is read
+# from the PR's base commit. Only data file types are ever exempt, and a
+# separate cap bounds the exempt lines. Never list source, scripts or workflows.
+package-lock.json linguist-generated
+Cargo.lock linguist-generated
+fixtures/**/expected/** linguist-generated
+metrics/public-proof/** linguist-generated
+
+# The CRLF hostile-input case stores carriage returns on purpose; the subject
+# file and the diff that edits it must reach the working tree byte for byte.
+fixtures/typescript-verdict-corpus/subjects/authored-ts-vitest-hostile/src/crlf.ts -text
+fixtures/typescript-verdict-corpus/cases/hostile-crlf-boundary-pinned.diff -text
+fixtures/python-verdict-corpus/subjects/authored-py-pytest-hostile/tests/test_helpered.py -text

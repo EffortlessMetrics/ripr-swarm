@@ -780,3 +780,194 @@ fn identity_copy_subject_reads_both_directions() {
         );
     }
 }
+
+#[test]
+fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String> {
+    let head = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    // Rule 4: an `expect(` the rule 2 refusals leave uncollected is unknown.
+    for (label, body) in [
+        (
+            "refused-then-rejection-handler",
+            "  return Promise.resolve(ready(cfg)).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "refused-async-foreach",
+            "  [cfg].forEach(async (c) => { await Promise.resolve(); expect(ready(c)).toEqual(c); });\n",
+        ),
+    ] {
+        let test = format!("{head}{body}}});\n");
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+        assert!(
+            !finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("mocks a module"),
+            "{label}: {}",
+            finding.ripr.reveal.discriminate.summary
+        );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![crate::domain::StopReason::GapEvidenceUnresolved],
+            "{label}"
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("no new assertion is needed")),
+            "{label}: {:?}",
+            finding.recommended_next_step
+        );
+    }
+    // Discriminating negatives that reach the arm (same-file no-op helper,
+    // so admission is `Unresolved` and nothing is collected): the markers
+    // beside it, in code that does not hold the `expect(`, or inside a
+    // comment or string, leave the gap actionable.
+    for (label, extra) in [
+        ("plain-helper", ""),
+        (
+            "unrelated-then",
+            "  Promise.resolve(1).then((n) => n + 1);\n",
+        ),
+        (
+            "unrelated-callback-expect",
+            "  Promise.resolve(1).then(() => expect(1).toBe(1));\n",
+        ),
+        ("then-in-comment", "  // x.then((r) => expect(r).toBe(1))\n"),
+        (
+            "then-in-string",
+            "  const note = \".then(() => expect(1))\";\n",
+        ),
+    ] {
+        let test = format!(
+            "import {{ ready }} from \"../src/settings\";\nfunction check(v: unknown) {{}}\ntest(\"ready\", () => {{\n  const cfg = {{ ok: true }};\n{extra}  check(ready(cfg));\n}});\n"
+        );
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+/// Rule 4's owner tie reads the receiver chain across lines (the prettier
+/// layout) and member and generic calls of the owner (#9354).
+#[test]
+fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
+    let tied =
+        |body: &str| super::super::classifier::body_asserts_in_unmodeled_callback(body, "ready");
+    for (label, body) in [
+        (
+            "multi-line-chain",
+            "  return ready(cfg)\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "multi-line-chain-through-a-continuation",
+            "  return ready(cfg)\n    .catch(() => {})\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "member-call",
+            "  return this.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "namespace-call",
+            "  return ns.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "optional-member-call",
+            "  return ns?.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "generic-call",
+            "  return ready<Config>(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "same-line-continuation",
+            "  return ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "multi-line-member-generic",
+            "  return this.ready<Map<string, number>>(cfg)\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+    ] {
+        assert!(tied(body), "{label}");
+    }
+    // The owner is not what the chain starts from: an earlier statement, a
+    // call or index result's member, a longer name, a comparison, or a chain
+    // broken by a blank line.
+    for (label, body) in [
+        (
+            "earlier-statement-with-semicolon",
+            "  ready(cfg);\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "adjacent-earlier-line-without-semicolon",
+            "  const a = ready(cfg)\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "earlier-statement-after-a-blank-line",
+            "  const a = ready(cfg)\n\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "call-result-member",
+            "  return make().ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "call-result-member-chain",
+            "  return make().obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "index-result-member-chain",
+            "  return table[0].obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "index-result-member",
+            "  return table[0].ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "longer-name",
+            "  return readyNow(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "unspaced-comparison-not-generic",
+            "  return ready<cfg.max && check(x).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "comparison-not-generic",
+            "  return ready < cfg.max && check(x).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "owner-only-named-in-a-comment",
+            "  // ready(cfg)\n  return other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+    ] {
+        assert!(!tied(body), "{label}");
+    }
+}
+
+/// The same ties through the production classifier: the prettier layout of the
+/// refused `.then` shape reads `static_unknown`, and a chain started by another
+/// call stays an actionable gap (#9354).
+#[test]
+fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result<(), String> {
+    let head = "import { ready } from \"../src/settings\";\nfunction check(v: unknown) {}\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    let tied = format!(
+        "{head}  return ready(cfg)\n    .then((r) => {{ expect(r).toEqual(cfg); }}, () => {{}});\n}});\n"
+    );
+    let finding = settings_finding("multi-line-then", &tied, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+
+    // A namespace-import member call and a same-line continuation tie too.
+    let namespaced = "import * as settings from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  return settings.ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n});\n";
+    let finding = settings_finding("namespaced-then", namespaced, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+
+    // The owner is called, but not by the chain that holds the `expect(`.
+    let untied = format!(
+        "{head}  check(ready(cfg));\n  return Promise.resolve(1)\n    .then((r) => {{ expect(r).toEqual(1); }}, () => {{}});\n}});\n"
+    );
+    let finding = settings_finding("multi-line-other-chain", &untied, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}

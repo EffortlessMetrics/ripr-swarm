@@ -8,7 +8,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Shared evidence and guidance
-  E1 [findings 1, 2]: reach yes: Related tests appear to reach deposit_cap: a_small_deposit_is_accepted, a_large_refund_hits_the_limit
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach deposit_cap: a_small_deposit_is_accepted
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: propagation yes: Complete propagation witness reaches error variant: Result::Err(PayError::Limit)
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior

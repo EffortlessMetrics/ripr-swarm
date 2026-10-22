@@ -142,7 +142,7 @@ Updated:
 ## Pending — propagated_error_closing_early_path (12)
 
 Reason:
-RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down; printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
 
 Command:
 `cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
