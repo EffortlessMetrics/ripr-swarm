@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-match-type-pattern",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-match-type-pattern.diff",
+  "anchor": {
+    "file": "shapes/matching.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_match_statement_class_pattern_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "case float():",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_matching.py::test_zero_and_int",
+        "equivalence_review": "not equivalent: an int returns other"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "kind(5) must reach the int arm; with a float pattern it falls to the wildcard.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

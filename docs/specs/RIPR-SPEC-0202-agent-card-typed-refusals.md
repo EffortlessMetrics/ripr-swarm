@@ -25,7 +25,7 @@ Support-tier impact:
 Policy impact:
 
 - None. No new process, network, or file-policy surface. The envelope
-  renders to stderr only, and only under `--json`.
+  renders to stdout (prose on stderr), and only under `--json`.
 
 ## Problem
 
@@ -46,7 +46,7 @@ machine signal than the commands it fronts for.
 
 Every deliberate named refusal of the `ripr agent card` handoff maps to the
 decision exit code `3` and, under `--json`, renders exactly one versioned
-typed envelope on stderr:
+typed envelope on stdout (prose on stderr):
 
 ```json
 {
@@ -89,9 +89,12 @@ typed envelope on stderr:
   share that guidance; genuinely unknown seam IDs retain pilot/list guidance.
 - `error.remedy_route` names one typed command for the kind's remedy family,
   bound to the same root the failing call used.
-- The card's stdout stays empty on every refusal: stdout is the handoff
-  artifact stream, the same rule `agent verify` follows (RIPR-SPEC-0134).
-  Without `--json`, stderr carries the same prose rendering only.
+- Under `--json` the envelope is the stdout document and stderr carries the
+  prose rendering; this matches `check`, `agent packet` and
+  `agent verify-execute` and lets a script parse stdout on every `--json`
+  refusal (the earlier stderr placement is superseded). Without `--json`
+  stdout stays empty and stderr carries the prose rendering only. An unknown
+  seam id exits `3` on `agent card`, `agent stub` and `agent packet`.
 - Operational could-not-complete failures (an unreadable config, a failed
   git head or dirty-state probe, a detail-source serialization failure, an
   unreadable attempt inventory) stay exit code `2` with human prose only.
@@ -110,9 +113,9 @@ typed envelope on stderr:
   `## Enums` list in `docs/OUTPUT_SCHEMA.md` must agree exactly.
 - The document kind `agent_card_refusal` is a registered output contract
   row pinned against the CLI adapter producer.
-- A CLI smoke test proves the end-to-end refusal: exit code `3`, empty
-  stdout, one parseable `agent_card_refusal` envelope on stderr under
-  `--json`, and the prose rendering preserved.
+- A CLI smoke test proves the end-to-end refusal: exit code `3`,
+  one parseable `agent_card_refusal` envelope on stdout under `--json`,
+  and the prose rendering preserved on stderr.
 - Unit tests pin the envelope shape (schema version, kind, seam id, verbatim
   message, remedy route per kind) and the producer's refusal/operational
   split (kind + prose preserved through the `String` rendering the LSP and
@@ -125,14 +128,14 @@ typed envelope on stderr:
 
 ## Outputs
 
-- Exit code `3` with the `agent_card_refusal` stderr envelope under
+- Exit code `3` with the `agent_card_refusal` stdout envelope under
   `--json`; exit code `3` with prose-only stderr without it; exit code `2`
   unchanged for operational failures.
 
 ## Acceptance Examples
 
 - `ripr agent card --seam-id probe:src_lib.rs:predicate:566edf6b --json`
-  exits `3`, prints nothing to stdout, and prints on stderr one envelope
+  exits `3`, prints on stdout one envelope
   whose `error.kind` is `seam_not_found`, whose `error.seam_id` repeats the
   asked-for id, whose `error.message` names the finding-ID hint, and whose
   `error.remedy_route` is the `ripr pilot` listing command.
@@ -163,10 +166,10 @@ typed envelope on stderr:
   card human/JSON remedy parity, packet JSON message/stderr parity, and both
   repair-before renderings preserve their status and output channels. A literal
   unknown seam under the same policy retains pilot/list recovery on all three
-  commands. Packet without `--json` retains its argument-validation refusal.
+  commands; card and packet exit `3`, repair exits `2`. Packet without `--json` retains its argument-validation refusal.
 - `crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card`
-  extends the cold-agent refusal journey: exit code `3`, empty stdout, and
-  the parseable `agent_card_refusal` envelope on stderr under `--json`.
+  extends the cold-agent refusal journey: exit code `3` and the
+  parseable `agent_card_refusal` envelope on stdout under `--json`.
 - `crates/ripr/src/cli/commands/agent_card.rs` unit tests pin the envelope
   shape for all five kinds and the opposite-remedy pairs.
 - `crates/ripr/src/app/repair_card_handoff.rs`

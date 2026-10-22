@@ -21,6 +21,19 @@ pub(super) fn added_type_bound_lines(
         .unwrap_or_else(|| vec![false; changed.added_lines.len()])
 }
 
+/// Added lines that touch a type bound anywhere on the line (see
+/// [`declarations::header_bound_lines`]); fails closed to `true` per line when
+/// no clean syntax is available.
+pub(super) fn added_header_bound_lines(
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) -> Vec<bool> {
+    file_facts(index, &changed.path)
+        .filter(|facts| !facts.used_lexical_fallback)
+        .map(|facts| declarations::header_bound_lines(&facts.source, &changed.added_lines))
+        .unwrap_or_else(|| vec![true; changed.added_lines.len()])
+}
+
 /// Removed declarations must be admitted using reconstructed old-side syntax,
 /// never a line coincidence in the candidate index. A refused reconstruction
 /// or parse leaves the existing lexical/unknown evidence intact.

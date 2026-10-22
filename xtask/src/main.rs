@@ -65,6 +65,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod termination_qualification;
 mod types;
 mod work_adapter_identity;
 mod work_burndown_identity;
@@ -1027,14 +1028,17 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                         .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
                 })
         }),
+        // The retained Rust gates include workspace/all-target Clippy and
+        // test-source policy. Include package tests, examples and build scripts,
+        // with anchored roots so fixture lookalikes keep their own category.
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && (f.contains("crates/ripr/src")
-                        || f.contains("xtask/src")
-                        || f.starts_with("tools/repo-policy/")))
+                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -1146,6 +1150,51 @@ mod check_fast_selector_tests {
         Ok(())
     }
 
+    #[test]
+    fn workspace_rust_targets_select_existing_rust_gates() {
+        for path in [
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/tests/cli_smoke/workflow_directory.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/src/main.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/ripr/Cargo.toml",
+        ] {
+            assert!(
+                categorize_changed_files(&[path.to_string()]).rust_src,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_workspace_rust_and_near_prefixes_keep_existing_categories() {
+        assert!(!categorize_changed_files(&[]).rust_src);
+        for path in [
+            "docs/selector.md",
+            "crates/ripr/tests/README.md",
+            "crates/ripr-not/src/lib.rs",
+            "xtask-not/src/main.rs",
+            "tools/repo-policy-not/src/lib.rs",
+            "fixtures/crates/ripr/src/lib.rs",
+            "fixtures/xtask/src/main.rs",
+            "fixtures/control/input/src/lib.rs",
+        ] {
+            let categories = categorize_changed_files(&[path.to_string()]);
+            assert!(!categories.rust_src, "{path}");
+            assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
+        }
+    }
+
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
         // raw spawn literal in this file (the gate-runner git-diff site),
@@ -1242,6 +1291,56 @@ mod check_fast_selector_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn committed_workspace_test_changes_select_rust_gates() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-fast-workspace-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let git = |args: &[&str]| run_fixture_git(&root, args);
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(root.join("README.md"), "baseline\n")
+                .map_err(|error| error.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "baseline"])?;
+            git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+            if !changed_files_vs_base(&root)?.is_empty() {
+                return Err("clean selector fixture was not empty".to_string());
+            }
+            for path in ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                let file = root.join(path);
+                let parent = file.parent().ok_or("fixture path has no parent")?;
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                std::fs::write(file, "// changed Rust test\n")
+                    .map_err(|error| error.to_string())?;
+            }
+            git(&["add", "."])?;
+            git(&["commit", "-m", "workspace tests"])?;
+            let paths = changed_files_vs_base(&root)?;
+            if paths != ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                return Err(format!("unexpected native selector paths: {paths:?}"));
+            }
+            for path in paths {
+                if !categorize_changed_files(std::slice::from_ref(&path)).rust_src {
+                    return Err(format!(
+                        "workspace Rust test did not select Rust gates: {path}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
     }
 
     #[test]
@@ -3455,9 +3554,235 @@ pub(crate) fn pr_summary_impl() -> Result<(), String> {
 }
 
 fn check_pr_shape() -> Result<(), String> {
+    check_pr_shape_with_args(&[])
+}
+
+pub(crate) fn check_pr_shape_with_args(args: &[String]) -> Result<(), String> {
+    let body = pr_body_input(args)?;
     let changes = collect_pr_changes()?;
-    let warnings = pr_shape_warnings(&changes);
-    write_report("pr-shape.md", &pr_shape_report_body(&warnings))
+    let mut warnings = pr_shape_warnings(&changes);
+    let mut missing: Vec<&'static str> = Vec::new();
+    if let Some(body) = &body {
+        missing = pr_body_template_missing_lines(body);
+        for line in &missing {
+            warnings.push(format!(
+                "PR body is missing or has a placeholder value for `{line}`; add the line from .github/pull_request_template.md with a real value."
+            ));
+        }
+    }
+    write_report("pr-shape.md", &pr_shape_report_body(&warnings))?;
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(pr_body_template_missing_error(&missing))
+    }
+}
+
+/// Template lines an agent-authored PR body must carry verbatim, with real
+/// values, before first Ready (#8601). Mirrors the Source-of-truth Links and
+/// Candidate Relationships sections of `.github/pull_request_template.md`.
+const PR_BODY_TEMPLATE_LINES: [&str; 11] = [
+    "Proposal:",
+    "Spec:",
+    "ADR:",
+    "Plan item:",
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+    "Candidate branch (GitHub PR head is authoritative after publication):",
+    "Stack parent or prerequisite PR (if any):",
+    "Proposed replacement of PR (if any; not yet accepted):",
+    "Acceptance retained from a replaced candidate (if any):",
+    "Accepted winner and losing candidate disposition (when decided):",
+];
+
+/// Lines admission gates on (`claim_identity_missing`): a placeholder counts
+/// as missing, mirroring `candidate_admission.py`'s placeholder set.
+const PR_BODY_GATED_LINES: [&str; 2] = [
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+];
+
+const PR_BODY_PLACEHOLDERS: [&str; 11] = [
+    "",
+    "n/a",
+    "na",
+    "none",
+    "not applicable",
+    "tbd",
+    "todo",
+    "unknown",
+    "pending",
+    "-",
+    "\u{2014}",
+];
+
+fn pr_body_template_missing_error(missing: &[&'static str]) -> String {
+    format!(
+        "claim_identity_missing: missing or placeholder PR body line(s): {}; add the line(s) from .github/pull_request_template.md with a real value",
+        missing.join(", ")
+    )
+}
+
+fn pr_body_template_missing_lines(body: &str) -> Vec<&'static str> {
+    PR_BODY_TEMPLATE_LINES
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(value) = pr_body_template_line_value(body, line) else {
+                return true;
+            };
+            if value.is_empty() {
+                return true;
+            }
+            if PR_BODY_GATED_LINES.contains(line) {
+                return pr_body_value_is_placeholder(value);
+            }
+            pr_body_value_is_unfilled_placeholder(value)
+        })
+        .collect()
+}
+
+/// Labels admission accepts for a template line, in admission's order.
+/// Mirrors `LABELS` in `candidate_admission.py:32-49`: the canonical
+/// template label first, then any shorter/alternate label admission
+/// also accepts at line start.
+fn pr_body_template_labels(template_line: &str) -> Vec<&str> {
+    let primary = template_line.trim_end_matches(':');
+    let mut labels = vec![primary];
+    match template_line {
+        "Governing issue or accepted claim:" => labels.push("Owner / governing claim"),
+        "Acceptance delta (one sentence):" => labels.push("Acceptance delta"),
+        "Proposed replacement of PR (if any; not yet accepted):" => {
+            labels.push("Proposed replacement of PR");
+        }
+        "Accepted winner and losing candidate disposition (when decided):" => {
+            labels.push("Accepted winner and losing candidate disposition");
+        }
+        _ => {}
+    }
+    labels
+}
+
+fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
+    // Mirror `extract_fields` in `candidate_admission.py:62-75` exactly:
+    // a line counts only when its whitespace-stripped form starts with
+    // `label:` (case-insensitive). Bulleted (`- Label: ...`) and spaced
+    // (`Label : ...`) forms therefore do not count. The first non-empty
+    // value wins; a blank occurrence does not mask a later filled one.
+    let labels: Vec<String> = pr_body_template_labels(template_line)
+        .iter()
+        .map(|label| format!("{}:", label.to_lowercase()))
+        .collect();
+    let mut saw_match = false;
+    for raw in body.lines() {
+        let line = raw.trim().trim_start_matches('\u{feff}');
+        let folded = line.to_lowercase();
+        for prefix in &labels {
+            if folded.starts_with(prefix.as_str()) {
+                saw_match = true;
+                let Some(value) = line.get(prefix.len()..) else {
+                    continue;
+                };
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+                break;
+            }
+        }
+    }
+    saw_match.then_some("")
+}
+
+fn pr_body_normalized_value(value: &str) -> String {
+    // Mirror `normalize` in `candidate_admission.py:57-59`.
+    value
+        .trim()
+        .trim_matches('`')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn pr_body_value_is_placeholder(value: &str) -> bool {
+    // Mirror `invalid` in `candidate_admission.py:78-80` over
+    // `PLACEHOLDERS` (`candidate_admission.py:19-31`).
+    let normalized = pr_body_normalized_value(value);
+    PR_BODY_PLACEHOLDERS.contains(&normalized.as_str()) || normalized.starts_with('<')
+}
+
+/// Unfilled-template markers for the non-gated template lines. Unlike
+/// the admission-gated lines, these lines may legitimately record an
+/// explicit non-applicable value such as `none` or `n/a`; only the
+/// still-unfilled markers (`TBD`, `<...>`, ...) count as missing.
+fn pr_body_value_is_unfilled_placeholder(value: &str) -> bool {
+    let normalized = pr_body_normalized_value(value);
+    normalized.starts_with('<')
+        || matches!(normalized.as_str(), "tbd" | "todo" | "pending" | "unknown")
+}
+
+/// Resolve the optional offline PR-body input for `check-pr-shape`.
+/// `--body-file <path>` reads raw Markdown or `gh pr view --json body`
+/// JSON; `--body-env <var>` reads the same from an environment variable.
+/// No network or `gh` call happens inside xtask.
+fn pr_body_input(args: &[String]) -> Result<Option<String>, String> {
+    let mut body_file: Option<String> = None;
+    let mut body_env: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--body-file" => {
+                body_file =
+                    Some(iter.next().cloned().ok_or_else(|| {
+                        "check-pr-shape: --body-file requires a path".to_string()
+                    })?);
+            }
+            "--body-env" => {
+                body_env = Some(iter.next().cloned().ok_or_else(|| {
+                    "check-pr-shape: --body-env requires a variable name".to_string()
+                })?);
+            }
+            other => {
+                return Err(format!(
+                    "check-pr-shape: unknown argument `{other}`; usage: cargo xtask check-pr-shape [--body-file <path> | --body-env <var>]"
+                ));
+            }
+        }
+    }
+    match (body_file, body_env) {
+        (Some(_), Some(_)) => {
+            Err("check-pr-shape: pass only one of --body-file or --body-env".to_string())
+        }
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(&path).map_err(|err| {
+                format!("check-pr-shape: cannot read --body-file `{path}`: {err}")
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, Some(var)) => {
+            let text = std::env::var(&var).map_err(|err| {
+                format!(
+                    "check-pr-shape: environment variable `{var}` named by --body-env is not set: {err}"
+                )
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// Accept raw Markdown, or the JSON object emitted by
+/// `gh pr view --json body` (its `body` field carries the Markdown).
+fn pr_body_from_input_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(body) = value.get("body").and_then(serde_json::Value::as_str)
+    {
+        return Ok(body.to_string());
+    }
+    Ok(text.to_string())
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
@@ -20012,11 +20337,30 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
 }
 
 fn pr_shape_report_body(warnings: &[String]) -> String {
-    let status = if warnings.is_empty() { "pass" } else { "warn" };
+    // A PR-body template failure is a failed check, not an advisory
+    // warning: `check_pr_shape_with_args` returns `Err` for it, so the
+    // report status must agree (`fail`) in body-file mode. Other shape
+    // warnings remain advisory (`warn`).
+    let body_failed = warnings
+        .iter()
+        .any(|warning| warning.contains("PR body is missing or has a placeholder value for"));
+    let status = if body_failed {
+        "fail"
+    } else if warnings.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    };
     let mut body = format!("# ripr PR shape report\n\nStatus: {status}\n\n");
-    body.push_str(
-        "This report is advisory. It highlights likely missing evidence before review.\n\n",
-    );
+    if body_failed {
+        body.push_str(
+            "This report records a failed PR-body check. It highlights likely missing evidence before review.\n\n",
+        );
+    } else {
+        body.push_str(
+            "This report is advisory. It highlights likely missing evidence before review.\n\n",
+        );
+    }
     body.push_str("## Warnings\n\n");
     if warnings.is_empty() {
         body.push_str("None detected.\n");
