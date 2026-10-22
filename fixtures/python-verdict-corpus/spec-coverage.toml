@@ -766,3 +766,8 @@ reason = "False actionable: field update read through a same-file helper is not 
 case = "py-grid-returns-property"
 issue = 9594
 reason = "False exposed: property assertion credited as exact for a returns edit (#9594)."
+
+[[known_false]]
+case = "py-hostile-star-import-no-all-public"
+issue = 9415
+reason = "False actionable: a public name imported by `from m import *` without __all__ is not resolved to its owner (#9415)."
