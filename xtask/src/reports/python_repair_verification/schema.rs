@@ -124,7 +124,8 @@ pub(crate) const CURRENTNESS: [&str; 3] = ["current", "dirty_worktree", "histori
 
 /// The after-analysis run statuses the producer can retain (the repo-exposure
 /// document's own run_status vocabulary, restated).
-pub(crate) const AFTER_RUN_STATUSES: [&str; 2] = ["complete", "seam_limit_applied"];
+pub(crate) const AFTER_RUN_STATUSES: [&str; 3] =
+    ["complete", "seam_limit_applied", "limited_declined_files"];
 
 /// The standing non-claims every verification receipt must carry verbatim.
 pub(crate) const VERIFICATION_NON_CLAIMS: [&str; 3] = [

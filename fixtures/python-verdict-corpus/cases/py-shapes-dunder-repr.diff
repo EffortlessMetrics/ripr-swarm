@@ -1,0 +1,12 @@
+diff --git a/shapes/money.py b/shapes/money.py
+--- a/shapes/money.py
++++ b/shapes/money.py
+@@ -15,7 +15,7 @@
+         return self.cents < other.cents
+ 
+     def __repr__(self):
+-        return f"Money({self.cents})"
++        return f"Money<{self.cents}>"
+ 
+     def __str__(self):
+         return f"${self.cents / 100:.2f}"

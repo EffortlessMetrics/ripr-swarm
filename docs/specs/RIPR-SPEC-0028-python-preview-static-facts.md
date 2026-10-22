@@ -241,6 +241,18 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+A test that imports a free-function owner's name from a workspace module that
+defines its own function of that name, when no import reaches the owner's module,
+is not related to the owner even if its call text matches the name (#8759). The
+evidence must be affirmative: the import's source module is exactly the module
+path of another workspace source file defining the same free function. A facade
+or package re-export, an unresolved or third-party source, a source the owner's
+path could also be spelled as under an import root the adapter cannot see, an
+ambiguous src-layout name, a test with no import of the name, a star import, and
+a test in the owner's own file keep the name-based relation.
+Only top-level free functions are gated, and only top-level imports are read: a
+same-named wrapper that delegates to the owner, or an import under `try`/`if`,
+is not modeled, so such a test can read as unrelated.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import
@@ -792,6 +804,34 @@ Expected static evidence:
 - a related test that reaches `century_index` without observing the
   changed return remains a gap.
 
+Typing markers are not decorator indirection:
+
+```python
+from typing import final, override
+
+class Child(Base):
+    @override
+    def rate(self, n):
+        return n + 1
+```
+
+Expected static evidence:
+
+- `@final`, `@override` and `@no_type_check` written as plain names (and
+  `typing.` / `typing_extensions.` qualified or aliased spellings; the
+  `typing_extensions` spelling covers `final` and `override` only) return the
+  function unchanged, so the owner emits no `decorator_indirection`;
+- a rebound receiver, a competing alias, a local same-named decorator, a
+  marker written as a call (`@final(wrapper)`), a file where the marker name
+  appears anywhere other than a `@name` decorator line or a `typing` /
+  `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+  target, nested or class-scope rebind, `try`/`except` import fallback), a
+  star import from another module, or any decorator in the file that is not
+  a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+  `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+  `contextlib.contextmanager` and `property` also stay limited.
+
 Simple route decorator repair:
 
 ```python
@@ -820,7 +860,9 @@ framework-specific selectors and relate only to the referenced owner.
 Functools memoization transparency (`lru_cache` / `cache` /
 `cached_property`) is covered by
 `crates/ripr/src/analysis/language/python/static_limits.rs` tests and
-`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+`fixtures/python_functools_memoization_not_indirection`. Typing-marker
+transparency (`final` / `override` / `no_type_check`) is covered by the
+`typing_marker_*` tests in the same file. Arbitrary
 decorators such as `@retry` remain limited via
 `fixtures/python_decorator_indirection_limit`.
 

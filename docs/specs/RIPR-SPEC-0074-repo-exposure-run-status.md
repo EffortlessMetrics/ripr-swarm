@@ -165,6 +165,11 @@ guidance disclosure applies. A seam-limit truncation is the original
 bounded case. Additive guidance and skip entries may appear while
 `run_status` stays `"complete"`: `typescript_diff_first`,
 `python_diff_first`, and `generated_rust_source_skipped`.
+A Rust file a typed parse limit declined (`rust_nesting_budget`, or a source
+that is not UTF-8) is not additive: it was read lexically and its seams are
+under-credited, so the run reports `"run_status": "limited_declined_files"` with
+a `category: "rust_files_declined"` entry (#9308). A seam cap keeps
+`seam_limit_applied` and still lists that entry.
 `limit_source` is added by Slice B as an additive field within `0.3`.
 
 Generated Rust that `ripr check` already skips is disclosed as
@@ -176,8 +181,9 @@ that predicate exists on this trunk.
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
-`complete`, `seam_limit_applied`, `repo_seam_limit_applied`,
-`generated_rust_source_skipped`. The forbidden runtime-mutation words
+`complete`, `seam_limit_applied`, `limited_declined_files`,
+`repo_seam_limit_applied`, `generated_rust_source_skipped`,
+`rust_files_declined`. The forbidden runtime-mutation words
 (`killed`, `survived`, `untested`, `proven`, `adequate`) are not used.
 
 ### Internal representation

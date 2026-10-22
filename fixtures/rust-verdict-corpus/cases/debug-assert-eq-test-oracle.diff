@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 93c11e2..a2e106e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ /// Shipping cost in cents for a parcel of `grams`.
+ pub fn shipping_cents(grams: u32) -> u32 {
+     let base = 250;
+-    base + grams / 100 * 40
++    base + (grams / 100) * 40
+ }
+ 
+ #[cfg(test)]
