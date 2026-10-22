@@ -188,6 +188,39 @@ fn mentions_python_name(text: &str, name: &str) -> bool {
         })
 }
 
+/// Whether `line` is a decorator in a run of added decorator lines that ends
+/// at an added `def` or `class` line: the decorators of a newly added
+/// definition. A decorator added above an existing definition, or beside
+/// unrelated added lines, is an edit of that definition and keeps its probe.
+fn opens_added_definition(
+    added_lines: &[crate::analysis::diff::ChangedLine],
+    line: &crate::analysis::diff::ChangedLine,
+) -> bool {
+    let is_decorator = |text: &str| {
+        text.trim_start()
+            .strip_prefix('@')
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
+    };
+    if !is_decorator(&line.text) {
+        return false;
+    }
+    let mut next = line.line;
+    loop {
+        next += 1;
+        let Some(following) = added_lines.iter().find(|added| added.line == next) else {
+            return false;
+        };
+        let text = following.text.trim_start();
+        if is_decorator(text) {
+            continue;
+        }
+        return text.starts_with("def ")
+            || text.starts_with("async def ")
+            || text.starts_with("class ");
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
     name: String,
@@ -980,6 +1013,12 @@ impl PythonAdapter {
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
+                    // A decorator that opens a newly added function is part of
+                    // its definition; the function's own lines carry the change.
+                    // A decorator that replaces an old line is an edit and keeps
+                    // its probe (#9756).
+                    || (!counterparts.contains_key(&added.line)
+                        && opens_added_definition(&changed.added_lines, added))
             });
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
