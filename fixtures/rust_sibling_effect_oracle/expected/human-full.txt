@@ -7,7 +7,7 @@ Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
-WARNING ./src/sensors/ripr_limits.rs:137
+NOTE ./src/sensors/ripr_limits.rs:137
   id: probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
 
 Changed
@@ -22,10 +22,10 @@ Probe
   canonical gap: gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes
+  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -33,7 +33,7 @@ Evidence
   - local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)
   - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses strong exact value oracle: assert_eq!(missing["sources"][0]["state"], "unavailable"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses weak relational check oracle: assert!(contexts.iter().all(|context| context.len() <= 1024)); misses: assertion too weak to tell the old behavior from the new
-  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses smoke smoke only oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some()); misses: assertion too weak to tell the old behavior from the new
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses smoke only oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some()); misses: assertion too weak to tell the old behavior from the new
   - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses strong exact value oracle: assert_eq!(
             parse_note(note("tests/日本語.rs").trim()),
             Some(vec![(
@@ -51,7 +51,7 @@ Evidence
   - source assertion argument value 8 at line 217
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
-  - source values (showing 8 of 131; --format json keeps a ranked 32)
+  - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
 
 Weakness
   - No strong discriminator was detected
@@ -79,7 +79,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes
+  - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: .or_default()
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -102,7 +102,7 @@ Evidence
   - source assertion argument value 8 at line 217
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
-  - source values (showing 8 of 131; --format json keeps a ranked 32)
+  - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
 
 Weakness
   - No strong discriminator was detected

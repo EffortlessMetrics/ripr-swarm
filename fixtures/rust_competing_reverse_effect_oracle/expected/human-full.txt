@@ -8,13 +8,13 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Shared evidence and guidance
-  E1 [findings 1, 2]: reach yes: Related tests appear to reach record: direct_smoke, implicit_observer, parser_only
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach record: direct_smoke
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence state write: output.borrow_mut().push(1)
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches state write: output.borrow_mut().push(1) (line 4)
-  E7 [findings 1, 2]: related test src/lib.rs:19 direct_smoke uses none unknown oracle; misses: has no assertion
+  E7 [findings 1, 2]: related test src/lib.rs:19 direct_smoke uses no oracle; misses: has no assertion
   E8 [findings 1, 2]: related test src/lib.rs:32 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E9 [findings 1, 2]: related test src/lib.rs:25 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!("{input}")), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E10 [findings 1, 2]: source assertion argument value "{input}" at line 28

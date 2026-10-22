@@ -35,17 +35,17 @@
         "expression": "self.sink.set(1)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach next: direct_smoke, implicit_observer"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach next: direct_smoke"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: self.sink.set(1)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach next: direct_smoke, implicit_observer", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: self.sink.set(1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: self.sink.set(1) (line 8)", "related test src/lib.rs:15 direct_smoke uses none unknown oracle", "related test src/lib.rs:20 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });", "source assertion argument value 1 at line 24"],
+      "evidence_path": ["reach yes: Related tests appear to reach next: direct_smoke", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: self.sink.set(1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: self.sink.set(1) (line 8)", "related test src/lib.rs:15 direct_smoke uses no oracle", "related test src/lib.rs:20 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });", "source assertion argument value 1 at line 24"],
       "flow_sinks": [
         {"kind":"call_effect","text":"self.sink.set(1)","line":8}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: self.sink.set(1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach next: direct_smoke, implicit_observer"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: self.sink.set(1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach next: direct_smoke"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "24": "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });"
