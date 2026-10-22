@@ -28,7 +28,17 @@ exercised boundary from a missing one.
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
   `char::len_utf8`, `map_or` with a literal default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
-  from exact indices.
+  from exact indices. Exact integer arithmetic (`+ - * / %`, with
+  precedence and parentheses, failing closed on a leading sign,
+  overflow, underflow, division by zero or a result above 2^31),
+  `split_whitespace().count()` and
+  `chars().count()` are credit-only families (#9637): a chain that
+  uses one may close a boundary through an observed equality row but
+  never names a missing input, so no row on the boundary leaves the
+  stage unknown. A comparison operand that is itself such a chain over
+  `&str`/`String`/integer owner parameters, same-file constants and
+  literals resolves the same way; a computed or call-result argument,
+  a generic or slice receiver and a rebound parameter stay unknown.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
