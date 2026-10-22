@@ -818,7 +818,7 @@ jobs:
       - name: Run LSP initialize-failure subset (advisory, #3802)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib initialize_surfaces_poisoned 2>&1 | tee target/subset-lsp-initialize.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-lsp-initialize.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-lsp-initialize.log" >&2; exit 1; fi; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --lib -- initialize_surfaces_poisoned poisoned_initialize_failure_commit 2>&1 | tee target/subset-lsp-initialize.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-lsp-initialize.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-lsp-initialize.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
