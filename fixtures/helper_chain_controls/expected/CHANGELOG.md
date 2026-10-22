@@ -226,3 +226,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_controls (17)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless helper_chain_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

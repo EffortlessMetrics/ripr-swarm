@@ -453,3 +453,182 @@ fn bracket_calls_and_loaders_keep_exposed() -> Result<(), String> {
     }
     Ok(())
 }
+
+const OPTIONS_PRICE: &str = "export function price(qty: number, { preserveOrder = true } = {}): string {\n  let out = \"\";\n  if (preserveOrder) {\n    out = \"ordered\";\n  } else {\n    out = \"unordered\";\n  }\n  return out + qty;\n}\n";
+
+fn options_else_arm(label: &str, test: &str) -> Result<Finding, String> {
+    let source = OPTIONS_PRICE.replace("\"unordered\"", "\"loose\"");
+    finding_at(
+        label,
+        &source,
+        6,
+        "    out = \"unordered\";",
+        "    out = \"loose\";",
+        test,
+    )
+}
+
+#[test]
+fn an_options_object_guard_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        ("options-omitted", vec![("price(2)", "\"ordered2\"")]),
+        (
+            "options-other-key",
+            vec![
+                ("price(2)", "\"ordered2\""),
+                ("price(3, { other: 1 })", "\"ordered3\""),
+            ],
+        ),
+        (
+            "options-explicit-true",
+            vec![("price(2, { preserveOrder: true })", "\"ordered2\"")],
+        ),
+    ] {
+        let finding = options_else_arm(label, &test_with(&calls))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("!(preserveOrder)")
+                    && line.contains("no related test call enters")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_options_object_guard_some_test_input_can_enter_keeps_exposed() -> Result<(), String> {
+    // Positive control: the call that turns the option off keeps the credit.
+    let entering = options_else_arm(
+        "options-entered",
+        &test_with(&[("price(2, { preserveOrder: false })", "\"unordered2\"")]),
+    )?;
+    assert_eq!(
+        entering.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        entering.missing
+    );
+    let mixed = options_else_arm(
+        "options-mixed",
+        &test_with(&[
+            ("price(2)", "\"ordered2\""),
+            ("price(3, { preserveOrder: false })", "\"unordered3\""),
+        ]),
+    )?;
+    assert_eq!(mixed.class, ExposureClass::Exposed, "{:?}", mixed.missing);
+    // Options the reader cannot read may turn the option off.
+    for (label, call) in [
+        ("options-variable", "price(2, opts)"),
+        ("options-spread", "price(2, { ...base })"),
+        (
+            "options-computed-value",
+            "price(2, { preserveOrder: pick() })",
+        ),
+    ] {
+        let finding = options_else_arm(label, &test_with(&[(call, "\"x\"")]))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+const BRACELESS_PRICE: &str = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2;\n  return total;\n}\n";
+
+fn braceless_arm(label: &str, test: &str) -> Result<Finding, String> {
+    finding_at(
+        label,
+        BRACELESS_PRICE,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        test,
+    )
+}
+
+#[test]
+fn a_braceless_arm_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
+    let finding = braceless_arm("braceless-closed", &test_with(&[("price(2)", "20")]))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_braceless_arm_some_test_input_can_enter_keeps_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        (
+            "braceless-entered",
+            vec![("price(2)", "20"), ("price(3, 'HALF')", "15")],
+        ),
+        ("braceless-computed", vec![("price(2, pick())", "20")]),
+    ] {
+        let finding = braceless_arm(label, &test_with(&calls))?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_second_statement_on_a_braceless_arm_line_keeps_exposed() -> Result<(), String> {
+    let source = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+    let finding = finding_at(
+        "braceless-two-statements",
+        source,
+        4,
+        "    total = total / 2; total += 1;",
+        "    total = total / 2; total += 2;",
+        &test_with(&[("price(2)", "22")]),
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+const SWITCH_PRICE: &str = "export function price(qty: number, mode?: string): number {\n  let total = qty * 10;\n  switch (mode) {\n    case 'half':\n      total = total / 2;\n      break;\n    case 'free':\n      total = 0;\n      break;\n  }\n  return total;\n}\n";
+
+fn switch_clause(label: &str, test: &str) -> Result<Finding, String> {
+    finding_at(
+        label,
+        SWITCH_PRICE,
+        5,
+        "      total = total / 3;",
+        "      total = total / 2;",
+        test,
+    )
+}
+
+#[test]
+fn a_switch_clause_no_test_input_selects_withdraws_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        ("switch-closed", vec![("price(2)", "20")]),
+        (
+            "switch-other-label",
+            vec![("price(2)", "20"), ("price(3, 'free')", "0")],
+        ),
+    ] {
+        let finding = switch_clause(label, &test_with(&calls))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_switch_clause_some_test_input_can_select_keeps_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        (
+            "switch-selected",
+            vec![("price(2)", "20"), ("price(3, 'half')", "15")],
+        ),
+        ("switch-computed", vec![("price(2, pick())", "20")]),
+    ] {
+        let finding = switch_clause(label, &test_with(&calls))?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}

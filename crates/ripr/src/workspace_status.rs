@@ -546,11 +546,26 @@ mod tests {
     #[test]
     fn git_marker_probe_rejects_a_non_regular_marker_without_opening_it() -> Result<(), String> {
         // A FIFO `.git` would block File::open forever if it were opened.
+        use std::os::unix::fs::FileTypeExt;
+        // The setup must prove the marker really is a FIFO, or MarkerInvalid
+        // could be produced by a missing marker for the wrong reason.
+        let setup_outcome = std::cell::RefCell::new(Err("setup did not run".to_string()));
         let probed = git_marker_probe("gitfile-fifo", |root| {
-            let _ = std::process::Command::new("mkfifo")
-                .arg(root.join(".git"))
-                .status();
+            let marker = root.join(".git");
+            let outcome = match std::process::Command::new("mkfifo").arg(&marker).status() {
+                Err(error) => Err(format!("mkfifo: {error}")),
+                Ok(status) if !status.success() => Err(format!("mkfifo failed: {status}")),
+                Ok(_) => match std::fs::symlink_metadata(&marker) {
+                    Err(error) => Err(format!("marker metadata: {error}")),
+                    Ok(metadata) if !metadata.file_type().is_fifo() => {
+                        Err("created .git marker is not a FIFO".to_string())
+                    }
+                    Ok(_) => Ok(()),
+                },
+            };
+            *setup_outcome.borrow_mut() = outcome;
         })?;
+        setup_outcome.into_inner()?;
         assert_eq!(probed, GitWorkTree::MarkerInvalid);
         Ok(())
     }

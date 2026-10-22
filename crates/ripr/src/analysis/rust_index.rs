@@ -80,6 +80,57 @@ fn escaped_path_display(path: &Path) -> String {
     crate::terminal_text::terminal_safe(displayed)
 }
 
+/// A Rust file a typed static limit declined to parse (`rust_nesting_budget`
+/// or `rust_source_not_utf8`). Lexical fallback read it instead, so it yields
+/// no probe shapes and its tests and seams are under-credited (#4511, #9308).
+/// Plain syntax errors take the same fallback but are not typed refusals and
+/// are not listed here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclinedRustFile {
+    pub(crate) path: PathBuf,
+    pub(crate) reason: String,
+}
+
+/// Declined files among the indexed lexical-fallback files, sorted by path.
+pub(crate) fn declined_rust_files(index: &RustIndex) -> Vec<DeclinedRustFile> {
+    lexical_fallback_files(index)
+        .into_iter()
+        .filter_map(|path| {
+            if index.non_utf8_sources.contains(&path) {
+                return Some(DeclinedRustFile {
+                    path,
+                    reason: RUST_SOURCE_NOT_UTF8_REASON.to_string(),
+                });
+            }
+            let facts = index.files().values().find(|facts| facts.path == path)?;
+            let reason = super::syntax::rust_nesting_refusal(&facts.source)?;
+            Some(DeclinedRustFile { path, reason })
+        })
+        .collect()
+}
+
+/// Same declined files for a classified-seam cache hit, which stores only the
+/// fallback paths. Each file is re-read under `root` so a warm run names the
+/// same typed reasons as the cold run.
+pub(crate) fn declined_rust_files_at(root: &Path, files: &[PathBuf]) -> Vec<DeclinedRustFile> {
+    files
+        .iter()
+        .filter_map(|path| {
+            let bytes = std::fs::read(root.join(path)).ok()?;
+            let source = super::facts::rust_source_text(&bytes);
+            let reason = if source.not_utf8 {
+                RUST_SOURCE_NOT_UTF8_REASON.to_string()
+            } else {
+                super::syntax::rust_nesting_refusal(&source.text)?
+            };
+            Some(DeclinedRustFile {
+                path: path.clone(),
+                reason,
+            })
+        })
+        .collect()
+}
+
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
 /// A file the Rust nesting budget refused also gets its typed
 /// `rust_nesting_budget` reason, recomputed from the indexed source, and a
@@ -87,18 +138,9 @@ fn escaped_path_display(path: &Path) -> String {
 pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
     let files = lexical_fallback_files(index);
     let disclosure = lexical_fallback_disclosure_for_files(&files)?;
-    Some(with_nesting_budget_reasons(
+    Some(with_declined_reasons(
         disclosure,
-        files.iter().filter_map(|path| {
-            if index.non_utf8_sources.contains(path) {
-                return Some((path.as_path(), RUST_SOURCE_NOT_UTF8_REASON.to_string()));
-            }
-            let facts = index.files().values().find(|facts| &facts.path == path)?;
-            Some((
-                path.as_path(),
-                super::syntax::rust_nesting_refusal(&facts.source)?,
-            ))
-        }),
+        declined_rust_files(index),
     ))
 }
 
@@ -107,27 +149,19 @@ pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
 /// names the same typed reasons as the cold run.
 pub(crate) fn lexical_fallback_disclosure_at(root: &Path, files: &[PathBuf]) -> Option<String> {
     let disclosure = lexical_fallback_disclosure_for_files(files)?;
-    Some(with_nesting_budget_reasons(
+    Some(with_declined_reasons(
         disclosure,
-        files.iter().filter_map(|path| {
-            let bytes = std::fs::read(root.join(path)).ok()?;
-            let source = super::facts::rust_source_text(&bytes);
-            let reason = if source.not_utf8 {
-                RUST_SOURCE_NOT_UTF8_REASON.to_string()
-            } else {
-                super::syntax::rust_nesting_refusal(&source.text)?
-            };
-            Some((path.as_path(), reason))
-        }),
+        declined_rust_files_at(root, files),
     ))
 }
 
-fn with_nesting_budget_reasons<'a>(
-    mut disclosure: String,
-    reasons: impl Iterator<Item = (&'a Path, String)>,
-) -> String {
-    for (path, reason) in reasons {
-        disclosure.push_str(&format!("\nripr: {}: {reason}", escaped_path_display(path)));
+fn with_declined_reasons(mut disclosure: String, declined: Vec<DeclinedRustFile>) -> String {
+    for file in declined {
+        disclosure.push_str(&format!(
+            "\nripr: {}: {}",
+            escaped_path_display(&file.path),
+            file.reason
+        ));
     }
     disclosure
 }

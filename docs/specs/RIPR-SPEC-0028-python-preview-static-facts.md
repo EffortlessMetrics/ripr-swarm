@@ -241,6 +241,18 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+A test that imports a free-function owner's name from a workspace module that
+defines its own function of that name, when no import reaches the owner's module,
+is not related to the owner even if its call text matches the name (#8759). The
+evidence must be affirmative: the import's source module is exactly the module
+path of another workspace source file defining the same free function. A facade
+or package re-export, an unresolved or third-party source, a source the owner's
+path could also be spelled as under an import root the adapter cannot see, an
+ambiguous src-layout name, a test with no import of the name, a star import, and
+a test in the owner's own file keep the name-based relation.
+Only top-level free functions are gated, and only top-level imports are read: a
+same-named wrapper that delegates to the owner, or an import under `try`/`if`,
+is not modeled, so such a test can read as unrelated.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import
