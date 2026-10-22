@@ -1,3 +1,4 @@
+use crate::output::path::path_identity_key_on;
 use std::path::{Component, Path, PathBuf};
 use tower_lsp_server::ls_types::Uri;
 
@@ -21,8 +22,12 @@ mod percent_codec {
     }
 
     pub(super) fn encode_uri_path(path: &str) -> String {
+        encode_uri_bytes(path.as_bytes())
+    }
+
+    pub(super) fn encode_uri_bytes(path: &[u8]) -> String {
         let mut encoded = String::new();
-        for byte in path.bytes() {
+        for &byte in path {
             match byte {
                 b'A'..=b'Z'
                 | b'a'..=b'z'
@@ -55,6 +60,14 @@ mod windows_paths {
         bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b':' && bytes[1].is_ascii_alphabetic()
     }
 
+    /// Whether `\` separates components in this spelling: always on Windows,
+    /// and on other hosts only for an explicit drive (`C:\`) or UNC (`\\`)
+    /// spelling. A Unix filename may contain `\`, and rewriting it would alias
+    /// `a\b.rs` with `a/b.rs`.
+    pub(super) fn spells_windows_separators(path: &str) -> bool {
+        cfg!(windows) || is_windows_drive_path(path) || path.starts_with("\\\\")
+    }
+
     pub(super) fn is_windows_drive_path(path: &str) -> bool {
         let bytes = path.as_bytes();
         bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
@@ -74,7 +87,14 @@ mod windows_paths {
 /// whose `..` escapes its own prefix cannot be collapsed without a root, so
 /// it is refused instead of emitted with a parent segment.
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
-    let normalized = path.to_string_lossy().replace('\\', "/");
+    let Some(text) = path.to_str() else {
+        return non_utf8_file_uri_for_path(path);
+    };
+    let normalized = if windows_paths::spells_windows_separators(text) {
+        text.replace('\\', "/")
+    } else {
+        text.to_string()
+    };
     if normalized.starts_with("//") {
         return Err(format!(
             "refusing to build a local file URI for the network-share path {}",
@@ -95,6 +115,41 @@ pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     };
     uri.parse()
         .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
+}
+
+/// A path that is not valid UTF-8 (Unix) is encoded from its raw bytes, so two
+/// distinct such paths never collapse to one U+FFFD spelling. The shared decoder
+/// still refuses a non-UTF-8 URI, so the emitted URI names no admitted file
+/// rather than aliasing another one. A `..` segment cannot be collapsed on raw
+/// bytes, and an unpaired-surrogate Windows path has no byte encoding, so both
+/// are refused.
+fn non_utf8_file_uri_for_path(path: &Path) -> Result<Uri, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.starts_with(b"//") || bytes.split(|byte| *byte == b'/').any(|s| s == b"..") {
+            return Err(format!(
+                "refusing to build a local file URI for the non-UTF-8 path {}",
+                path.display()
+            ));
+        }
+        let encoded = percent_codec::encode_uri_bytes(bytes);
+        let uri = if encoded.starts_with('/') {
+            format!("file://{encoded}")
+        } else {
+            format!("file:///{encoded}")
+        };
+        uri.parse()
+            .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        Err(format!(
+            "refusing to build a local file URI for the non-UTF-8 path {}",
+            path.display()
+        ))
+    }
 }
 
 pub(super) fn path_from_file_uri(uri: &Uri) -> Option<PathBuf> {
@@ -202,15 +257,11 @@ pub(super) fn file_uris_match_on(left: &Uri, right: &Uri, case_insensitive_host:
     // equal. An earlier revision short-circuited on `left == right` *before*
     // admission, which made a URI this decoder refuses match itself. Identity is
     // therefore a statement about admitted local paths, never about wire strings.
-    if windows_paths::is_windows_drive_path(&left_path)
-        && windows_paths::is_windows_drive_path(&right_path)
-    {
-        return left_path.eq_ignore_ascii_case(&right_path);
-    }
-    if case_insensitive_host {
-        return left_path.eq_ignore_ascii_case(&right_path);
-    }
-    left_path == right_path
+    let fold = case_insensitive_host
+        || (windows_paths::is_windows_drive_path(&left_path)
+            && windows_paths::is_windows_drive_path(&right_path));
+    path_identity_key_on(Path::new(&left_path), false, fold)
+        == path_identity_key_on(Path::new(&right_path), false, fold)
 }
 
 /// Resolve the supported local forms of a file URI (RFC 8089 sections 2-3).
@@ -243,7 +294,12 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
     };
     // Split URI components before decoding: encoded filename delimiters are
     // literal path data, not a query, fragment, or a second decoding pass.
-    let decoded = percent_codec::decode_uri_path(path)?.replace('\\', "/");
+    let mut decoded = percent_codec::decode_uri_path(path)?;
+    // `\` is a separator only where the host or the drive spelling says so; a
+    // Unix `a%5Cb.rs` is one filename and must not alias `a/b.rs`.
+    if cfg!(windows) || windows_paths::is_windows_drive_uri_path(&decoded) {
+        decoded = decoded.replace('\\', "/");
+    }
     if decoded.contains('\0') || decoded.starts_with("//") {
         // A doubled leading separator is a UNC/network-share spelling on
         // Windows even when the URI authority is empty or localhost. This
@@ -476,14 +532,15 @@ fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
 
 fn paths_equal_or_below_on(root: &Path, candidate: &Path, case_insensitive: bool) -> bool {
     if case_insensitive {
-        let root_components = root
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
-            .collect::<Vec<_>>();
-        let candidate_components = candidate
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
-            .collect::<Vec<_>>();
+        let fold = |path: &Path| {
+            path.components()
+                .map(|component| {
+                    path_identity_key_on(Path::new(component.as_os_str()), false, true)
+                })
+                .collect::<Vec<_>>()
+        };
+        let root_components = fold(root);
+        let candidate_components = fold(candidate);
         candidate_components.len() >= root_components.len()
             && candidate_components[..root_components.len()] == root_components[..]
     } else {
@@ -888,6 +945,66 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_backslash_filename_does_not_alias_a_directory_separator() -> Result<(), String> {
+        let backslash = parse_uri("file:///w/a%5Cb.rs")?;
+        let nested = parse_uri("file:///w/a/b.rs")?;
+        // Negative experiment: rewriting `\` on every host makes these equal.
+        assert!(!file_uris_match_on(&backslash, &nested, false));
+        assert!(!file_uris_match_on(&backslash, &nested, true));
+        assert_eq!(
+            path_from_file_uri(&backslash),
+            Some(PathBuf::from("/w/a\\b.rs"))
+        );
+        assert_eq!(
+            path_from_file_uri(&nested),
+            Some(PathBuf::from("/w/a/b.rs"))
+        );
+        // The encoder represents the file and round-trips it.
+        let emitted = file_uri_for_path(Path::new("/w/a\\b.rs"))?;
+        assert_eq!(emitted.as_str(), "file:///w/a%5Cb.rs");
+        assert!(file_uris_match_on(&emitted, &backslash, false));
+        // A traversal-looking backslash run is one literal filename on Unix.
+        let literal = parse_uri("file:///a/..%5c..%5cetc/passwd")?;
+        assert_eq!(
+            path_from_file_uri(&literal),
+            Some(PathBuf::from("/a/..\\..\\etc/passwd"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn windows_drive_backslash_spelling_still_separates_on_every_host() -> Result<(), String> {
+        let slash = parse_uri("file:///C:/a/b.rs")?;
+        let backslash = parse_uri("file:///C:/a%5Cb.rs")?;
+        assert!(file_uris_match_on(&slash, &backslash, false));
+        let emitted = file_uri_for_path(Path::new(r"C:\a\b.rs"))?;
+        assert!(file_uris_match_on(&emitted, &slash, false));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn distinct_non_utf8_paths_keep_distinct_file_uris() -> Result<(), String> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let first = Path::new(OsStr::from_bytes(b"/w/a\xFF.rs"));
+        let second = Path::new(OsStr::from_bytes(b"/w/a\xFE.rs"));
+        let first_uri = file_uri_for_path(first)?;
+        let second_uri = file_uri_for_path(second)?;
+        // Negative experiment: `to_string_lossy` maps both to `a\u{FFFD}.rs`.
+        assert_ne!(first_uri.as_str(), second_uri.as_str());
+        assert_eq!(first_uri.as_str(), "file:///w/a%FF.rs");
+        assert_eq!(second_uri.as_str(), "file:///w/a%FE.rs");
+        assert!(!file_uris_match_on(&first_uri, &second_uri, false));
+        // The shared decoder refuses non-UTF-8 URIs: never an alias.
+        assert_eq!(path_from_file_uri(&first_uri), None);
+        // A non-UTF-8 path with a parent segment cannot be collapsed.
+        assert!(file_uri_for_path(Path::new(OsStr::from_bytes(b"/w/../a\xFF"))).is_err());
+        Ok(())
+    }
+
     #[test]
     fn file_uri_rejects_parent_directory_segments() -> Result<(), String> {
         let root = std::env::temp_dir().join("ripr-uri-parent-segment-root");
@@ -899,7 +1016,7 @@ mod tests {
             "file:///a/%2e%2e/etc/passwd",
             "file:///a/%2E%2E/%2e%2e/etc/passwd",
             "file:///a/..%2f..%2fetc/passwd",
-            "file:///a/..%5c..%5cetc/passwd",
+            "file:///C:/a/..%5c..%5cetc/passwd",
             "file:///workspace/src/../lib.rs",
             "file:///C:/Windows/../system.ini",
             "file:///C:/Windows/%2e%2e/system.ini",

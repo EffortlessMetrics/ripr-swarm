@@ -2178,12 +2178,7 @@ fn is_inside_workspace(root: &Path, path: &Path) -> bool {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) {
-        normalized.to_lowercase()
-    } else {
-        normalized
-    }
+    crate::output::path::path_identity_key(path)
 }
 
 fn static_limit_kind_values(value: &Value) -> Vec<String> {
