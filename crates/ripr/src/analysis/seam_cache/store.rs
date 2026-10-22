@@ -2138,15 +2138,24 @@ mod tests {
             PublicationPlan::Sharded(ranges) => format!("sharded {ranges:?}"),
             PublicationPlan::SkipOversized { index, .. } => format!("oversized {index:?}"),
         };
-        for ceiling in [
-            single_len,
-            single_len.saturating_sub(1),
-            single_len / 3,
-            single_len.saturating_mul(4),
+        // One record far above the ceiling, mid-store: both planners must
+        // name the same oversized record.
+        let mut with_oversized_record = mixed_seams(120, 30, 7);
+        if let Some(record) = with_oversized_record.get_mut(70) {
+            record.evidence.reach =
+                StageEvidence::new(StageState::Yes, Confidence::High, "r".repeat(single_len));
+        }
+        for (seams, ceiling) in [
+            (&seams, single_len),
+            (&seams, single_len.saturating_sub(1)),
+            (&seams, single_len / 3),
+            (&seams, single_len.saturating_mul(4)),
+            (&seams, 1),
+            (&with_oversized_record, single_len / 2),
         ] {
-            let serial = plan_publication(&key, &seams, None, &[], 120, ceiling)?;
+            let serial = plan_publication(&key, seams, None, &[], 120, ceiling)?;
             let concurrent = with_shard_publish_workers(4, || {
-                plan_publication(&key, &seams, None, &[], 120, ceiling)
+                plan_publication(&key, seams, None, &[], 120, ceiling)
             })?;
             assert_eq!(
                 plan_kind(concurrent),
@@ -2154,11 +2163,9 @@ mod tests {
                 "ceiling {ceiling}"
             );
             let blocked = with_shard_publish_workers(4, || {
-                with_blocked_shard_spawns(|| {
-                    plan_publication(&key, &seams, None, &[], 120, ceiling)
-                })
+                with_blocked_shard_spawns(|| plan_publication(&key, seams, None, &[], 120, ceiling))
             })?;
-            let again = plan_publication(&key, &seams, None, &[], 120, ceiling)?;
+            let again = plan_publication(&key, seams, None, &[], 120, ceiling)?;
             assert_eq!(
                 plan_kind(blocked),
                 plan_kind(again),
