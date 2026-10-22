@@ -369,3 +369,119 @@ fn function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask() -> Re
     }
     Ok(())
 }
+
+const INFECTION_CASES: &[(&str, &str, bool)] = &[
+    (
+        "bare_blind",
+        "let f: fn(u32) -> u32 = capped; assert_eq!(f(3), 3);",
+        false,
+    ),
+    (
+        "qualified_blind",
+        "let f: fn(u32) -> u32 = crate::capped; assert_eq!(f(3), 3);",
+        false,
+    ),
+    (
+        "reverse_blind",
+        "let f: fn(u32) -> u32 = capped; assert_eq!(3, f(3));",
+        false,
+    ),
+    ("direct_blind", "assert_eq!(capped(3), 3);", false),
+    (
+        "bare_observed",
+        "let f: fn(u32) -> u32 = capped; assert_eq!(f(9), 6);",
+        true,
+    ),
+    (
+        "qualified_observed",
+        "let f: fn(u32) -> u32 = crate::capped; assert_eq!(f(9), 6);",
+        true,
+    ),
+    (
+        "reverse_observed",
+        "let f: fn(u32) -> u32 = capped; assert_eq!(6, f(9));",
+        true,
+    ),
+    ("direct_observed", "assert_eq!(capped(9), 6);", true),
+];
+
+fn infection_source(body: &str) -> String {
+    format!(
+        "pub fn capped(n: u32) -> u32 {{
+    n.min(6)
+}}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    #[test]
+    fn pin() {{
+        {body}
+    }}
+}}
+"
+    )
+}
+
+#[test]
+fn function_pointer_invisible_inputs_keep_infection_weak() -> Result<(), String> {
+    for &(case, body, observes_change) in INFECTION_CASES {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"pointer-infection\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), infection_source(body))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("change.diff"),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn capped(n: u32) -> u32 {\n-    n.min(5)\n+    n.min(6)\n }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let changed: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 2
+            })
+            .collect();
+        assert_eq!(changed.len(), 1, "{case}: one changed return");
+        assert_eq!(
+            changed[0].class,
+            if observes_change {
+                ExposureClass::Exposed
+            } else {
+                ExposureClass::WeaklyExposed
+            },
+            "{case}: the asserted input must reach the changed value"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn function_pointer_invisible_runtime_controls_match_the_input() -> Result<(), String> {
+    for &(case, body, observes_change) in INFECTION_CASES {
+        for (label, expression, should_fail) in [
+            ("current", "n.min(6)", false),
+            ("baseline", "n.min(5)", observes_change),
+        ] {
+            source_runtime_control(
+                &infection_source(body).replacen("n.min(6)", expression, 1),
+                &format!("function_pointer_invisible_{case}_{label}"),
+                1,
+                should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}
