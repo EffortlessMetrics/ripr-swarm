@@ -35,7 +35,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         let action = if route == "ub-review.yml" {
             "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
         } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
-            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
+            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master"
         } else {
             "v1"
         };
@@ -1608,6 +1608,7 @@ fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Re
         "badge-endpoints.yml",
         "coverage.yml",
         "test-analytics.yml",
+        "ub-review.yml",
     ] {
         let path = format!(".github/workflows/{name}");
         assert!(
@@ -1709,47 +1710,144 @@ fn unpinned_allowlist_row_for_a_missing_workflow_is_rejected() {
     assert!(unpinned_allowlist_missing_file_violations(&allowlist, &present).is_empty());
 }
 
-#[test]
-fn publish_jobs_run_locked_tools_without_the_registry_latest() -> Result<(), String> {
-    let text = repo_workflow("publish-extension.yml")?;
-    for job in ["publish-vs-marketplace", "publish-open-vsx"] {
-        let header = format!("  {job}:");
-        let mut block = String::new();
-        let mut inside = false;
-        for line in text.lines() {
-            let top_level_job = line.starts_with("  ")
-                && !line.starts_with("   ")
-                && line.trim_end().ends_with(':');
-            if top_level_job {
-                inside = line == header;
-            }
-            if inside {
-                block.push_str(line);
-                block.push('\n');
-            }
+fn job_block(text: &str, job: &str) -> String {
+    let header = format!("  {job}:");
+    let mut block = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let top_level_job =
+            line.starts_with("  ") && !line.starts_with("   ") && line.trim_end().ends_with(':');
+        if top_level_job {
+            inside = line == header;
         }
-        assert!(!block.is_empty(), "missing job {job}");
-        assert!(
-            block.contains("environment: "),
-            "{job} needs an environment gate"
+        if inside {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    block
+}
+
+/// Contract violations for one PAT-holding publish job; comment lines ignored.
+fn publish_job_violations(text: &str, job: &str, environment: &str, pat: &str) -> Vec<String> {
+    let block = job_block(text, job);
+    if block.is_empty() {
+        return vec![format!("missing job {job}")];
+    }
+    let code: Vec<&str> = block
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    let code_text = code.join("\n");
+    let mut violations = Vec::new();
+    if !code.contains(&format!("    environment: {environment}").as_str()) {
+        violations.push(format!("{job} must declare environment {environment}"));
+    }
+    if !code_text.contains("\n    permissions:\n      contents: read\n") {
+        violations.push(format!("{job} must declare job-level contents: read"));
+    }
+    let job_env = code_text
+        .split("\n    env:\n")
+        .nth(1)
+        .map(|rest| rest.split("\n    steps:").next().unwrap_or(""))
+        .unwrap_or("");
+    if job_env.contains(pat) {
+        violations.push(format!("{job} exposes {pat} at job level"));
+    }
+    if code_text.matches("secrets.").count() != 1
+        || !code_text.contains(&format!("{pat}: ${{{{ secrets.{pat} }}}}"))
+    {
+        violations.push(format!("{job} must reference exactly the {pat} secret"));
+    }
+    let publish_step = code_text.find("      - name: Publish to ");
+    let pat_env = code_text.find(&format!("{pat}: ${{{{ secrets."));
+    if !matches!((pat_env, publish_step), (Some(env), Some(step)) if env > step) {
+        violations.push(format!("{job} {pat} must be env of the publish step only"));
+    }
+    if !code_text.contains("npm ci --ignore-scripts") {
+        violations.push(format!("{job} must install the locked graph"));
+    }
+    if !(code_text.contains("node_modules/.bin/") || code_text.contains("npx --no-install")) {
+        violations.push(format!("{job} must run the lockfile-installed tool"));
+    }
+    if code_text.contains("npx -y") || code_text.contains("npx @") {
+        violations.push(format!("{job} runs a registry-latest tool"));
+    }
+    if !code_text.contains("persist-credentials: false") {
+        violations.push(format!(
+            "{job} checkout must set persist-credentials: false"
+        ));
+    }
+    violations
+}
+
+#[test]
+fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    let jobs = [
+        (
+            "publish-vs-marketplace",
+            "vs-marketplace-publish",
+            "VSCE_PAT",
+        ),
+        ("publish-open-vsx", "open-vsx-publish", "OVSX_PAT"),
+    ];
+    for (job, environment, pat) in jobs {
+        // Positive control: the checked-in workflow satisfies the contract.
+        assert_eq!(
+            publish_job_violations(&text, job, environment, pat),
+            Vec::<String>::new()
         );
-        assert!(
-            block.contains("npm ci --ignore-scripts"),
-            "{job} must install the locked graph"
+        // Negative experiments: each mutation must be caught for this job.
+        let block = job_block(&text, job);
+        let step_env = format!("          {pat}: ${{{{ secrets.{pat} }}}}\n");
+        let job_env = format!("      {pat}: ${{{{ secrets.{pat} }}}}\n");
+        assert!(block.contains(&step_env), "{job} step-level PAT must exist");
+        for (label, mutated_block, expect) in [
+            (
+                "PAT back at job level",
+                block.replace(&step_env, "").replacen(
+                    "    env:\n",
+                    &format!("    env:\n{job_env}"),
+                    1,
+                ),
+                "job level",
+            ),
+            (
+                "environment removed",
+                block.replace(&format!("    environment: {environment}\n"), ""),
+                "environment",
+            ),
+            (
+                "contents: read removed",
+                block.replace("    permissions:\n      contents: read\n", ""),
+                "contents: read",
+            ),
+            (
+                "credentials persisted",
+                block.replace("          persist-credentials: false\n", ""),
+                "persist-credentials",
+            ),
+            (
+                "registry-latest tool",
+                block.replace("npm ci --ignore-scripts", "npx -y ovsx --version"),
+                "locked graph",
+            ),
+        ] {
+            assert_ne!(mutated_block, block, "{label} mutation must change {job}");
+            let mutated = text.replace(&block, &mutated_block);
+            let violations = publish_job_violations(&mutated, job, environment, pat);
+            assert!(
+                violations.iter().any(|v| v.contains(expect)),
+                "{label} on {job} must be rejected ({expect}); got {violations:?}"
+            );
+        }
+        // A commented-out gate does not count.
+        let commented = text.replace(
+            &format!("    environment: {environment}\n"),
+            &format!("    # environment: {environment}\n"),
         );
-        let code: String = block
-            .lines()
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            code.contains("node_modules/.bin/") || code.contains("npx --no-install"),
-            "{job} must run the lockfile-installed tool, not fetch one at run time"
-        );
-        assert!(
-            !code.contains("npx -y") && !code.contains("npx @"),
-            "{job} must not run registry-latest tools"
-        );
+        assert!(!publish_job_violations(&commented, job, environment, pat).is_empty());
     }
     Ok(())
 }
