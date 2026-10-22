@@ -109,6 +109,36 @@ fn axes_pass_at_their_floor_and_fail_below_it() -> Result<(), String> {
 }
 
 #[test]
+fn coverage_violations_enforce_axis_floors_and_stay_quiet_without_axes() -> Result<(), String> {
+    let mut corpus = bare_corpus()?;
+    tag(&mut corpus, 0, &["language_shape"]);
+    let text = coverage_violations(&corpus, &ledger(AXIS_LEDGER)?, &SpecExamples::new()).join("\n");
+    assert!(
+        text.contains("axis `language_shape` holds 1 cases"),
+        "{text}"
+    );
+    assert!(
+        text.contains("axis `hostile_input` holds 0 cases"),
+        "{text}"
+    );
+    // A ledger with no [[axis]] declares nothing and prints nothing.
+    let plain = ledger(LEDGER)?;
+    assert!(axis_violations(&bare_corpus()?, &plain).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_blank_axis_id_is_rejected() -> Result<(), String> {
+    let text = "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n[[axis]]\nid = \" \"\ndescription = \"d\"\nfloor = 0\n";
+    let violations = axis_violations(&bare_corpus()?, &ledger(text)?);
+    assert!(
+        violations.iter().any(|v| v.contains("axis without an id")),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn undeclared_duplicate_and_repeated_axes_are_rejected() -> Result<(), String> {
     let doubled = format!(
         "{AXIS_LEDGER}\n[[axis]]\nid = \"hostile_input\"\ndescription = \" \"\nfloor = 0\n"

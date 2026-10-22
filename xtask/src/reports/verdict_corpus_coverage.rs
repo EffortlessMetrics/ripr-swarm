@@ -396,6 +396,9 @@ fn axis_violations(corpus: &Corpus, ledger: &Ledger) -> Vec<String> {
         if !declared.insert(axis.id.as_str()) {
             violations.push(format!("{LEDGER_FILE} declares axis `{}` twice", axis.id));
         }
+        if axis.id.trim().is_empty() {
+            violations.push(format!("{LEDGER_FILE} declares an axis without an id"));
+        }
         if axis.description.trim().is_empty() {
             violations.push(format!(
                 "{LEDGER_FILE} declares axis `{}` without a description",
