@@ -17,15 +17,15 @@
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
     "mutants": [
       {
-        "replacement": "exists $args{start} ? $args{start} : 1",
-        "mutated_line": "my $self = bless { n => exists $args{start} ? $args{start} : 1 }, $class;",
+        "replacement": "defined $args{start} ? $args{start} : 1",
+        "mutated_line": "my $self = bless { n => defined $args{start} ? $args{start} : 1 }, $class;",
         "outcome": "tests_failed",
         "failing_test": "t/counter.t: first increment",
         "equivalence_review": "not equivalent: the default start is one"
       },
       {
-        "replacement": "exists $args{start} ? 0 : 0",
-        "mutated_line": "my $self = bless { n => exists $args{start} ? 0 : 0 }, $class;",
+        "replacement": "defined $args{start} ? 0 : 0",
+        "mutated_line": "my $self = bless { n => defined $args{start} ? 0 : 0 }, $class;",
         "outcome": "tests_failed",
         "failing_test": "t/counter.t: start is honoured",
         "equivalence_review": "not equivalent: an explicit start is ignored"
@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-bless-counter-start.json",
-    "sha256": "80e51a4e6bdaee28334544a4e75c5105be6c9fcf13e99a886d7e96a75b598dff",
+    "sha256": "632e3f9f6f837fd0a23491555a234914c209079757e6e9fd393aa8ebe2eb1b74",
     "provenance": "producer"
   }
 }

@@ -4,13 +4,13 @@
       "behavior_hint": "unknown",
       "change_id": "change:file:lib/Counter.pm:7:7",
       "changed_observable": null,
-      "changed_text_digest": "fnv64:5fc3863d3a206cc4",
+      "changed_text_digest": "fnv64:1b3eaf30ddbbd6dd",
       "file_id": "file:lib/Counter.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Counter.pm:sub:Counter::new:45-181",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::new:45-182",
       "provenance_refs": [],
       "range": {
-        "end_column": 77,
+        "end_column": 78,
         "end_line": 7,
         "start_column": 0,
         "start_line": 7
@@ -20,7 +20,7 @@
   "dynamic_boundaries": [],
   "files": [
     {
-      "digest": "sha256:fea2abc9e8a9e6c816fbbe1d4696451b7603e45e935f95761fa4cb88d889a5b2",
+      "digest": "sha256:d3b1f750e1c31b850a2784b9dc7ad81dea149dbae8d7cc7cad86384c284d5c8f",
       "file_id": "file:lib/Counter.pm",
       "package_names": [
         "Counter"
@@ -306,7 +306,7 @@
       "file_id": "file:lib/Counter.pm",
       "kind": "sub",
       "name": "new",
-      "owner_id": "owner:lib/Counter.pm:sub:Counter::new:45-181",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::new:45-182",
       "package": "Counter",
       "provenance_refs": [
         "prov:syntax:file:lib/Counter.pm"
@@ -323,7 +323,7 @@
       "file_id": "file:lib/Counter.pm",
       "kind": "sub",
       "name": "inc",
-      "owner_id": "owner:lib/Counter.pm:sub:Counter::inc:183-266",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::inc:184-267",
       "package": "Counter",
       "provenance_refs": [
         "prov:syntax:file:lib/Counter.pm"
@@ -340,7 +340,7 @@
       "file_id": "file:lib/Counter.pm",
       "kind": "sub",
       "name": "value",
-      "owner_id": "owner:lib/Counter.pm:sub:Counter::value:268-325",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::value:269-326",
       "package": "Counter",
       "provenance_refs": [
         "prov:syntax:file:lib/Counter.pm"
@@ -421,7 +421,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:c6cb09256fc0f55bedfc4b9b545d118bc929c36a3652ae2f62ad1fc501c8f3f6",
+  "packet_fingerprint": "sha256:29d7e132179ff5a72b9ef5ee6f06e4f3213b2a94175a732b7043d20cdade435a",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
