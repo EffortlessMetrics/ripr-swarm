@@ -9,18 +9,16 @@ use std::process::Command;
 /// `bash` on a Windows PATH can be the WSL launcher in System32, which fails
 /// without an installed distribution. Prefer Git for Windows' bash there.
 fn bash() -> PathBuf {
-    if cfg!(windows) {
-        if let Some(files) = std::env::var_os("ProgramFiles") {
-            let git_bash = PathBuf::from(files)
+    let git_bash = std::env::var_os("ProgramFiles")
+        .filter(|_| cfg!(windows))
+        .map(|files| {
+            PathBuf::from(files)
                 .join("Git")
                 .join("bin")
-                .join("bash.exe");
-            if git_bash.exists() {
-                return git_bash;
-            }
-        }
-    }
-    PathBuf::from("bash")
+                .join("bash.exe")
+        })
+        .filter(|path| path.exists());
+    git_bash.unwrap_or_else(|| PathBuf::from("bash"))
 }
 
 fn summarize_step() -> Result<String, String> {
