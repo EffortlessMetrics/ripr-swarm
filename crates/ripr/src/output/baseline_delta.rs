@@ -3584,6 +3584,123 @@ mod tests {
         Ok(())
     }
 
+    fn scoped_gate_decision(changed_files: &[&str]) -> String {
+        json!({
+            "schema_version": "0.1",
+            "decisions": [],
+            "analysis_scope": {
+                "scope": "diff_scoped_changed_files",
+                "run_status": "limited_diff_scope",
+                "changed_files": changed_files,
+                "changed_production_files": changed_files,
+            },
+        })
+        .to_string()
+    }
+
+    fn two_gap_baseline() -> &'static str {
+        r#"{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "entries": [
+            {"identity": {"canonical_gap_id": "gap:fixed"}, "path": "src/fixed.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"},
+            {"identity": {"canonical_gap_id": "gap:elsewhere"}, "path": "src/elsewhere.rs", "line": 9, "static_class": "weakly_gripped", "decision": "advisory"}
+          ]
+        }"#
+    }
+
+    #[test]
+    fn baseline_delta_and_update_keep_out_of_scope_gaps_not_evaluated() -> Result<(), String> {
+        // Issue #9301 F2: a diff-scoped gate decision lists only gaps in the
+        // analyzed files. Positive control: `src/fixed.rs` is inside the
+        // scope and absent, so it is genuinely `resolved` and removable.
+        // Discriminating negative: `src/elsewhere.rs` is outside the scope,
+        // so its absence is `not_evaluated` (never resolved) and
+        // `--remove-resolved` must keep the live debt.
+        let current = scoped_gate_decision(&["src/fixed.rs"]);
+        let report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(two_gap_baseline().to_string()),
+            current_gate_decision_json: Ok(current.clone()),
+        });
+        let rendered: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(rendered["delta"]["resolved"], 1, "{rendered}");
+        assert_eq!(rendered["delta"]["stale_baseline_entry"], 1, "{rendered}");
+        let items = rendered["items"].as_array().ok_or("items missing")?;
+        let resolved = items
+            .iter()
+            .find(|item| item["bucket"] == "resolved")
+            .ok_or("no resolved item")?;
+        assert_eq!(resolved["path"], "src/fixed.rs");
+        assert!(resolved.get("evaluation").is_none(), "{resolved}");
+        let skipped = items
+            .iter()
+            .find(|item| item["path"] == "src/elsewhere.rs")
+            .ok_or("no elsewhere item")?;
+        assert_eq!(skipped["bucket"], "stale_baseline_entry", "{skipped}");
+        assert_eq!(skipped["evaluation"], "not_evaluated", "{skipped}");
+
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: two_gap_baseline().to_string(),
+                current_gate_decision_json: current,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        let updated = crate::output::baseline_update::render_baseline_update_json(&update)?;
+        assert!(updated.contains("gap:elsewhere"), "{updated}");
+        assert!(!updated.contains("gap:fixed"), "{updated}");
+        assert_eq!(
+            crate::output::baseline_update::baseline_update_removed_resolved_count(&update),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_unrelated_diff_resolves_nothing_and_missing_scope_fails_closed()
+    -> Result<(), String> {
+        // The audit repro: a diff touching only unrelated files.
+        for current in [
+            scoped_gate_decision(&["tests/unrelated.rs"]),
+            // A legacy decision with no scope disclosure fails closed too.
+            r#"{"schema_version": "0.1", "decisions": []}"#.to_string(),
+        ] {
+            let report = build_baseline_delta_report(BaselineDeltaInput {
+                root: ".".to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: Ok(two_gap_baseline().to_string()),
+                current_gate_decision_json: Ok(current.clone()),
+            });
+            let rendered: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+                .map_err(|err| err.to_string())?;
+            assert_eq!(rendered["delta"]["resolved"], 0, "{rendered}");
+            assert_eq!(rendered["delta"]["stale_baseline_entry"], 2, "{rendered}");
+            let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+                crate::output::baseline_update::BaselineUpdateInput {
+                    baseline_path: "baseline.json".to_string(),
+                    current_gate_decision_path: "current.json".to_string(),
+                    baseline_json: two_gap_baseline().to_string(),
+                    current_gate_decision_json: current,
+                    remove_resolved: true,
+                    migrate_legacy_identities: false,
+                },
+            )?;
+            assert_eq!(
+                crate::output::baseline_update::baseline_update_after_entry_count(&update),
+                2
+            );
+        }
+        Ok(())
+    }
+
     fn repo_root() -> Result<PathBuf, String> {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
