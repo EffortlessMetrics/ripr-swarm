@@ -1,4 +1,4 @@
-//! #9497 (RIPR-SPEC-0243 rule 16): a changed `return` expression whose old
+//! #9497 (RIPR-SPEC-0243 rule 17): a changed `return` expression whose old
 //! and new values agree on every literal input the strong assertions use is
 //! unexercised, so its finding is `weakly_exposed`; any input that separates
 //! the two, or anything the evaluator cannot decide, keeps the verdict.

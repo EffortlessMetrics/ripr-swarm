@@ -914,7 +914,7 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
 
-/// RIPR-SPEC-0243 rule 15 (#9497): a `node:test` callback that calls
+/// RIPR-SPEC-0243 rule 16 (#9497): a `node:test` callback that calls
 /// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
 /// have gone, so it registers no discriminator. Negative: the same body
 /// without the call, a `skip` on another receiver, and a callback with no

@@ -2844,7 +2844,7 @@ fn test_name_and_assertions_from_registration(
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
     // `node:test` / AVA-style contexts end a running test as skipped or todo
-    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 15):
+    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 16):
     // the run passes however the later assertions would have gone, so the
     // test registers no discriminator. Textual and fail-closed: any call of
     // those methods on the callback's first parameter withdraws the test,

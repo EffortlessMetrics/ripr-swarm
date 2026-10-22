@@ -206,6 +206,10 @@ PR-B1 adds
 `output::sarif::tests::sarif_discloses_incomplete_zero_finding_outcome_at_run_level`
 and
 `output::badge::tests::incomplete_zero_finding_diff_is_not_a_green_badge`.
+A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
+`no_behavioral_candidates` shows a yellow warning naming that kind, not a green
+`0`; `complete_no_findings` keeps the green zero. This is pinned by
+`output::badge::tests::no_subject_badges_do_not_claim_a_clean_zero`.
 
 ## Required Evidence
 
