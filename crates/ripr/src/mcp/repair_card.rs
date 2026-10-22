@@ -178,7 +178,7 @@ pub(crate) fn gather_seam_inventory(
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        let scoped = crate::analysis::inventory_diff_scoped_with_seam_limit_at_with_config(
+        let scoped = crate::analysis::inventory_diff_scoped_bound_seams_at_with_config(
             root,
             config,
             &changed_files,

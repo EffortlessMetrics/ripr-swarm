@@ -32,9 +32,9 @@ Generated config:
   - remains advisory and does not configure CI blocking or mutation execution
 
 Generated GitHub workflow:
-  - installs ripr and writes a pilot packet plus repo report artifacts
+  - installs ripr and runs `ripr reports ci-packet` for the PR evidence packet
   - uploads report artifacts and writes a reviewer-oriented advisory summary
-  - surfaces future PR test guidance reports as non-blocking check annotations
+  - optionally renders inline review comments (RIPR_COMMENT_MODE=inline)
   - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
   - uses continue-on-error for advisory RIPR work and upload steps
   - does not enable baseline failure policy by default

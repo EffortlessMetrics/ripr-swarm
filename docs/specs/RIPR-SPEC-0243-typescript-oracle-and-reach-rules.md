@@ -1153,6 +1153,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `an_options_object_guard_no_test_input_enters_withdraws_exposed` and
   `an_options_object_guard_some_test_input_can_enter_keeps_exposed` are the
   production-path positive and negative.
+- #8569: a braceless `if (c)` / `else if (c)` head that directly precedes the
+  changed line makes that line the arm's one statement, read with the same
+  rule. Any other text before the line (a loop head, a nested braceless `if`,
+  a continued condition, an `else` after a braceless arm, or a second
+  statement on the changed line, which the head does not guard) reads no
+  extra condition and only withdraws exclusions.
+  `braceless_arms_read_their_head_and_nothing_else` pins the reader, and
+  `a_braceless_arm_no_test_input_enters_withdraws_exposed` and
+  `a_braceless_arm_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with

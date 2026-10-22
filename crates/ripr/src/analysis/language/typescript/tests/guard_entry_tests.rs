@@ -539,3 +539,53 @@ fn an_options_object_guard_some_test_input_can_enter_keeps_exposed() -> Result<(
     }
     Ok(())
 }
+
+const BRACELESS_PRICE: &str = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2;\n  return total;\n}\n";
+
+fn braceless_arm(label: &str, test: &str) -> Result<Finding, String> {
+    finding_at(
+        label,
+        BRACELESS_PRICE,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        test,
+    )
+}
+
+#[test]
+fn a_braceless_arm_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
+    let finding = braceless_arm("braceless-closed", &test_with(&[("price(2)", "20")]))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_braceless_arm_some_test_input_can_enter_keeps_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        (
+            "braceless-entered",
+            vec![("price(2)", "20"), ("price(3, 'HALF')", "15")],
+        ),
+        ("braceless-computed", vec![("price(2, pick())", "20")]),
+    ] {
+        let finding = braceless_arm(label, &test_with(&calls))?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_second_statement_on_a_braceless_arm_line_keeps_exposed() -> Result<(), String> {
+    let source = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+    let finding = finding_at(
+        "braceless-two-statements",
+        source,
+        4,
+        "    total = total / 2; total += 1;",
+        "    total = total / 2; total += 2;",
+        &test_with(&[("price(2)", "22")]),
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
