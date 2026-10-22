@@ -36,7 +36,9 @@ use ra_ap_syntax::{
     AstNode, SyntaxKind,
     ast::{self, HasAttrs, HasName},
 };
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use super::nesting::parse_clean_source_file;
 use super::ra::{include_literal_path, parse_rust_string_literal, path_target_from_attributes};
@@ -129,8 +131,60 @@ pub(crate) struct RustModuleTreeScan {
     pub(crate) items_complete: bool,
 }
 
+/// Upper bound on the source text the scan memo keeps as keys. The cargo pin
+/// holds about 36 MB of distinct sources; a quarter of that keeps the memo
+/// well under the peak-RSS noise while still covering most repeats (#9794).
+const SCAN_MEMO_KEY_BYTES: usize = 8 * 1024 * 1024;
+
+/// A source larger than this is scanned without being memoized, so one
+/// generated file cannot spend the whole key budget.
+const SCAN_MEMO_MAX_TEXT_BYTES: usize = 256 * 1024;
+
+#[derive(Default)]
+struct ScanMemo {
+    scans: HashMap<Box<str>, RustModuleTreeScan>,
+    key_bytes: usize,
+}
+
+static SCAN_MEMO: Mutex<Option<ScanMemo>> = Mutex::new(None);
+
 /// Scans one Rust source text for its module-tree edges.
+///
+/// The scan is a pure function of `text`, and the module graph, the
+/// call-identity owner lookup and the facts build each ask it about the same
+/// file, so repeats of an exact text return the earlier result without a
+/// second parse. The memo is keyed by the full text (equality, never a hash)
+/// and keeps only the tiny scan result plus the key; when the key budget is
+/// spent the memo starts over, so a long-lived editor process stays bounded.
 pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
+    if text.len() > SCAN_MEMO_MAX_TEXT_BYTES {
+        return scan_module_tree(text);
+    }
+    if let Some(found) = scan_memo_lookup(text) {
+        return found;
+    }
+    let scan = scan_module_tree(text);
+    scan_memo_insert(text, &scan);
+    scan
+}
+
+fn scan_memo_lookup(text: &str) -> Option<RustModuleTreeScan> {
+    let guard = SCAN_MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+    guard.as_ref()?.scans.get(text).cloned()
+}
+
+fn scan_memo_insert(text: &str, scan: &RustModuleTreeScan) {
+    let mut guard = SCAN_MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+    let memo = guard.get_or_insert_with(ScanMemo::default);
+    if memo.key_bytes + text.len() > SCAN_MEMO_KEY_BYTES {
+        *memo = ScanMemo::default();
+    }
+    if memo.scans.insert(text.into(), scan.clone()).is_none() {
+        memo.key_bytes += text.len();
+    }
+}
+
+fn scan_module_tree(text: &str) -> RustModuleTreeScan {
     let Some(parse) = parse_clean_source_file(text) else {
         return RustModuleTreeScan::default();
     };
@@ -488,6 +542,55 @@ mod tests {
             inline: inline.iter().map(|segment| segment.to_string()).collect(),
             name: name.to_string(),
         }
+    }
+
+    #[test]
+    fn memoized_scan_equals_a_fresh_scan_for_complete_and_incomplete_sources() {
+        for source in [
+            "mod a;\n#[path = \"b.rs\"]\nmod b;\n",
+            "mod a { mod b; }\n",
+            "mod broken {",
+            "cfg_if::cfg_if! { if #[cfg(unix)] { mod unix; } }\n",
+        ] {
+            let fresh = scan_module_tree(source);
+            assert_eq!(rust_module_tree_scan(source), fresh, "{source}");
+            assert_eq!(rust_module_tree_scan(source), fresh, "repeat {source}");
+        }
+    }
+
+    #[test]
+    fn memo_is_keyed_by_exact_text_not_by_a_prefix_or_hash() {
+        let first = rust_module_tree_scan("mod same_len_a;\n");
+        let second = rust_module_tree_scan("mod same_len_b;\n");
+        assert_eq!(first.edges, vec![default(&[], "same_len_a")]);
+        assert_eq!(second.edges, vec![default(&[], "same_len_b")]);
+    }
+
+    #[test]
+    fn spent_key_budget_restarts_the_memo_without_changing_results() {
+        // Distinct texts large enough to overflow the budget several times.
+        let filler = " ".repeat(SCAN_MEMO_MAX_TEXT_BYTES / 2);
+        let count = SCAN_MEMO_KEY_BYTES / filler.len() * 3;
+        for n in 0..count {
+            let source = format!("mod m{n};\n{filler}");
+            assert_eq!(
+                rust_module_tree_scan(&source).edges,
+                vec![default(&[], &format!("m{n}"))]
+            );
+        }
+        let guard = SCAN_MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+        let held = guard.as_ref().map_or(0, |memo| memo.key_bytes);
+        assert!(held <= SCAN_MEMO_KEY_BYTES, "{held}");
+    }
+
+    #[test]
+    fn oversized_text_is_scanned_but_never_kept() {
+        let big = format!("mod big_one;\n{}", " ".repeat(SCAN_MEMO_MAX_TEXT_BYTES));
+        assert_eq!(
+            rust_module_tree_scan(&big).edges,
+            vec![default(&[], "big_one")]
+        );
+        assert!(scan_memo_lookup(&big).is_none());
     }
 
     #[test]
