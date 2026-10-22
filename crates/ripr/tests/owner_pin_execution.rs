@@ -2001,6 +2001,26 @@ fn tokio_spawned_task_counts_only_when_joined_and_unwrapped() -> Result<(), Stri
             "    use core as tokio;\n",
         ),
         (
+            "a glob import that may supply tokio",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::*;\n",
+        ),
+        (
+            "an imported tokio from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::tokio;\n",
+        ),
+        (
+            "an imported spawn from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::{spawn};\n",
+        ),
+        (
+            "an expect message that can return",
+            spawned(".await.expect(if std::env::var(\"X\").is_ok() { return; } else { \"failed\" });"),
+            "",
+        ),
+        (
             "a spawn that is not tokio's",
             spawned(".await.unwrap();").replace("tokio::spawn", "spawn"),
             "    fn spawn<F>(task: F) -> std::future::Ready<Result<(), ()>> { drop(task); std::future::ready(Ok(())) }\n",

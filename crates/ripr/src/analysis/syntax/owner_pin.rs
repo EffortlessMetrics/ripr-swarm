@@ -4643,6 +4643,43 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
     {
         return None;
     }
+    // A `use` can supply `tokio` or `spawn` without declaring a `Name`: a
+    // glob import may pull in another module's `tokio`, and a path segment such
+    // as `crate::fake::tokio` is a `NameRef`. Only the crate's own
+    // `use tokio::..` keeps the spelling honest.
+    let rebinds_through_use = file.descendants().filter_map(ast::Use::cast).any(|item| {
+        let Some(tree) = item.use_tree() else {
+            return true;
+        };
+        let own_root = tree
+            .path()
+            .and_then(|path| path.first_segment())
+            .and_then(|segment| segment.name_ref());
+        // `use super::*;` inside an inline `mod` only re-exports names this
+        // file declares, which the scan above already covers.
+        let parent_glob =
+            item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && tree
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                == "super::*";
+        tree.syntax().descendants().any(|node| {
+            ast::UseTree::cast(node.clone())
+                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                    matches!(unraw(name.text()), "tokio" | "spawn")
+                        && !(unraw(name.text()) == "tokio"
+                            && own_root.as_ref().is_some_and(|root| root == &name))
+                })
+        })
+    });
+    if rebinds_through_use {
+        return None;
+    }
     let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
     if awaited.expr()?.syntax() != call.syntax() {
         return None;
@@ -4651,7 +4688,15 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
     let outer = ast::MethodCallExpr::cast(parent)?;
     let arguments = outer.arg_list()?.args().count();
     let name = outer.name_ref()?;
-    ((outer.receiver()?.syntax() == awaited.syntax())
+    // The `expect` message runs before `expect` does, so only a literal keeps
+    // an exit out of the call.
+    let message_is_literal = arguments == 0
+        || outer
+            .arg_list()?
+            .args()
+            .all(|argument| matches!(argument, ast::Expr::Literal(_)));
+    (message_is_literal
+        && (outer.receiver()?.syntax() == awaited.syntax())
         && outer.generic_arg_list().is_none()
         && ((name.text() == "unwrap" && arguments == 0)
             || (name.text() == "expect" && arguments == 1)))

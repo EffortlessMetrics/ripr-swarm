@@ -154,9 +154,11 @@ rule only for an assertion whose context was admitted.
    the task's panic as a `JoinError`, which `unwrap` re-raises on the test
    task, as a joined thread does below. The test must be a `#[tokio::test]`
    admitted above, and the file must hold no item, binding or alias named
-   `tokio` or `spawn`, and the block itself holds no `return` or `?` (they
-   would skip the assertion, and the closure escape gate does not read
-   `async` blocks); a detached task, a handle kept in a binding, an
+   `tokio` or `spawn`, no `use` in the file may bring in a glob or a
+   `tokio` or `spawn` path other than the crate's own `tokio::..` (a `use super::*;` inside an inline `mod` is fine), an
+   `expect` message must be a literal (it runs before `expect` does), and
+   the block itself holds no `return` or `?` (they would skip the assertion,
+   and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
    `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
    any other spawn function stay refused. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
