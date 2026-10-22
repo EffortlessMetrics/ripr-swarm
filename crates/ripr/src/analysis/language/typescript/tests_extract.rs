@@ -126,6 +126,14 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         {
             return (Vec::new(), None, Some(expansion));
         }
+        // A top-level test's call to a same-file assertion helper reads as
+        // the helper's assertions (#9636); rerun on the rewritten source.
+        if expand
+            && let Some(inlined) =
+                super::helper_inline::inline_test_helpers(&ret.program.body, source)
+        {
+            return (Vec::new(), None, Some(inlined));
+        }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();

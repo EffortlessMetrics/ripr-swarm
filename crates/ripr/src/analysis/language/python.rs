@@ -61,6 +61,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod helper_inline;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
@@ -1107,6 +1108,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod helper_inline_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;
