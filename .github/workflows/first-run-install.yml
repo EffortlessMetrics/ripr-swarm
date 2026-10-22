@@ -95,15 +95,13 @@ jobs:
           --ripr target/debug/ripr
           --out target/ripr/first-run-main
 
-      - name: Record the scoreboard and summarize each crate's reading
-        run: |
-          cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl
-          # The scoreboard header carries no analyzer identity for a caller-supplied
-          # binary, so bind the measured executable to this commit here.
-          {
-            echo
-            echo "Measured binary: \`$(target/debug/ripr --version)\` built from \`$GITHUB_SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the scoreboard
+        run: cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl
+
+      # The scoreboard header carries no analyzer identity for a caller-supplied
+      # binary, so bind the measured executable to this commit here.
+      - name: Bind the measured binary to this commit
+        run: echo "Measured binary \`$(target/debug/ripr --version)\` built from \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload first-run reports
         if: always()
