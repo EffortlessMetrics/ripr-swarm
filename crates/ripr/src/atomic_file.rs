@@ -11,8 +11,21 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// repository-controlled content; following it would let an untrusted repo
 /// choose where cache and workflow artifacts are written. Links that stay
 /// inside the workspace, and an explicit `RIPR_CACHE_DIR`, are unaffected.
+///
+/// A non-empty `RIPR_CACHE_DIR` skips the whole check, so this entry point is
+/// only for commands whose output is entirely redirected by that variable;
+/// report-only writers use [`ensure_report_output_contained`].
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
     ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+}
+
+/// [`ensure_default_output_contained`] for commands that never write to the
+/// cache directory (`pr-comments`, `review-comments`, `gate evaluate`): an
+/// explicit `RIPR_CACHE_DIR` redirects only the cache, so it must not waive the
+/// `target` / `target/ripr/*` link check for the reports and review artifacts
+/// these commands still write under the workspace.
+pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> {
+    ensure_default_output_contained_with(root, None)
 }
 
 fn ensure_default_output_contained_with(
@@ -35,13 +48,46 @@ fn ensure_default_output_contained_with(
     })?;
     // Compare resolved locations rather than asking `is_symlink`, so NTFS
     // junctions and other aliases are judged by where they actually land.
-    for relative in [
+    let mut candidates: Vec<std::path::PathBuf> = [
         "target",
         "target/ripr",
         "target/ripr/cache",
         "target/ripr/reports",
-    ] {
-        let path = root.join(relative);
+        // `reports ci-packet` writes `target/ci/labels.json`.
+        "target/ci",
+    ]
+    .iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    // Every other output sub-tree (`review`, `workflow`, `receipts`, ...) is a
+    // direct child of `target/ripr`; a committed link at any of them redirects
+    // that command family just as `target` does.
+    // Fail closed: only a missing directory has nothing to enumerate.
+    let ripr_dir = root.join("target/ripr");
+    match std::fs::read_dir(&ripr_dir) {
+        Ok(entries) => {
+            let mut children = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "refusing to write ripr output: cannot enumerate {}: {error}",
+                        ripr_dir.display()
+                    )
+                })?;
+                children.push(entry.path());
+            }
+            children.sort();
+            candidates.extend(children);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "refusing to write ripr output: cannot enumerate {}: {error}",
+                ripr_dir.display()
+            ));
+        }
+    }
+    for path in candidates {
         match std::fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             _ => {}
@@ -955,6 +1001,64 @@ mod tests {
             })
         );
         assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_any_target_ripr_child_link() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-child-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("target/ripr/review")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Positive control: a real review directory passes.
+        ensure_default_output_contained_with(&ws, None)?;
+        std::fs::remove_dir(ws.join("target/ripr/review")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            refused.is_err_and(
+                |e| e.contains("target/ripr/review") || e.contains("target\\ripr\\review")
+            ),
+            "target/ripr/review link must refuse"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_output_guard_fails_closed_when_target_ripr_cannot_be_enumerated()
+    -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-enum-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        // Control: a missing target/ripr is nothing to enumerate.
+        ensure_default_output_contained_with(&ws, None)?;
+        // A regular file at target/ripr cannot be listed and is not "missing".
+        std::fs::write(ws.join("target/ripr"), "x").map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err_and(|e| e.contains("cannot enumerate")));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_output_guard_refuses_a_target_ci_link() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-guard-ci-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("target")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("target/ci")).map_err(|e| e.to_string())?;
+        let refused = ensure_default_output_contained_with(&ws, None);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err());
         Ok(())
     }
 

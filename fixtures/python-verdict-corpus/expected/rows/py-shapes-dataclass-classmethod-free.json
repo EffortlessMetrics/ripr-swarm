@@ -1,0 +1,22 @@
+{
+  "case_id": "py-shapes-dataclass-classmethod-free",
+  "subject_id": "authored-py-pytest-shapes",
+  "origin": "authored",
+  "anchor": "shapes/models.py:21",
+  "behavior_family": "constructor_field",
+  "test_shape": "pytest_classmethod_zero_amount_masks_rate",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

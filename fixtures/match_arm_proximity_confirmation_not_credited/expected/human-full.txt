@@ -24,7 +24,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach seconds: seconds_total, from_str_fortnight
+  - reach yes: Related tests appear to reach seconds: seconds_total
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: Unit::Fortnight =>
   - observation yes: A related test observes a value or effect near the changed behavior

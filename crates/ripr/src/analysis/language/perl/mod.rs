@@ -665,6 +665,10 @@ fn packet_to_findings_with_currentness(
             }
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let observable_unavailable = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && packet.observable_declared_absent(&change.change_id);
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -945,6 +949,11 @@ fn packet_to_findings_with_currentness(
                 // RIPR-SPEC-0235 rule 16: say why this is unknown and what
                 // settles it, instead of asking for an assertion that may exist.
                 "A related Perl test reaches this code with an assertion the fact producer grades broad, so ripr cannot tell whether it pins the changed behavior. If it asserts the specific message, class or value, no change is needed; otherwise tighten it."
+                    .to_string()
+            } else if observable_unavailable {
+                // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
+                // asking for an assertion that may already exist.
+                "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
                     .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
@@ -1756,6 +1765,16 @@ impl PerlFactPacket {
         })
     }
 
+    fn observable_declared_absent(&self, change_id: &str) -> bool {
+        self.change(change_id).is_some_and(|change| {
+            change.changed_observable.declared_absent()
+                || change
+                    .changed_observable
+                    .as_deref()
+                    .is_some_and(|text| text.trim().is_empty())
+        })
+    }
+
     fn classify_related_relation(
         &self,
         relation: &RelationFact,
@@ -1773,7 +1792,16 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            ExposureClass::WeaklyExposed
+            if self.observable_declared_absent(&relation.change_id) {
+                // RIPR-SPEC-0235 rule 18: the producer found no changed
+                // observable, so there is nothing for the oracle's sink to
+                // align to and ripr cannot tell whether the strong oracle
+                // pins the change. Unknown, not a repairable gap (#8730). A
+                // packet that never carried the field keeps `weakly_exposed`.
+                ExposureClass::StaticUnknown
+            } else {
+                ExposureClass::WeaklyExposed
+            }
         } else if bound
             && oracle.is_broad_unresolved()
             && relation.relation_kind.supports_weak_oracle_credit()
@@ -2751,6 +2779,28 @@ impl OwnerKind {
     }
 }
 
+/// The `changed_observable` of a change, keeping "the packet never carried
+/// the field" (an older packet) apart from "the producer wrote `null`".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ObservableField(Option<Option<String>>);
+
+impl<'de> Deserialize<'de> for ObservableField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<String>::deserialize(deserializer).map(|text| Self(Some(text)))
+    }
+}
+
+impl ObservableField {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_ref()?.as_deref()
+    }
+
+    /// The producer wrote the field and found no observable.
+    fn declared_absent(&self) -> bool {
+        matches!(&self.0, Some(None))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct ChangeFact {
     change_id: String,
@@ -2762,9 +2812,10 @@ struct ChangeFact {
     /// Campaign 31 step 2 contract freeze (ripr-swarm#1379): the observable
     /// the change produces (e.g. `"$amount / 2"` for a return change).
     /// Producer-emitted; consumed by H2 classification for sink alignment.
-    /// `#[serde(default)]` so older packets without the field still parse.
+    /// `#[serde(default)]` so older packets without the field still parse;
+    /// an explicit `null` is the producer saying it found no observable.
     #[serde(default)]
-    changed_observable: Option<String>,
+    changed_observable: ObservableField,
     /// The concrete discriminator derived from the change (e.g.
     /// `"$amount == $threshold"`). The documented (SPEC-0064, #6829)
     /// canonical-gap discriminator channel: when present, it forms the
@@ -3257,7 +3308,9 @@ fn sink_aligned_observation(
         // changed observable. Exact equality is the safe bar; the normalized
         // observable covers the common `return <expr>` form. Anything else
         // fails closed (returns None at the end of the loop).
-        if observed_sink == changed_observable || observed_sink == normalized_observable {
+        if sink_text_eq(observed_sink, changed_observable)
+            || sink_text_eq(observed_sink, normalized_observable)
+        {
             return Some(SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
@@ -3269,6 +3322,85 @@ fn sink_aligned_observation(
         }
     }
     None
+}
+
+/// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
+/// cannot change what the expression means. It fails closed: text with a
+/// construct whose spacing can carry meaning (`/`, `~`, `#`, a backtick, `$"`,
+/// `$'`, or a `q`, `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word) compares
+/// exactly. Otherwise whitespace inside a quoted literal is kept, and outside
+/// one it is dropped except between two identifier characters
+/// (`$a lt $b` is not `$altb`), between two characters that can fuse into one
+/// operator (`- -1` is not `--1`), and next to a `.` (`1 . 5` is not `1.5`).
+/// A sigil ends an identifier, so `scalar @a` equals `scalar@a`.
+fn sink_text_eq(left: &str, right: &str) -> bool {
+    left == right
+        || canonical_sink_text(left)
+            .zip(canonical_sink_text(right))
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn canonical_sink_text(text: &str) -> Option<String> {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let fuses = |c: char| matches!(c, '<' | '>' | '=' | '!' | '&' | '|' | '*' | '+' | '-' | ':');
+    if text.contains(['/', '~', '`', '#']) || text.contains("$\"") || text.contains("$'") {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut pending_space = false;
+    let mut word = String::new();
+    for c in text.trim().chars() {
+        if let Some(open) = quote {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        if is_word(c) {
+            word.push(c);
+        } else {
+            if matches!(
+                word.as_str(),
+                "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+            ) {
+                return None;
+            }
+            word.clear();
+        }
+        if c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space {
+            if let Some(prev) = out.chars().next_back()
+                && ((is_word(prev) && is_word(c))
+                    || (fuses(prev) && fuses(c))
+                    || prev == '.'
+                    || c == '.')
+            {
+                out.push(' ');
+            }
+            pending_space = false;
+        }
+        if c == '\'' || c == '"' {
+            quote = Some(c);
+        }
+        out.push(c);
+    }
+    if matches!(
+        word.as_str(),
+        "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+    ) {
+        return None;
+    }
+    Some(out)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

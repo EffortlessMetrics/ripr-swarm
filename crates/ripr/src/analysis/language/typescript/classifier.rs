@@ -3258,6 +3258,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
+        None if !probe_shape.specific => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it."
+        ),
         None => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed branch."
         ),
@@ -4409,6 +4412,122 @@ impl Folder<'_> {
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
 
+/// True when every oracle-eligible related test holds assertion-like code the
+/// extractor could not resolve, so the absence of a discriminator is unproven.
+fn unresolved_assertions_only(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner_name: &str,
+) -> bool {
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .peekable();
+    eligible.peek().is_some()
+        && eligible.all(|candidate| {
+            candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == TypeScriptAssertionAdmission::Unresolved
+                && body_asserts_in_unmodeled_callback(&candidate.test.body_text, owner_name)
+        })
+}
+
+/// An `expect(` inside the argument span of a `.then(` or `forEach(async`
+/// call that is tied to the owner: the owner is called in that span or in the
+/// statement's receiver before the marker (`owner(x).then(...)`). These are
+/// the two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the
+/// assertion still runs. Comments and string contents are blanked first, so a
+/// marker in either never counts. An unrelated callback, and other
+/// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
+/// gaps.
+fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let calls_owner = |text: &str| {
+        text.match_indices(owner_name).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            before.is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '.')))
+                && text[at + owner_name.len()..].starts_with('(')
+        })
+    };
+    [".then(", "forEach(async"].iter().any(|marker| {
+        masked.match_indices(marker).any(|(start, _)| {
+            let Some(offset) = marker.find('(') else {
+                return false;
+            };
+            let open = start + offset;
+            let mut depth = 0usize;
+            let mut end = masked.len();
+            for (i, byte) in masked.bytes().enumerate().skip(open) {
+                match byte {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let statement_start = masked[..start].rfind([';', '\n']).map_or(0, |at| at + 1);
+            let tied_to_owner = calls_owner(&masked[statement_start..start])
+                || masked.get(open..end).is_some_and(calls_owner);
+            tied_to_owner
+                && masked.get(open..end).is_some_and(|span| {
+                    span.match_indices("expect(").any(|(at, _)| {
+                        !span[..at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                    })
+                })
+        })
+    })
+}
+
+/// Blanks comment and string/template-literal contents, keeping byte length.
+fn mask_comments_and_strings(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        let next = bytes.get(i + 1).copied();
+        match bytes[i] {
+            b'/' if next == Some(b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if next == Some(b'*') => {
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    out[i] = b' ';
+                    i += 1;
+                }
+                for slot in out.iter_mut().skip(i).take(2) {
+                    *slot = b' ';
+                }
+                i += 2;
+            }
+            quote @ (b'"' | b'\'' | b'`') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                    out[i] = b' ';
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    // Multi-byte characters inside masked spans become spaces byte by byte, so
+    // the output stays valid UTF-8; fall back to the original on any surprise.
+    String::from_utf8(out).unwrap_or_else(|_| body.to_string())
+}
+
 /// Returns `true` when `oracle_kind` can observe the seam identified by
 /// `probe_family`.
 ///
@@ -5179,6 +5298,20 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Weak,
             vec![named_limitation],
         )
+    } else if unresolved_assertions_only(&related_candidates, &owner.name) {
+        // Every oracle-eligible test holds assertion-like code the extractor
+        // could not resolve, so "no discriminator" is not established. Say
+        // unknown, not an actionable gap (RIPR-SPEC-0246 examples 7 and 9).
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Yes,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                owner.name
+            )],
+        )
     } else {
         (
             ExposureClass::WeaklyExposed,
@@ -5202,10 +5335,15 @@ pub(crate) fn classify_change_with_alias_state(
         missing,
     };
     let ladder_exposed = matches!(verdict.class, ExposureClass::Exposed);
+    // Only the unresolved-callback arm yields `static_unknown` before the
+    // post-ladder rules; any later `static_unknown` is the rule 8 mock cause.
+    let ladder_unresolved_unknown = matches!(verdict.class, ExposureClass::StaticUnknown);
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
         &TsPostLadderContext {
+            all_tests,
+            line,
             probe_shape: &probe_shape,
             line_text,
             old_line_text,
@@ -5229,7 +5367,10 @@ pub(crate) fn classify_change_with_alias_state(
         discriminate_state,
         mut missing,
     } = verdict;
-    let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown);
+    let static_unknown_by_mock =
+        matches!(class, ExposureClass::StaticUnknown) && !ladder_unresolved_unknown;
+    let unresolved_callback_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
     // unchanged. Outside rule 8 a static limit is advisory: an `exposed`
@@ -5350,6 +5491,8 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if ladder_unresolved_unknown {
+        "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
         // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
         // ladder's credit; its missing line says why.
@@ -5369,8 +5512,10 @@ pub(crate) fn classify_change_with_alias_state(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {
         // RIPR-SPEC-0027: strong oracle exists but no assertion reaches the
-        // changed predicate boundary.
+        // changed predicate boundary. An unrecognised line shape has no
+        // predicate to witness, so it must not claim one (#8672).
         match missing_discriminators.first() {
+            _ if !probe_shape.specific => "TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown.".to_string(),
             Some(discriminator) => format!(
                 "TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `{}`.",
                 discriminator.value
@@ -5412,6 +5557,9 @@ pub(crate) fn classify_change_with_alias_state(
         match &class {
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
+            "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::NoStaticPath => match &alias_gap {
             Some(gap) => gap.no_static_path_recommendation(),
@@ -5580,6 +5728,8 @@ pub(crate) fn classify_change_with_alias_state(
         },
         stop_reasons: if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if unresolved_callback_unknown {
+            vec![StopReason::GapEvidenceUnresolved]
         } else {
             Vec::new()
         },
@@ -5609,6 +5759,10 @@ struct TsLadderVerdict {
 
 /// What the post-ladder rules read besides the verdict.
 struct TsPostLadderContext<'a> {
+    /// Every parsed test, so a file-level reader can blank its test bodies.
+    all_tests: &'a [TypeScriptTest],
+    /// The changed line's number in the owner's file.
+    line: usize,
     probe_shape: &'a TypeScriptProbeShape,
     line_text: &'a str,
     old_line_text: Option<&'a str>,
@@ -5632,6 +5786,9 @@ struct TsPostLadderContext<'a> {
 ///   only sets or drops one literal field after spreading a parameter reads
 ///   `weakly_exposed` when observed owner calls exist and none passes an
 ///   input shown to lack the field or hold another value there.
+/// - #8569: an `exposed` result whose changed line sits under an `if` arm
+///   that every related test call provably leaves untaken reads
+///   `weakly_exposed`, because the line never runs under the tests.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -5678,6 +5835,18 @@ fn ts_apply_post_ladder_rules(
             verdict.missing = vec![callee.missing_summary(&context.owner.name)];
             return;
         }
+    }
+    // #8569: a changed line under an `if` arm no related test call enters.
+    if !matches!(context.probe_shape.family, ProbeFamily::Predicate)
+        && let Some(guard) = ts_unentered_guard(context)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+            context.owner.name, guard.condition, guard.observed
+        )];
+        return;
     }
     // A value seam only: an error message, a mock payload or a state write
     // is observed by matchers the fold cannot read, and demoting it would
@@ -5739,6 +5908,162 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// The guard no related test call enters, and what the tests pass instead.
+struct TsUnenteredGuard {
+    condition: String,
+    observed: String,
+}
+
+/// #8569: `Some` when the changed line sits under `if` / `else` arms and
+/// every owner call of every related test passes literal inputs that
+/// provably leave one needed condition unmet. Any unreadable piece (a
+/// related test that does not call the owner directly, a shadowed or
+/// non-call owner reference, a recursive owner, a rebound or defaulted
+/// parameter, a non-literal argument) returns `None`, keeping the verdict.
+fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGuard> {
+    use super::guard_entry_guard::{
+        CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults, parameter_shapes,
+    };
+    let owner = context.owner;
+    let source = owner.source_text.as_deref()?;
+    if context.candidates.is_empty() {
+        return None;
+    }
+    let conditions =
+        enclosing_conditions(source, owner.start_line, context.line, context.line_text)?;
+    // A destructured options parameter leaves `owner.params` empty (arity is
+    // unknown); read the signature itself for it.
+    let (params, defaults, options) = if owner.params.is_empty() {
+        let shapes = parameter_shapes(source)?;
+        (shapes.names, shapes.defaults, shapes.options)
+    } else {
+        let defaults = parameter_defaults(source, &owner.params)?;
+        (owner.params.clone(), defaults, Vec::new())
+    };
+    // A recursive or re-exported owner can be re-entered with another input.
+    if let Some(root) = context.workspace_root
+        && !owner_module_names_owner_once(owner, root)
+    {
+        return None;
+    }
+    let mut observed: Vec<String> = Vec::new();
+    for candidate in context.candidates {
+        if !matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+        ) {
+            return None;
+        }
+        let test = candidate.test;
+        let names =
+            ts_owner_call_names(candidate, owner, context.alias_map, context.workspace_root);
+        let receivers = unshadowed_owner_namespace_receivers(
+            test,
+            owner,
+            context.alias_map,
+            context.workspace_root,
+        );
+        // The whole registration, not the first arrow block in it: text
+        // outside any one callback (arguments to `test.each`, statements
+        // before a nested arrow) can call the owner too.
+        let callback = test.body_text.as_str();
+        let masked_body = ts_mask_literals_and_comments(callback);
+        // Calls outside the test bodies (a hook, a file-level binding) and
+        // imports that are not the owner or a test framework could enter the
+        // arm with inputs this reader never sees.
+        let root = context.workspace_root?;
+        for import in &test.imports_in_file {
+            if import.namespace {
+                if !receivers.contains(&import.local) && !is_test_framework_source(&import.source) {
+                    return None;
+                }
+            } else if import.imported.as_deref() == Some(owner.name.as_str())
+                || import.local == owner.name
+            {
+                if !import_source_matches_owner(
+                    import,
+                    &test.file,
+                    owner,
+                    context.alias_map,
+                    context.workspace_root,
+                ) {
+                    return None;
+                }
+            } else if !is_test_framework_source(&import.source) {
+                return None;
+            }
+        }
+        let file_names: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(receivers.iter().map(String::as_str))
+            .collect();
+        if !test_file_names_owner_only_in_test_bodies(test, context.all_tests, &file_names, root) {
+            return None;
+        }
+        // A file-local helper (`check = (c) => price(3, c)`) could enter the
+        // arm with an input the test text does not show: only the owner and
+        // the test framework's own calls are readable.
+        let allowed: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(["expect", "assert", "test", "it", "describe"])
+            .collect();
+        if !super::guard_entry_guard::calls_only_allowed(callback, &allowed, &receivers) {
+            return None;
+        }
+        let mut calls = 0usize;
+        for name in names {
+            if local_identifier_declared_in_test_body(&test.body_text, name)
+                || !every_owner_reference_is_a_call(&masked_body, name, &receivers)
+            {
+                return None;
+            }
+            for arguments in owner_call_arguments(callback, name, &receivers) {
+                calls += 1;
+                let inputs = CallInputs {
+                    owner_source: source,
+                    params: &params,
+                    defaults: &defaults,
+                    options: &options,
+                    arguments: &arguments,
+                };
+                if !call_excludes_arm(&inputs, &conditions) {
+                    return None;
+                }
+                observed.push(if arguments.is_empty() {
+                    "no arguments".to_string()
+                } else {
+                    format!("({})", arguments.join(", "))
+                });
+            }
+        }
+        if calls == 0 {
+            return None;
+        }
+    }
+    observed.sort();
+    observed.dedup();
+    Some(TsUnenteredGuard {
+        condition: conditions
+            .iter()
+            .map(|condition| condition.display())
+            .collect::<Vec<_>>()
+            .join(" && "),
+        observed: format!(
+            "observed `{}` calls: {}",
+            owner.name,
+            observed
+                .iter()
+                .map(|call| format!("`{call}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    })
 }
 
 /// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread

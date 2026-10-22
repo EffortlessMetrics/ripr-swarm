@@ -24,6 +24,7 @@ The related test reads `relational_check` / weak (RIPR-SPEC-0231 rule 1;
 ## Must Not
 
 - Read a comparison held in a value wrapper (`Some`, `Ok`, a constructor,
-  `Box::new`, an array or `vec!`) as an `exact_value` / strong oracle.
+  `Box::new`, an array or `vec!`), compared with a non-literal, `false` or a
+  different wrapper, as an `exact_value` / strong oracle.
 - Promote the changed multiplication to `exposed` on that comparison alone.
 - Claim runtime mutation adequacy.
