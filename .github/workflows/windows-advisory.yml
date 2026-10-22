@@ -346,10 +346,23 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      # The storage tests below ship in this run's workflow definition (the merge ref on a
+      # pull_request), so they read the consumer from that same ref and not from the PR head;
+      # otherwise a branch behind main pairs new tests with an old consumer (#9521).
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: target/workflow-ref
+          sparse-checkout: .github/workflows/windows-advisory.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: dtolnay/rust-toolchain@1.95
 
       - name: Check selector storage boundaries without a product build
         shell: pwsh
+        env:
+          SELECTOR_WORKFLOW_FILE: target/workflow-ref/.github/workflows/windows-advisory.yml
         run: |
           $storage_tests = @'
           """Exercise the actual inline Actions consumer with synthetic files; never build RIPR."""
@@ -366,7 +379,7 @@ jobs:
           import unittest
           from unittest.mock import patch
 
-          WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'
+          WORKFLOW = Path.cwd() / os.environ['SELECTOR_WORKFLOW_FILE']
 
 
           def consumer():
