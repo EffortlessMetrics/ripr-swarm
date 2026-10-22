@@ -87,7 +87,7 @@ pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection_for_probe, current_path_witness_with,
     direct_collection_mutation_receiver, field_assignment_target,
-    mutexed_assertion_observes_collection_argument, owner_may_exit_before_line,
+    owner_may_exit_before_line,
     retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{

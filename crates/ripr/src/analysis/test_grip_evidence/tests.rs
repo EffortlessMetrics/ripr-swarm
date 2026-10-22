@@ -3122,6 +3122,37 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     Ok(())
 }
 
+/// #9211 for the seam walk: the workspace macro-site scan is paid once on the
+/// caller before any seam is queued, not by whichever worker asks first while
+/// the others wait on a shared lock.
+#[test]
+fn evidence_pass_pays_the_workspace_macro_scan_before_its_workers_start() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("the fixture must build a context")?;
+    if context.workspace_scan_passes() != 0 {
+        return Err("no scan may be paid before the pass runs".into());
+    }
+    let evidence = pass.evidence_for(&seams);
+    if evidence.len() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    // At most the ambiguity pass plus one completion, whether or not a seam
+    // asked: this fixture has no consumer, so only priming can have paid it.
+    let paid = context.workspace_scan_passes();
+    if !(1..=2).contains(&paid) {
+        return Err(format!("expected the primed scan, got {paid} passes"));
+    }
+    pass.evidence_for(&seams);
+    if context.workspace_scan_passes() != paid {
+        return Err("a second stage must not rescan the workspace".into());
+    }
+    Ok(())
+}
+
 #[test]
 fn given_compact_evidence_when_direct_owner_call_reaches_error_seam_then_activation_is_yes()
 -> Result<(), String> {
