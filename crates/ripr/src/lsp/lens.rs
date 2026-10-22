@@ -678,9 +678,9 @@ mod tests {
                 "title must say 'no related tests found', got: {title}"
             ));
         }
-        if !title.contains("no_static_path") {
+        if !title.contains("no path") {
             return Err(format!(
-                "title must include class 'no_static_path', got: {title}"
+                "title must include plain class label 'no path', got: {title}"
             ));
         }
         // Test guard: confirm the lens title uses none of the forbidden
@@ -749,9 +749,9 @@ mod tests {
                 "uncertain class must state 'no static discriminator', got: {title}"
             ));
         }
-        if !title.contains("reachable_unrevealed") {
+        if !title.contains("unrevealed") {
             return Err(format!(
-                "title must include class 'reachable_unrevealed', got: {title}"
+                "title must include plain class label 'unrevealed', got: {title}"
             ));
         }
         Ok(())
