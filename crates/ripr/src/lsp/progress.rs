@@ -395,27 +395,34 @@ impl AnalysisProgressTracker {
         // Stages issued while `create` was pending follow Begin in producer
         // order under the same token lock, so End still comes last (#9362).
         let pending = std::mem::take(&mut notifications.pending_stages);
-        for stage in pending {
-            let Some(message) = stage_report_message(stage) else {
-                continue;
-            };
-            let live = self.tokens.lock().is_ok_and(|tokens| {
-                tokens.get(&request.generation).is_some_and(|record| {
-                    record.terminal.is_none() && record.phase == AnalysisProgressPhase::Analyzing
-                })
-            });
-            if !live || notifications.last_stage == Some(stage) {
-                continue;
+        // Held stages are advisory and this send holds the token lock that
+        // End needs: apply the stage drain budget so a client that stops
+        // reading after Begin cannot pin cleanup.
+        let _ = tokio::time::timeout(super::progress_stages::STAGE_DRAIN_BUDGET, async {
+            for stage in pending {
+                let Some(message) = stage_report_message(stage) else {
+                    continue;
+                };
+                let live = self.tokens.lock().is_ok_and(|tokens| {
+                    tokens.get(&request.generation).is_some_and(|record| {
+                        record.terminal.is_none()
+                            && record.phase == AnalysisProgressPhase::Analyzing
+                    })
+                });
+                if !live || notifications.last_stage == Some(stage) {
+                    continue;
+                }
+                notifications.last_stage = Some(stage);
+                sink.notify(
+                    token.clone(),
+                    ProgressNotificationValue::Report {
+                        message: message.to_string(),
+                    },
+                )
+                .await;
             }
-            notifications.last_stage = Some(stage);
-            sink.notify(
-                token.clone(),
-                ProgressNotificationValue::Report {
-                    message: message.to_string(),
-                },
-            )
-            .await;
-        }
+        })
+        .await;
     }
 
     fn notification_state(
@@ -1282,6 +1289,66 @@ mod tests {
             {
                 return Err(format!(
                     "delayed announcement used a stale phase or lost its end: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// A client that answered `create`, took `Begin`, then stopped reading:
+    /// every stage report send parks forever.
+    struct StalledReportsSink {
+        events: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl ProgressSink for StalledReportsSink {
+        fn create(&self, _token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn notify(&self, _token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                let kind = match value {
+                    ProgressNotificationValue::Begin { .. } => "begin",
+                    ProgressNotificationValue::Report { .. } => "report",
+                    ProgressNotificationValue::End { .. } => "end",
+                };
+                if let Ok(mut events) = self.events.lock() {
+                    events.push(kind);
+                }
+                if kind == "report" {
+                    std::future::pending::<()>().await;
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn stalled_held_stage_flush_cannot_pin_the_token_end() -> Result<(), String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .map_err(|err| err.to_string())?;
+        rt.block_on(async {
+            let tracker = AnalysisProgressTracker::new(test_client());
+            let sink = Arc::new(StalledReportsSink {
+                events: std::sync::Mutex::new(Vec::new()),
+            });
+            tracker.install_test_sink(sink.clone());
+            let request = test_request(1);
+            if !tracker.register(&request, AnalysisProgressPhase::Analyzing) {
+                return Err("token registration was refused".to_string());
+            }
+            tracker
+                .report_stage(1, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker.announce(&request).await;
+            tracker.end(1, AnalysisProgressEnd::Complete).await;
+            let events = sink.events.lock().map(|e| e.clone()).unwrap_or_default();
+            if events != ["begin", "report", "end"] {
+                return Err(format!(
+                    "End must follow a stalled held-stage flush: {events:?}"
                 ));
             }
             Ok(())

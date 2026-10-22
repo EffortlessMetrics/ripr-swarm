@@ -27239,10 +27239,7 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(
-        lens.contains("no static discriminator (weakly_exposed)"),
-        "{lens}"
-    );
+    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"

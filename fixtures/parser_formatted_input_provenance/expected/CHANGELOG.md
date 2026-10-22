@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — parser_formatted_input_provenance (8)
+
+Reason:
+RIPR-SPEC-0001: an unmapped local boundary operand and a neutral input-free fallback name the literal inputs that would settle the unknown (#9276)
+
+Command:
+`cargo xtask goldens bless parser_formatted_input_provenance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

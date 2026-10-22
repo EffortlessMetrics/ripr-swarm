@@ -658,7 +658,14 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
-            let message = if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+            let message = if let Some(language) =
+                crate::app::task_first::non_rust_item_language(seam_id)
+            {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
+                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                )
+            } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )

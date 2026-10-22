@@ -12,110 +12,110 @@
   "test_framework": "vitest",
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
-  "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "each snapshot's package-lock.json is the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); all ten snapshots carry the same lockfile (#9104); the journey environment records the installed node/npm/vitest identities above"
+  "runner_identity": "vitest 5.0.5 via the package-lock.json-selected npm runner",
+  "lockfile_note": "each snapshot's package-lock.json is the full npm lockfile for vitest 5.0.5 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); all ten snapshots carry the same lockfile (#9104); the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
   "default_base_ref": "main",
   "snapshots": {
    "base": {
-    "commit": "7634ae2d3c1ce78b8c2eae627a57b2c898360c2d",
-    "tree": "b4bb5899f84b70b72859c032aa0fb5714b938000",
+    "commit": "0d2028aa4dd22048eb5667de075328d82fc47e01",
+    "tree": "1a96b11c9a3dceaa5768da948ccbce0209972899",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "90729bd40d79fa2580a2bdbd3ecda07e5a1ea371eebaf73d970b18095d1423d8",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "head": {
-    "commit": "437162917bfbcba77c0ed8b36f34da9e2dd98eca",
-    "tree": "69ad833aac73ac2350850282cbf3ddab714185ea",
+    "commit": "db5f7f85e2d3bad3ee9731e27ef14de43f059dfe",
+    "tree": "ebe731c498962661ee0970a67be98ec5c965282e",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "d5305cef7b658d2b658de2ade29832b7991205373a167b52450fb8b91dbe1500",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-let-binding": {
-    "commit": "60f94a75f6f13ec3209b796da45bfb3459d8eee6",
-    "tree": "265a4ed34827fa561ba77c2e54251f68d1d2a534",
+    "commit": "1d14b50dac59bd165f5202a5a53c20255e8e27b9",
+    "tree": "422f9fa3099d9c1f4492e2e51240055ae0a90702",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "bd018e6af9928204494165e91405d7bf4a6324e7a5645faae206c8fac8c5d17c",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-reassignment": {
-    "commit": "935405e0fe41cf9b25adc556cc720f5221edd134",
-    "tree": "8afa5b80c90946dd18b1035df79613e9aed5d8ac",
+    "commit": "f2d55c37312e84866dc67f3591bce47f7b040ecc",
+    "tree": "85d00c8fc503930fec7c2124da833e47a6b3f8a4",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "284b0a47aeb33eea010f2a0ff4cd0a235e0231c11947047640b63729fa925646",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-shadowing": {
-    "commit": "a840645aace33f6492fce63b2f27aa3c95fd32c5",
-    "tree": "fdad433eaea6491a6209aaefc07f7c279f658565",
+    "commit": "b0900c5709189566d3d22a127336c28d349c5aee",
+    "tree": "317f06a9ab69e5ec614e0a2ac8f4584acd721d14",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "3b2212d0addb6b2a07592aa47af5c3d9abcb3805f32dfe40fa3884f2c59a4117",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-imported-constant": {
-    "commit": "c4204223c98d9549176edc83094330e1b3141005",
-    "tree": "3d95f34885b75e3e7b264a6374a78e4fcf76dd4c",
+    "commit": "dc70cf09d4b5fafb7f3c3f5d7316a60c5ce790f2",
+    "tree": "739582b150359a1c9ed29191b005cecd3ffbefe3",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/constants.ts": "ece5808de14af715353fb9c452676811af467d89bae5005560e3906bd5844985",
      "src/pricing.ts": "14122b860abd68530b4a48355b6b1dc2a3bdbc15f313ceeff1f16d25496e5d66",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-object-namespace-write": {
-    "commit": "5a0a097e6eeb2de23335c3119bec661da6c4fa57",
-    "tree": "8474f4ea8ee0350b4fc588ad37de8e8a343a6396",
+    "commit": "944d3379bf614f9282233231e23da1d6ed512ad5",
+    "tree": "c96e7fba484fc812d215582d0cec10b5c8df553b",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "1f6b591b6924961ae3b2025991df3d1d22350f3540c53369651101be90565dca",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-enum-computed-initializer": {
-    "commit": "2fd1a00878787939e27eb818f4222693485990f3",
-    "tree": "90973247aaf7739fa2b5a222a5fc382a129ae39f",
+    "commit": "5356d671d92e4c2e8444bd8bec146895b36ad589",
+    "tree": "2249ae404c37231ea9474d6016b937fca6f7ba80",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "e0c5ef9ad991eeb14f09b3a5048274c17a9d04823a19ae78353a6aa6c17fa8e4",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-nonliteral-arithmetic": {
-    "commit": "2f1c00e828509a7ac15db0ab259219a101f9ea14",
-    "tree": "aeb385e3ac25504ad13cd7bf38325248657b5461",
+    "commit": "37fa2cf450c3cd38b9b7357f6d9be80b2bdb5401",
+    "tree": "66ff8ae7dddf579454711977d16ef5a5097fa30e",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "b8f7c3436adb6d0d6fc3839330b4b48e0a74d692d55a5a701875bc2f1327aa11",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-reach-barrier": {
-    "commit": "e83e1d380290dae6cac3a9d14b17fc0ea1bd0987",
-    "tree": "f8f3e9879a5bbcb76feea30b5284c015f0e85002",
+    "commit": "a0745bdfc3f87536810247f0067d7c998fe6833b",
+    "tree": "5133ceae4bfa22b834f11604b9adf22175014673",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "3670a98b9c8210f9fa522758786e6613591f13d4e2e7e8ee1f3add7314ffcc05",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }

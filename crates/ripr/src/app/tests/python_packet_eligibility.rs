@@ -54,6 +54,7 @@ fn check_output_python_bound_receiver_direct_card_is_agent_packet_eligible() -> 
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;

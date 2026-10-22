@@ -1,4 +1,5 @@
 mod json_construction;
+mod retention_parity;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
