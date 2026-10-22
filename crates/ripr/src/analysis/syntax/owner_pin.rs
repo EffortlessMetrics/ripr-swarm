@@ -80,9 +80,9 @@ struct BodyFingerprint {
 
 impl BodyFingerprint {
     fn of(text: &str) -> Self {
-        use std::hash::{Hash, Hasher};
+        use std::hash::{DefaultHasher, Hash, Hasher};
         let hash = |key: u8| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut hasher = DefaultHasher::new();
             key.hash(&mut hasher);
             text.hash(&mut hasher);
             hasher.finish()
