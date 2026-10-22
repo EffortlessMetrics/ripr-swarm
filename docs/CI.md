@@ -1160,7 +1160,7 @@ on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
 PR's `mergeable_state` through the API (retrying while GitHub computes it), and
 for a `dirty` PR posts one comment per head SHA plus a failing
 `merge-ready conflict` commit status. A mergeable PR gets nothing from it, and a
-head that moved after the request is ignored. The workflow checks out and runs
+head that moved after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA, so it clears with the next push. The workflow checks out and runs
 no PR code, takes only the PR number and head SHA as `env` values, uses no
 third-party actions, and holds job-level `pull-requests: write` and
 `statuses: write` only. It is a notice, not a required check; the author merges

@@ -52,11 +52,15 @@ jobs:
           # GitHub computes mergeability lazily: `mergeable` is null until it does.
           state=unknown
           for _ in 1 2 3 4 5 6; do
-            pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[.mergeable, .mergeable_state, .head.sha] | @tsv')"
-            IFS=$'\t' read -r mergeable state current_sha <<<"$pr"
-            [ "$mergeable" = "null" ] || [ -z "$mergeable" ] || break
+            pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[(.mergeable | tostring), .mergeable_state, .head.sha] | join(" ")')"
+            read -r mergeable state current_sha <<<"$pr"
+            [ "$mergeable" = "null" ] || break
             sleep 10
           done
+          if [ "$mergeable" = "null" ]; then
+            echo "::warning title=mergeability not computed::PR #$PR_NUMBER mergeable is still null after retries; re-apply merge-ready to re-check."
+            exit 0
+          fi
           # A push after the label makes this request stale; the new head owns itself.
           if [ "$current_sha" != "$HEAD_SHA" ]; then
             echo "Head moved to $current_sha after the request on $HEAD_SHA; nothing to report."
