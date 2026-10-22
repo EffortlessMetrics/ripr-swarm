@@ -17581,6 +17581,8 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
   "xtask/src/reports/release_ledger/tests.rs::markdown_projection_shows_every_records_theme",
   "xtask/src/reports/release_ledger/tests.rs::input_over_the_byte_cap_is_rejected_not_truncated",
+  "xtask/src/reports/release_ledger/tests.rs::audit_file_digest_must_match_the_recorded_sha",
+  "xtask/src/reports/release_ledger/tests.rs::editing_the_audit_file_after_derivation_fails_validation",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]
