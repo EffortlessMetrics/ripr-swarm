@@ -1,0 +1,40 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_returned_error_drop_exit/input
+
+Summary: 3 probes (0 exposed, 3 weak, 0 unrevealed, 0 no path); 3 of 3 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:13
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:parse:error_variant:error_path:err_cfg_n_x*3
+  Changed behavior: Err(Cfg { n: x * 3 })
+  Missing discriminator: No exact error variant discriminator was detected
+  Related test: src/lib.rs:21 parses (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `parses` already asserts an exact value; the gap is not the assertion
+    shape. Add a test input that executes the changed error arm and assert the exact variant or
+    payload it produces
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    - reach yes: Related tests appear to reach parse: parses
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_returned_error_drop_exit/input --diff <cwd>/fixtures/rust_returned_error_drop_exit/diff.patch --mode fast probe:src_lib.rs:error_path:ac1e8194
+  ripr context --root <cwd>/fixtures/rust_returned_error_drop_exit/input --diff <cwd>/fixtures/rust_returned_error_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:error_path:ac1e8194
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:error_path:ac1e8194 --root <cwd>/fixtures/rust_returned_error_drop_exit/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_returned_error_drop_exit/input --at src/lib.rs:13 --kind error_path
+
+Hidden:
+  2 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:13 (weak)
+    - ./src/lib.rs:13 (weak)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

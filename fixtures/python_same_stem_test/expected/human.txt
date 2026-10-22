@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_same_stem_test/input --diff <cwd>/fixtures/python_same_stem_test/diff.patch --mode fast probe:src_reconcile.py:python_preview:5cd72db4
   ripr context --root <cwd>/fixtures/python_same_stem_test/input --diff <cwd>/fixtures/python_same_stem_test/diff.patch --mode fast --at probe:src_reconcile.py:python_preview:5cd72db4
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_reconcile.py:python_preview:5cd72db4 --root <cwd>/fixtures/python_same_stem_test/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

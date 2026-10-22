@@ -946,3 +946,140 @@ fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String
     );
     Ok(())
 }
+
+/// Runs `work` with the classify pool pinned to `threads` workers.
+fn with_classify_threads<T>(threads: usize, work: impl FnOnce() -> T) -> T {
+    super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(Some(threads)));
+    let out = work();
+    super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(None));
+    out
+}
+
+#[test]
+fn classified_findings_are_identical_in_order_on_one_and_many_threads() -> Result<(), String> {
+    let fixture = Fixture::new("thread-parity", &shared_reach_source())?;
+    let encode = |findings: &[Finding]| serde_json::to_string(findings).map_err(|e| e.to_string());
+    let serial = encode(&with_classify_threads(1, || fixture.arm_findings())?)?;
+    // Repeated so a fill-order race between workers has several chances to
+    // change a memo-dependent verdict.
+    for threads in [2, 4, 8] {
+        for round in 0..5 {
+            let parallel = encode(&with_classify_threads(threads, || fixture.arm_findings())?)?;
+            if serial != parallel {
+                return Err(format!(
+                    "{threads} classify threads differ from one thread (round {round})"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_workers_follow_the_callers_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+
+    let fixture = Fixture::new("cancel", &shared_reach_source())?;
+    let live = AnalysisCancellationToken::new();
+    let completed = cancellation::with_token(&live, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    })?;
+    assert_eq!(completed.len(), 2, "a live token must not drop a probe");
+
+    let cancelled = AnalysisCancellationToken::new();
+    cancelled.cancel(AnalysisAbortKind::Cancelled);
+    let outcome = cancellation::with_token(&cancelled, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    });
+    assert!(
+        outcome.is_err(),
+        "a cancelled run must fail, not return partial findings"
+    );
+
+    // A budget that only a classify worker sees as spent: the caller thread's
+    // seeding checkpoints pass, so the abort can only come from a worker that
+    // installed the caller's token. A worker that ignored the token would
+    // finish every probe and this run would succeed.
+    let started = std::time::Instant::now();
+    let worker_sees_spent_budget: cancellation::AnalysisClock = std::sync::Arc::new(move || {
+        let on_worker = std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with("ripr-classify-"));
+        if on_worker {
+            started + std::time::Duration::from_mins(2)
+        } else {
+            started
+        }
+    });
+    let budgeted = AnalysisCancellationToken::with_budget(
+        started,
+        std::time::Duration::from_mins(1),
+        worker_sees_spent_budget,
+    );
+    let outcome = cancellation::with_token(&budgeted, || {
+        with_classify_threads(4, || fixture.arm_findings())
+    });
+    assert!(
+        outcome.is_err(),
+        "a budget spent on a worker must fail the run, not publish a partial result"
+    );
+    assert_eq!(
+        budgeted.abort_kind(),
+        Some(AnalysisAbortKind::DeadlineExceeded),
+        "the worker's checkpoint must be what recorded the abort"
+    );
+    Ok(())
+}
+
+/// #9211: the workspace macro-site scan a classify run needs is paid before
+/// the probes are queued, fanned out over the classify pool, not run in line
+/// on whichever worker reaches it first while its siblings sleep on the memo.
+#[test]
+fn the_classify_run_fans_the_workspace_macro_scan_out_before_its_probes() -> Result<(), String> {
+    use std::hash::{Hash, Hasher};
+
+    let source = format!("{}\n// convoy-9211-unique-fixture\n", shared_reach_source());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.as_str().hash(&mut hasher);
+    let fixture_hash = hasher.finish();
+    let fixture = Fixture::new("convoy-9211", &source)?;
+    let findings = with_classify_threads(4, || fixture.arm_findings())?;
+    assert_eq!(findings.len(), 2, "both probes must classify");
+
+    let log = crate::analysis::classify::SCAN_LOG
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let decisions: Vec<bool> = log
+        .iter()
+        .filter(|(hash, _)| *hash == fixture_hash)
+        .map(|(_, fanned_out)| *fanned_out)
+        .collect();
+    assert!(
+        !decisions.is_empty(),
+        "the run must scan the fixture's macro sites"
+    );
+    assert!(
+        decisions.iter().all(|fanned_out| *fanned_out),
+        "a scan ran in line on a classify worker: {decisions:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_scans_run_in_line_on_a_pool_worker_only() -> Result<(), String> {
+    use crate::analysis::classify::nested_parallelism_allowed;
+
+    assert!(
+        nested_parallelism_allowed(),
+        "the caller thread may fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    assert!(
+        !pool.install(nested_parallelism_allowed),
+        "a worker must not block in a nested par_iter while it can hold a memo lock"
+    );
+    Ok(())
+}

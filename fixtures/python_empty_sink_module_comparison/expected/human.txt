@@ -34,6 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast probe:src_constants.py:python_preview:904eec8a
   ripr context --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast --at probe:src_constants.py:python_preview:904eec8a
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_constants.py:python_preview:904eec8a --root <cwd>/fixtures/python_empty_sink_module_comparison/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

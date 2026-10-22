@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0279-doc-use-bare-call",
+  "subject_id": "authored-spec0279-doc-use",
+  "diff": "cases/spec0279-doc-use-bare-call.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "doctest_only_oracle",
+  "hard_case": "The only test is a doc example that imports the owner with `use wire::read_u16;` and calls it by its bare name. RIPR-SPEC-0279 example 2: the import binds the library function, so the example pins the return value.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "u16::from_le_bytes([bytes[0], bytes[1]])",
+        "mutated_line": "u16::from_le_bytes([bytes[0], bytes[1]])",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - read_u16 (line 6)",
+        "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+      },
+      {
+        "replacement": "u16::from_be_bytes([bytes[1], bytes[0]])",
+        "mutated_line": "u16::from_be_bytes([bytes[1], bytes[0]])",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - read_u16 (line 6)",
+        "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The doc example asserts read_u16(&[0x12, 0x34]) == 0x1234 through the imported bare name and `cargo test` runs it, so both byte-order mutants fail the doctest; no unit test calls read_u16.",
+  "spec_examples": [
+    "RIPR-SPEC-0279#2"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "16953fb36",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

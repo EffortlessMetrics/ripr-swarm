@@ -103,6 +103,10 @@ tower = { version = "0.5", default-features = false }
 # version, or when the selected ra_ap_syntax drops the assert.
 unicode-ident = { version = "=1.0.24", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+# Standalone CLI SIGINT observation through safe signal registration.
+signal-hook = { version = "0.3", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep the standard-library flag implementation shared with xtask's archive
 # stack on the measured Linux build route. Otherwise bitflags/std changes the
@@ -145,6 +149,10 @@ serial_test = "4"
 # time and drive the service layers (tower Service) directly.
 tokio = { version = "1", features = ["test-util", "process"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Owned Linux interruption witnesses: safe signals, pipes and failure reaping.
+nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal"] }
 
 [lints]
 workspace = true

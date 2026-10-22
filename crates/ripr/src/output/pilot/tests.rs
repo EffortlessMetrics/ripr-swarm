@@ -24,6 +24,8 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+mod native_artifacts;
 mod spec_0237;
 mod timeout_retry;
 
@@ -837,6 +839,15 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{md}"
     );
     assert!(!md.contains("Withheld"), "{md}");
+    // #8766: with nothing ranked there is no focused test to run "after
+    // adding", so the terminal screen prints no snapshot/outcome commands.
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("Run after adding the focused test")
+            && !terminal.contains("ripr outcome")
+            && terminal.contains("No seam was ranked"),
+        "{terminal}"
+    );
 
     // A seam limit cut seams pilot never classified: they may hold gaps, so
     // the withheld count is a lower bound and "No gap to test" would claim an
@@ -938,7 +949,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
+        "## Ranked Seams\n\nExploratory seams, not ranked by expected mutant yield.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -950,6 +961,72 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
     assert!(!md.contains("## Ranked Actionable Seams"), "{md}");
     assert!(
         !md.contains("- Focused test: not applicable (route limited"),
+        "{md}"
+    );
+}
+
+#[test]
+fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
+    // Published pilot precision (docs/PUBLIC_PROOF.md: 8.3% top-5, 5.9%
+    // top-10 against a >=60% bar) does not support presenting these picks
+    // as recommendations ranked by expected mutant yield. Human output
+    // must carry the exploratory label; structured output must not change.
+    let weak = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let ungripped = classified_with(
+        SeamGripClass::Ungripped,
+        "src/other.rs",
+        10,
+        Vec::new(),
+        Vec::new(),
+    );
+    let entries = [ungripped, weak];
+    let artifacts = pilot_artifacts();
+
+    let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
+    assert!(
+        md.contains("Exploratory seams, not ranked by expected mutant yield"),
+        "{md}"
+    );
+    // The label sits with the list it describes, not only in a header.
+    let ranked = md.find("## Ranked").map_or("", |start| &md[start..]);
+    assert!(
+        ranked.contains("Exploratory seams, not ranked by expected mutant yield."),
+        "{md}"
+    );
+
+    let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(
+        terminal.contains("Exploratory seams, not ranked by expected mutant yield"),
+        "{terminal}"
+    );
+
+    // Ordering is unchanged (label-only): the existing static-evidence
+    // order still puts the weakly gripped seam first, in every surface.
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(ranked[0].class, SeamGripClass::WeaklyGripped);
+    assert_eq!(ranked[1].class, SeamGripClass::Ungripped);
+
+    // Control: JSON carries no exploratory label and keeps the same seam
+    // order as the human list, so structured consumers are byte-stable
+    // apart from pre-existing fields (pinned by the JSON assertions in
+    // `pilot_summary_json_*` and verified byte-identical against
+    // origin/main for this fixture in the PR body).
+    let json = render_pilot_summary_json(&entries, pilot_context(&artifacts));
+    assert!(!json.contains("Exploratory"), "{json}");
+    assert!(!json.contains("mutant yield"), "{json}");
+    let weak_at = json.find("src/pricing.rs").unwrap_or(usize::MAX);
+    let ungripped_at = json.find("src/other.rs").unwrap_or(usize::MAX);
+    assert!(weak_at < ungripped_at, "{json}");
+    let md_weak_at = md.find("src/pricing.rs").unwrap_or(usize::MAX);
+    let md_ungripped_at = md.rfind("src/other.rs").unwrap_or(usize::MAX);
+    assert!(
+        md_weak_at != usize::MAX && md_ungripped_at != usize::MAX,
         "{md}"
     );
 }
@@ -1103,6 +1180,86 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     assert!(
         !terminal.contains("repair this seam:"),
         "a route-limited seam must not be offered a repair transaction:\n{terminal}"
+    );
+}
+
+/// #8696: the loaded config path arrives canonicalized (#7652), which on
+/// Windows carries the verbatim `\\?\` prefix. Both pilot human surfaces must
+/// render the plain spelling, matching the check header and doctor lines —
+/// the terminal line is what a new user reads, and the markdown line is what
+/// review links keep.
+#[cfg(windows)]
+#[test]
+fn pilot_human_surfaces_strip_verbatim_config_prefix_natively_on_windows() {
+    // `check-local-context` forbids drive-letter path literals, so the
+    // Windows shapes are assembled from parts.
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {drive}/tmp/demo/ripr.toml")),
+        "terminal must render the plain config spelling:\n{terminal}"
+    );
+    assert!(!terminal.contains("/?/"), "{terminal}");
+
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "markdown must render the plain config spelling:\n{md}"
+    );
+    assert!(!md.contains("/?/"), "{md}");
+
+    // The timed-out pilot uses its own renderers; they carry the same rule
+    // so a partial run does not resurrect the raw prefix.
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {drive}/tmp/demo/ripr.toml")),
+        "timeout terminal must render the plain config spelling:\n{timeout_terminal}"
+    );
+    assert!(!timeout_terminal.contains("/?/"), "{timeout_terminal}");
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "timeout markdown must render the plain config spelling:\n{timeout_md}"
+    );
+    assert!(!timeout_md.contains("/?/"), "{timeout_md}");
+}
+
+/// The Unix-native counterpart of the #8696 control: a verbatim-looking
+/// spelling is an ordinary relative filename there, so the human-path owner
+/// keeps it byte-for-byte and the pilot line carries the spelling as given.
+#[cfg(unix)]
+#[test]
+fn pilot_human_surfaces_keep_verbatim_looking_config_spelling_natively_on_unix() {
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{md}"
+    );
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_terminal}"
+    );
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_md}"
     );
 }
 
@@ -1859,6 +2016,32 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
     assert!(!terminal.contains("agent repair --root"), "{terminal}");
     assert!(!terminal.contains("Next, in order:"), "{terminal}");
+    Ok(())
+}
+
+/// #8992: the offered repair start route renders the root through
+/// `root_path_display` before `bound_root`, so a Unix checkout whose path
+/// contains a literal backslash still names the user's checkout; `display_path`
+/// would have rewritten the backslash into a separator and the pasted command
+/// would target a different directory. On Windows `\` is a separator and the
+/// rendered root keeps stable `/` separators, exactly as before.
+#[test]
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+    let entry = route_ready_entry(&["tests/pricing.rs"]);
+    let root = Path::new("/tmp/team\\repo");
+    let route = commands::repair_start_command(root, &entry)
+        .ok_or_else(|| "eligible seam must offer a repair start".to_string())?;
+    if cfg!(unix) {
+        assert!(
+            route.contains("--root '/tmp/team\\repo'"),
+            "route must keep the literal backslash: {route}"
+        );
+    } else {
+        assert!(
+            route.contains("tmp/team/repo"),
+            "route must render stable separators on Windows: {route}"
+        );
+    }
     Ok(())
 }
 
@@ -3192,7 +3375,7 @@ fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> 
                     .iter()
                     .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
             {
-                assert!(head.span().is_none(), "calibration remains line-only");
+                assert_eq!(head.span().is_none(), head.display_line() == 2);
                 for line in 1..=14 {
                     let diff = format!(
                         "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
@@ -3666,7 +3849,13 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
     assert!(
         terminal.contains(
-            "Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
+            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains(
+            "  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
         ),
         "{terminal}"
     );

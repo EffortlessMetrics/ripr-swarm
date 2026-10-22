@@ -220,6 +220,11 @@ that untracked source was analyzed.
   drill-in re-reads the working tree when it runs, so an edit made between
   `check` and `explain`/`context` can move a `file:line` or change a finding
   id; the miss message then names the same-scope listing to re-list ids.
+  Exception (#9088): when `--worktree` came only from the dirty-tree
+  default rather than an explicit flag, a selector copied from a committed
+  listing carries no scope pin, so the miss recovery names the committed
+  listing first (and the worktree listing second). Analysis itself still
+  follows the defaulted worktree scope; only the recovery order changes.
 
 ## Acceptance Examples
 
