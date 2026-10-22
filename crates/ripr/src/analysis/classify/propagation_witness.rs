@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod collection_argument;
-pub(in crate::analysis) use collection_argument::{
-    assertion_observes_collection_argument, mutexed_assertion_observes_collection_argument,
-};
+pub(in crate::analysis) use collection_argument::assertion_observes_collection_argument;
 
 const SCHEMA_VERSION: u16 = 1;
 

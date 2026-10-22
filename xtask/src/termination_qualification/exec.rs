@@ -101,6 +101,11 @@ pub(crate) fn run_case(
     row.subjects.workspace_files = case.files.len().saturating_sub(1);
     row.subjects.unchanged_outside_diff = usize::from(case.hostile.is_some());
 
+    // Output the route is expected to write must come from this run, never
+    // from a file that was already in the workspace.
+    if let Some(artifact) = &case.artifact {
+        let _ = fs::remove_file(root.join(artifact));
+    }
     let outcome = launch(binary, &root, case, deadline);
     match outcome {
         Err(error) => {

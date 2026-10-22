@@ -64,6 +64,7 @@ pub(crate) enum Route {
     Pilot,
 }
 
+#[derive(Clone)]
 pub(crate) struct Case {
     pub(crate) id: String,
     pub(crate) route: Route,

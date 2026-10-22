@@ -9577,6 +9577,105 @@ fn allow_attribute_detection_flags_guarded_lint_suppressions() {
     );
 }
 
+/// #9501 negative experiment: a guarded suppression wrapped in `cfg_attr`
+/// used to bypass the count ledger because only `allow`/`expect` directly
+/// after `#[` were recognized.
+#[test]
+fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
+    let text = format!(
+        "{}\nfn a() {{}}\n{}\n{}\n{}\n{}\n",
+        concat!("#", "[cfg_attr(test, allow(clippy::unwrap_used))]"),
+        concat!(
+            "#",
+            "![cfg_attr(not(test), expect(dead_code, reason = \"a, (b)\"), inline(never))]"
+        ),
+        concat!(
+            "#",
+            "[cfg_attr(all(unix, test), cfg_attr(test, allow(warnings)))]"
+        ),
+        concat!("#", "[ cfg_attr ( test , allow ( unused_imports ) ) ]"),
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(clippy::module_name_repetitions))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (3, "expect(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (5, "allow(unused_imports)".to_string()),
+        ]
+    );
+}
+
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
+    for text in [
+        concat!("#", "[cfg_attr(test, derive(Debug))]"),
+        concat!("#", "[cfg_attr(test, allow)]"),
+        // The predicate position is not an attribute, even if it names a lint.
+        concat!("#", "[cfg_attr(allow(dead_code), derive(Debug))]"),
+        concat!("#", "[cfg_attr(test)]"),
+        concat!("#", "[cfg_attr(test, allow(dead_code)"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cfg_attr_suppression_spends_the_same_budget_as_the_plain_attribute() {
+    let guarded = guarded_allow_attribute_lints();
+    let text = concat!("#", "[cfg_attr(test, allow(dead_code))]");
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+    for (line, attribute) in guarded_allow_attributes_in_text(text, &guarded) {
+        counts
+            .entry(("src/lib.rs".to_string(), attribute))
+            .or_default()
+            .push(line);
+    }
+
+    let unbudgeted = allow_attribute_budget_violations(&BTreeMap::new(), &counts, &guarded);
+    assert_eq!(unbudgeted.len(), 1, "{unbudgeted:?}");
+    assert!(unbudgeted[0].contains("allow(dead_code)"), "{unbudgeted:?}");
+
+    let budget = BTreeMap::from([(
+        ("src/lib.rs".to_string(), "allow(dead_code)".to_string()),
+        1,
+    )]);
+    assert!(allow_attribute_budget_violations(&budget, &counts, &guarded).is_empty());
+}
+
 #[test]
 fn allow_attribute_detection_ignores_untracked_lints() {
     let text = format!(
