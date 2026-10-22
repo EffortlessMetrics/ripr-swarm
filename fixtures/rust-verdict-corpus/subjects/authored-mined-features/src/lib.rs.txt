@@ -1,0 +1,151 @@
+//! Small crate with feature-gated modules, a snapshot helper and a byte table.
+
+/// Version stamping behind the `v4` feature; its tests run only when the
+/// feature is on.
+#[cfg(feature = "v4")]
+pub mod v4 {
+    /// Stamps version 4 into the top nibble of the 16-bit field.
+    pub fn stamp(raw: u16) -> u16 {
+        (raw & 0x0fff) | 0x4000
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::stamp;
+
+        #[test]
+        fn stamp_sets_the_version_nibble() {
+            assert_eq!(stamp(0xffff), 0x4fff);
+            assert_eq!(stamp(0x0000), 0x4000);
+        }
+    }
+}
+
+/// Version stamping behind the `v7` feature; same shape as `v4`.
+#[cfg(feature = "v7")]
+pub mod v7 {
+    /// Stamps version 7 into the top nibble of the 16-bit field.
+    pub fn stamp(raw: u16) -> u16 {
+        (raw & 0x0fff) | 0x7000
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::stamp;
+
+        #[test]
+        fn stamp_sets_the_version_nibble() {
+            assert_eq!(stamp(0xffff), 0x7fff);
+            assert_eq!(stamp(0x0000), 0x7000);
+        }
+    }
+}
+
+/// Inline-snapshot helper in the style of snapbox's `assert_data_eq!` and
+/// `str![[..]]`, written here so the crate needs no dependency.
+pub mod snap {
+    /// Compares rendered output with the expected snapshot text.
+    pub fn check(actual: &str, expected: &str) {
+        assert_eq!(actual.trim_end(), expected.trim_end(), "snapshot mismatch");
+    }
+
+    /// Compares and returns whether the snapshot matched, without asserting.
+    pub fn matches(actual: &str, expected: &str) -> bool {
+        actual.trim_end() == expected.trim_end()
+    }
+
+    /// Mirrors `snapbox::str![[".."]]`: the literal is the expected text.
+    #[macro_export]
+    macro_rules! snap_str {
+        [[$text:literal]] => {
+            $text
+        };
+    }
+
+    /// Mirrors `snapbox::assert_data_eq!(actual, expected)`.
+    #[macro_export]
+    macro_rules! assert_data_eq {
+        ($actual:expr, $expected:expr) => {
+            $crate::snap::check(&$actual, $expected)
+        };
+    }
+}
+
+/// Renders a float the way a config writer would, keeping the sign of zero.
+pub fn render_float(value: f64) -> String {
+    if value == 0.0 && value.is_sign_negative() {
+        return "-0.0".to_string();
+    }
+    format!("{value:?}")
+}
+
+/// Renders key/value pairs as a small document, one `key = value` per line.
+pub fn render_document(pairs: &[(&str, i64)]) -> String {
+    let mut out = String::new();
+    for (key, value) in pairs {
+        out.push_str(&format!("{key} = {value}\n"));
+    }
+    out
+}
+
+/// Renders a heading line for a section.
+pub fn render_heading(name: &str) -> String {
+    format!("[{name}]")
+}
+
+/// A compile-time membership table for HTTP token bytes.
+const fn build_token_map() -> [bool; 256] {
+    let mut map = [false; 256];
+    let mut i = 0;
+    while i < 256 {
+        let b = i as u8;
+        map[i] = matches!(
+            b,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+                | b'^' | b'_' | b'`' | b'|' | b'~'
+                | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z'
+        );
+        i += 1;
+    }
+    map
+}
+
+pub static TOKEN_MAP: [bool; 256] = build_token_map();
+
+/// Whether `b` may appear in an HTTP token.
+pub fn is_token(b: u8) -> bool {
+    TOKEN_MAP[b as usize]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negative_zero_snapshot() {
+        assert_data_eq!(render_float(-0.0), snap_str![["-0.0"]]);
+        assert_data_eq!(render_float(1.5), snap_str![["1.5"]]);
+    }
+
+    #[test]
+    fn document_snapshot() {
+        let doc = render_document(&[("alpha", 1), ("beta", -2)]);
+        assert_data_eq!(doc, snap_str![["alpha = 1\nbeta = -2\n"]]);
+    }
+
+    #[test]
+    fn heading_is_computed_but_never_asserted() {
+        let _ = snap::matches(&render_heading("server"), "[server]");
+    }
+
+    #[test]
+    fn token_table_pins_alphanumerics_and_bang() {
+        assert!(is_token(b'0'));
+        assert!(is_token(b'9'));
+        assert!(is_token(b'a'));
+        assert!(is_token(b'Z'));
+        assert!(is_token(b'!'));
+        assert!(!is_token(b' '));
+        assert!(!is_token(b'('));
+    }
+}

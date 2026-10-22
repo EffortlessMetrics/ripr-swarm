@@ -916,3 +916,13 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-async-fn-block-on"
 issue = 9443
 reason = "Async fn driven by block_on is not followed (#9443)."
+
+[[known_false]]
+case = "mined-feature-v4-stamp-run-with-feature"
+issue = 9643
+reason = "Exact pin in a nested cfg(feature) module's tests read as gap though the feature-on run catches the edit (#9643)."
+
+[[known_false]]
+case = "mined-snapshot-helper-negative-zero"
+issue = 9644
+reason = "Exact inline snapshot compared through a local assert_data_eq!/snap_str! helper read as gap (#9644)."

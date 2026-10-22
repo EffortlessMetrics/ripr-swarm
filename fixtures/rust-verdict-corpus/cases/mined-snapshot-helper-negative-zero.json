@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-snapshot-helper-negative-zero",
+  "subject_id": "authored-mined-features",
+  "diff": "cases/mined-snapshot-helper-negative-zero.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 77
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "inline_snapshot_via_helper_macro",
+  "hard_case": "Mirrors toml_writer, whose tests compare output through snapbox::assert_data_eq! and str![[..]]. The crate carries local stand-ins (assert_data_eq! and snap_str! over a snap::check helper) so it needs no dependency.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return \"0.0\".to_string();",
+        "mutated_line": "return \"0.0\".to_string();",
+        "outcome": "tests_failed",
+        "failing_test": "tests::negative_zero_snapshot",
+        "equivalence_review": "not equivalent: the sign of zero is lost"
+      },
+      {
+        "replacement": "return String::new();",
+        "mutated_line": "return String::new();",
+        "outcome": "tests_failed",
+        "failing_test": "tests::negative_zero_snapshot",
+        "equivalence_review": "not equivalent: empty output"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "negative_zero_snapshot compares render_float(-0.0) with the inline snapshot \"-0.0\" through the assert_data_eq! helper, so both mutants fail it.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

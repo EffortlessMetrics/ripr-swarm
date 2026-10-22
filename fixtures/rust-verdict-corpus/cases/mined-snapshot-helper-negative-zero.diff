@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -74,7 +74,7 @@
+ /// Renders a float the way a config writer would, keeping the sign of zero.
+ pub fn render_float(value: f64) -> String {
+     if value == 0.0 && value.is_sign_negative() {
+-        return "-0.0".to_string();
++        return String::from("-0.0");
+     }
+     format!("{value:?}")
+ }
