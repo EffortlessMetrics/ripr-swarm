@@ -152,8 +152,8 @@ published wire contract), except that any `.md` is `docs`, `package-lock.json`
 is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`; `evidence` is any test path (`tests/`, `tests.rs`,
 `*_tests.rs`, `fixtures/`), `benchmarks/`, `metrics/`, `docs/specs/` and
 `.ripr/`; `docs` is `docs/`, `changelog.d/`, any `.md` and the root `LICENSE`,
-`LICENSE-MIT` and `LICENSE-APACHE`; `control` is
-`.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`, `xtask`,
+`LICENSE-MIT` and `LICENSE-APACHE`; `automation` is `xtask`; `control` is
+`.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`,
 `policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and other root
 files; anything else is unclassified.
 
@@ -171,7 +171,9 @@ Order, first match wins:
    `claim_ref`.
 5. Otherwise the strongest class present: product is
    `included_accepted_product`, control is
-   `included_accepted_release_or_control`, evidence is `included_test_or_evidence`,
+   `included_accepted_release_or_control` (automation, `xtask`, keeps that
+   disposition under its own `automation` theme; a commit that also touches control
+   paths takes the control theme), evidence is `included_test_or_evidence`,
    docs is `included_structural_no_semantic_delta`.
 
 The design brief reads "only tests..." and "only docs..." for the lower classes;
@@ -220,7 +222,8 @@ valid-ledger control that yields no reasons.
   `unjudgeable_commits_block_instead_of_defaulting`,
   `deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row`,
   `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
-  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`.
+  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`,
+  `xtask_only_commits_share_the_control_disposition_under_their_own_theme`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
