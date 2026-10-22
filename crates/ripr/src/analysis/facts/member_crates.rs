@@ -451,6 +451,129 @@ impl MemberCrates {
     }
 }
 
+impl MemberCrates {
+    /// Whether `file` (root-relative) is a module of the library of a
+    /// proc-macro package (`[lib] proc-macro = true`). Tests reach such code
+    /// only through derive/attribute expansion, which ripr does not follow.
+    ///
+    /// Only library code qualifies: the file must sit under the library's
+    /// source directory (`src/`, or the parent of `[lib] path`) and must not
+    /// be a build script, `src/main.rs`, `src/bin/**`, or the file or
+    /// directory of any explicit `[[bin]]`/`[[example]]`/`[[test]]`/
+    /// `[[bench]]` target; `tests/`, `benches/` and `examples/` fall outside
+    /// the library directory. The manifest is read through the committed
+    /// source overlay, so a dirty `Cargo.toml` cannot change a committed-
+    /// history finding. A missing, unreadable or virtual manifest, or
+    /// absent manifest authority, answers no (fail closed).
+    pub(crate) fn is_proc_macro_library_file(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let file_abs = lexical(&root.join(file));
+        let Some(directory) = file_abs.parent() else {
+            return false;
+        };
+        let Some((package, manifest)) =
+            committed_package(self.root.as_deref().unwrap_or(&root), &root, directory)
+        else {
+            return false;
+        };
+        let lib = manifest.get("lib");
+        let proc_macro = lib
+            .and_then(|lib| lib.get("proc-macro").or_else(|| lib.get("proc_macro")))
+            .and_then(toml::Value::as_bool)
+            == Some(true);
+        if !proc_macro {
+            return false;
+        }
+        let lib_dir = lib
+            .and_then(|lib| lib.get("path"))
+            .and_then(toml::Value::as_str)
+            .map_or_else(
+                || package.join("src"),
+                |path| {
+                    lexical(&package.join(path))
+                        .parent()
+                        .map_or_else(|| package.join("src"), Path::to_path_buf)
+                },
+            );
+        if !file_abs.starts_with(&lib_dir) {
+            return false;
+        }
+        let relative = |path: &str| lexical(&package.join(path));
+        // `[lib] path` may sit in the package root, making the library
+        // directory an ancestor of these target directories.
+        if file_abs == relative("src/main.rs")
+            || file_abs.starts_with(relative("src/bin"))
+            || file_abs == relative("build.rs")
+            || ["tests", "benches", "examples", "target"]
+                .iter()
+                .any(|dir| file_abs.starts_with(relative(dir)))
+        {
+            return false;
+        }
+        if let Some(build) = manifest
+            .get("package")
+            .and_then(|package| package.get("build"))
+            .and_then(toml::Value::as_str)
+            && file_abs == relative(build)
+        {
+            return false;
+        }
+        for kind in ["bin", "example", "test", "bench"] {
+            let Some(targets) = manifest.get(kind).and_then(toml::Value::as_array) else {
+                continue;
+            };
+            for target in targets {
+                let Some(path) = target.get("path").and_then(toml::Value::as_str) else {
+                    continue;
+                };
+                let target_path = relative(path);
+                let target_dir = target_path.parent().map(Path::to_path_buf);
+                if file_abs == target_path
+                    || target_dir
+                        .as_ref()
+                        .is_some_and(|dir| *dir != lib_dir && file_abs.starts_with(dir))
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// The nearest package manifest at or above `directory`, read through the
+/// committed-source overlay. `None` for a virtual workspace, an unreadable
+/// or unparsable manifest, or no manifest below `root`.
+fn committed_package(
+    read_root: &Path,
+    root: &Path,
+    directory: &Path,
+) -> Option<(PathBuf, toml::Table)> {
+    for candidate in directory
+        .ancestors()
+        .take_while(|candidate| candidate.starts_with(root))
+    {
+        let relative = candidate.strip_prefix(root).map_or_else(
+            |_| PathBuf::from("Cargo.toml"),
+            |rel| rel.join("Cargo.toml"),
+        );
+        match crate::analysis::committed_source::read_source_bytes(read_root, &relative) {
+            Ok(Some(bytes)) => {
+                let manifest = String::from_utf8(bytes).ok()?.parse::<toml::Table>().ok()?;
+                manifest.get("package")?;
+                return Some((candidate.to_path_buf(), manifest));
+            }
+            Ok(None) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// One package manifest: its directory and parsed table.
 struct Package {
     directory: PathBuf,
@@ -718,6 +841,122 @@ mod tests {
         let default = MemberCrates::new(&root).is_default_target_root(Path::new(crate_root));
         let _ = std::fs::remove_dir_all(&root);
         Ok(default)
+    }
+
+    fn proc_macro_files(files: &[(&str, &str)], probes: &[&str]) -> Result<Vec<bool>, String> {
+        let root = temp_workspace("proc-macro-lib", files)?;
+        let members = MemberCrates::new(&root);
+        let answers = probes
+            .iter()
+            .map(|file| members.is_proc_macro_library_file(Path::new(file)))
+            .collect();
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(answers)
+    }
+
+    const PM: &str =
+        "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
+
+    #[test]
+    fn only_proc_macro_library_modules_are_proc_macro_library_files() -> Result<(), String> {
+        let answers = proc_macro_files(
+            &[("derive/Cargo.toml", PM), ("plain/Cargo.toml", PRICING)],
+            &[
+                "derive/src/lib.rs",
+                "derive/src/expand/mod.rs",
+                "plain/src/lib.rs",
+                "derive/build.rs",
+                "derive/src/main.rs",
+                "derive/src/bin/tool.rs",
+                "derive/tests/it.rs",
+                "derive/benches/b.rs",
+                "derive/examples/e.rs",
+                "missing/src/lib.rs",
+            ],
+        )?;
+        assert_eq!(
+            answers,
+            [
+                true, true, false, false, false, false, false, false, false, false
+            ]
+        );
+        assert!(
+            !MemberCrates::default().is_proc_macro_library_file(Path::new("derive/src/lib.rs"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_package_root_lib_path_still_excludes_target_directories() -> Result<(), String> {
+        let manifest = "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\npath = \"lib.rs\"\n";
+        let answers = proc_macro_files(
+            &[("derive/Cargo.toml", manifest)],
+            &[
+                "derive/lib.rs",
+                "derive/expand/mod.rs",
+                "derive/tests/it.rs",
+                "derive/benches/b.rs",
+                "derive/examples/e.rs",
+                "derive/build.rs",
+            ],
+        )?;
+        assert_eq!(answers, [true, true, false, false, false, false]);
+        Ok(())
+    }
+
+    #[test]
+    fn underscore_spelling_and_explicit_targets_are_read() -> Result<(), String> {
+        let manifest = "[package]\nname = \"derive\"\nversion = \"0.1.0\"\nbuild = \"src/gen/build.rs\"\n[lib]\nproc_macro = true\n[[bin]]\nname = \"tool\"\npath = \"src/tool/main.rs\"\n";
+        let answers = proc_macro_files(
+            &[("derive/Cargo.toml", manifest)],
+            &[
+                "derive/src/lib.rs",
+                "derive/src/gen/build.rs",
+                "derive/src/tool/main.rs",
+                "derive/src/tool/cli.rs",
+            ],
+        )?;
+        assert_eq!(answers, [true, false, false, false]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_virtual_workspace_manifest_alone_is_not_a_proc_macro_package() -> Result<(), String> {
+        let answers = proc_macro_files(
+            &[("Cargo.toml", "[workspace]\nmembers = []\n")],
+            &["src/lib.rs"],
+        )?;
+        assert_eq!(answers, [false]);
+        Ok(())
+    }
+
+    // The manifest is read through the committed-source overlay: a dirty
+    // working-tree `Cargo.toml` must not change a committed-history answer,
+    // in either direction.
+    #[test]
+    fn a_dirty_manifest_does_not_flip_the_committed_answer() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        let plain = "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n";
+        let cases: [(&str, Option<&'static str>, bool); 3] = [
+            (PM, Some(plain), false),
+            (plain, Some(PM), true),
+            // No manifest at HEAD: fail closed, whatever the worktree holds.
+            (PM, None, false),
+        ];
+        for (worktree, committed, expected) in cases {
+            let root = temp_workspace("proc-macro-dirty", &[("Cargo.toml", worktree)])?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [("Cargo.toml", committed.map(str::as_bytes))],
+            );
+            let members = MemberCrates::new(&root);
+            let answer = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                members.is_proc_macro_library_file(Path::new("src/lib.rs"))
+            });
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(answer, expected);
+        }
+        Ok(())
     }
 
     #[test]
