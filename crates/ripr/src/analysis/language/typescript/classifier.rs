@@ -6183,6 +6183,13 @@ pub(crate) fn ts_nullish_operand_unreached(
     let Some(index) = owner.params.iter().position(|p| p == &change.subject) else {
         return false;
     };
+    if owner
+        .source_text
+        .as_deref()
+        .is_none_or(|source| parameter_may_have_default(source, &change.subject))
+    {
+        return false;
+    }
     if !owner.source_text.as_deref().is_some_and(|source| {
         ts_parameter_is_stable(source, &change.subject)
             && masked_owner_body(source)

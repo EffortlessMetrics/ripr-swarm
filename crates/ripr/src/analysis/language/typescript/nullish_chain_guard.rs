@@ -29,6 +29,9 @@ pub(crate) struct NullishChainChange {
     earlier: Vec<Operand>,
     old: Operand,
     new: Operand,
+    /// The changed operand ends the chain, so its value is returned as is
+    /// and `null` differs from `undefined`.
+    last: bool,
 }
 
 /// What one tested argument shows about the changed operand.
@@ -44,7 +47,8 @@ pub(crate) enum ChainInput {
 
 /// A property value read from an object literal.
 enum Value {
-    Nullish,
+    Null,
+    Undefined,
     Literal(LiteralValue),
     Unknown,
 }
@@ -87,6 +91,7 @@ impl NullishChainChange {
             earlier,
             old: old_operand,
             new: new_operand,
+            last: at + 1 == old.len(),
         })
     }
 
@@ -108,7 +113,7 @@ impl NullishChainChange {
                 Operand::Literal(literal) => Value::Literal(literal.clone()),
                 Operand::Read { prop, optional } => match &entries {
                     // `undefined.prop` throws; only `?.` reads nullish.
-                    None if *optional => Value::Nullish,
+                    None if *optional => Value::Undefined,
                     None => Value::Unknown,
                     Some(entries) => property_value(entries, prop),
                 },
@@ -116,14 +121,20 @@ impl NullishChainChange {
         };
         for operand in &self.earlier {
             match value(operand) {
-                Value::Nullish => {}
+                Value::Null | Value::Undefined => {}
                 Value::Literal(_) => return ChainInput::Unreached,
                 Value::Unknown => return ChainInput::Unknown,
             }
         }
         match (value(&self.old), value(&self.new)) {
             (Value::Unknown, _) | (_, Value::Unknown) => ChainInput::Unknown,
-            (Value::Nullish, Value::Nullish) => ChainInput::Unreached,
+            (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
+                ChainInput::Unreached
+            }
+            // Both fall through to the next operand, unless this is the last.
+            (Value::Null | Value::Undefined, Value::Null | Value::Undefined) if !self.last => {
+                ChainInput::Unreached
+            }
             (Value::Literal(a), Value::Literal(b)) if a == b => ChainInput::Unreached,
             _ => ChainInput::Differs,
         }
@@ -132,26 +143,89 @@ impl NullishChainChange {
 
 /// The `prop` entry of an object literal's entries.
 fn property_value(entries: &[String], prop: &str) -> Value {
-    let mut found = Value::Nullish;
+    let mut found: Option<Value> = None;
     for entry in entries {
         if entry.starts_with("...") {
             return Value::Unknown;
         }
         match key_value(entry) {
             Some((key, text)) if key == prop => {
-                found = match literal_value(&text) {
-                    Some(LiteralValue::Word("null")) => Value::Nullish,
+                found = Some(match literal_value(&text) {
+                    Some(LiteralValue::Word("null")) => Value::Null,
                     Some(literal) => Value::Literal(literal),
-                    None if text == "undefined" => Value::Nullish,
+                    None if text == "undefined" => Value::Undefined,
                     None => Value::Unknown,
-                };
+                });
             }
             Some(_) => {}
             None if is_identifier(entry) && entry != prop => {}
             None => return Value::Unknown,
         }
     }
-    found
+    match found {
+        Some(value) => value,
+        // A missing own key still reads an inherited member.
+        None if OBJECT_PROTOTYPE_MEMBERS.contains(&prop) => Value::Unknown,
+        None => Value::Undefined,
+    }
+}
+
+const OBJECT_PROTOTYPE_MEMBERS: [&str; 8] = [
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "__proto__",
+];
+
+/// `true` when the owner's parameter list gives `name` a default value, or
+/// the list cannot be read. An omitted or `undefined` argument is then not
+/// nullish in the body.
+pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
+    let Some(open) = source.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut entries = vec![String::new()];
+    let mut closed = false;
+    let mut chars = source[open + 1..].chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' if depth == 0 => {
+                closed = ch == ')';
+                break;
+            }
+            ')' | ']' | '}' | '>' => depth -= 1,
+            ',' if depth == 0 => {
+                entries.push(String::new());
+                continue;
+            }
+            '=' if depth == 0 && chars.peek() != Some(&'>') => {
+                if let Some(entry) = entries.last_mut() {
+                    entry.push('=');
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(entry) = entries.last_mut() {
+            entry.push(ch);
+        }
+    }
+    if !closed {
+        return true;
+    }
+    entries.iter().any(|entry| {
+        let entry = entry.trim();
+        entry.contains('=')
+            && entry.strip_prefix(name).is_some_and(|rest| {
+                !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
+            })
+    })
 }
 
 /// `param?.prop` or `param.prop`, with plain identifiers only.

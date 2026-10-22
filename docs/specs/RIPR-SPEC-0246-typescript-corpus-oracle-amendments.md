@@ -220,7 +220,12 @@ a once-bound local, as in rule 3), `undefined` or `null`. An input reaches
 the changed operand when each earlier property is absent, `null` or
 `undefined`; it tells the versions apart when the old and new operands then
 read different values (absent, `null` and `undefined` all read as nullish).
-If one observed input tells them apart, or any observed input cannot be read
+Null and `undefined` are interchangeable only for an operand that falls
+through to a later one; for the final operand, whose value is returned,
+they differ. A missing key that names an `Object.prototype` member
+(`constructor`, `toString`, ...) is unreadable, not absent, and a
+parameter with a default value (`function f(person = {...})`) or an
+unreadable parameter list fails open. If one observed input tells them apart, or any observed input cannot be read
 (a spread, a non-literal value, a non-literal argument, a non-optional read
 of `undefined`), the ladder result stands. Otherwise, when at least one
 whole-result call is observed, an `exposed` ladder result reads
