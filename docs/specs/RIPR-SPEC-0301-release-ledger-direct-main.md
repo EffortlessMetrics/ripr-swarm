@@ -146,9 +146,9 @@ it cannot close, a whole-file add or delete, a hunk-less change and a quoted pat
 give no span and stay product, as does an attribute on a field, variant or
 parameter (no item of its own ends before an enclosing closer). A span whose first or last line also holds other code
 gives no span either, because hunks are whole lines. A hunk that touches a span's
-attribute or closing line is a product change unless it is exactly the whole span, so a hunk that also adds a blank separator line
-around a new test module stays product (a conservative miss).
- Product-class Rust under
+attribute or closing line is a product change unless it is exactly the whole span. Blank lines at either edge of a hunk are
+set aside first, read from the file at that revision, so a blank separator added or removed with a whole test module does not
+hide it; a hunk of only blank lines counts only when it touches a span, and otherwise stays product. Product-class Rust under
 `editors/` and `schemas/` is scanned as well as `crates/ripr/src/`.
 
 ## Disposition rule v1 and overrides
@@ -247,6 +247,7 @@ valid-ledger control that yields no reasons.
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,
   `changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit`,
+  `blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit`,
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
   `split_refs_takes_only_the_trailing_pull_request`,
