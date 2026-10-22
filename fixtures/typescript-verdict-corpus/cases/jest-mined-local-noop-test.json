@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-mined-local-noop-test",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-local-noop-test.diff",
+  "anchor": {
+    "file": "src/sumNoopTest.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_local_noop_test_in_describe",
+  "hard_case": "module-local test no-op invoked inside a real describe: test(name, fn) never runs its callback",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; mutant hand-applied to the anchor line (StrykerJS 10's compound-assignment mutant), run with the test command on the whole package",
+    "mutants": [
+      {
+        "replacement": "total -= v;",
+        "mutated_line": "total -= v;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the sum changes, but the only test that observes it is registered through a local no-op and never runs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The module declares `const test = (_name, _body) => {}`, so the registration never runs and its `toBe(9)` is never evaluated; only the `it` placeholder runs. The `total -= v` mutant passes the whole package. ripr must not credit the unexecuted assertion: `test` is the enclosing scope's own function (RIPR-SPEC-0243 rule 14, #8959). Before the rule ripr reported `exposed`, a false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "8994ec5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast probe:src_lib.rs:return_value:4fe97f3f
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:4fe97f3f
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:4fe97f3f --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input` for the full gate's answer
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

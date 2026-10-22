@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (3)
+
+Reason:
+RIPR-SPEC-0122 / #8729 (#8856): preserve the producer-owned NoCanonicalGap refusal advisory for this preview finding; no TypeScript verdict, JSON, or repair eligibility change
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

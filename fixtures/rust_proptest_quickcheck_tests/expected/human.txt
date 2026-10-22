@@ -14,7 +14,7 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.35)
   Why no path: no static path from a related test to this change was found
   Changed behavior: x >= 10
-  Missing discriminator (1 of 4): No detected boundary input for the changed predicate
+  Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Next step: Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test
   Evidence: reach unknown · infection unknown · propagation unknown · observation no · discriminator no
     - reach unknown: Property macro expansion and owner execution are unresolved
@@ -24,6 +24,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_proptest_quickcheck_tests/input --diff <cwd>/fixtures/rust_proptest_quickcheck_tests/diff.patch --mode fast probe:src_lib.rs:predicate:f83d04a7
   ripr context --root <cwd>/fixtures/rust_proptest_quickcheck_tests/input --diff <cwd>/fixtures/rust_proptest_quickcheck_tests/diff.patch --mode fast --at probe:src_lib.rs:predicate:f83d04a7
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:f83d04a7 --root <cwd>/fixtures/rust_proptest_quickcheck_tests/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

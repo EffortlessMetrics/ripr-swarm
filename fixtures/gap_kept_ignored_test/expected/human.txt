@@ -17,7 +17,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
   Changed behavior: input * 3
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  Related test: tests/weight_tests.rs:5 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test: tests/weight_tests.rs:5 checks_weight (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:6; the
     "not credited" note says why. That shape can keep the assertion from checking the change, so
     this is not a static limit: make the check run on every default test run, as the standard
@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/gap_kept_ignored_test/input --diff <cwd>/fixtures/gap_kept_ignored_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/gap_kept_ignored_test/input --diff <cwd>/fixtures/gap_kept_ignored_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:6ea804bb --root <cwd>/fixtures/gap_kept_ignored_test/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/gap_kept_ignored_test/input --at src/lib.rs:2 --kind return_value
 

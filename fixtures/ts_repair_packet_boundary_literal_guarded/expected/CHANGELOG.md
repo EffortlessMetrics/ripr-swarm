@@ -167,3 +167,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_guarded (15)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_guarded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -60,6 +60,8 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+#[cfg(test)]
+mod capability_disposition_tests;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -69,6 +71,7 @@ mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod guard_entry_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -101,6 +104,9 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod repo;
+#[cfg(test)]
+mod repo_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -115,6 +121,7 @@ mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
@@ -154,6 +161,7 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
+use suite_factory::SuiteFactoryExpansion;
 pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
@@ -208,35 +216,27 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // The stub still returns an empty result, but it now discloses
-        // the partial run through `partial_reason` so the pipeline
-        // records a `Partial` language run on the shared `language_runs`
-        // channel (adapter.rs): human/JSON output renders the limitation
-        // and gates fail closed on the partial denominator. Without this
-        // disclosure the empty adapter result was silent — and in a mixed
-        // Rust+TypeScript repo the render-side `typescript_diff_first`
-        // guidance (output/render.rs) never fires because it requires an
-        // empty seam inventory AND no Rust files. See
-        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
-        // the limitation contract.
-        Ok(LanguageRepoResult {
-            findings: Vec::new(),
-            harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
-            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
-            rust_diagnostic_origins: Default::default(),
-            rust_consumed_sources: Default::default(),
-        })
+        // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
+        // unreadable or partially indexed run discloses itself through
+        // `partial_reason` on the shared `language_runs` channel.
+        repo::analyze_repo(options, &[])
     }
 }
 
 impl TypeScriptAdapter {
+    /// [`LanguageAdapter::analyze_repo`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386), so repo mode admits the same
+    /// declared hand-written sources diff mode does.
+    pub(crate) fn analyze_repo_with_handwritten_env(
+        options: &AnalysisOptions,
+        handwritten: &[String],
+    ) -> Result<LanguageRepoResult, String> {
+        repo::analyze_repo(options, handwritten)
+    }
+
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the read caps injected (mirrors
     /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves
@@ -372,16 +372,32 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap) =
-                    extract_tests_and_conditional_credit_gap(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) =
+                    extract_tests_with_expansion(relative, source);
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
-                promote_committed_snapshots(&options.root, relative, source, &mut tests);
+                // The tests of a suite-factory call carry the factory's
+                // snapshot call once per expansion, so the file's calls are
+                // counted the same way.
+                let counted = expansion
+                    .as_ref()
+                    .map(SuiteFactoryExpansion::snapshot_source);
+                promote_committed_snapshots(
+                    &options.root,
+                    relative,
+                    counted.as_deref().unwrap_or(source),
+                    &mut tests,
+                );
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
+                if let Some(gap) = detect_partial_test_extraction_expanded(
+                    relative,
+                    source,
+                    &tests,
+                    expansion.as_ref(),
+                ) {
                     extraction_gaps.push(gap);
                 }
                 // #8714: an extracted assertion sitting under an unevaluated

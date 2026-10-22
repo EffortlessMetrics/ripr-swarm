@@ -1,0 +1,12 @@
+diff --git a/src/memoize.ts b/src/memoize.ts
+index 0000000..1111111 100644
+--- a/src/memoize.ts
++++ b/src/memoize.ts
+@@ -12,6 +12,6 @@
+ export class Calc {
+   @memoize
+   square(n: number): number {
+-    return n * n;
++    return n * (n + 1);
+   }
+ }

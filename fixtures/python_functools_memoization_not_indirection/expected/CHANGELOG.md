@@ -144,3 +144,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (13)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (14)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (15)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (16)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-7976-should-panic",
+  "origin": "authored",
+  "version_label": "authored 2026-10-19; paired guard evidence for #7976 / #8866",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "30bcbefa4668f8682cd5e6b05777b59ebc9b5b3352a0f91a6d6c0396994e3528"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f2d25cd66ade84f8a9294c25f8daf9fbee9b91a9e9c5934d4500ba9467cfa2df"
+    }
+  ]
+}

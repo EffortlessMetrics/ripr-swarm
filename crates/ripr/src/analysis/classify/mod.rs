@@ -10,6 +10,7 @@ mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
 mod flow;
+mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
 mod infection;
@@ -56,9 +57,11 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
+pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
-    withhold_unsupported_gap,
+    CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, REFUSALS_ARE_ANALYZER_LIMITS, is_ignored,
+    withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
+    withhold_should_panic_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -70,8 +73,6 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
-#[cfg(test)]
-pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
@@ -79,6 +80,8 @@ pub(in crate::analysis) use owner_pin::{
     targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
@@ -100,8 +103,8 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, test_calls_free_function,
+    is_partial_eq_method, manifests_with_unindexed_files, method_call_resolves_to_impl,
+    module_stem, owner_call_text, owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
@@ -109,6 +112,9 @@ pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+};
+pub(in crate::analysis) use reveal::{
+    NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
