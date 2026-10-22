@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Eleven small authored Python projects under `subjects/`, our own code under
+Twelve small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -59,6 +59,14 @@ this repository's license, one per test library or library feature:
   `skip` and non-strict `xfail`, `caplog`, `parametrize` with ids, a Hypothesis
   round-trip property whose oracle calls the changed function, a
   `unittest.TestCase` with `setUp` run under pytest, and an autouse fixture.
+- `authored-py-pytest-hostile`: inputs that stress file, name and syntax
+  handling. Non-ASCII identifiers and strings, tab indentation, a file with no
+  final newline, a 488-character line, a function named like a builtin, a
+  conditional definition (live and dead branch), `from m import *` through a
+  module whose `__all__` exports one name and omits another, a test that asserts nothing, a CRLF test file asserting
+  through a helper in another file, a module-level lambda, `globals()`
+  dispatch, a module constant read by a test class, the same function name in
+  two modules, a nested function, and an unrelated unparseable module.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -66,7 +74,7 @@ own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under
 Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
-The newest subjects (shapes, idioms) were run under Python 3.13.16
+The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
 and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
 
 ## When
