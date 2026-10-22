@@ -701,3 +701,33 @@ reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
 case = "shape-enum-member-value-unread"
 issue = 9436
 reason = "Enum member value edit reads silent; claimed by the Declined-Rust-file thread (#9436)."
+
+[[known_false]]
+case = "pw-expect-soft-second-term"
+issue = 9434
+reason = "Playwright expect.soft read as no oracle (#9434)."
+
+[[known_false]]
+case = "pw-step-heavy-parcel-threshold"
+issue = 9434
+reason = "Playwright test.step body read as no oracle (#9434)."
+
+[[known_false]]
+case = "pw-tothrow-anchored-regex"
+issue = 9434
+reason = "Anchored regex in toThrow read as no oracle (#9434)."
+
+[[known_false]]
+case = "pw-loop-registered-rounding-mode"
+issue = 9434
+reason = "Playwright loop-registered test read as a gap (#9434)."
+
+[[known_false]]
+case = "pw-fixme-clamp-upper-bound"
+issue = 9436
+reason = "test.fixme credited as a live test (#9436)."
+
+[[known_false]]
+case = "hostile-minified-line-pinned"
+issue = 9435
+reason = "Exact oracle ignored on a minified line (#9435)."
