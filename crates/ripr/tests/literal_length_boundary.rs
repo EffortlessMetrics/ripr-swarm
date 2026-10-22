@@ -350,6 +350,10 @@ fn same_named_foreign_owner_and_weak_oracle_do_not_get_credit() -> Result<(), St
         "assert!(fits(\"abc\", 3));",
         "assert!(fits(\"abc\", 3) || true);",
     );
-    assert_ne!(finding(&source)?.class, ExposureClass::Exposed);
+    let finding = finding(&source)?;
+    assert_eq!(finding.ripr.infect.state, StageState::Yes);
+    assert_eq!(finding.ripr.propagate.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:#?}");
     Ok(())
 }
