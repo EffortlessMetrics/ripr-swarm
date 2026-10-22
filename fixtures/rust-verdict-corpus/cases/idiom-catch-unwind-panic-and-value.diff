@@ -6,7 +6,7 @@ diff --git a/src/unwinding.rs b/src/unwinding.rs
  
  pub fn pop_front(values: &mut Vec<u32>) -> u32 {
 -    values.remove(0)
-+    values.swap_remove(0)
++    Vec::remove(values, 0)
  }
  
  pub struct Cart {

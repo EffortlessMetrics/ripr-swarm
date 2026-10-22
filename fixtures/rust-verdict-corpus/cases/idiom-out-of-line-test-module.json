@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "span_ignores_order asserts both orders give 7, so an off-by-one and the unsigned-less difference both fail. Shape: out-of-line test module.",
+  "reasoning": "span_ignores_order asserts both orders give 7, so an off-by-one and the signed `hi - lo` (negative for the reversed pair) both fail. Shape: out-of-line test module.",
   "axes": [
     "std_test_form"
   ],

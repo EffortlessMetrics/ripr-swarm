@@ -930,7 +930,7 @@ reason = "Async fn driven by block_on is not followed (#9443)."
 [[known_false]]
 case = "idiom-assert-macro-wrapper"
 issue = 7089
-reason = "A user macro_rules! wrapping assert_eq! hides the owner pin; the weak gap should take the macro-wrapped limit (#7089)."
+reason = "A user macro_rules! wrapping assert_eq! reads as a weak gap; it should be credited, or at worst limited under the macro-wrapped limit (#7089)."
 
 [[known_false]]
 case = "idiom-display-string-pin"

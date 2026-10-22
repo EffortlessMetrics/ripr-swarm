@@ -21,14 +21,14 @@
         "mutated_line": "values.remove(1)",
         "outcome": "tests_failed",
         "failing_test": "unwinding::tests::pops_the_first",
-        "equivalence_review": "not equivalent: `values.swap_remove(0)` becomes `values.remove(1)`"
+        "equivalence_review": "not equivalent: `Vec::remove(values, 0)` becomes `values.remove(1)`"
       },
       {
         "replacement": "values.pop().unwrap()",
         "mutated_line": "values.pop().unwrap()",
         "outcome": "tests_failed",
         "failing_test": "unwinding::tests::pops_the_first",
-        "equivalence_review": "not equivalent: `values.swap_remove(0)` becomes `values.pop().unwrap()`"
+        "equivalence_review": "not equivalent: `Vec::remove(values, 0)` becomes `values.pop().unwrap()`"
       }
     ]
   },
