@@ -42,7 +42,9 @@
 //! direct discriminator beside an unresolved macro route (#7542);
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
-//! when that widening would exceed the narrowing threshold.
+//! when that widening would exceed the narrowing threshold. Past
+//! [`REACH_INDEX_CAPACITY`] distinct closures the scope builds one index over
+//! the whole full selection and shares it (#9278).
 //!
 //! Every admission test is a lexical superset of the parser fact it stands
 //! for: a call, definition or mention the index records is spelled in the

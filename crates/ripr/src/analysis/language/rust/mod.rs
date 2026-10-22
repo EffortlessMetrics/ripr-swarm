@@ -2492,13 +2492,7 @@ impl RustAdapter {
                                 reach,
                             );
                         } else {
-                            apply_rust_no_static_path_limit(
-                                &mut finding,
-                                &probe,
-                                &index,
-                                &property_macro_mentions,
-                                &transitive_reach,
-                            );
+                            return Err("shared reach index reported but not held".to_string());
                         }
                     }
                     dependent_scope::ReachIndex::Widened(reach_index) => {
@@ -3937,8 +3931,15 @@ mod tests {
                     &OraclePolicy::default(),
                     &changed,
                 )?;
-                if result.findings.len() < 4 {
-                    return Err("every changed owner must seed a probe".to_string());
+                let unreached = result
+                    .findings
+                    .iter()
+                    .filter(|finding| finding.class == ExposureClass::NoStaticPath)
+                    .count();
+                if unreached < 4 {
+                    return Err(format!(
+                        "every changed owner must be a no_static_path finding, got {unreached}"
+                    ));
                 }
                 Ok::<_, String>((
                     format!("{:?}", result.findings),
@@ -3953,6 +3954,7 @@ mod tests {
             builds, 3,
             "two cached closure indexes plus one shared full index, not one build per owner"
         );
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 
