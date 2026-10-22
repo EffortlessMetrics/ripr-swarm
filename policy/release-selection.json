@@ -733,12 +733,21 @@
       "claim_id": "candidate-harness",
       "owner_issue": 4510,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "The exact-candidate harness accepted a capture slice; shared harness and child consumers are open.",
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "The termination harness is on main with exact-binary snapshot and hash, deadline and process-group custody, per-row cleanup and the instrument, repeat and removal controls (#9411, #9425); it runs on the cut binary at the candidate.",
       "related_issues": [
         4522
       ],
-      "next": "Finish the shared harness and child-consumer acceptance, and bind successor packets (#4522). Owner: #4510 owner."
+      "implementation_refs": [
+        "pr:9411",
+        "pr:9425"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/4510#issuecomment-6333565475",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/1609",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9480"
+      ],
+      "non_claim": "The release does not claim the #1609 manifest binding, the ambient or stale-binary and decoy-CWD execution controls, or blind rows for the harness, and nothing has run on the cut binary until repairs-disabled builds exist for all four families; gaps are tracked in #9480 and #4510 stays open."
     }
   ],
   "outside_selection": [
