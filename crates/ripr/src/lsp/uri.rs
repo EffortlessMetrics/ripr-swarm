@@ -69,9 +69,20 @@ mod windows_paths {
     /// `\`. On Unix that text is one literal (relative) filename, which would
     /// share a URI with the slash spelling, so the encoder refuses it there.
     pub(super) fn is_foreign_windows_spelling(path: &str) -> bool {
+        let bytes = path.as_bytes();
         !cfg!(windows)
-            && path.contains('\\')
-            && (is_windows_drive_path(path) || path.starts_with("\\\\"))
+            && ((is_windows_drive_path(path) && bytes.get(2) == Some(&b'\\'))
+                || path.starts_with("\\\\"))
+    }
+
+    /// `/X:` followed by anything but `/` (or nothing): a drive-relative shape
+    /// that no host admits as a drive path. Takes the still-rooted bytes.
+    pub(super) fn is_drive_relative_shape(rooted: &[u8]) -> bool {
+        rooted.len() >= 3
+            && rooted[0] == b'/'
+            && rooted[1].is_ascii_alphabetic()
+            && rooted[2] == b':'
+            && rooted.get(3) != Some(&b'/')
     }
 
     pub(super) fn is_windows_drive_path(path: &str) -> bool {
@@ -123,20 +134,32 @@ pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
             path.display()
         ));
     };
-    let encoded = encode_uri_path(&collapsed);
-    let uri = if encoded.starts_with('/') {
-        format!("file://{encoded}")
-    } else {
-        format!("file:///{encoded}")
-    };
+    let uri = format!("file://{}", rooted_uri_path(encode_uri_path(&collapsed)));
     uri.parse()
         .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
 }
 
+/// Root an encoded path for the URI. On a non-Windows host a first segment of
+/// the shape `x:name` (a legitimate Unix name such as `a:b\c.rs`) would read as
+/// a refused drive-relative path, so it is emitted as `/./x:name`, a form the
+/// decoder admits and strips back to `/x:name`. A real drive-letter path is
+/// untouched, and a real drive-relative one is still refused by the decoder.
+fn rooted_uri_path(encoded: String) -> String {
+    let rooted = if encoded.starts_with('/') {
+        encoded
+    } else {
+        format!("/{encoded}")
+    };
+    if !cfg!(windows) && windows_paths::is_drive_relative_shape(rooted.as_bytes()) {
+        format!("/.{rooted}")
+    } else {
+        rooted
+    }
+}
+
 /// A path that is not valid UTF-8 (Unix) is encoded from its raw bytes, so two
-/// distinct such paths never collapse to one U+FFFD spelling. The shared decoder
-/// still refuses a non-UTF-8 URI, so the emitted URI names no admitted file
-/// rather than aliasing another one. A `..` segment cannot be collapsed on raw
+/// distinct such paths never collapse to one U+FFFD spelling; the decoder maps
+/// such a URI back to the exact byte path. A `..` segment cannot be collapsed on raw
 /// bytes, and an unpaired-surrogate Windows path has no byte encoding, so both
 /// are refused.
 fn non_utf8_file_uri_for_path(path: &Path) -> Result<Uri, String> {
@@ -151,11 +174,7 @@ fn non_utf8_file_uri_for_path(path: &Path) -> Result<Uri, String> {
             ));
         }
         let encoded = percent_codec::encode_uri_bytes(bytes);
-        let uri = if encoded.starts_with('/') {
-            format!("file://{encoded}")
-        } else {
-            format!("file:///{encoded}")
-        };
+        let uri = format!("file://{}", rooted_uri_path(encoded));
         uri.parse()
             .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
     }
@@ -193,6 +212,24 @@ fn non_utf8_path_from_file_uri(uri: &Uri) -> Option<PathBuf> {
         {
             return None;
         }
+        // Same structural drive admission as the UTF-8 route, on exact bytes:
+        // `/C:/x` drops its leading slash, `/C:x` is refused, and `/./x:name`
+        // is the emitter's disambiguation for a legitimate `x:name` segment.
+        let bytes = if let Some(rest) = bytes.strip_prefix(b"/./")
+            && windows_paths::is_drive_relative_shape(&[b"/", rest].concat())
+        {
+            [b"/", rest].concat()
+        } else if windows_paths::is_drive_relative_shape(&bytes) {
+            return None;
+        } else if bytes.len() >= 4
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+            && bytes[3] == b'/'
+        {
+            bytes[1..].to_vec()
+        } else {
+            bytes
+        };
         Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
     }
     #[cfg(not(unix))]
@@ -378,6 +415,13 @@ fn normalize_decoded_uri_path(mut decoded: String) -> Option<String> {
     // read would follow. `foo..bar` and `..hidden` are filenames.
     if has_parent_directory_segment(&decoded) {
         return None;
+    }
+    if !cfg!(windows)
+        && let Some(rest) = decoded.strip_prefix("/./")
+        && windows_paths::is_drive_relative_shape(format!("/{rest}").as_bytes())
+    {
+        // Emitter disambiguation for a legitimate Unix `x:name` segment.
+        return Some(format!("/{rest}"));
     }
     if windows_paths::is_windows_drive_uri_path(&decoded) {
         // `/C:relative` must not become a drive-relative filesystem path.
@@ -1099,6 +1143,82 @@ mod tests {
         assert!(file_uris_match_on(&slash, &backslash, false));
         let emitted = file_uri_for_path(Path::new(["C:", "a", "b.rs"].join("\\").as_str()))?;
         assert!(file_uris_match_on(&emitted, &slash, false));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_drive_forms_follow_the_utf8_admission_rules() -> Result<(), String> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = |value: &[u8]| PathBuf::from(OsStr::from_bytes(value));
+        // Built at runtime so the source has no local Windows path token.
+        let drive = "C";
+        let expected = [drive.as_bytes(), b":/a", &[0xff]].concat();
+        // Absolute drive parity with the UTF-8 route: leading slash dropped,
+        // exact payload bytes kept, for every local authority spelling.
+        for prefix in ["file:///", "file://localhost/", "file:/"] {
+            let uri = parse_uri(&format!("{prefix}{drive}:/a%FF"))?;
+            assert_eq!(path_from_file_uri(&uri), Some(bytes(&expected)), "{prefix}");
+        }
+        assert_eq!(
+            path_from_file_uri(&parse_uri(&format!("file:///{drive}:/a"))?),
+            Some(PathBuf::from(format!("{drive}:/a")))
+        );
+        // Drive-relative shapes are refused like `file:///C:x`.
+        assert_eq!(path_from_file_uri(&parse_uri("file:///C:x")?), None);
+        for refused in ["file:///C:x%FF", "file://localhost/C:x%FF", "file:/C:%FF"] {
+            assert_eq!(path_from_file_uri(&parse_uri(refused)?), None, "{refused}");
+        }
+        // Distinct payloads and no case fold, even on a case-insensitive host.
+        let ff = parse_uri(&format!("file:///{drive}:/a%FF"))?;
+        let fe = parse_uri(&format!("file:///{drive}:/a%FE"))?;
+        let upper = parse_uri(&format!("file:///{drive}:/A%FF"))?;
+        assert!(!file_uris_match_on(&ff, &fe, true));
+        assert!(!file_uris_match_on(&ff, &upper, true));
+        assert!(file_uris_match_on(&ff, &ff, true));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legitimate_drive_shaped_unix_names_round_trip() -> Result<(), String> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        // Negative experiment: an emission-only repair (or none) leaves the
+        // decoder refusing `/a:b\c.rs` as a drive-relative path.
+        for (path, wire) in [
+            ("/a:b\\c.rs", "file:///./a:b%5Cc.rs"),
+            ("a:b\\c.rs", "file:///./a:b%5Cc.rs"),
+            ("/z:", "file:///./z:"),
+        ] {
+            let uri = file_uri_for_path(Path::new(path))?;
+            assert_eq!(uri.as_str(), wire, "{path}");
+            assert_eq!(
+                path_from_file_uri(&uri),
+                Some(PathBuf::from(format!("/{}", path.trim_start_matches('/')))),
+                "{path}"
+            );
+        }
+        let raw = Path::new(OsStr::from_bytes(b"/a:b\xFF"));
+        let uri = file_uri_for_path(raw)?;
+        assert_eq!(uri.as_str(), "file:///./a:b%FF");
+        assert_eq!(path_from_file_uri(&uri).as_deref(), Some(raw));
+        // Real drive-relative and foreign spellings stay refused or unaliased.
+        assert_eq!(path_from_file_uri(&parse_uri("file:///a:b%5Cc.rs")?), None);
+        assert_eq!(path_from_file_uri(&parse_uri("file:///C:x")?), None);
+        let foreign = ["C:", "a", "b.rs"].join("\\");
+        if let Ok(uri) = file_uri_for_path(Path::new(&foreign)) {
+            return Err(format!(
+                "foreign spelling must be refused: {}",
+                uri.as_str()
+            ));
+        }
+        let slash = file_uri_for_path(Path::new(&["C:", "a", "b.rs"].join("/")))?;
+        assert_eq!(
+            slash.as_str(),
+            format!("file:///{}", ["C:", "a", "b.rs"].join("/"))
+        );
         Ok(())
     }
 
