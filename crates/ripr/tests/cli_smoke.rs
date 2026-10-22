@@ -1915,6 +1915,77 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #9346: the issue's diff shape end to end — the actual two-probe
+/// shape from the live witness. The signature line of the production
+/// function changes (seeding a whole-function `static_unknown` probe at
+/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// reaches a decisive `exposed` verdict for the same function, and the
+/// discriminating test is added in `tests/` in the same working tree.
+/// Both production probes cover `discounted_total`, so Start here must
+/// lead with the decisive line-2 finding, not the limitation state.
+#[test]
+fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Result<(), String> {
+    let root = unique_temp_workspace("start-here-production");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create fixture root: {err}"))?;
+    let result = (|| {
+        init_producer_fixture_repo(&root).map_err(|err| format!("init producer fixture: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&lib).map_err(|err| format!("read lib: {err}"))?;
+        let changed = source
+            .replacen(
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                1,
+            )
+            .replacen(">= discount_threshold", "> discount_threshold", 1);
+        if changed == source || !changed.contains("> discount_threshold") {
+            return Err("fixture boundary must be present".to_string());
+        }
+        std::fs::write(&lib, changed).map_err(|err| format!("write lib: {err}"))?;
+        let tests = root.join("tests/pricing.rs");
+        let mut test_source =
+            std::fs::read_to_string(&tests).map_err(|err| format!("read tests: {err}"))?;
+        test_source.push_str(
+            "\n#[test]\nfn discount_at_threshold_keeps_full_amount() {\n    assert_eq!(discounted_total(100, 100), 100);\n}\n",
+        );
+        std::fs::write(&tests, test_source).map_err(|err| format!("write tests: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&["check", "--root", &root_arg]);
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    let stdout = result?;
+    let start_here = stdout
+        .split("Start here:")
+        .nth(1)
+        .ok_or_else(|| format!("check output omitted the Start-here block:\n{stdout}"))?;
+    let block = start_here
+        .split("\nHidden:")
+        .next()
+        .unwrap_or(start_here)
+        .split("\nMore:")
+        .next()
+        .unwrap_or(start_here);
+    assert!(
+        stdout.contains("1 unknown"),
+        "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
+    );
+    assert!(
+        !block.contains("limited by static analysis"),
+        "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
+    );
+    assert!(
+        block.contains("State: no gap selected for repair"),
+        "Start here must name the production finding's state:\n{block}"
+    );
+    assert!(
+        block.contains("src/lib.rs:2"),
+        "Start here must name the decisive line-2 production finding, not the fn-level unknown at line 1:\n{block}"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() -> sample_output::TestResult {
     // #4946(a): keep the real CLI and both recall notes on a small owned root.
