@@ -250,6 +250,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
         }
+        XtaskCommand::TerminationRemovalBuilds(args) => {
+            super::termination_qualification::run_removal_builds(&args)
+        }
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),

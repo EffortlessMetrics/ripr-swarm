@@ -1,0 +1,3 @@
+case = "node-t-skip-inside-test"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."

@@ -32,6 +32,14 @@ mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 mod field_projection;
+#[cfg(test)]
+mod method_hop_tests;
+#[cfg(test)]
+mod multi_caller_tests;
+mod receiver_value;
+pub(in crate::analysis::classify) use receiver_value::{
+    is_receiver_cell, project_receiver_field, receiver_cell_value,
+};
 mod selected_inherent_call;
 pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use selected_inherent_call::{
@@ -138,6 +146,12 @@ pub(crate) struct HelperHop {
     pub(crate) caller: FunctionSummary,
     pub(crate) call_text: String,
     pub(crate) arguments: Vec<String>,
+    /// The caller-side receiver of a method hop (#9329): the plain
+    /// identifier `b` of `b.to_string_as(si)`. `arguments` stay positional
+    /// and exclude it. `None` for a direct free call and a macro hop. A
+    /// consumer that binds `arguments` positionally treats a hop with a
+    /// receiver as unbindable unless it handles the receiver itself.
+    pub(crate) receiver: Option<String>,
     /// The caller hands the callee to a local `macro_rules!` macro as an
     /// identifier token (`twice!(base_rate)`, #6614) instead of calling it.
     /// ripr does not expand macros: such a hop carries reach only. It never
@@ -768,7 +782,7 @@ pub(crate) fn resolve_chain(
             "recursion through helper `{callee_name}` at the transfer bound"
         ));
     }
-    let callers = direct_callers(callee_name, index);
+    let callers = chain_callers(callee_name, index);
     if callers.is_empty() {
         // #6614: a unique local-macro identifier argument is the only
         // caller edge; it carries reach, never a forwarded result.
@@ -780,18 +794,103 @@ pub(crate) fn resolve_chain(
             caller: caller.clone(),
             call_text,
             arguments: Vec::new(),
+            receiver: None,
             through_macro: true,
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
     if callers.len() > 1 {
-        return stopped(format!(
-            "callee `{callee_name}` has {} callers; multi-caller binding is not transferred at this bound",
-            callers.len()
-        ));
+        return resolve_multi_caller(callee_name, &callers, index, workspace_complete, visited);
     }
-    let caller = callers[0];
+    chain_through_caller(callers[0], callee_name, index, workspace_complete, visited)
+}
+
+/// The most callers [`resolve_multi_caller`] binds one by one (#9329). A
+/// callee with more direct callers declines as before.
+const MAX_MULTI_CALLER_BINDINGS: usize = 8;
+
+/// A callee with more than one direct caller (#9329). The chain binds per
+/// resolvable caller: each caller is resolved on its own, and the chain is
+/// the one caller a test actually reaches. A caller no test reaches
+/// contributes nothing, so `Display::fmt` calling the same formatter as
+/// `to_string_as` neither binds nor blocks.
+///
+/// Fail closed: the chain declines, with the multi-caller edge named, when
+/// no caller is reached, when two callers are both reached (the tests'
+/// call path to the callee is ambiguous), or when the callee has more than
+/// [`MAX_MULTI_CALLER_BINDINGS`] callers. A reached caller whose hop does
+/// not bind carries its own stop edge instead of a chain.
+fn resolve_multi_caller(
+    callee_name: &str,
+    callers: &[&FunctionSummary],
+    index: &RustIndex,
+    workspace_complete: bool,
+    visited: &[String],
+) -> HelperChain {
+    let declined = |detail: &str| HelperChain {
+        hops: Vec::new(),
+        stop_above: Some(format!(
+            "callee `{callee_name}` has {} callers; multi-caller binding is not transferred at this bound{detail}",
+            callers.len()
+        )),
+    };
+    if callers.len() > MAX_MULTI_CALLER_BINDINGS {
+        return declined("");
+    }
+    let mut reached: Vec<HelperChain> = Vec::new();
+    for caller in callers {
+        let chain = chain_through_caller(caller, callee_name, index, workspace_complete, visited);
+        let mut entries: Vec<String> = vec![caller.name.clone()];
+        let above = if chain.hops.is_empty() {
+            let mut next_visited = visited.to_vec();
+            next_visited.push(callee_name.to_string());
+            resolve_chain(&caller.name, index, workspace_complete, &next_visited).hops
+        } else {
+            chain.hops.clone()
+        };
+        entries.extend(above.iter().map(|hop| hop.caller.name.clone()));
+        // A test that calls the callee itself reaches it by a path of its
+        // own, so it counts as reached (a test is never a hop).
+        if caller.source_role.registers_executable_test() || tests_call_any(index, &entries) {
+            reached.push(chain);
+        }
+    }
+    match reached.len() {
+        0 => declined("; no related test reaches any of them"),
+        1 => reached.remove(0),
+        _ => declined("; related tests reach more than one of them"),
+    }
+}
+
+/// Whether any test in the index calls one of `names` (by call-fact name; a
+/// same-named method call counts, which only makes the caller look reached).
+fn tests_call_any(index: &RustIndex, names: &[String]) -> bool {
+    index
+        .tests()
+        .iter()
+        .any(|test| test.calls.iter().any(|call| names.contains(&call.name)))
+}
+
+/// The chain through one `caller` of `callee_name`: a direct free call, or
+/// the method hop, then whatever resolves above `caller`.
+fn chain_through_caller(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+    workspace_complete: bool,
+    visited: &[String],
+) -> HelperChain {
+    let stopped = |edge: String| HelperChain {
+        hops: Vec::new(),
+        stop_above: Some(edge),
+    };
     let Some(sites) = call_sites(caller, callee_name) else {
+        // #9329: not a direct free call. A receiver call of a unique
+        // inherent method on the caller's own typed parameter is the one
+        // other shape that binds.
+        if let Some(hop) = method_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
@@ -809,9 +908,197 @@ pub(crate) fn resolve_chain(
         caller: caller.clone(),
         call_text,
         arguments,
+        receiver: None,
         through_macro: false,
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
+}
+
+/// The callers [`resolve_chain`] counts for `callee_name` (#9329). It is
+/// [`direct_callers`], except that when the callee is a module-level free
+/// function a function whose only mentions of the name are receiver calls
+/// (`expected.to_string()`) is not a caller: a method call can never resolve
+/// to a free function, so it neither binds nor makes the callee multi-caller.
+/// A callee whose container is not established keeps every caller.
+fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a FunctionSummary> {
+    let callee_is_free = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+        .is_some_and(|function| {
+            function.item.container == crate::analysis::facts::FunctionContainer::Free
+        });
+    direct_callers(callee_name, index)
+        .into_iter()
+        .filter(|caller| {
+            !callee_is_free
+                || caller
+                    .calls
+                    .iter()
+                    .filter(|call| call.name == callee_name)
+                    .any(|call| !mentions_only_as_receiver_call(&call.text, callee_name))
+        })
+        .collect()
+}
+
+/// Whether every token-boundary mention of `name` in `text` is a receiver
+/// call (`.name(`). Zero mentions answers `false`, so an unreadable call text
+/// (a turbofish, a macro) keeps its caller.
+pub(crate) fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut mentions = 0usize;
+    for (at, _) in masked.match_indices(name) {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            continue;
+        }
+        mentions += 1;
+        if !masked[..at].trim_end().ends_with('.') {
+            return false;
+        }
+    }
+    mentions > 0
+}
+
+/// Whether any hop of `chain` is a method hop (#9329).
+pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
+    chain.hops.iter().any(|hop| hop.receiver.is_some())
+}
+
+/// The receiver self forms a method hop admits. `&mut self` is refused: the
+/// method may change a field before it reaches the owner, so the receiver
+/// value the test built is no longer the value the owner sees.
+fn is_plain_self_receiver(parameter: &str) -> bool {
+    matches!(parameter.trim(), "self" | "&self")
+}
+
+/// #9329: the hop from `caller` into the unique inherent method
+/// `callee_name` when the call is `<ident>.<callee>(args)`. Every condition
+/// fails closed (`None` keeps the pre-existing "not statically splittable"
+/// stop):
+///
+/// - the callee is the one function of that name, declared in an inherent
+///   `impl <Type>` for a plain single-segment `Type` and taking exactly
+///   `self` or `&self` first;
+/// - the caller mentions the callee exactly once, as `<ident>.<callee>(..)`
+///   with `<ident>` a plain identifier not itself a field, path or call
+///   result;
+/// - `<ident>` is one of the caller's own parameters, declared as exactly
+///   `Type`, `&Type` or `&mut Type` (a generic, `impl Trait` or other type
+///   declines), and the caller does not rebind it;
+/// - the file the caller lives in does not `use`-import the name `Type`
+///   (the same-named type might not be the impl's).
+fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) -> Option<HelperHop> {
+    use crate::analysis::facts::FunctionContainer;
+    let mut candidates = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == callee_name);
+    let callee = candidates.next()?;
+    if candidates.next().is_some() {
+        return None;
+    }
+    let FunctionContainer::Inherent { self_ty } = &callee.item.container else {
+        return None;
+    };
+    if !callee.item.has_self_param || !is_identifier(self_ty) {
+        return None;
+    }
+    let callee_signature = super::activation::signature_parameter_texts(callee);
+    if !callee_signature
+        .first()
+        .is_some_and(|first| is_plain_self_receiver(first))
+    {
+        return None;
+    }
+    let mut call_facts = caller.calls.iter().filter(|call| call.name == callee_name);
+    let call = call_facts.next()?;
+    if call_facts.next().is_some() {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&call.text);
+    if masked.len() != call.text.len() {
+        return None;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mentions: Vec<usize> = masked
+        .match_indices(callee_name)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            !masked[..*at].chars().next_back().is_some_and(is_word)
+                && !masked[at + callee_name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .collect();
+    let [at] = mentions.as_slice() else {
+        return None;
+    };
+    let at = *at;
+    if !masked[at + callee_name.len()..].starts_with('(') {
+        return None;
+    }
+    let before = masked[..at].strip_suffix('.')?;
+    let receiver_start = before
+        .rfind(|ch: char| !is_word(ch))
+        .map_or(0, |found| found + 1);
+    let receiver = &before[receiver_start..];
+    if receiver.is_empty()
+        || !is_identifier(receiver)
+        || receiver
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit())
+        || receiver == "self"
+        || receiver == "_"
+        || matches!(
+            before[..receiver_start].chars().next_back(),
+            Some('.' | ':')
+        )
+    {
+        return None;
+    }
+    let declared_type = super::activation::signature_parameter_texts(caller)
+        .into_iter()
+        .find_map(|parameter| {
+            let (name, declared) = parameter.split_once(':')?;
+            (name.trim() == receiver).then(|| declared.trim().to_string())
+        })?;
+    // Exactly `Type`, `&Type` or `&mut Type`; nothing else (a lifetime, a
+    // generic, `impl Trait`, a path) is the same type by this text.
+    let declared_base = declared_type
+        .strip_prefix('&')
+        .map_or(declared_type.as_str(), |rest| {
+            let rest = rest.trim_start();
+            match rest.strip_prefix("mut") {
+                Some(after) if after.starts_with(char::is_whitespace) => after.trim_start(),
+                _ => rest,
+            }
+        });
+    if declared_base != self_ty.as_str() || caller_rebinds_parameter(&caller.body, receiver) {
+        return None;
+    }
+    if index
+        .files()
+        .get(&caller.file)
+        .is_none_or(|facts| super::activation::name_imported_in_file(&facts.source, self_ty))
+    {
+        return None;
+    }
+    let arguments = split_call_arguments_text(&call.text[at..], callee_name)?;
+    Some(HelperHop {
+        caller: caller.clone(),
+        call_text: call.text.to_string(),
+        arguments,
+        receiver: Some(receiver.to_string()),
+        through_macro: false,
+    })
 }
 
 /// Resolve the chain above `hop`'s caller and put `hop` beneath it.
@@ -832,10 +1119,17 @@ fn extend_chain(
     // #3296 review M2: tests are ordinary functions in the index, so
     // the chain must never climb into a test body — the entry a test
     // can call directly is the topmost production caller.
-    while hops
-        .last()
-        .is_some_and(|top| top.caller.source_role.is_evidence_role())
-    {
+    // #9329: the one evidence-role caller kept is a `#[cfg(test)]` helper
+    // that makes the method hop's receiver call on its own typed parameter
+    // (`fn assert_to_string(.., b: ByteSize, ..) { .. b.to_string_as(si) }`):
+    // tests call that helper with the receiver's value, so it is the entry
+    // that carries the rows. Test functions themselves are still popped.
+    while hops.last().is_some_and(|top| {
+        top.caller.source_role.is_evidence_role()
+            && !(top.receiver.is_some()
+                && top.caller.source_role
+                    == crate::analysis::facts::FunctionSourceRole::CfgTestModule)
+    }) {
         hops.pop();
     }
     let mut resolved = vec![hop];
@@ -1008,7 +1302,6 @@ pub(crate) fn test_call_is_shadowed(
     callee: &str,
     call_line: usize,
 ) -> bool {
-    use crate::analysis::extract::ShadowAuthority;
     if !callee_is_unique(callee, index) {
         return true;
     }
@@ -1029,6 +1322,23 @@ pub(crate) fn test_call_is_shadowed(
     {
         return true;
     }
+    test_body_shadows_name(index, test, callee, call_line)
+}
+
+/// Whether a test-local closure, nested fn or binding named `name` is in
+/// scope at `call_line`. Unlike `test_call_is_shadowed` it does not require
+/// `name` to be a unique workspace function, so it also covers a tuple-struct
+/// constructor such as `Size(..)` rebound by `let Size = |n| ..`.
+pub(crate) fn test_body_shadows_name(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    name: &str,
+    call_line: usize,
+) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let callee = name;
+    let files = index.files();
+    let file_facts = files.get(&test.file);
     let parser_backed = file_facts
         .as_ref()
         .is_some_and(|facts| !facts.used_lexical_fallback);
@@ -1156,6 +1466,7 @@ fn caller_oracles_are_all_weak(
                 Some(below) => hops.get(below).map(|lower| &lower.caller),
             };
             hop.caller.source_role != FunctionSourceRole::Production
+                || hop.receiver.is_some()
                 || (!hop.through_macro
                     && !callee.is_some_and(|callee| {
                         returns_std_scalar_or_string(&callee.body)
@@ -1593,7 +1904,14 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         .map(|(index, _)| index)
         .collect();
     // #6614: a macro-argument hop passes no state the analyzer can follow.
-    if tracked.is_empty() || hops.is_empty() || hops.iter().any(|hop| hop.through_macro) {
+    // #9329: a method hop hands its callee the receiver's state as well as
+    // its arguments; the effect target is not followed through it.
+    if tracked.is_empty()
+        || hops.is_empty()
+        || hops
+            .iter()
+            .any(|hop| hop.through_macro || hop.receiver.is_some())
+    {
         return false;
     }
     for hop in hops {
@@ -1624,7 +1942,9 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
             // macro hands the callee's result on is unknown.
-            if hop.through_macro {
+            // #9329: a method hop never forwards: its caller makes a
+            // receiver call whose result no tail-forwarding rule reads.
+            if hop.through_macro || hop.receiver.is_some() {
                 return false;
             }
             let callee = match step.checked_sub(1) {
@@ -2740,6 +3060,7 @@ mod tests {
                 caller,
                 call_text: String::new(),
                 arguments: Vec::new(),
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -2985,6 +3306,7 @@ mod tests {
             caller,
             call_text: String::new(),
             arguments: Vec::new(),
+            receiver: None,
             through_macro: false,
         };
         let chain = HelperChain {

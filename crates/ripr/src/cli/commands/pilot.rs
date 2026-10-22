@@ -901,6 +901,18 @@ fn publish_timeout_packet(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_timeout_summary_md(context),
     )?;
+    // #9368 item 2: a timeout partial run exits 0 deliberately (pinned by
+    // the cli-smoke contract), which reads as success to a CI pipeline
+    // keying on exit codes. Disclose the contract on stderr at the moment it
+    // happens — stdout stays byte-clean for `--format json` — and name the
+    // packet field CI must gate on. This is contract disclosure, not
+    // progress, so `--quiet` does not suppress it.
+    eprintln!(
+        "{}",
+        output::human::terminal_safe(
+            "ripr pilot: timed out; wrote a partial timeout packet and exited 0 deliberately. For CI: gate on pilot-summary.json top-level status (complete vs partial), not the exit code.".to_string()
+        )
+    );
     print!(
         "{}",
         pilot_stdout(

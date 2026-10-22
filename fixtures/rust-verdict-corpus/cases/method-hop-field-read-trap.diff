@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 4acc53b..5feb4fb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -51,7 +51,7 @@ pub fn hit(bytes: u64, si: bool) -> String {
+ 
+ pub fn trap(bytes: u64, si: bool) -> String {
+     let unit = if si { KIB } else { KB };
+-    if bytes < unit {
++    if bytes <= unit {
+         format!("{bytes} B")
+     } else {
+         format!("{} big", bytes / unit)
