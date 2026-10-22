@@ -3055,6 +3055,7 @@ fn run_diff_check_from_file(
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)

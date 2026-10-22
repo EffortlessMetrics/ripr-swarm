@@ -475,3 +475,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_method_owner_imported_unbound_receiver (23)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_adversarial_method_owner_imported_unbound_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
