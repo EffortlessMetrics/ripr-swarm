@@ -32,6 +32,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut base_explicitly_provided = false;
     // `--worktree` matches `ripr check --worktree` (see `explain`).
     let mut worktree = false;
+    let mut committed = false;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -76,6 +77,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 )?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -119,13 +121,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("context"));
     }
-    super::worktree_scope_conflict(
+    super::drill_in_scope_conflict(
         "context",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",
             "ripr check --json",
@@ -144,18 +147,47 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // parsing and can fail on the Git probe; `context` is JSON-only, so the
     // failure writes the shared refusal envelope (with a root-unusable
     // identity) instead of leaving stdout empty.
-    let root_resolution =
-        super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided);
-    if let Err(err) = root_resolution {
-        return Err(crate::cli::commands_context::refuse_json_envelope(
-            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
-            "diff",
-            Some(input.mode.as_str()),
-            &input.root,
-            input.base.as_deref(),
-            crate::core_error::CoreError::repository_root_unusable(err),
-        ));
-    }
+    //
+    // #8902: the implicit root is the one `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory like `explain`.
+    // `--diff` and `--from` are read as typed from the invocation directory,
+    // which is already the file the operator named.
+    let prefix = match super::check::resolve_implicit_command_root(
+        &mut input.root,
+        root_explicitly_provided,
+    ) {
+        Ok(prefix) => prefix,
+        Err(err) => {
+            return Err(crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                crate::core_error::CoreError::repository_root_unusable(err),
+            ));
+        }
+    };
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    // A binding failure (for example a shadowed member selector) is a
+    // post-argv-parse failure like the root and config refusals, so it writes
+    // the shared refusal envelope before the prose error reaches stderr.
+    let selector = selector
+        .map(|item| {
+            super::bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay)
+        })
+        .transpose()
+        .map_err(|err| {
+            crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                err,
+            )
+        })?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
     // below writes the shared refusal envelope (keyed with the context
     // packet's own version) to stdout before the prose error reaches
@@ -174,8 +206,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree_from_default =
-        !worktree && super::dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree_from_default = !worktree
+        && super::dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
     let worktree = worktree || worktree_from_default;
     // Capture the effective mode after config merging: a configured
     // `[analysis] mode` replaces the default, and later refusals must name

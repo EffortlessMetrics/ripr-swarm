@@ -4,6 +4,19 @@ use std::path::{Path, PathBuf};
 
 // Include directories and exact file bytes, including .git, so no-write controls
 // detect new empty directories and changed existing files as well as new files.
+//
+// Transient git-internal lock files (`.git/objects/maintenance.lock` from
+// `git maintenance --auto`, `.git/index.lock`, ...) are git's own bookkeeping:
+// they appear and disappear between two snapshots on git's schedule, never as
+// product writes. Treating them as inventory drift turns hosted git
+// auto-maintenance into a flaky RED witness for no-write controls.
+fn is_transient_git_lock(relative: &Path) -> bool {
+    relative.starts_with(".git")
+        && relative
+            .extension()
+            .is_some_and(|extension| extension == "lock")
+}
+
 fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, Option<Vec<u8>>>, String> {
     fn visit(
         root: &Path,
@@ -20,6 +33,9 @@ fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, Option<Vec<u8>>>, String> 
                 entries.insert(relative, None);
                 visit(root, &path, entries)?;
             } else {
+                if is_transient_git_lock(&relative) {
+                    continue;
+                }
                 entries.insert(
                     relative,
                     Some(std::fs::read(path).map_err(|e| e.to_string())?),
@@ -31,6 +47,32 @@ fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, Option<Vec<u8>>>, String> 
     let mut entries = BTreeMap::new();
     visit(root, root, &mut entries)?;
     Ok(entries)
+}
+
+#[test]
+fn inventory_ignores_transient_git_lock_files() -> Result<(), String> {
+    let fixture = Fixture::dir("inventory-git-lock")?;
+    let git_dir = fixture.root.join(".git");
+    std::fs::create_dir_all(git_dir.join("objects")).map_err(|e| e.to_string())?;
+    let before = inventory(&fixture.root)?;
+    // Hosted git auto-maintenance creates and removes these between two
+    // snapshots on its own schedule; they are git bookkeeping, not product
+    // writes, and must not read as no-write drift.
+    std::fs::write(git_dir.join("objects/maintenance.lock"), b"").map_err(|e| e.to_string())?;
+    std::fs::write(git_dir.join("index.lock"), b"").map_err(|e| e.to_string())?;
+    assert_eq!(
+        inventory(&fixture.root)?,
+        before,
+        "transient git-internal lock files must not read as inventory drift"
+    );
+    // The filter stays narrow: a real file under .git is still inventory.
+    std::fs::write(git_dir.join("COMMIT_EDITMSG"), "subject").map_err(|e| e.to_string())?;
+    assert_ne!(
+        inventory(&fixture.root)?,
+        before,
+        "an ordinary .git file change must still read as inventory drift"
+    );
+    Ok(())
 }
 
 #[test]
@@ -96,6 +138,20 @@ fn inspection_discovery_discloses_observed_cache_writes() -> Result<(), String> 
                 Some(bytes),
                 "fresh inspection changed {path:?}"
             );
+        }
+        // New entries outside the declared cache output are writes too; the
+        // cache-presence assertion above must not excuse them. The cache
+        // writer may create the `target` / `target/ripr` directory chain on
+        // the way to its declared output directory.
+        for path in after.keys() {
+            if !before.contains_key(path) {
+                assert!(
+                    path == Path::new("target")
+                        || path == Path::new("target/ripr")
+                        || path.starts_with("target/ripr/cache"),
+                    "fresh inspection added unexpected {path:?}"
+                );
+            }
         }
         let id = format!("cmd:{verb}");
         let human_help = run_ripr_env(&cwd.root, &[verb, "--help"], &[])?;

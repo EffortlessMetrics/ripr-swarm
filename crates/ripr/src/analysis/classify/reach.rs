@@ -3,6 +3,7 @@ use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
 use ra_ap_syntax::{AstNode, ast};
+use std::collections::HashSet;
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -100,10 +101,14 @@ pub(in crate::analysis) fn reach_evidence(
             format!("{CALLEE_ONLY_REACH_PREFIX}: {names}"),
         );
     }
-    let names = owner_anchored
+    // Name only the tests whose relation establishes reach: a proximity-only
+    // neighbour ranked beside the reaching test must not be named as reaching
+    // the owner (#9033).
+    let names = related_tests
         .iter()
+        .filter(|(_, reason)| relation_establishes_reach(*reason, owner_is_function))
         .take(3)
-        .map(|t| t.name.as_str())
+        .map(|(test, _)| test.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     StageEvidence::new(
@@ -141,21 +146,54 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct UnseenReachNames {
     /// Every identifier some source names other than directly after `fn`.
-    named: std::collections::HashSet<String>,
+    named: HashSet<String>,
     /// Some file pulls external docs in as doctests.
     external_docs: bool,
 }
 
 impl UnseenReachNames {
     pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
-        let mut names = Self::default();
-        for file in index.files().values() {
-            names.external_docs |= includes_external_docs(&file.source);
+        use rayon::prelude::*;
+        let sources: Vec<&str> = index
+            .files()
+            .values()
+            .map(|file| file.data().source.as_ref())
+            .collect();
+        // The external-docs parse is most of this scan and every file is
+        // independent, so the parses run on the rayon pool. `build` can also
+        // be reached from a classification worker (through a `OnceLock`
+        // init); there the scans run in line, as `memoize_many` does.
+        let external_docs = includes_external_docs_many(&sources)
+            .into_iter()
+            .any(|includes| includes);
+        fn collect_names<'a>(mut names: HashSet<&'a str>, source: &'a str) -> HashSet<&'a str> {
+            names.extend(identifiers_outside_fn_definition(source));
             names
-                .named
-                .extend(identifiers_outside_fn_definition(&file.source).map(str::to_string));
         }
-        names
+        fn merge_names<'a>(
+            mut left: HashSet<&'a str>,
+            mut right: HashSet<&'a str>,
+        ) -> HashSet<&'a str> {
+            if left.len() < right.len() {
+                std::mem::swap(&mut left, &mut right);
+            }
+            left.extend(right);
+            left
+        }
+        let named: HashSet<&str> = if super::owner_pin::nested_parallelism_allowed() {
+            sources
+                .par_iter()
+                .fold(HashSet::new, |names, source| collect_names(names, source))
+                .reduce(HashSet::new, merge_names)
+        } else {
+            sources
+                .iter()
+                .fold(HashSet::new(), |names, source| collect_names(names, source))
+        };
+        Self {
+            named: named.into_iter().map(str::to_string).collect(),
+            external_docs,
+        }
     }
 
     pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
@@ -178,7 +216,7 @@ pub(in crate::analysis) fn take_external_docs_parse_count() -> usize {
 /// Macro-derived documentation can produce unindexed doctest calls, including
 /// external files and names assembled by `concat!` or supplied by `env!`.
 pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
-    if !source.contains("doc") || !source.contains('!') {
+    if !may_include_external_docs(source) {
         return false;
     }
     // Pure in the source text, and rescanned for every overlapping index a
@@ -190,25 +228,68 @@ pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
         || {
             #[cfg(test)]
             EXTERNAL_DOCS_PARSE_COUNT.with(|count| count.set(count.get() + 1));
-            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-                return true;
-            };
-            parse
-                .tree()
-                .syntax()
-                .descendants()
-                .filter_map(ast::Attr::cast)
-                .any(|attribute| {
-                    attribute.meta().is_some_and(|meta| {
-                        meta.skip_cfg_attrs().into_iter().any(|meta| {
-                            meta.simple_name().is_some_and(|name| name == "doc")
-                                && matches!(meta, ast::Meta::KeyValueMeta(value)
-                                if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
-                        })
-                    })
-                })
+            external_docs_uncached(source)
         },
     )
+}
+
+/// The cheap text gate in front of the parse: a source that never spells
+/// `doc` and `!` cannot include external docs.
+fn may_include_external_docs(source: &str) -> bool {
+    source.contains("doc") && source.contains('!')
+}
+
+/// [`includes_external_docs`] for every source of a scan, in order. The
+/// parses of the texts the run scope has not seen run on the rayon pool
+/// (see [`crate::analysis::syntax::run_memo::memoize_many`]); the answers and
+/// the memo's contents are those of calling the single form per source.
+pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<bool> {
+    let candidates: Vec<&str> = sources
+        .iter()
+        .copied()
+        .filter(|source| may_include_external_docs(source))
+        .collect();
+    #[cfg(test)]
+    let parsed = std::sync::atomic::AtomicUsize::new(0);
+    let mut answers = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::ExternalDocs,
+        &candidates,
+        |source| {
+            #[cfg(test)]
+            parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            external_docs_uncached(source)
+        },
+    )
+    .into_iter();
+    // Parses ran on workers, so the owning thread's test counter is credited
+    // here, where the single form would have counted them.
+    #[cfg(test)]
+    EXTERNAL_DOCS_PARSE_COUNT
+        .with(|count| count.set(count.get() + parsed.load(std::sync::atomic::Ordering::Relaxed)));
+    sources
+        .iter()
+        .map(|source| may_include_external_docs(source) && answers.next().unwrap_or(true))
+        .collect()
+}
+
+fn external_docs_uncached(source: &str) -> bool {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attribute| {
+            attribute.meta().is_some_and(|meta| {
+                meta.skip_cfg_attrs().into_iter().any(|meta| {
+                    meta.simple_name().is_some_and(|name| name == "doc")
+                        && matches!(meta, ast::Meta::KeyValueMeta(value)
+                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+                })
+            })
+        })
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -585,6 +666,49 @@ mod tests {
     }
 
     #[test]
+    fn includes_external_docs_many_answers_like_the_single_form() {
+        let sources = [
+            "pub fn plain() {}",
+            "#![doc = include_str!(\"README.md\")]\npub fn a() {}",
+            "/// docs! mention the words without an attribute\nfn b() {}",
+            "#![doc = \"literal\"] fn c() { assert!(true) }",
+            "fn broken( { doc !",
+            "#![doc = include_str!(\"README.md\")]\npub fn a() {}",
+        ];
+        let expected: Vec<bool> = sources
+            .iter()
+            .map(|source| includes_external_docs(source))
+            .collect();
+        assert_eq!(expected, vec![false, true, false, false, true, true]);
+        let _ = take_external_docs_parse_count();
+        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(
+            take_external_docs_parse_count(),
+            5,
+            "without a scope every source that passes the text gate parses"
+        );
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(
+            take_external_docs_parse_count(),
+            4,
+            "inside a scope a repeated text parses once"
+        );
+        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(
+            take_external_docs_parse_count(),
+            0,
+            "a second batch is served from the scope"
+        );
+        assert!(includes_external_docs(sources[1]));
+        assert_eq!(
+            take_external_docs_parse_count(),
+            0,
+            "the single form hits too"
+        );
+    }
+
+    #[test]
     fn included_doc_files_count_as_unseen_callers() {
         for (source, expected) in [
             (
@@ -684,6 +808,26 @@ mod tests {
         assert_eq!(
             evidence.summary,
             "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome, other_callee_probe"
+        );
+    }
+
+    #[test]
+    fn given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named()
+     {
+        let owner = function("discount");
+        let reaching = test("d");
+        let neighbour = test("t");
+        let related = vec![
+            (&reaching, RelationReason::DirectOwnerCall),
+            (&neighbour, RelationReason::SameTestFile),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner), || false);
+
+        assert_eq!(evidence.state, StageState::Yes);
+        assert_eq!(
+            evidence.summary,
+            "Related tests appear to reach discount: d"
         );
     }
 

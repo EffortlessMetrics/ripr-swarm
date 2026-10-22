@@ -2,14 +2,53 @@ use crate::domain::{ProbeFamily, ProbeId, SymbolId};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// Normalize an expression: trim leading/trailing whitespace and collapse
-/// internal whitespace runs to a single space.
+/// Historical cross-language whitespace normalization. Foreign producers and
+/// 0.10 ID reconstruction retain this boundary until their native literal
+/// semantics are handled by their language owner.
 pub(crate) fn normalize_expression(expr: &str) -> String {
+    normalize_outside_literals(expr.trim(), &[], &[])
+}
+
+/// Collapse formatting whitespace without collapsing Rust literal values or
+/// the lexical boundary that ends a line comment.
+/// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
+/// Consume original source once: flattening a line comment's newline changes
+/// how a second lexical scan would interpret the following literal.
+pub(crate) fn normalize_rust_expression(expr: &str) -> String {
     let trimmed = expr.trim();
+    let spans = crate::analysis::extract::rust_identity_spans(trimmed);
+    normalize_outside_literals(trimmed, &spans.literal_ranges, &spans.line_comment_ends)
+}
+
+fn normalize_outside_literals(
+    trimmed: &str,
+    ranges: &[(usize, usize)],
+    line_comment_ends: &[usize],
+) -> String {
+    let mut ranges = ranges.iter().peekable();
+    let mut line_comment_ends = line_comment_ends.iter().peekable();
     let mut result = String::with_capacity(trimmed.len());
     let mut last_was_space = false;
-    for ch in trimmed.chars() {
-        if ch.is_whitespace() {
+    for (offset, ch) in trimmed.char_indices() {
+        if line_comment_ends.peek().is_some_and(|end| **end == offset) {
+            // A line comment's terminator separates comment text from active
+            // tokens. Canonicalize CRLF, trailing comment whitespace and the
+            // following indentation to one LF, retaining that distinction.
+            if result.ends_with(' ') {
+                result.pop();
+            }
+            result.push('\n');
+            last_was_space = true;
+            line_comment_ends.next();
+            continue;
+        }
+        while ranges.peek().is_some_and(|(_, close)| offset > *close) {
+            ranges.next();
+        }
+        let literal = ranges
+            .peek()
+            .is_some_and(|(open, close)| *open <= offset && offset <= *close);
+        if ch.is_whitespace() && !literal {
             if !last_was_space {
                 result.push(' ');
             }
@@ -83,7 +122,7 @@ pub(crate) fn diff_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 
@@ -116,7 +155,15 @@ pub(crate) fn legacy_whole_line_diff_probe_id(
     {
         return None;
     }
-    let id = diff_probe_id(relative, &probe.family, probe.owner.as_ref(), line, 1).0;
+    let id = fingerprint_probe_id(
+        "probe",
+        &sanitize_path(relative),
+        probe.family.as_str(),
+        probe.owner.as_ref().map_or("", |owner| owner.0.as_str()),
+        &normalized,
+        1,
+    )
+    .0;
     (id != probe.id.0).then_some(id)
 }
 
@@ -130,7 +177,7 @@ pub(crate) fn repo_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("repo-probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 
@@ -147,6 +194,39 @@ mod tests {
     use crate::domain::ProbeFamily;
     use std::path::PathBuf;
 
+    #[test]
+    fn line_comment_terminators_preserve_lexical_boundaries() {
+        assert_eq!(
+            normalize_rust_expression("x == concat!(\"a\", // \"b\",\n        \"c\")"),
+            "x == concat!(\"a\", // \"b\",\n\"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x  ==\tconcat!(\"a\", //  \r\n        \"b\", \"c\")"),
+            "x == concat!(\"a\", //\n\"b\", \"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x == // \"a  b\"\n        \"value\""),
+            "x == // \"a b\"\n\"value\""
+        );
+    }
+
+    #[test]
+    fn line_comment_terminators_are_not_invented_inside_literals_or_block_comments() {
+        for (expression, expected) in [
+            ("x == \"// a  b\"", "x == \"// a  b\""),
+            ("x == r#\"//\na  b\"#", "x == r#\"//\na  b\"#"),
+            (
+                "x == /* // fake\n */ \"a  b\"",
+                "x == /* // fake */ \"a  b\"",
+            ),
+            (
+                "x == /* outer /* // fake\n */ */ \"a  b\"",
+                "x == /* outer /* // fake */ */ \"a  b\"",
+            ),
+        ] {
+            assert_eq!(normalize_rust_expression(expression), expected);
+        }
+    }
     #[test]
     fn sanitize_path_converts_separators_and_colons() {
         let path = PathBuf::from("src/lib.rs");

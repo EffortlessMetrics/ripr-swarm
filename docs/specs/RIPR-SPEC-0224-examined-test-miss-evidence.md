@@ -229,7 +229,7 @@ written and must not copy these gaps.
   reason with its own row shapes (a matched row keeps its oracle strength and
   kind, only an unmatched row uses `<label>: ...; checked ...`, and a row with
   no recorded oracle shows only the reason, where human-full still prints its
-  `uses none unknown oracle` projection first), and diagnostics add up to three
+  `uses no oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
@@ -237,12 +237,19 @@ written and must not copy these gaps.
   JSON, MCP and the context packet carry no label.
 - `output::related_test_miss::oracle_projection` owns the oracle phrase of a
   related-test row, after "uses" (#8388): `<strength> <kind> oracle` for a
-  graded row; `<kind> oracle, not graded against this probe` when the
+  graded row (a multi-word kind that already leads with the strength word is
+  not doubled: `smoke_only` with strength `smoke` reads `smoke only oracle`,
+  #8711; the shared `output::oracle_phrase` helper owns that join); `<kind> oracle, not graded against this probe` when the
   strength is `unknown` (the probe family has no typed oracle relationships,
   so the assertion is not graded, not of unknown quality); `an unclassified
   oracle, not graded against this probe` when the kind is also `unknown` and
-  an assertion was selected; and `no oracle` when no assertion was selected.
-  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`.
+  an assertion was selected; and `no oracle` when the strength is `none`
+  (whatever the kind, #8747) or when no assertion was selected. The JSON
+  `evidence_path` uses the same projection, so strength `none` reads
+  `no oracle` there too.
+  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
+  and the fixture-honesty matcher test
+  `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.
   Finding hover, fix-site diagnostic links, seam diagnostic links and targeted
   agent briefs use this same phrase (#8951). The diagnostic witness owns the
   selected test; prose does not reselect a stronger row. Finding hover retains
@@ -269,8 +276,12 @@ admission state, computed fail-closed from the test's syntax:
 A related test whose state is not `recognized_assertion_present` adds the
 evidence line `test_assertion_admission: <state> (<test>)` to its finding.
 The line is evidence only: it changes no verdict, ranking, miss or
-actionability. Blind spots the scan cannot see (conftest and setup files,
-runner plugins) are tracked in #6657 and #6889.
+actionability. For Python, a `conftest.py` on the test's directory chain that
+declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
+or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
+every test in its scope (#6657). Remaining blind spots (dynamically registered
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
+and #6889.
 
 ### Family-relevant assertion selection (Python)
 
