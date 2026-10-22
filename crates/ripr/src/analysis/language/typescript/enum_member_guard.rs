@@ -57,7 +57,10 @@ fn enum_function_types(function: &Function<'_>, ranges: &mut Vec<oxc_span::Span>
 /// This runs once per imported/declared root over its whole module, including
 /// hooks and other tests, rather than trusting only the assertion callback.
 pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: bool) -> bool {
-    !tests_extract::identifier_written_in(code, root)
+    // The textual stability scan cannot compare escaped runtime identifiers
+    // with their canonical spelling. Strings and comments are already masked.
+    !code.contains("\\u")
+        && !tests_extract::identifier_written_in(code, root)
         && !ts_members_written(code, root, true)
         && mock_payload_guard::identifier_offsets(code, root)
             .into_iter()

@@ -6,6 +6,57 @@ const ENUM: &str = "export enum Level { Low = 1, High = 2 }\nexport const Other 
 const OLD: &str = "  return level === Level.High ? 10 : 10;";
 
 #[test]
+fn escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not() -> Result<(), String> {
+    for (label, setup, expected) in [
+        (
+            "escaped-root",
+            r"L\u0065vel.High = 1;",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "escaped-member",
+            r"Level.H\u0069gh = 1;",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "quoted-escape",
+            r"const text = 'L\u0065vel.High = 1';",
+            ExposureClass::Exposed,
+        ),
+        (
+            "comment-escape",
+            r"/* L\u0065vel.High = 1; */",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        for owner_setup in [false, true] {
+            let owner = if owner_setup { setup } else { "" };
+            let test_setup = if owner_setup { "" } else { setup };
+            let source = format!(
+                "import {{ Level }} from './constants';\nexport function weight(level: number): number {{\n  {owner}\n  return level === Level.High ? 11 : 10;\n}}\n"
+            );
+            let test = format!(
+                "import {{ expect, it }} from 'vitest';\nimport {{ weight }} from '../src/level';\nimport {{ Level }} from '../src/constants';\n{test_setup}\nit('high', () => {{ expect(weight(Level.High)).toBe(10); }});\n"
+            );
+            let finding = classify_enum_source(
+                label,
+                &source,
+                &test,
+                &[(
+                    "src/constants.ts",
+                    "export enum Level { Low = 1, High = 2 }\n",
+                )],
+            )?;
+            assert_eq!(
+                finding.class, expected,
+                "{label}, owner setup: {owner_setup}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn grouped_enum_member_callees_never_establish_read_only_identity() -> Result<(), String> {
     let test = "import { expect, it } from 'vitest';\nimport { weight } from '../src/level';\nimport { Level } from '../src/constants';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
     for (label, imports, member_call) in [

@@ -746,7 +746,9 @@ prove its condition costs an abstention or a gap, never a credit.
    also rejects grouped member updates, assignments and deletion. Whitespace
    or comments after an optional-call token do not establish read-only use,
    and optional generic invocation is still invocation. Scalar unary minus,
-   logical not and ordinary comparisons remain reads. The test check
+   logical not and ordinary comparisons remain reads. Unmasked Unicode-escaped
+   runtime identifiers make stability unknown; escapes confined to strings or
+   comments do not. The test check
    covers the whole file, including setup hooks. Distinct source files
    collapsed by extension
    stripping (for example `constants.ts` and `constants.mts`) make that
