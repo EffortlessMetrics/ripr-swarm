@@ -688,6 +688,26 @@ issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
+case = "py-grid-arithmetic-property"
+issue = 9594
+reason = "Python operator-grid false verdict; #9594 owns the fix."
+
+[[known_false]]
+case = "py-grid-arithmetic-table"
+issue = 9594
+reason = "Python operator-grid false verdict; #9594 owns the fix."
+
+[[known_false]]
+case = "py-grid-delete-helper"
+issue = 9594
+reason = "Python operator-grid false verdict; #9594 owns the fix."
+
+[[known_false]]
+case = "py-grid-returns-property"
+issue = 9594
+reason = "Python operator-grid false verdict; #9594 owns the fix."
+
+[[known_false]]
 case = "py-idioms-caplog-message"
 issue = 9424
 reason = "caplog text assertions pin log messages but are graded weak (#9424)."
