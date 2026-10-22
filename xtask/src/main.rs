@@ -21559,33 +21559,56 @@ fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
 fn split_top_level_commas(content: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
+    let bytes = content.as_bytes();
     let mut start = 0;
-    for (index, ch) in content.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index = attribute_string_end(bytes, index);
             continue;
         }
-        match ch {
-            '"' => in_string = true,
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
                 parts.push(&content[start..index]);
                 start = index + 1;
             }
             _ => {}
         }
+        index += 1;
     }
     parts.push(&content[start..]);
     parts
+}
+
+/// Read a string from its opening quote. Raw strings close only at a quote
+/// followed by the opening hash suffix; backslashes escape only cooked strings.
+fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
+    let mut marker = quote;
+    while marker > 0 && bytes[marker - 1] == b'#' {
+        marker -= 1;
+    }
+    let raw_suffix = (marker > 0 && bytes[marker - 1] == b'r').then_some(&bytes[marker..quote]);
+    let mut index = quote + 1;
+    while index < bytes.len() {
+        if raw_suffix.is_none() && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let after_quote = index + 1;
+            if let Some(hashes) = raw_suffix {
+                if bytes[after_quote..].starts_with(hashes) {
+                    return after_quote + hashes.len();
+                }
+            } else {
+                return after_quote;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
 }
 
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
@@ -21597,13 +21620,8 @@ fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usiz
             // syntax; skipping the literal keeps a later suppression in the
             // same attribute visible to the budget.
             b'"' => {
-                index += 1;
-                while index < bytes.len() && bytes[index] != b'"' {
-                    if bytes[index] == b'\\' {
-                        index += 1;
-                    }
-                    index += 1;
-                }
+                index = attribute_string_end(bytes, index);
+                continue;
             }
             b'(' => depth += 1,
             b')' => {
