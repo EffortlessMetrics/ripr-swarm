@@ -1,0 +1,3 @@
+case = "py-grid-delete-helper"
+issue = 9594
+reason = "False actionable: field update read through a same-file helper is not credited (#9594)."
