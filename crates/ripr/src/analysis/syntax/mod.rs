@@ -23,6 +23,7 @@ pub(crate) use owner_pin::{
     use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use owner_pin::{module_literal_slice_consts, row_skip_guard_ranges};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 

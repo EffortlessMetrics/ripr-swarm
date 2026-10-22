@@ -632,6 +632,7 @@ fn summarize_file_with_collectors(
         };
 
         if has_test_attribute {
+            let literal_consts = super::module_literal_slice_consts(&function);
             tests.push(TestFact {
                 name,
                 file: path_buf.clone(),
@@ -653,6 +654,7 @@ fn summarize_file_with_collectors(
                 attrs,
                 nested_fn_names,
                 let_bindings,
+                literal_consts,
             });
         }
 

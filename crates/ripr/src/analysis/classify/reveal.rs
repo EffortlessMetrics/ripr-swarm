@@ -6017,6 +6017,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }];
         let touched =
             crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
@@ -8478,6 +8479,7 @@ return Err(\"typed pin\".into());
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

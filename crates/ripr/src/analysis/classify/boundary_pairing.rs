@@ -897,8 +897,12 @@ fn argument_list_activates_boundary(
         // overlap is reached.
         let table_column = |index: usize| {
             arguments.get(index).is_some_and(|argument| {
-                crate::analysis::syntax::constant_table_column(&test.body, argument.trim())
-                    .is_some()
+                crate::analysis::syntax::constant_table_column(
+                    &test.body,
+                    argument.trim(),
+                    &test.literal_consts,
+                )
+                .is_some()
             })
         };
         if left_values.len() > 1
@@ -3760,6 +3764,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

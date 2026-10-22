@@ -334,7 +334,7 @@ pub(crate) fn constant_table_call_column(
         .name_ref()?
         .text()
         .to_string();
-    let column = constant_table_column(fn_text, &name)?;
+    let column = constant_table_column(fn_text, &name, &[])?;
     if column.len() > 64 || column.iter().any(|row| row.len() > 4096) {
         return None;
     }

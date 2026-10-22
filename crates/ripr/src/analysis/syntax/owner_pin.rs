@@ -12,8 +12,11 @@ use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
     literal_json_tree, literal_json_uses,
 };
+mod row_skip;
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use row_skip::module_literal_slice_consts;
+use row_skip::row_skips;
 pub(crate) use slice_table::{
     constant_table_call_column, direct_literal_call_column, owner_reference_count,
 };
@@ -23,6 +26,7 @@ use super::ra::{
     LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
     std_macro_root_is_unrebound,
 };
+use crate::analysis::facts::LiteralSliceConst;
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
@@ -3934,9 +3938,22 @@ fn eager_path(
             {
                 return Err(conditional_construct(&parent));
             }
+            // A leading `if LIST.contains(&row_key) { continue; }` skips only
+            // the rows it names (#9409); the assertion still runs on the rest.
+            let skips = constant_row_array(&table, function).and_then(|rows| {
+                row_skips(
+                    &table,
+                    function,
+                    &rows,
+                    &module_literal_slice_consts(function),
+                )
+            });
             if table.syntax().descendants().any(|node| {
                 (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
                     && node.text_range().start() < execution_start
+                    && !skips
+                        .as_ref()
+                        .is_some_and(|skips| skips.covers(node.text_range()))
             }) {
                 return Err("a `for` loop after a `break` or `continue` that can skip it");
             }
@@ -4072,8 +4089,12 @@ fn bound_constant_rows(
 /// one field of a flat tuple pattern (`for (x, want) in [..]`). Each row
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
-pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
-    table_column(fn_text, name).map(|(column, _)| column)
+pub(crate) fn constant_table_column(
+    fn_text: &str,
+    name: &str,
+    consts: &[LiteralSliceConst],
+) -> Option<Vec<String>> {
+    table_column(fn_text, name, consts).map(|(column, _)| column)
 }
 
 /// [`constant_table_column`], but only when the table's loop body holds
@@ -4083,13 +4104,48 @@ pub(crate) fn constant_table_column_around(
     fn_text: &str,
     name: &str,
     at: usize,
+    consts: &[LiteralSliceConst],
 ) -> Option<Vec<String>> {
-    let (column, body) = table_column(fn_text, name)?;
+    let (column, body) = table_column(fn_text, name, consts)?;
     body.contains(&at).then_some(column)
 }
 
+/// The byte ranges of `fn_text` that are decided row-skip guards of its
+/// constant-row `for` tables (#9409): text-level scans that refuse a
+/// `continue` before an assertion set these ranges aside.
+pub(crate) fn row_skip_guard_ranges(
+    fn_text: &str,
+    consts: &[LiteralSliceConst],
+) -> Vec<std::ops::Range<usize>> {
+    if !fn_text.contains("continue") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(fn_text) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ForExpr::cast)
+        .filter(|table| table.label().is_none())
+        .filter_map(|table| {
+            let rows = constant_row_array(&table, &function)?;
+            row_skips(&table, &function, &rows, consts)
+        })
+        .flat_map(|skips| skips.guards)
+        .map(|guard| usize::from(guard.start())..usize::from(guard.end()))
+        .collect()
+}
+
 /// The column and the byte range of its loop body.
-fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Range<usize>)> {
+fn table_column(
+    fn_text: &str,
+    name: &str,
+    consts: &[LiteralSliceConst],
+) -> Option<(Vec<String>, std::ops::Range<usize>)> {
     // Most tests hold no `for` at all; skip the parse for them.
     if !fn_text.contains("for") || !fn_text.contains(name) {
         return None;
@@ -4151,10 +4207,19 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     // `|` may open a closure that never runs, and `&&` or `||` may skip the
     // call on its right.
     let body = table.loop_body()?;
+    // Leading `if LIST.contains(&key) { continue; }` guards that decide
+    // every row set the rows they name aside (#9409).
+    let rows = constant_row_array(&table, &function)?;
+    let skips = row_skips(&table, &function, &rows, consts);
     if body
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
+        .filter(|token| {
+            !skips
+                .as_ref()
+                .is_some_and(|skips| skips.covers(token.text_range()))
+        })
         .any(|token| {
             matches!(
                 token.text(),
@@ -4174,10 +4239,44 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     {
         return None;
     }
-    // The parser does not see bindings inside macro arguments, so a macro
-    // that names the column next to a closure, `let`, `for`, `fn` or match
-    // arm may rebind it there (`[50].map(|cents| gate(cents))`).
-    if function
+    if macro_may_rebind(&function, name) {
+        return None;
+    }
+    let range = body.syntax().text_range();
+    let body_range = usize::from(range.start())..usize::from(range.end());
+    let column = rows
+        .exprs()
+        .enumerate()
+        .filter(|(index, _)| !skips.as_ref().is_some_and(|skips| skips.skipped[*index]))
+        .map(|(_, row)| row_cell(row, position))
+        .collect::<Option<Vec<_>>>()?;
+    Some((column, body_range))
+}
+
+/// The text of `row`'s cell for a loop pattern variable: the whole row
+/// (`position` none) or field `i` of a tuple row of arity `n`.
+fn row_cell(row: ast::Expr, position: Option<(usize, usize)>) -> Option<String> {
+    let Some((index, arity)) = position else {
+        return Some(row.syntax().text().to_string());
+    };
+    let ast::Expr::TupleExpr(tuple) = row else {
+        return None;
+    };
+    let cells: Vec<_> = tuple.fields().collect();
+    if cells.len() != arity {
+        return None;
+    }
+    cells
+        .get(index)
+        .map(|cell| cell.syntax().text().to_string())
+}
+
+/// Whether a macro in `function` names `name` next to a closure, `let`,
+/// `for`, `fn` or match arm. The parser does not see bindings inside macro
+/// arguments, so such a macro may rebind it there
+/// (`[50].map(|cents| gate(cents))`).
+fn macro_may_rebind(function: &ast::Fn, name: &str) -> bool {
+    function
         .syntax()
         .descendants()
         .filter_map(ast::TokenTree::cast)
@@ -4195,31 +4294,6 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
                     .iter()
                     .any(|token| matches!(token.as_str(), "|" | "let" | "for" | "fn" | "=>"))
         })
-    {
-        return None;
-    }
-    let rows = constant_row_array(&table, &function)?;
-    let range = body.syntax().text_range();
-    let body_range = usize::from(range.start())..usize::from(range.end());
-    let column = rows
-        .exprs()
-        .map(|row| match position {
-            None => Some(row.syntax().text().to_string()),
-            Some((index, arity)) => {
-                let ast::Expr::TupleExpr(tuple) = row else {
-                    return None;
-                };
-                let cells: Vec<_> = tuple.fields().collect();
-                if cells.len() != arity {
-                    return None;
-                }
-                cells
-                    .get(index)
-                    .map(|cell| cell.syntax().text().to_string())
-            }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((column, body_range))
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {

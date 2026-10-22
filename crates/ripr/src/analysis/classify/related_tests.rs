@@ -5033,6 +5033,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                literal_consts: Vec::new(),
             }],
             ..Default::default()
         });
@@ -8859,6 +8860,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![macro_test],
@@ -8889,6 +8891,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![call_test],
@@ -9487,6 +9490,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 
@@ -10477,6 +10481,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 
@@ -10540,6 +10545,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

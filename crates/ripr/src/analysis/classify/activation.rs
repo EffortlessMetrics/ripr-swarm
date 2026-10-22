@@ -3263,6 +3263,7 @@ fn owner_call_parameter_values_where(
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
                             argument.trim(),
+                            &test.literal_consts,
                         )
                         .is_some();
                     Some((parameters.get(idx)?, values, argument.trim(), table_column))
@@ -4540,7 +4541,9 @@ pub(in crate::analysis) fn owner_argument_values(
     // A `for` pattern over a constant-row table carries one value per row
     // (#5328); a row whose cell is not a plain scalar yields nothing at all,
     // since a partial column would hide the rows ripr cannot read.
-    if let Some(column) = crate::analysis::syntax::constant_table_column(&test.body, name) {
+    if let Some(column) =
+        crate::analysis::syntax::constant_table_column(&test.body, name, &test.literal_consts)
+    {
         let scalars: Option<Vec<String>> = column
             .iter()
             .map(|cell| {
@@ -5459,6 +5462,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
         let probe = Probe {
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
@@ -5734,6 +5738,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 
@@ -6267,6 +6272,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
 
         let facts = value_facts_for_test(&test, None);
@@ -6311,6 +6317,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
 
         let facts = value_facts_for_test(&test, None);
@@ -6344,6 +6351,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
 
         let facts = value_facts_for_test(&test, Some(&owner));
@@ -6392,6 +6400,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
 
         let facts = value_facts_for_test(&test, Some(&owner));
@@ -6431,6 +6440,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
             crate::analysis::facts::OwnedRustIndex {
@@ -6824,6 +6834,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         };
 
         assert!(
@@ -7060,6 +7071,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 
@@ -7076,6 +7088,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 
@@ -7137,6 +7150,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

@@ -5793,14 +5793,103 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
     ] {
         assert_eq!(refusal(&refused), zero, "{refused}");
     }
-    assert_eq!(
-        refusal(&format!(
-            "for (x, want) in [(4, 12), (0, 0)] {{ if x == 0 {{ continue; }} {pin} }}"
-        )),
-        conditional("a `for` loop after a `break` or `continue` that can skip it")
-    );
+    let skipped = conditional("a `for` loop after a `break` or `continue` that can skip it");
+    // A comparison ripr cannot decide per row may skip any of them.
+    for refused in [
+        format!("for (x, want) in [(4, 12), (0, 0)] {{ if x > 0 {{ continue; }} {pin} }}"),
+        format!(
+            "for (x, want) in [(4, 12), (0, 0)] {{ if x == 0 {{ continue; }} else {{ }} {pin} }}"
+        ),
+        format!("for (x, want) in [(4, 12), (0, 0)] {{ if x == y() {{ continue; }} {pin} }}"),
+        // Every row is skipped: nothing runs the assertion.
+        format!("for (x, want) in [(0, 0), (0, 1)] {{ if x == 0 {{ continue; }} {pin} }}"),
+        // `0` and `0x0` are one value that text equality cannot see.
+        format!("for (x, want) in [(0x0, 0), (4, 12)] {{ if x == 0 {{ continue; }} {pin} }}"),
+        // A later `continue` may skip rows the guard does not name.
+        format!(
+            "for (x, want) in [(4, 12), (0, 0)] {{ if x == 0 {{ continue; }} if want > 99 {{ continue; }} {pin} }}"
+        ),
+    ] {
+        assert_eq!(refusal(&refused), skipped, "{refused}");
+    }
+    // A comparison with a literal skips exactly the rows it names, so the
+    // assertion still runs on the rest (#9409).
+    for admitted in [
+        format!("for (x, want) in [(4, 12), (0, 0)] {{ if x == 0 {{ continue; }} {pin} }}"),
+        format!("for (x, want) in [(4, 12), (0, 0)] {{ if 0 == x {{ continue; }} {pin} }}"),
+    ] {
+        assert_eq!(refusal(&admitted), None, "{admitted}");
+    }
     // Only the loop body is admitted; the iterable is not on its path.
     assert!(refusal("for _ in [assert_eq!(weight(4), 12)] {}").is_some());
+}
+
+#[test]
+fn a_skip_guard_over_a_module_const_list_leaves_the_rows_it_does_not_name() {
+    let refusal = |list: &str, guard: &str| {
+        weight_refusal(
+            &format!(
+                "use demo::weight;\n{list}\n#[test]\nfn weighs() {{\nfor (x, want) in [(4, 12), (0, 0)] {{ {guard} assert_eq!(weight(x), want); }}\n}}\n"
+            ),
+            &[],
+        )
+    };
+    let skipped = Some(AssertionRefusal::Syntax(
+        AssertionContextRefusal::ConditionalPath(
+            "a `for` loop after a `break` or `continue` that can skip it",
+        ),
+    ));
+    let guard = "if SKIP.contains(&x) { continue; }";
+    assert_eq!(refusal("const SKIP: &[u32] = &[0];", guard), None);
+    assert_eq!(refusal("const SKIP: &[u32] = &[7, 0, 9];", guard), None);
+    for (list, guard) in [
+        // The list is not a module `const` of literals.
+        ("", guard),
+        ("static SKIP: &[u32] = &[0];", guard),
+        ("const SKIP: &[u32] = &[compute()];", guard),
+        ("const SKIP: Vec<u32> = Vec::new();", guard),
+        (
+            "const SKIP: &[u32] = &[0];\nconst SKIP: &[u32] = &[4];",
+            guard,
+        ),
+        ("#[cfg(any())]\nconst SKIP: &[u32] = &[0];", guard),
+        // Every row is listed.
+        ("const SKIP: &[u32] = &[0, 4];", guard),
+        // A local of the list's name may stand in for the const.
+        (
+            "const SKIP: &[u32] = &[0];",
+            "let SKIP = [4]; if SKIP.contains(&x) { continue; }",
+        ),
+        // Not the loop's own variable.
+        (
+            "const SKIP: &[u32] = &[0];",
+            "if SKIP.contains(&other) { continue; }",
+        ),
+        // Not a bare `continue`.
+        (
+            "const SKIP: &[u32] = &[0];",
+            "if SKIP.contains(&x) { break; }",
+        ),
+        (
+            "const SKIP: &[u32] = &[0];",
+            "if SKIP.contains(&x) { drop(x); continue; }",
+        ),
+        (
+            "const SKIP: &[u32] = &[0];",
+            "if SKIP.contains(&x) { 'rows: continue 'rows; }",
+        ),
+    ] {
+        assert!(
+            refusal(list, guard).is_some(),
+            "{list} {guard}: {:?}",
+            refusal(list, guard)
+        );
+    }
+    assert_eq!(
+        refusal("const SKIP: &[u32] = &[0, 4];", guard),
+        skipped.clone(),
+        "every row listed"
+    );
 }
 
 #[test]

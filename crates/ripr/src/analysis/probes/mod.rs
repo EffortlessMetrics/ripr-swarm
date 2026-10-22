@@ -9,6 +9,7 @@ mod macro_definition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod respelled_literal;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::domain::Probe;

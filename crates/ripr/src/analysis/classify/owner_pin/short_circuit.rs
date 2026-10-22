@@ -460,8 +460,9 @@ fn argument_runs(
         } else if super::is_plain_identifier(argument) {
             let column = match loan {
                 Some(loan) => helper_column(test, loan, argument),
-                None => call_offset(test, call_line, name)
-                    .and_then(|at| constant_table_column_around(&test.body, argument, at)),
+                None => call_offset(test, call_line, name).and_then(|at| {
+                    constant_table_column_around(&test.body, argument, at, &test.literal_consts)
+                }),
             };
             match column {
                 Some(column) => {

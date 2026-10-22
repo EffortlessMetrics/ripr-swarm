@@ -1208,6 +1208,18 @@ pub struct TestFact {
     /// Body-relative `let` binding facts, mirroring
     /// `FunctionFact.let_bindings` (#3727 Slice A).
     pub let_bindings: Vec<LetBindingFact>,
+    /// Literal-slice `const`s the test's own module declares, for guards
+    /// like `if SKIP.contains(&scheme) { continue; }` in a table loop
+    /// (#9409). Empty where the producer could not establish them.
+    pub literal_consts: Vec<LiteralSliceConst>,
+}
+
+/// A module-level `const NAME: &[T] = &[lit, ..]` as written: the name and
+/// the source text of each literal item (#9409).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LiteralSliceConst {
+    pub name: String,
+    pub items: Vec<String>,
 }
 
 impl TestFact {
@@ -1585,6 +1597,8 @@ pub(crate) struct TestFactWire {
     pub nested_fn_names: Vec<String>,
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    #[serde(default)]
+    pub literal_consts: Vec<LiteralSliceConst>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1687,6 +1701,7 @@ impl TestFactWire {
             attrs: fact.attrs.clone(),
             nested_fn_names: fact.nested_fn_names.clone(),
             let_bindings: fact.let_bindings.clone(),
+            literal_consts: fact.literal_consts.clone(),
         }
     }
 
@@ -1707,6 +1722,7 @@ impl TestFactWire {
             attrs: fact.attrs.clone(),
             nested_fn_names: fact.nested_fn_names.clone(),
             let_bindings: fact.let_bindings.clone(),
+            literal_consts: fact.literal_consts.clone(),
         }
     }
 }
@@ -1812,6 +1828,7 @@ impl TestFactWire {
             attrs: self.attrs,
             nested_fn_names: self.nested_fn_names,
             let_bindings: self.let_bindings,
+            literal_consts: self.literal_consts,
         })
     }
 }
@@ -1935,6 +1952,7 @@ impl<'de> serde::Deserialize<'de> for TestFact {
             attrs: wire.attrs,
             nested_fn_names: wire.nested_fn_names,
             let_bindings: wire.let_bindings,
+            literal_consts: wire.literal_consts,
         })
     }
 }

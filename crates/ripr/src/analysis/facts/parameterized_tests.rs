@@ -117,6 +117,7 @@ fn test_fact(function: &FunctionFact) -> TestFact {
         // parser-produced shadow facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        literal_consts: Vec::new(),
     }
 }
 

@@ -216,6 +216,30 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+### A respelled literal is not a changed return value
+
+When an edit only respells integer literals (`"ftp" => Some(21)` to
+`"ftp" => Some(0x15)`), the returned number and its type are unchanged, so a
+`return_value` finding would ask for a discriminator of a value no test could
+see move (#9409). The return value is dropped when every other difference
+between the old and new line is nil: each literal reads the same number with
+the same suffix, and all other text is identical. A line with no other shape
+keeps its return value, so a changed line never loses its only finding. A
+float, a different suffix or any other changed text keeps the finding.
+
+### A table loop's skip guard names only its own rows
+
+A constant-row table loop that opens with `if LIST.contains(&key) { continue; }`
+or `if key == literal { continue; }` skips the rows the guard names, not the
+loop. ripr decides each row when `LIST` is a module `const` of plain literals
+(strings without escapes, decimal integers) named once in the test, `key` is
+the loop's own pattern variable bound nowhere else, and every row's cell for
+`key` is such a literal. It then credits the assertion for the remaining rows
+and takes the listed rows out of every column the loop feeds the owner. A row
+the guards skip is a gap, as before. If any part is undecided (a local or
+computed list, a duplicated or shadowed name, a guard that is not a bare
+`continue`, every row skipped) the `continue` stays a bypass of the whole loop.
+
 ### A guard-only edit is the guard's predicate
 
 When an edit lies wholly inside one comparison of an arm's guard

@@ -330,11 +330,29 @@ pub(crate) fn probes_for_file_with_relations(
             // behavior. It is dropped only when another shape on the line holds
             // the whole edit, so the line keeps a probe for what did change.
             let unchanged_return = |shape: &super::classify::ParserProbeShape| {
-                shape.family == ProbeFamily::ReturnValue
+                // #9409: an edit that only respells an integer literal
+                // (`21` to `0x15`) keeps the returned number, so no return
+                // value changed. The line's other shapes keep their probes;
+                // a line with only this shape keeps it.
+                let respelled = shape.family == ProbeFamily::ReturnValue
+                    && canonical_shapes
+                        .iter()
+                        .any(|other| other.family != ProbeFamily::ReturnValue)
                     && removed_counterpart.as_deref().is_some_and(|removed| {
-                        let removed = removed.trim();
-                        shape_outside_edit(text, &canonical_probe_text(text, shape.text), removed)
-                            && canonical_shapes.iter().any(|other| {
+                        super::respelled_literal::only_respells_integer_literals(
+                            text.trim(),
+                            removed.trim(),
+                        )
+                    });
+                respelled
+                    || shape.family == ProbeFamily::ReturnValue
+                        && removed_counterpart.as_deref().is_some_and(|removed| {
+                            let removed = removed.trim();
+                            shape_outside_edit(
+                                text,
+                                &canonical_probe_text(text, shape.text),
+                                removed,
+                            ) && canonical_shapes.iter().any(|other| {
                                 other.family != ProbeFamily::ReturnValue
                                     && removed_span_of_shape(
                                         text,
@@ -343,7 +361,7 @@ pub(crate) fn probes_for_file_with_relations(
                                     )
                                     .is_some()
                             })
-                    })
+                        })
             };
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the

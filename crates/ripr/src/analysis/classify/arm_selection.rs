@@ -994,7 +994,11 @@ impl ArmSelector {
                 .map(str::trim)
                 .filter(|input| is_identifier(input) && runs_in_table_loop(test, line, input))
                 .filter_map(|input| {
-                    crate::analysis::syntax::constant_table_column(&test.body, input)
+                    crate::analysis::syntax::constant_table_column(
+                        &test.body,
+                        input,
+                        &test.literal_consts,
+                    )
                 })
                 .any(|cells| {
                     cells.iter().any(|cell| {
@@ -2588,7 +2592,21 @@ fn runs_in_table_loop(test: &TestSummary, line: usize, name: &str) -> bool {
     let Some(relative) = line.checked_sub(test.start_line) else {
         return false;
     };
-    let masked = mask_comments_and_strings(&test.body);
+    let mut masked = mask_comments_and_strings(&test.body);
+    // A decided skip guard (#9409) removes only the rows it names, so it
+    // is no bypass of the assertion: blank it before the scan below.
+    let guards = crate::analysis::syntax::row_skip_guard_ranges(&test.body, &test.literal_consts);
+    if !guards.is_empty() {
+        let mut bytes = masked.into_bytes();
+        for guard in guards {
+            for byte in bytes.get_mut(guard).into_iter().flatten() {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+        }
+        masked = String::from_utf8(bytes).unwrap_or_default();
+    }
     let offset = masked
         .split_inclusive('\n')
         .take(relative)
@@ -3129,6 +3147,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

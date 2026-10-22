@@ -3029,6 +3029,7 @@ fn demote_harness_target_functions_drops_differently_named_test_facts()
         attrs: vec!["#[test]".to_string()],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        literal_consts: Vec::new(),
     };
     let file_facts = FileFacts {
         path: target.to_path_buf(),

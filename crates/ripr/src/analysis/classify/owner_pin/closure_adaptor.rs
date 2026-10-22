@@ -487,7 +487,7 @@ pub(in crate::analysis::classify) fn argument_sequences(
             if found.next().is_some() {
                 return None;
             }
-            constant_table_column_around(&test.body, name, at)?
+            constant_table_column_around(&test.body, name, at, &test.literal_consts)?
         }
         .iter()
         .map(|cell| literal_sequence(cell))
@@ -994,6 +994,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            literal_consts: Vec::new(),
         }
     }
 

@@ -663,8 +663,12 @@ fn table_row_observes_err(expression: &ast::Expr, function: &ast::Fn, owner: &st
             ok_side_expected(&assertion, owner).is_some_and(|expected| {
                 is_plain_identifier(&expected)
                     && binds_in_pattern(&expected)
-                    && crate::analysis::syntax::constant_table_column(&fn_text, &expected)
-                        .is_some_and(|cells| cells.iter().any(|cell| cell.trim() == "None"))
+                    && crate::analysis::syntax::constant_table_column(
+                        &fn_text,
+                        &expected,
+                        &crate::analysis::syntax::module_literal_slice_consts(function),
+                    )
+                    .is_some_and(|cells| cells.iter().any(|cell| cell.trim() == "None"))
             })
         })
 }
