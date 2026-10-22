@@ -62,6 +62,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
         languages,
         &crate::config::RustLanguageConfig::default(),
         &crate::config::LanguagesConfig::default(),
+        None,
     )
 }
 
@@ -71,6 +72,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
 ) -> Result<AnalysisResult, CoreError> {
     #[cfg(test)]
     {
@@ -124,6 +128,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -190,6 +195,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
                 languages,
                 rust_config,
                 language_config,
+                perl_cache_dir,
                 &loaded.text,
             )
         });
@@ -267,6 +273,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
     disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
@@ -310,6 +319,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &loaded.text,
         )?;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -379,6 +389,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &loaded.text,
         );
         let (excluded, analyzed) = match probes.join() {
@@ -892,6 +903,7 @@ fn run_pipeline_for_diff_text(
         languages,
         rust_config,
         &crate::config::LanguagesConfig::default(),
+        None,
         diff_text,
     )
 }
@@ -906,6 +918,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
@@ -915,11 +930,19 @@ fn run_pipeline_for_diff_text_with_language_config(
     // the next analysis would count ripr's own output as changed scope and
     // inflate every downstream count. Partition them out at the intake so
     // counts, adapter dispatch, and disclosures all see the same user
-    // scope, and disclose the exclusion by name below.
+    // scope, and disclose the exclusion by name below. #8751: the roots
+    // follow the writers — a relocated `RIPR_CACHE_DIR` or `[perl].cache_dir`
+    // moves ripr's own output out of `target/ripr`, and the exclusion must
+    // follow it or committed relocated artifacts reopen the same inflation.
+    let artifact_roots = diff::ripr_artifact_roots(
+        &options.root,
+        &crate::analysis::seam_cache::cache_base_dir(&options.root),
+        perl_cache_dir,
+    );
     let (changed_files, own_artifact_files): (Vec<_>, Vec<_>) = parsed_diff
         .changed_files
         .into_iter()
-        .partition(|file| !diff::is_ripr_artifact_path(&file.path));
+        .partition(|file| !diff::is_ripr_artifact_path_under(&file.path, &artifact_roots));
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1309,7 +1332,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!("{}", ripr_artifact_disclosure(&own_artifact_files));
+        eprintln!(
+            "{}",
+            ripr_artifact_disclosure(&artifact_roots, &own_artifact_files)
+        );
     }
 
     if findings.is_empty()
@@ -1652,6 +1678,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
         oracle_policy,
         languages,
         &crate::config::RustLanguageConfig::default(),
+        &crate::config::LanguagesConfig::default(),
     )
 }
 
@@ -1660,6 +1687,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut rust_diagnostic_origins =
@@ -1702,9 +1730,11 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => {
-                analyze_typescript_repo(options, oracle_policy)
-            }
+            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_repo(
+                options,
+                oracle_policy,
+                &language_config.typescript.handwritten_files,
+            ),
             LanguageId::Python => analyze_python_repo(options, oracle_policy),
             LanguageId::Perl => analyze_perl_repo(options, oracle_policy),
             LanguageId::Rust => {
@@ -2046,18 +2076,57 @@ fn bounded_path_listing(paths: &[String]) -> String {
 /// The stderr line naming the ripr-artifact files the intake dropped from
 /// changed-scope accounting (#7663). Pure so the disclosure contract is
 /// testable without capturing stderr. The recovery names the exact
-/// `.gitignore` entry because the common trigger is a Python repo whose
-/// template `.gitignore` does not cover Rust-conventional `target/`.
-fn ripr_artifact_disclosure(own_artifact_files: &[diff::ChangedFile]) -> String {
+/// `.gitignore` entries for the artifact roots that actually excluded the
+/// files — the default `/target/ripr/`, or the writer-layer directories a
+/// relocated `RIPR_CACHE_DIR` / `[perl].cache_dir` produced (#8751; PR #8901
+/// review: stale `/target/ripr/` advice covers nothing when the relocated
+/// cache was what the intake excluded) — because the common trigger is a
+/// Python repo whose template `.gitignore` does not cover Rust-conventional
+/// `target/`.
+fn ripr_artifact_disclosure(
+    artifact_roots: &[PathBuf],
+    own_artifact_files: &[diff::ChangedFile],
+) -> String {
     let listed = bounded_path_listing(
         &own_artifact_files
             .iter()
             .map(|file| file.path.to_string_lossy().replace('\\', "/"))
             .collect::<Vec<_>>(),
     );
+    // Advise only for the roots that actually excluded these files: the
+    // configured root set always contains `target/ripr`, and naming it for
+    // a relocated-cache exclusion sends the user to a stale rule that
+    // covers nothing (PR #8901 review, graphite finding).
+    let normalized_files = own_artifact_files
+        .iter()
+        .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    let matched_roots: Vec<&PathBuf> = artifact_roots
+        .iter()
+        .filter(|root| {
+            let root = diff::artifact_root_pathspec(root);
+            normalized_files
+                .iter()
+                .any(|file| file.as_str() == root || file.starts_with(&format!("{root}/")))
+        })
+        .collect();
+    let all_roots: Vec<&PathBuf> = artifact_roots.iter().collect();
+    let advice_roots: &[&PathBuf] = if matched_roots.is_empty() {
+        // The intake identified these files through the roots, so an empty
+        // match means only shape drift; fall back to the full set rather
+        // than printing no recovery at all.
+        &all_roots
+    } else {
+        &matched_roots
+    };
+    let entries = advice_roots
+        .iter()
+        .map(|root| diff::artifact_root_gitignore_entry(root))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "ripr: {count} ripr artifact file(s) under target/ripr are tool output, not user \
-         source, and were not counted as changed scope: {listed}. Add `/target/ripr/` to \
+        "ripr: {count} ripr artifact file(s) are tool output, not user source, \
+         and were not counted as changed scope: {listed}. Add {entries} to \
          `.gitignore` to keep ripr's reports and caches out of commits.",
         count = own_artifact_files.len()
     )
@@ -2160,14 +2229,17 @@ fn analyze_python_diff(
 fn analyze_typescript_repo(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
+    handwritten: &[String],
 ) -> Result<LanguageRepoResult, String> {
-    TypeScriptAdapter.analyze_repo(options, oracle_policy)
+    let _ = oracle_policy;
+    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, handwritten)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
 fn analyze_typescript_repo(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
+    _handwritten: &[String],
 ) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -2677,6 +2749,14 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_disclosure_escapes_gitignore_metacharacters() {
+        let files = [changed_file("build/cache*/nested/a.json")];
+        let roots = vec![PathBuf::from("build/cache*")];
+        let message = ripr_artifact_disclosure(&roots, &files);
+        assert!(message.contains(r"Add /build/cache\*/ to"), "{message}");
+    }
+
+    #[test]
     fn bom_only_rewrite_is_excluded_from_the_eol_pairing() -> Result<(), String> {
         // #4959: the parser strips a line-1 UTF-8 BOM from both sides before
         // storage, so a BOM-only rewrite parses to an elementwise-equal pair
@@ -2916,13 +2996,28 @@ mod tests {
             changed_file("target/ripr/pilot/pilot-summary.md"),
             changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
         ];
-        let message = ripr_artifact_disclosure(&files);
+        let message = ripr_artifact_disclosure(&[PathBuf::from("target").join("ripr")], &files);
         assert!(message.contains("2 ripr artifact file(s)"), "{message}");
         assert!(
             message.contains("target/ripr/pilot/pilot-summary.md"),
             "{message}"
         );
         assert!(message.contains("/target/ripr/"), "{message}");
+    }
+
+    #[test]
+    fn ripr_artifact_disclosure_advice_follows_relocated_roots() {
+        // PR #8901 review (devin #7): when the intake excluded a relocated
+        // cache, the recovery must name the relocated layer entries, not the
+        // stale `/target/ripr/` rule that covers none of them.
+        let files = [changed_file(".ripr-cache/repo-seam-facts/1.61/abc.json")];
+        let roots = vec![PathBuf::from(".ripr-cache").join("repo-seam-facts")];
+        let message = ripr_artifact_disclosure(&roots, &files);
+        assert!(
+            message.contains("/.ripr-cache/repo-seam-facts/"),
+            "{message}"
+        );
+        assert!(!message.contains("/target/ripr/"), "{message}");
     }
 
     #[test]
@@ -4221,6 +4316,49 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_threads_typescript_handwritten_files_to_repo_mode() -> Result<(), String> {
+        let root = temp_root("repo-ts-handwritten")?;
+        write(
+            &root.join("dist/handwritten.ts"),
+            "export function f(a: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  return 0;\n}\n",
+        )?;
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        };
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files = vec!["dist/handwritten.ts".to_string()];
+        let run = |config: &crate::config::LanguagesConfig| {
+            run_repo_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::TypeScript],
+                &crate::config::RustLanguageConfig::default(),
+                config,
+            )
+        };
+        let with_decl = run(&declared);
+        let without_decl = run(&crate::config::LanguagesConfig::default());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!with_decl?.findings.is_empty());
+        assert!(without_decl?.findings.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn repo_mode_counts_cargo_vendor_crates_as_a_partial_rust_run() -> Result<(), String> {
         let root = temp_root("repo-vendored-skip")?;
@@ -4254,6 +4392,7 @@ mod tests {
             &OraclePolicy::default(),
             &[LanguageId::Rust],
             &crate::config::RustLanguageConfig::default(),
+            &crate::config::LanguagesConfig::default(),
         )?;
         let rust_run = result
             .language_runs
@@ -6375,6 +6514,7 @@ index 0000000..1111111 100644
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
+                None,
                 crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
@@ -6518,6 +6658,7 @@ index 0000000..1111111 100644
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
+                None,
                 crate::analysis::DisclosureProbes::Skip,
             )
             .map_err(|err| format!("worktree pipeline failed: {err}"))?;

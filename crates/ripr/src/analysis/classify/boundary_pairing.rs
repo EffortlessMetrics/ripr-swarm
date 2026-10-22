@@ -17,6 +17,7 @@ use super::owner_pin::closure_adaptor::{
     AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
 };
 use super::reveal::assertion_comparison_operands;
+use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
@@ -318,6 +319,9 @@ fn loan_pairs_boundary_call(
         // Every call fact on the line is the helper call: a call buried in a
         // macro (`assert!(passes(50) || true)`) or chained after it is
         // another source of the line's `==` fact.
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
         let mut on_line = test.calls.iter().filter(|call| call.line == *line);
         let Some(helper_call) = on_line.next() else {
             return false;
@@ -392,7 +396,9 @@ fn test_pairs_boundary_element(
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
-            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+            .any(|arguments| {
+                arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
+            })
     })
 }
 
@@ -402,11 +408,12 @@ fn arguments_feed_boundary_element(
     test: &TestSummary,
     loan: Option<&HelperLoan>,
     arguments: &[String],
+    site: &str,
     (tail, boundary): &(AdaptorTail, String),
 ) -> bool {
     arguments
         .get(tail.position)
-        .and_then(|argument| argument_sequences(test, loan, argument))
+        .and_then(|argument| argument_sequences(test, loan, argument, site))
         .is_some_and(|runs| {
             runs.iter()
                 .any(|run| tail.run_reaches_boundary(run, boundary))
@@ -429,7 +436,9 @@ fn loan_pairs_boundary_element(
     }
     whole_owner_call_operands(test, assertion_text, owner)
         .iter()
-        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+        .any(|arguments| {
+            arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
+        })
 }
 
 /// The argument lists of the asserted operands that are exactly one whole
@@ -622,6 +631,7 @@ fn assertion_observes_boundary_owner_call(
     // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
         && owner_call_sites(&assertion.text, owner).len() == 1
+        && !crate::analysis::extract::line_at_call_budget(test.calls.iter(), assertion.line)
         && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
@@ -1091,10 +1101,21 @@ fn owner_call_arguments_admit_activation_fallback(
     } else {
         compared
     };
+    // A `slice.len()` operand over a parameter reads the cardinality of a
+    // literal `&[..]` argument. Other literal slices in the call carry no
+    // scalar for activation to mistake for the boundary, so they stay
+    // admissible; the witness row itself is keyed to the receiver's position.
+    let slice_len_operand = [left.as_str(), right.as_str()].into_iter().any(|operand| {
+        operand
+            .strip_suffix(".len()")
+            .is_some_and(|receiver| parameter_index(&parameters, receiver).is_some())
+    });
     indices.iter().all(|&idx| {
-        arguments
-            .get(idx)
-            .is_some_and(|argument| argument_is_activation_fallback_shape(argument.trim()))
+        arguments.get(idx).is_some_and(|argument| {
+            let argument = argument.trim();
+            argument_is_activation_fallback_shape(argument)
+                || (slice_len_operand && literal_slice_length(argument).is_some())
+        })
     })
 }
 
@@ -1489,6 +1510,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }), true); | first scalar"
                     .to_string(),
@@ -1516,6 +1538,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(10-offset), false); | first scalar".to_string(),
                 value: "input == 10".to_string(),
@@ -1573,6 +1596,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT), true); | named constant".to_string(),
                 value: "input == 10".to_string(),
@@ -1630,6 +1654,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90); | argument names constant BULK_ITEMS"
                     .to_string(),
@@ -1686,6 +1711,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT, make_context()), true); | named constant".to_string(),
                 value: "input == 10".to_string(),
@@ -1743,6 +1769,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true); | first scalar"
                     .to_string(),
@@ -1793,6 +1820,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(if false { 10 } else { 50 }, 10), true); | first scalar"
                     .to_string(),
@@ -1838,6 +1866,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(gate(LIMIT, 10), true); | named constant".to_string(),
                 value: "amount == threshold".to_string(),
@@ -2306,6 +2335,7 @@ mod tests {
         bound.end_line = 3;
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == \"alpha\"".to_string(),
@@ -2613,6 +2643,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "assert_eq!(classify(\"word\"), \"word\"); | helper hop".to_string(),
                 value: "final_label == \"alpha\"".to_string(),
@@ -2664,6 +2695,7 @@ mod tests {
     fn transferred_boundary_row(line: usize, assertion: &str) -> ActivationEvidence {
         ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line,
                 text: format!("{assertion} | exact input qty = 10; literal operand 10 = 10"),
                 value: "qty == 10".to_string(),
@@ -2944,6 +2976,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: format!("{line} | helper hop"),
                 value: "final_label == \"alpha\"".to_string(),
@@ -3023,6 +3056,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == 10".to_string(),
@@ -3034,6 +3068,65 @@ mod tests {
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&quoted], &activation),
             "a quoted owner spelling is not a second call on the line"
         );
+    }
+
+    #[test]
+    fn a_line_at_the_call_fact_budget_keeps_the_activation_fallback_closed() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let line = "assert!(gate(n));";
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let with_facts = |count: usize| {
+            test_summary(
+                "budget",
+                line,
+                (0..count).map(|_| call("gate", line)).collect(),
+                vec![exact(line)],
+                &[],
+            )
+        };
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE - 1)],
+                &activation
+            ),
+            "control: a line one fact under the budget keeps the fallback"
+        );
+        // Identical facts count once, so only the budget guard refuses.
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE)],
+                &activation
+            ),
+            "a line at the budget may have dropped another owner call"
+        );
+    }
+
+    #[test]
+    fn a_loan_call_line_at_the_call_fact_budget_does_not_pair() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let (mut test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+        let helper_call = test.calls[0].clone();
+        // Identical helper facts pass the "every fact is the helper call"
+        // check, so only the budget guard can refuse the full line.
+        test.calls
+            .extend((1..MAX_CALL_FACTS_PER_LINE).map(|_| helper_call.clone()));
+        assert!(!loan_pairs(&test, &assertion, &loan, &activation));
     }
 
     #[test]
@@ -3050,6 +3143,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: String::new(),
                 value: "input == 10".to_string(),
@@ -3157,6 +3251,7 @@ mod tests {
         };
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: activation_line,
                 text: format!("{call_text} | input"),
                 value: "input == 10".to_string(),
@@ -3216,6 +3311,7 @@ mod tests {
         );
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {
+                file: None,
                 line: 1,
                 text: "let got = gate(10); | input".to_string(),
                 value: "input == 10".to_string(),
@@ -3567,6 +3663,7 @@ mod tests {
             );
             let activation = ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 3,
                     text: format!("{call_line} | element x = 0 of xs"),
                     value: "x == 0".to_string(),

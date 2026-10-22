@@ -2031,7 +2031,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
             "external_state_read",
-            "target/ripr/first-run/first-run.{json,md} plus per-case clones under the same directory",
+            "target/ripr/first-run/first-run.{json,md}, first-run-rows.jsonl, install-root, cargo-home, install_published.stderr.log plus per-case clones under the same directory",
             false,
             true,
             "Replays a new developer's first run (doctor, check, pilot, the printed explain command, init --ci github) on pinned third-party crates fetched through cargo, times each step and records friction; observes only and asserts no verdict.",
@@ -2321,7 +2321,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/doc-roles.md",
             false,
-            false,
+            true,
             "Checks documentation role policy.",
         ),
         command_entry(

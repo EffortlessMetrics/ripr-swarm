@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_wrong_receiver_assertion/input --diff <cwd>/fixtures/python_wrong_receiver_assertion/diff.patch --mode fast probe:src_cart.py:python_preview:95942161
   ripr context --root <cwd>/fixtures/python_wrong_receiver_assertion/input --diff <cwd>/fixtures/python_wrong_receiver_assertion/diff.patch --mode fast --at probe:src_cart.py:python_preview:95942161
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_cart.py:python_preview:95942161 --root <cwd>/fixtures/python_wrong_receiver_assertion/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -243,7 +243,7 @@ pub(super) fn resolve_agent_brief_working_set(
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
             let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
                 path.clone(),
@@ -253,7 +253,7 @@ pub(super) fn resolve_agent_brief_working_set(
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
             let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
                 base.clone(),
@@ -299,6 +299,46 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
         ));
     }
     Ok(candidate)
+}
+
+/// Refuse parser-limited input before owner lookup or repository fallback can
+/// turn unexamined changed lines into a successful brief. The compatibility
+/// projection below remains available to the separate review-comments route.
+fn agent_brief_checked_lines_from_diff(
+    root: &Path,
+    diff_text: &str,
+) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
+    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)
+        .map_err(crate::core_error::CoreError::diff_input_unsupported)?;
+    if let Some(limitation) = parsed.limitations.first() {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: {}. {}",
+                limitation.kind.as_str(),
+                limitation.recovery.detail,
+            ),
+        ));
+    }
+    if parsed.truncated_file_sections > 0 {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: malformed_diff: \
+                 {} file section(s) parsed a header but no hunk body; the diff appears \
+                 truncated. Re-run with the complete diff stream.",
+                parsed.truncated_file_sections,
+            ),
+        ));
+    }
+    Ok(parsed
+        .changed_files
+        .into_iter()
+        .flat_map(|file| {
+            let path = normalize_agent_brief_path(root, &file.path);
+            file.added_lines
+                .into_iter()
+                .map(move |line| AgentBriefLine::new(path.clone(), line.line))
+        })
+        .collect())
 }
 
 pub(super) fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<AgentBriefLine> {
@@ -779,17 +819,29 @@ mod tests {
         let _restore = RestoreMode(dir.path.clone());
         std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod root 000: {error}"))?;
+        // Probe the OS independently of the code under test, so a wrong
+        // implementation cannot declare the denial ineffective for itself.
+        // A privileged process can still traverse mode 000; skip visibly
+        // rather than fail production behavior that stays correct for
+        // unprivileged users.
+        let denied = crate::testing::access_denial::denied_by_permission(
+            std::fs::symlink_metadata(dir.path.join("ripr.toml")),
+        )?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unreadable_ripr_toml_lookup_is_not_built_in_defaults",
+            denied,
+        ) {
+            return Ok(());
+        }
         match agent_receipt_config_fingerprint(&dir.path) {
             Ok(None) => Err(
                 "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
                     .to_string(),
             ),
-            Ok(Some(_)) => {
-                // A privileged process can still traverse mode 000. Skip rather
-                // than fail the production behavior that remains correct for
-                // unprivileged users.
-                Ok(())
-            }
+            Ok(Some(_)) => Err(
+                "an unreadable ripr.toml lookup must not fingerprint as if it were readable"
+                    .to_string(),
+            ),
             Err(error) if error.contains("ripr.toml") => Ok(()),
             Err(error) => Err(format!(
                 "an unreadable ripr.toml lookup must name ripr.toml: {error}"

@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "is_deeply pins subtotal, shipping and total, so any change to how total is computed fails the test. Spec cells: RIPR-SPEC-0064 hash_or_object_field, #5498 observation_unconfirmed.",
+  "reasoning": "is_deeply pins subtotal, shipping and total, so any change to how total is computed fails the test. Spec cells: RIPR-SPEC-0064 hash_or_object_field, #5498 observation_unconfirmed. RIPR-SPEC-0235 example 32: the producer wrote changed_observable null (the change is a hash-element assignment), so the oracle has no sink to align to and the packet cannot show whether it pins the change; the spec reads that as unknown, not a gap.",
   "labeling_observation": {
     "ripr_commit": "28e86e6",
     "full_checkout_verdict": "gap",
@@ -51,7 +51,10 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-quote-is-deeply-total.json",
-    "sha256": "f1ea355e9890d43064ab4f8a0d3d7122c69d7f8ed73426607d2466a4bfac377a",
+    "sha256": "6d041b0e5902d17dc33ea89df32871c711edaa6d75c88949409ba483275981af",
     "provenance": "producer"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#32"
+  ]
 }

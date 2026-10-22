@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_empty_each/input --diff <cwd>/fixtures/typescript_empty_each/diff.patch --mode fast probe:src_subject.ts:typescript_preview:5c135e82
   ripr context --root <cwd>/fixtures/typescript_empty_each/input --diff <cwd>/fixtures/typescript_empty_each/diff.patch --mode fast --at probe:src_subject.ts:typescript_preview:5c135e82
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_subject.ts:typescript_preview:5c135e82 --root <cwd>/fixtures/typescript_empty_each/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -2649,7 +2649,7 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
 /// must carry its spec-example ledger (#6686 review for Rust, #7650 for
 /// Python and TypeScript), so a deleted or renamed ledger fails instead of
 /// silently dropping the coverage floor. Ledgerless operation is reserved
-/// for the Perl corpus, which has not opted in yet.
+/// for the Perl corpus, which carries a ledger but is not yet required to (#8775).
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
     if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
         return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));

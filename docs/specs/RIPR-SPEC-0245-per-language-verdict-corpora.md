@@ -173,8 +173,10 @@ in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
 Every runnable RIPR-SPEC-0238 example has a case; example 10 is labeled in
 a numpy subject (#7819). A deleted ledger fails `verdict-corpus check-all` and
 `committed_python_corpus_is_valid_and_covers_each_test_library`: every
-corpus but Perl must carry its ledger, and only the Perl corpus scores rows
-without the coverage gate.
+corpus but Perl must carry its ledger. The Perl corpus carries one now
+(`fixtures/perl-verdict-corpus/spec-coverage.toml`, RIPR-SPEC-0235 in scope,
+all 31 examples covered); requiring it there is tracked in #8775, and until
+then a Perl corpus without a ledger scores rows without the coverage gate.
 
 ## Required Evidence
 

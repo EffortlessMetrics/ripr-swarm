@@ -1,5 +1,5 @@
 name: 'PR candidate admission'
-description: 'Refuse expensive qualification for stale heads, incomplete claim identity, trusted competing candidates, or oversized non-docs scope (#2022, #4987)'
+description: 'Refuse expensive qualification for stale, competing, oversized, or hard-cut-frozen candidates (#2022, #4987, #5391)'
 author: 'EffortlessMetrics'
 
 inputs:
@@ -41,8 +41,11 @@ outputs:
     description: 'admitted, not_applicable, self_test_pass, or refused'
     value: ${{ steps.admit.outputs.status }}
   reason:
-    description: 'Stable admission reason token'
+    description: 'Stable candidate-admission reason token'
     value: ${{ steps.admit.outputs.reason }}
+  detail:
+    description: 'Single concrete admission detail naming what to fix'
+    value: ${{ steps.admit.outputs.detail }}
   claim:
     description: 'Normalized governing claim identity'
     value: ${{ steps.admit.outputs.claim }}
@@ -58,11 +61,20 @@ outputs:
   changed_lines:
     description: 'GitHub additions plus deletions for the current PR'
     value: ${{ steps.admit.outputs.changed_lines }}
+  cut_status:
+    description: 'Hard-cut freeze status'
+    value: ${{ steps.admit.outputs.cut_status }}
+  cut_reason:
+    description: 'Stable hard-cut freeze reason token'
+    value: ${{ steps.admit.outputs.cut_reason }}
+  cut_detail:
+    description: 'Single concrete hard-cut admission detail naming what to fix'
+    value: ${{ steps.admit.outputs.cut_detail }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Evaluate candidate admission
+    - name: Evaluate candidate and hard-cut admission
       id: admit
       shell: bash
       env:
@@ -76,294 +88,192 @@ runs:
         ADMISSION_MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
+        action_root="${GITHUB_ACTION_PATH}"
+        packet_path="policy/release-hard-cut-admission.json"
+        local_packet="${GITHUB_WORKSPACE}/${packet_path}"
         tmp="$(mktemp -d)"
         trap 'rm -rf "$tmp"' EXIT
         current="$tmp/current.json"
         open_prs="$tmp/open-prs.json"
+        pr_files="$tmp/pr-files.json"
+        base_commit="$tmp/base-commit.json"
+        cut_commit="$tmp/cut-commit.json"
+        packet="$tmp/cut-packet.json"
+        packet_meta="$tmp/cut-packet-meta.json"
         result="$tmp/result.json"
+        cut_result="$tmp/cut-result.json"
+        rc_candidate=0
+        rc_cut=0
+        candidate_allowed="admitted,refused,self_test_pass,not_applicable"
 
-        if [ "${ADMISSION_MODE:-admit}" = "admit" ] && [ -n "${ADMISSION_PR_NUMBER:-}" ]; then
-          [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
-          [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
+        sanitize_output_value() {
+          local value="$1"
+          value="${value//$'\n'/ }"
+          value="${value//$'\r'/ }"
+          printf '%s' "$value" | tr -d '\001-\010\013\014\016-\037\177'
+        }
+
+        refuse_early() {
+          local reason detail
+          reason="$(sanitize_output_value "$1")"
+          detail="$(sanitize_output_value "$2")"
+          echo "::error::candidate admission refused ($reason): $detail"
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            {
+              echo "status=refused"
+              echo "reason=$reason"
+              echo "detail=$detail"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "### PR candidate admission"
+              echo ""
+              echo "- status: \`refused\`"
+              echo "- reason: \`$reason\`"
+              echo "- refusal reason: \`$reason\` — $detail"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 1
+        }
+
+        python3 "$action_root/candidate_admission.py" --self-test
+        python3 "$action_root/release_cut_admission.py" --self-test
+
+        validate_candidate_result() {
+          local file="$1" rc="$2" allowed="$3"
+          if ! jq -e --arg allowed "$allowed" '
+            type == "object"
+            and (.status | type == "string")
+            and (.reason | type == "string" and length > 0)
+            and (.claim | type == "string")
+            and (.acceptance_delta | type == "string")
+            and (.competing_prs | type == "array")
+            and (.changed_files | type == "number")
+            and (.changed_lines | type == "number")
+            and (.max_changed_files | type == "number")
+            and (.max_changed_lines | type == "number")
+            and (.status as $status | ($allowed | split(",") | index($status)) != null)
+          ' "$file" >/dev/null; then
+            refuse_early "candidate_result_invalid" "candidate admission produced no valid result; refresh the exact PR/head evidence and retry"
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1|self_test_pass:0|not_applicable:0) ;;
+            *)
+              refuse_early "candidate_status_exit_mismatch" "candidate admission status/exit mismatch ($status/$rc); refresh the exact PR/head evidence and retry"
+              ;;
+          esac
+        }
+
+        validate_cut_result() {
+          local file="$1" rc="$2"
+          if ! jq -e '
+            type == "object"
+            and (.status == "admitted" or .status == "refused")
+            and (.reason | type == "string" and length > 0)
+          ' "$file" >/dev/null; then
+            refuse_early "cut_result_invalid" "hard-cut admission produced no valid result; refresh the exact base evidence and retry"
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1) ;;
+            *)
+              refuse_early "cut_status_exit_mismatch" "hard-cut admission status/exit mismatch ($status/$rc); refresh the exact base evidence and retry"
+              ;;
+          esac
+        }
+
+        if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
+          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass","detail":""}' > "$cut_result"
+        elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
+          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation","detail":""}' > "$cut_result"
+        else
+          [ -n "${GH_TOKEN:-}" ] || refuse_early "token_missing" "candidate admission requires a read-only GitHub token"
+          [ -n "${ADMISSION_REPOSITORY:-}" ] || refuse_early "repository_missing" "candidate admission requires owner/name repository identity"
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+          gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+
+          base_ref="$(jq -r '.base.ref // empty' "$current")"
+          [ -n "$base_ref" ] || refuse_early "base_ref_missing" "candidate admission received no base ref from the PR snapshot; refresh the exact PR evidence and retry"
+          base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || refuse_early "base_sha_unresolved" "candidate admission could not resolve the exact live base SHA for $base_ref; refresh the exact PR evidence and retry"
+          gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+
+          # The enforcement packet comes from the exact live base commit, never
+          # the candidate checkout. The local inactive template is used only
+          # while the machinery PR is introduced on a base that has no packet.
+          packet_err="$RUNNER_TEMP/packet-err.$$"
+          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+            packet_from_base=1
+          elif grep -q 'HTTP 404' "$packet_err"; then
+            cp "$local_packet" "$packet"
+            packet_from_base=0
+          else
+            refuse_early "cut_packet_read_failed" "hard-cut packet read from the live base failed for a reason other than absence; refresh the exact base evidence and retry"
+          fi
+          cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+          cut_args=()
+          if [ -n "$cut_sha" ]; then
+            [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || refuse_early "cut_packet_invalid_sha" "hard-cut packet has an invalid product-cut SHA; fix policy/release-hard-cut-admission.json on the base"
+            gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
+            cut_args=(--cut-commit "$cut_commit")
+          fi
+
+          docs_flag=()
+          [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
+          candidate_allowed="admitted,refused"
+          set +e
+          python3 "$action_root/candidate_admission.py" \
+            --current "$current" \
+            --open-prs "$open_prs" \
+            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
+            --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+            "${docs_flag[@]}" > "$result"
+          rc_candidate=$?
+          python3 "$action_root/release_cut_admission.py" \
+            --packet "$packet" \
+            --current "$current" \
+            --base-commit "$base_commit" \
+            --pr-files "$pr_files" \
+            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            "${cut_args[@]}" > "$cut_result"
+          rc_cut=$?
+          set -e
+
+          base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          if [ "$base_sha_after" != "$base_sha" ]; then
+            # Movement is harmless only when both the evaluated and the newly
+            # observed base carry an inactive packet; any other state refuses.
+            # Only a positively read inactive packet, or a verified HTTP 404
+            # (when the evaluated base also had none), is benign movement.
+            moved_state=""
+            if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" > "$packet_meta" 2>"$packet_err"; then
+              moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
+            elif [ "$packet_from_base" = "0" ] && grep -q 'HTTP 404' "$packet_err"; then
+              moved_state=inactive
+            else
+              moved_state="unreadable"
+            fi
+            if [ "$(jq -r '.state' "$packet")" != "inactive" ] || [ "$moved_state" != "inactive" ]; then
+              refuse_early "base_moved_during_evaluation" "candidate admission base moved during evaluation ($base_sha -> $base_sha_after); refresh the exact PR/head evidence and retry"
+            fi
+          fi
         fi
 
-        CURRENT_PATH="$current" OPEN_PRS_PATH="$open_prs" python3 - <<'PY' > "$result"
-        import json
-        import os
-        import re
-
-        MODE = os.environ.get("ADMISSION_MODE", "admit")
-        EXPECTED_HEAD = os.environ.get("ADMISSION_EXPECTED_HEAD", "")
-        DOCS_ONLY = os.environ.get("ADMISSION_DOCS_ONLY", "false").lower() == "true"
-
-        def bounded_int(name: str) -> int:
-            raw = os.environ.get(name, "")
-            if not raw.isdigit() or int(raw) < 1:
-                raise SystemExit(f"{name} must be a positive integer")
-            return int(raw)
-
-        MAX_FILES = bounded_int("ADMISSION_MAX_CHANGED_FILES")
-        MAX_LINES = bounded_int("ADMISSION_MAX_CHANGED_LINES")
-        LABELS = {
-            "claim": (
-                "governing issue or accepted claim",
-                "owner / governing claim",
-            ),
-            "delta": (
-                "acceptance delta (one sentence)",
-                "acceptance delta",
-            ),
-            "replacement": (
-                "proposed replacement of pr (if any; not yet accepted)",
-                "proposed replacement of pr",
-            ),
-            "winner": (
-                "accepted winner and losing candidate disposition (when decided)",
-                "accepted winner and losing candidate disposition",
-            ),
-        }
-        PLACEHOLDERS = {
-            "", "n/a", "na", "none", "not applicable", "tbd", "todo",
-            "unknown", "pending", "-", "—",
-        }
-
-        def normalize(value: str) -> str:
-            value = value.strip().strip("`")
-            return " ".join(value.split()).casefold()
-
-        def extract_fields(body: str) -> dict[str, str]:
-            found = {"claim": "", "delta": "", "replacement": "", "winner": ""}
-            for raw_line in (body or "").splitlines():
-                line = raw_line.strip()
-                folded = line.casefold()
-                for key, labels in LABELS.items():
-                    if found[key]:
-                        continue
-                    for label in labels:
-                        prefix = f"{label}:"
-                        if folded.startswith(prefix):
-                            found[key] = line[len(prefix):].strip()
-                            break
-            return found
-
-        def invalid(value: str) -> bool:
-            normalized = normalize(value)
-            return normalized in PLACEHOLDERS or normalized.startswith("<")
-
-        def pr_refs(value: str) -> set[int]:
-            return {int(match) for match in re.findall(r"#(\d+)", value or "")}
-
-        def first_ref(value: str):
-            # The recorded winner is the first PR reference in the field.
-            found = re.search(r"#(\d+)", value or "")
-            return int(found.group(1)) if found else None
-
-        def reconciled(current: dict, peer: dict, fields: dict, peer_fields: dict) -> bool:
-            # Copied PR-body metadata confers no authority by itself: a record
-            # counts only when it is consistent from both sides, so at most
-            # one of two Ready PRs proceeds instead of both or neither.
-            number = int(current.get("number") or 0)
-            peer_number = int(peer.get("number") or 0)
-            winner = first_ref(fields.get("winner", ""))
-            peer_winner = first_ref(peer_fields.get("winner", ""))
-            if winner == peer_number:
-                # The current PR records that it lost.
-                return False
-            if peer_winner == number:
-                # The peer concedes to the current PR.
-                return True
-            if peer_winner == peer_number:
-                # The peer also claims to win; the disposition is contested.
-                return False
-            if winner == number:
-                return True
-            # A proposed replacement is honored only when the peer does not
-            # claim to win and does not name the current PR as its own
-            # replacement target.
-            return (
-                peer_number in pr_refs(fields.get("replacement", ""))
-                and number not in pr_refs(peer_fields.get("replacement", ""))
-            )
-
-        def head_repository(pr: dict) -> str:
-            return (((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
-
-        def base_ref(pr: dict) -> str:
-            return ((pr.get("base") or {}).get("ref") or "")
-
-        def trusted_peer(current: dict, peer: dict) -> bool:
-            return (
-                peer.get("state") == "open"
-                and peer.get("draft") is False
-                and head_repository(peer) != ""
-                and head_repository(peer) == head_repository(current)
-                and base_ref(peer) != ""
-                and base_ref(peer) == base_ref(current)
-            )
-
-        def refusal(reason: str, current: dict, fields: dict, peers=None) -> dict:
-            changed_files = int(current.get("changed_files") or 0)
-            changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
-            return {
-                "status": "refused",
-                "reason": reason,
-                "claim": normalize(fields.get("claim", "")),
-                "acceptance_delta": normalize(fields.get("delta", "")),
-                "competing_prs": peers or [],
-                "changed_files": changed_files,
-                "changed_lines": changed_lines,
-                "max_changed_files": MAX_FILES,
-                "max_changed_lines": MAX_LINES,
-            }
-
-        def decide(current: dict, open_candidates: list[dict], expected_head: str, docs_only: bool) -> dict:
-            fields = extract_fields(current.get("body") or "")
-            actual_head = ((current.get("head") or {}).get("sha") or "")
-            if not expected_head or not re.fullmatch(r"[0-9a-f]{40}", expected_head):
-                return refusal("expected_head_missing", current, fields)
-            if actual_head != expected_head:
-                return refusal("candidate_head_moved", current, fields)
-            if current.get("state") != "open" or current.get("draft") is True:
-                return refusal("candidate_not_open_ready", current, fields)
-            if invalid(fields["claim"]) or invalid(fields["delta"]):
-                return refusal("claim_identity_missing", current, fields)
-
-            claim = normalize(fields["claim"])
-            delta = normalize(fields["delta"])
-            exact_peers: list[int] = []
-            for peer in open_candidates:
-                if peer.get("number") == current.get("number") or not trusted_peer(current, peer):
-                    continue
-                peer_fields = extract_fields(peer.get("body") or "")
-                if invalid(peer_fields["claim"]) or invalid(peer_fields["delta"]):
-                    # An incomplete peer refuses itself when selected. It cannot
-                    # acquire authority to block a complete candidate.
-                    continue
-                if normalize(peer_fields["claim"]) == claim and normalize(peer_fields["delta"]) == delta:
-                    if reconciled(current, peer, fields, peer_fields):
-                        continue
-                    exact_peers.append(int(peer["number"]))
-
-            if exact_peers:
-                return refusal("competing_candidate", current, fields, sorted(exact_peers))
-
-            changed_files = int(current.get("changed_files") or 0)
-            changed_lines = int(current.get("additions") or 0) + int(current.get("deletions") or 0)
-            if not docs_only and (changed_files > MAX_FILES or changed_lines > MAX_LINES):
-                return refusal("qualification_scope_oversized", current, fields)
-
-            return {
-                "status": "admitted",
-                "reason": "candidate_current_unique_bounded",
-                "claim": claim,
-                "acceptance_delta": delta,
-                "competing_prs": [],
-                "changed_files": changed_files,
-                "changed_lines": changed_lines,
-                "max_changed_files": MAX_FILES,
-                "max_changed_lines": MAX_LINES,
-            }
-
-        def fixture(number: int = 10, body: str = "", head: str = "a" * 40,
-                    changed_files: int = 2, additions: int = 20, deletions: int = 5,
-                    draft: bool = False, repository: str = "EffortlessMetrics/ripr-swarm",
-                    target: str = "main") -> dict:
-            return {
-                "number": number,
-                "state": "open",
-                "draft": draft,
-                "body": body,
-                "head": {"sha": head, "repo": {"full_name": repository}},
-                "base": {"ref": target},
-                "changed_files": changed_files,
-                "additions": additions,
-                "deletions": deletions,
-            }
-
-        def body(claim: str = "#2022", delta: str = "refuse duplicate candidate qualification", extra: str = "") -> str:
-            return (
-                f"Governing issue or accepted claim: {claim}\n"
-                f"Acceptance delta (one sentence): {delta}\n"
-                f"{extra}"
-            )
-
-        if MODE == "self-test":
-            head = "a" * 40
-            current = fixture(body=body(), head=head)
-            duplicate = fixture(number=11, body=body(), head="b" * 40)
-            assert decide(current, [current, duplicate], head, False)["reason"] == "competing_candidate"
-            distinct = fixture(number=12, body=body(delta="add a delivery-state projection"), head="c" * 40)
-            assert decide(current, [current, distinct], head, False)["status"] == "admitted"
-            incomplete = fixture(number=13, body="Governing issue or accepted claim: #2022\n", head="d" * 40)
-            assert decide(current, [current, incomplete], head, False)["status"] == "admitted"
-            draft_duplicate = fixture(number=14, body=body(), head="e" * 40, draft=True)
-            assert decide(current, [current, draft_duplicate], head, False)["status"] == "admitted"
-            fork_duplicate = fixture(number=15, body=body(), head="f" * 40, repository="external/fork")
-            assert decide(current, [current, fork_duplicate], head, False)["status"] == "admitted"
-            other_base = fixture(number=16, body=body(), head="1" * 40, target="release")
-            assert decide(current, [current, other_base], head, False)["status"] == "admitted"
-            winner = fixture(body=body(extra="Accepted winner and losing candidate disposition (when decided): #10 wins, #11 loses\n"), head=head)
-            assert decide(winner, [winner, duplicate], head, False)["status"] == "admitted"
-            loser = fixture(number=11, body=body(extra="Accepted winner and losing candidate disposition (when decided): #10 wins, #11 loses\n"), head="b" * 40)
-            assert decide(loser, [winner, loser], "b" * 40, False)["reason"] == "competing_candidate"
-            replaces = fixture(body=body(extra="Proposed replacement of PR (if any; not yet accepted): #11\n"), head=head)
-            assert decide(replaces, [replaces, duplicate], head, False)["status"] == "admitted"
-            def won(number: int, winner_ref: str, head_char: str, extra: str = "") -> dict:
-                return fixture(number=number, head=head_char * 40, body=body(extra=(
-                    f"Accepted winner and losing candidate disposition (when decided): {winner_ref}\n{extra}")))
-            both_self = [won(10, "#10", "a"), won(11, "#11", "b")]
-            assert decide(both_self[0], both_self, "a" * 40, False)["reason"] == "competing_candidate"
-            assert decide(both_self[1], both_self, "b" * 40, False)["reason"] == "competing_candidate"
-            third = [won(10, "#10", "a"), won(11, "#99", "b")]
-            assert decide(third[0], third, "a" * 40, False)["status"] == "admitted"
-            assert decide(third[1], third, "b" * 40, False)["reason"] == "competing_candidate"
-            conceded = [won(10, "", "a"), won(11, "#10", "b")]
-            assert decide(conceded[0], conceded, "a" * 40, False)["status"] == "admitted"
-            mutual_replace = [
-                won(10, "", "a", "Proposed replacement of PR (if any; not yet accepted): #11\n"),
-                won(11, "", "b", "Proposed replacement of PR (if any; not yet accepted): #10\n"),
-            ]
-            assert decide(mutual_replace[0], mutual_replace, "a" * 40, False)["reason"] == "competing_candidate"
-            assert decide(fixture(body="", head=head), [], head, False)["reason"] == "claim_identity_missing"
-            oversized = fixture(body=body(), head=head, changed_files=161)
-            assert decide(oversized, [oversized], head, False)["reason"] == "qualification_scope_oversized"
-            assert decide(oversized, [oversized], head, True)["status"] == "admitted"
-            assert decide(current, [current], "b" * 40, False)["reason"] == "candidate_head_moved"
-            print(json.dumps({
-                "status": "self_test_pass",
-                "reason": "nineteen_discriminating_controls_passed",
-                "claim": "",
-                "acceptance_delta": "",
-                "competing_prs": [],
-                "changed_files": 0,
-                "changed_lines": 0,
-                "max_changed_files": MAX_FILES,
-                "max_changed_lines": MAX_LINES,
-            }, sort_keys=True))
-        elif not os.environ.get("ADMISSION_PR_NUMBER", ""):
-            print(json.dumps({
-                "status": "not_applicable",
-                "reason": "non_pull_request_invocation",
-                "claim": "",
-                "acceptance_delta": "",
-                "competing_prs": [],
-                "changed_files": 0,
-                "changed_lines": 0,
-                "max_changed_files": MAX_FILES,
-                "max_changed_lines": MAX_LINES,
-            }, sort_keys=True))
-        else:
-            with open(os.environ["CURRENT_PATH"], encoding="utf-8") as handle:
-                current = json.load(handle)
-            with open(os.environ["OPEN_PRS_PATH"], encoding="utf-8") as handle:
-                open_candidates = json.load(handle)
-            print(json.dumps(decide(current, open_candidates, EXPECTED_HEAD, DOCS_ONLY), sort_keys=True))
-        PY
+        validate_candidate_result "$result" "$rc_candidate" "$candidate_allowed"
+        validate_cut_result "$cut_result" "$rc_cut"
 
         status="$(jq -r '.status' "$result")"
         reason="$(jq -r '.reason' "$result")"
+        detail="$(jq -r '.detail // ""' "$result")"
         claim="$(jq -r '.claim' "$result")"
         acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
         competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
@@ -371,20 +281,50 @@ runs:
         changed_lines="$(jq -r '.changed_lines' "$result")"
         max_files="$(jq -r '.max_changed_files' "$result")"
         max_lines="$(jq -r '.max_changed_lines' "$result")"
+        cut_status="$(jq -r '.status' "$cut_result")"
+        cut_reason="$(jq -r '.reason' "$cut_result")"
+        cut_detail="$(jq -r '.detail // ""' "$cut_result")"
+        status="$(sanitize_output_value "$status")"
+        reason="$(sanitize_output_value "$reason")"
+        detail="$(sanitize_output_value "$detail")"
+        claim="$(sanitize_output_value "$claim")"
+        acceptance_delta="$(sanitize_output_value "$acceptance_delta")"
+        competing_prs="$(sanitize_output_value "$competing_prs")"
+        changed_files="$(sanitize_output_value "$changed_files")"
+        changed_lines="$(sanitize_output_value "$changed_lines")"
+        max_files="$(sanitize_output_value "$max_files")"
+        max_lines="$(sanitize_output_value "$max_lines")"
+        cut_status="$(sanitize_output_value "$cut_status")"
+        cut_reason="$(sanitize_output_value "$cut_reason")"
+        cut_detail="$(sanitize_output_value "$cut_detail")"
         {
           echo "status=$status"
           echo "reason=$reason"
+          echo "detail=$detail"
           echo "claim=$claim"
           echo "acceptance_delta=$acceptance_delta"
           echo "competing_prs=$competing_prs"
           echo "changed_files=$changed_files"
           echo "changed_lines=$changed_lines"
+          echo "cut_status=$cut_status"
+          echo "cut_reason=$cut_reason"
+          echo "cut_detail=$cut_detail"
         } >> "$GITHUB_OUTPUT"
         {
           echo "### PR candidate admission"
           echo ""
           echo "- status: \`$status\`"
           echo "- reason: \`$reason\`"
+          echo "- hard-cut status: \`$cut_status\`"
+          echo "- hard-cut reason: \`$cut_reason\`"
+          if [ "$status" = "refused" ] && [ "$cut_status" = "refused" ]; then
+            echo "- refusal reason: \`$reason\` — ${detail:-refresh the exact PR/head evidence and retry}"
+            echo "- also refused (subordinate): hard-cut \`$cut_reason\`"
+          elif [ "$status" = "refused" ]; then
+            echo "- refusal reason: \`$reason\` — ${detail:-refresh the exact PR/head evidence and retry}"
+          elif [ "$cut_status" = "refused" ]; then
+            echo "- refusal reason: \`$cut_reason\` — ${cut_detail:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
+          fi
           echo "- claim: \`$claim\`"
           echo "- acceptance delta: \`$acceptance_delta\`"
           echo "- competing PRs: \`${competing_prs:-none}\`"
@@ -393,19 +333,23 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
         if [ "$status" = "refused" ]; then
-          case "$reason" in
-            competing_candidate)
-              echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition (Accepted winner and losing candidate disposition, or Proposed replacement of PR, in the PR body) before qualification"
-              ;;
-            qualification_scope_oversized)
-              echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)"
-              ;;
-            claim_identity_missing)
-              echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body"
-              ;;
-            *)
-              echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event"
-              ;;
-          esac
+          if [ -n "$detail" ]; then
+            echo "::error::candidate admission refused ($reason): $detail"
+          else
+            case "$reason" in
+              competing_candidate)
+                echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification" ;;
+              qualification_scope_oversized)
+                echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)" ;;
+              claim_identity_missing)
+                echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body" ;;
+              *)
+                echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event" ;;
+            esac
+          fi
+          exit 1
+        fi
+        if [ "$cut_status" = "refused" ]; then
+          echo "::error::hard-cut admission refused ($cut_reason): ${cut_detail:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
           exit 1
         fi

@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
   ripr context --root <cwd>/fixtures/rust_array_sibling_plain_field/input --diff <cwd>/fixtures/rust_array_sibling_plain_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:field_construction:d6d7c327 --root <cwd>/fixtures/rust_array_sibling_plain_field/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

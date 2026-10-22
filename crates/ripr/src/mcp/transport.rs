@@ -7,10 +7,7 @@ use crate::workspace_status::WorkspaceStatus;
 use rmcp::{
     RoleServer, ServiceExt,
     model::{ClientJsonRpcMessage, RequestId, ServerJsonRpcMessage},
-    transport::{
-        Transport,
-        async_rw::{JsonRpcMessageCodec, JsonRpcMessageCodecError},
-    },
+    transport::{Transport, async_rw::JsonRpcMessageCodec},
 };
 use serde_json::json;
 use std::{
@@ -92,11 +89,101 @@ struct BoundedTransport<R, W> {
 /// JSON-RPC requires `"id": null` when the request id is unknown (#5254
 /// item 3), so these frames bypass the SDK type.
 fn protocol_error_frame(code: i32, message: &str) -> std::io::Result<Vec<u8>> {
+    protocol_error_frame_with_id(json!(null), code, message)
+}
+fn protocol_error_frame_with_id(
+    id: serde_json::Value,
+    code: i32,
+    message: &str,
+) -> std::io::Result<Vec<u8>> {
     super::writer::encode(&json!({
         "jsonrpc": "2.0",
-        "id": null,
+        "id": id,
         "error": {"code": code, "message": message},
     }))
+}
+fn carries_id_member(frame: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(frame)
+        .ok()
+        .and_then(|value| value.as_object().map(|object| object.contains_key("id")))
+        .unwrap_or(false)
+}
+/// The request id of a typed-shape-invalid frame, when it is still readable.
+///
+/// JSON-RPC 2.0 says the error id is the request's id when it can be
+/// detected, and null only otherwise. A frame that is a JSON object with a
+/// `method` and a string or integer `id` names its request even when `params`
+/// or `_meta` is the wrong shape, so the client can correlate the rejection.
+/// The id is echoed verbatim: any JSON integer is accepted, a superset of the
+/// SDK's i64 `RequestId` (a u64 above `i64::MAX` is the client's own id).
+/// Notifications, null, boolean, float and structured ids stay null.
+fn recoverable_request_id(frame: &[u8]) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
+    let object = value.as_object()?;
+    object.get("method")?.as_str()?;
+    let id = object.get("id")?;
+    let echoable = id.is_string() || id.is_i64() || id.is_u64();
+    // An id over the admission bound is never echoed, even in a rejection:
+    // the reply would otherwise carry it past the response cap.
+    let within_bound = serde_json::to_vec(id)
+        .map(|serialized| serialized.len() <= super::MAX_REQUEST_ID_BYTES)
+        .unwrap_or(false);
+    (echoable && within_bound).then(|| id.clone())
+}
+/// The error frame for a message the SDK could not type: Parse error with a
+/// null id when the bytes are not JSON (including JSON nested past the
+/// parser's depth limit), Invalid Request carrying the request id when one is
+/// still readable.
+fn unreadable_frame_error(frame: &[u8]) -> std::io::Result<Vec<u8>> {
+    if serde_json::from_slice::<serde_json::Value>(frame).is_err() {
+        return protocol_error_frame(-32700, "Parse error");
+    }
+    protocol_error_frame_with_id(
+        recoverable_request_id(frame).unwrap_or(serde_json::Value::Null),
+        -32600,
+        "Invalid request",
+    )
+}
+/// The request id of an over-cap message, read from its retained prefix.
+///
+/// Only a top-level `"id"` member that is a string or integer and that
+/// finishes inside the prefix counts; members are walked in order and skipped
+/// structurally, so an `"id"` nested inside `params` or text inside a string
+/// is never mistaken for the request id. A prefix cut before the id (or an
+/// id past the prefix) yields `None`, and the error keeps the null id.
+fn oversized_request_id(prefix: &[u8]) -> Option<serde_json::Value> {
+    use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
+    use std::{cell::RefCell, fmt};
+    struct Members<'a>(&'a RefCell<Option<serde_json::Value>>);
+    impl<'de> Visitor<'de> for Members<'_> {
+        type Value = ();
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a JSON object")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "id" {
+                    let id: serde_json::Value = map.next_value()?;
+                    // Accept the id only once the member after it parses: a
+                    // number cut by the prefix end would otherwise read as a
+                    // shorter, different id.
+                    map.next_key::<IgnoredAny>()?;
+                    if id.is_string() || id.is_i64() || id.is_u64() {
+                        *self.0.borrow_mut() = Some(id);
+                    }
+                    return Ok(());
+                }
+                map.next_value::<IgnoredAny>()?;
+            }
+            Ok(())
+        }
+    }
+    let found = RefCell::new(None);
+    let mut deserializer = serde_json::Deserializer::from_slice(prefix);
+    // A truncated prefix always errors after the id is captured or lost;
+    // the captured value is the only output that matters.
+    let _ = deserializer.deserialize_map(Members(&found));
+    found.into_inner()
 }
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transport<RoleServer>
     for BoundedTransport<R, W>
@@ -211,8 +298,9 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             let frame = match read {
                 Ok(FrameRead::Eof) => return None,
                 Ok(FrameRead::Empty) => continue,
-                Ok(FrameRead::Oversized) => {
-                    match protocol_error_frame(
+                Ok(FrameRead::Oversized(prefix)) => {
+                    match protocol_error_frame_with_id(
+                        oversized_request_id(&prefix).unwrap_or(serde_json::Value::Null),
                         -32600,
                         "MCP message exceeds the configured byte limit",
                     ) {
@@ -236,7 +324,42 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             // already enforced the product input bound, including at EOF.
             let mut bytes = BytesMut::from(frame.as_slice());
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
+                // A frame with an `id` member is a request, never a
+                // notification. The SDK's untagged decode falls back to the
+                // notification shape (ignoring `id`) when the id is null or
+                // not a string/integer, which dropped the request unanswered.
+                Ok(Some(ClientJsonRpcMessage::Notification(_))) if carries_id_member(&frame) => {
+                    match unreadable_frame_error(&frame) {
+                        Ok(frame) => {
+                            self.pending_protocol_error = Some(frame);
+                        }
+                        Err(error) => {
+                            record_failure(&self.failure, super::writer::failure_reason(&error));
+                            return None;
+                        }
+                    }
+                }
                 Ok(Some(message)) => {
+                    if let ClientJsonRpcMessage::Request(request) = &message
+                        && serde_json::to_vec(&request.id)
+                            .map(|id| id.len() > super::MAX_REQUEST_ID_BYTES)
+                            .unwrap_or(true)
+                    {
+                        match protocol_error_frame(
+                            -32600,
+                            "MCP request id exceeds the configured byte limit",
+                        ) {
+                            Ok(frame) => self.pending_protocol_error = Some(frame),
+                            Err(error) => {
+                                record_failure(
+                                    &self.failure,
+                                    super::writer::failure_reason(&error),
+                                );
+                                return None;
+                            }
+                        }
+                        continue;
+                    }
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {
@@ -246,15 +369,14 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     return Some(message);
                 }
                 Ok(None) => continue,
-                Err(JsonRpcMessageCodecError::Serde(error))
-                    if matches!(
-                        error.classify(),
-                        serde_json::error::Category::Syntax | serde_json::error::Category::Eof
-                    ) =>
-                {
-                    continue;
-                }
-                Err(_) => match protocol_error_frame(-32600, "Invalid request") {
+                // JSON-RPC 2.0: text that is not JSON is a Parse error
+                // (-32700) and anything that is JSON but not a request the
+                // SDK can type is an Invalid Request (-32600). Both must be
+                // answered: a silent drop leaves the client waiting forever
+                // on a request it cannot know was rejected. Classifying by an
+                // independent JSON parse (not the codec's error category)
+                // keeps SDK id and nesting-limit failures from being ignored.
+                Err(_) => match unreadable_frame_error(&frame) {
                     Ok(frame) => {
                         self.pending_protocol_error = Some(frame);
                     }

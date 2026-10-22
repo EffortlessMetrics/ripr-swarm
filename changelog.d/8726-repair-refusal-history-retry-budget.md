@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A repair attempt now keeps a capped, append-only `after_refusal_history` and an uncapped `after_refusal_count` beside `last_after_refusal`, `ripr agent status` reports the count, history and spent budget, the no-movement recovery escalates from the second refusal, and an attempt that recorded 5 after-phase refusals stops with a typed refusal and a new-attempt recovery instead of retrying (#8726). `ripr agent status` and `ripr repair` no longer offer or resume the spent attempt.

@@ -1140,6 +1140,40 @@ fn an_unasserted_owner_call_does_not_block_an_inactive_term() -> Result<(), Stri
         )?,
         ExposureClass::Exposed
     );
+    // The same two calls pushed apart on one long line (past the row-text
+    // window): the call count reads the full line, so the nonzero call still
+    // blocks. The control with one call on the long line downgrades.
+    let padding = "# pad ".repeat(60);
+    // The fixture line must exceed the 240-byte row-text window, and its
+    // second owner call must lie beyond that window.
+    let long_line = format!("    quote(6000); collected.append(['{padding}', quote(1000)])");
+    assert!(
+        long_line.len() > 240,
+        "fixture line must be cut: {}",
+        long_line.len()
+    );
+    assert!(
+        long_line.rfind("quote(1000)").is_some_and(|at| at > 240),
+        "the second owner call must sit outside the window"
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            &format!(
+                "def test_quote():\n    quote(6000); collected.append(['{padding}', quote(1000)])\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            &format!(
+                "def test_quote():\n    quote(1000)  # {padding}\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+            )
+        )?,
+        ExposureClass::WeaklyExposed
+    );
     // An attribute that shares the bound local's name is not a local read.
     // The assertion still observes `quote(6000)` so the finding would stay
     // `exposed` unless `out = quote(6000)` were falsely marked observed.

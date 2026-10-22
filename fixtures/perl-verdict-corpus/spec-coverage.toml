@@ -1,0 +1,515 @@
+# Spec-example coverage ledger for the Perl verdict corpus (RIPR-SPEC-0245,
+# using the RIPR-SPEC-0219 ledger contract).
+#
+# Every spec with numbered `## Acceptance Examples` items is listed here as
+# in or out of scope; `cargo xtask verdict-corpus validate --language perl`
+# fails when one is missing, so a new spec cannot leave the denominator
+# silently. In scope means the examples describe Perl fact-packet
+# classification behavior that a corpus case (a Perl diff, the fact packet
+# for it, and runtime mutant truth from the subject's own tests) can label.
+# RIPR-SPEC-0235 is the only in-scope spec: its examples each name the packet
+# facts that change, which the `perl-0235-*` cases edit from a producer packet
+# (SPEC.md). RIPR-SPEC-0064 is prose without numbered examples.
+#
+# `floor` is the covered-example count `verdict-corpus check` protects. Raise
+# it when coverage grows; lowering it is a reviewed edit with a reason.
+
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 32
+
+[[spec]]
+id = "RIPR-SPEC-0235"
+scope = "in"
+
+[[spec]]
+id = "RIPR-SPEC-0077"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0078"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0079"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0080"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0081"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0082"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0083"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0084"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0090"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0091"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0112"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0113"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0114"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0115"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0116"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0117"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0118"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0119"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0120"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0122"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0123"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0124"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0125"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0127"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0128"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0133"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0170"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0178"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0179"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0182"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0184"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0185"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0187"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0188"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0189"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0190"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0192"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0193"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0194"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0195"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0196"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0198"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0199"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0200"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0201"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0204"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0205"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0207"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0208"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0209"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0210"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0211"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0212"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0214"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0215"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0216"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0217"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0220"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0224"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0225"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0226"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0227"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0228"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0229"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0231"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0233"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0236"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0237"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0239"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0243"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0246"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0247"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0248"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0249"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0250"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0251"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0252"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0253"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0254"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0256"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0258"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0260"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0262"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0265"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0267"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0268"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0279"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+# Covered-by instrument-failure contract
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "repository precommit and xtask instrument contract; not an analyzer verdict, so no corpus case can label it"
+
+# Pilot ranking refuted-count growth allowance
+[[spec]]
+id = "RIPR-SPEC-0281"
+scope = "out"
+reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
+
+# Repair attempt after-refusal retry budget
+[[spec]]
+id = "RIPR-SPEC-0282"
+scope = "out"
+reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
+[[spec]]
+id = "RIPR-SPEC-0285"
+scope = "out"
+reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"

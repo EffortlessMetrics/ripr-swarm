@@ -668,8 +668,14 @@ impl ArmSelector {
     }
 
     fn demote_constant_bindings(&mut self, owner_source: Option<&str>) {
-        let resolves =
-            |name: &str| owner_source.is_none_or(|source| may_name_constant(source, name));
+        // An item macro (`def_const!(p);`) may declare a constant the
+        // pattern name then resolves to (#7863), so a file with one reads
+        // every bare binding as unreadable.
+        let macro_may_declare = owner_source
+            .is_some_and(|source| may_declare_items_in_owner_scope(source, &self.owner));
+        let resolves = |name: &str| {
+            macro_may_declare || owner_source.is_none_or(|source| may_name_constant(source, name))
+        };
         let demote = |heads: &mut Vec<PatternHead>| {
             for head in heads.iter_mut() {
                 if let PatternHead::Binding(name) = head
@@ -1062,6 +1068,9 @@ impl ArmSelector {
             return false;
         };
         loan.call_lines.iter().any(|line| {
+            if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+                return false;
+            }
             let mut on_line = test.calls.iter().filter(|call| call.line == *line);
             let Some(helper_call) = on_line.next() else {
                 return false;
@@ -3227,6 +3236,51 @@ mod tests {
         }
     }
 
+    /// `fn check(input, want) { assert_eq!(reason(input), want); }` called
+    /// as `check(None, 0);` selects the `None` arm, unless the call line is
+    /// at the call-fact budget: then a dropped call may share the line.
+    #[test]
+    fn a_loan_call_line_at_the_call_fact_budget_selects_nothing() -> Result<(), String> {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let tier = "pub fn tier(n: u32) -> u32 {\n    match n {\n        0 => 1,\n        _ => 2,\n    }\n}\n";
+        let selector = ArmSelector::establish(&arm_probe("0 => 1,", 3), &owner(tier, "tier"))
+            .ok_or_else(|| "premise: the 0 arm reads its scrutinee from n".to_string())?;
+        let text = "check(0, 1);";
+        let assertion_text = "assert_eq!(tier(input), want);";
+        let loan = HelperLoan {
+            name: "check".to_string(),
+            helper: "fn check(input: u32, want: u32) { assert_eq!(tier(input), want); }"
+                .to_string(),
+            parameters: vec!["input".to_string(), "want".to_string()],
+            call_lines: vec![2],
+        };
+        let call_fact = || crate::analysis::facts::CallFact {
+            line: 2,
+            name: "check".to_string(),
+            text: text.into(),
+        };
+        let mut test = test_with("fn t() {\n    check(0, 1);\n}\n");
+        test.calls = vec![call_fact()];
+        let selects = |test: &TestSummary| selector.loan_selects(test, assertion_text, &loan);
+        assert!(
+            selects(&test),
+            "control: one helper call on the line selects"
+        );
+        // Same-name, same-text facts pass the "every fact is the helper
+        // call" check, so only the budget guard can refuse the full line.
+        test.calls = (0..MAX_CALL_FACTS_PER_LINE).map(|_| call_fact()).collect();
+        assert!(
+            !selects(&test),
+            "a line at the budget may hide a foreign call"
+        );
+        test.calls.truncate(MAX_CALL_FACTS_PER_LINE - 1);
+        assert!(
+            selects(&test),
+            "control: one fact under the budget still selects"
+        );
+        Ok(())
+    }
+
     /// #6616: an admitted exact pattern pin selects the trailing `_` arm
     /// only through an input that misses every sibling literal; a pin the
     /// admission refused selects nothing.
@@ -3506,6 +3560,18 @@ mod tests {
             judged(Some(&format!("use Rule::*;\n{body}"))),
             Some(ArmSelection::Selects)
         );
+        // An item macro may declare the constant (#7863).
+        for macro_item in [
+            "macro_rules! def_const { ($n:ident) => { const $n: u8 = 0; }; }\ndef_const!(target);\n",
+            "def_const!(target);\n",
+        ] {
+            let source = format!("{macro_item}{body}");
+            assert_eq!(
+                judged(Some(&source)),
+                Some(ArmSelection::Unknown),
+                "{macro_item}"
+            );
+        }
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())
