@@ -127,7 +127,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | no (decision input via `is_unmatched`) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | yes (weak and smoke only) | yes | no |
+| `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | pending follow-up (#5491) | no (shared prose over-claims) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
 | `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | yes | yes |
@@ -137,7 +137,7 @@ law above (see Current Rust conformance gaps).
 
 TypeScript (#5495) maps only row-local merged evidence: the owner-path
 disposition (#5523), assertion admission, the family-relevant assertion (#5525)
-and per-row predicate activation (#5527). `weak_assertion` is a row whose own
+and per-row predicate activation (#5527). `weak_assertion` is (weak and smoke only; a medium snapshot or mock oracle keeps no miss) a row whose own
 selected oracle is below strong. `observation_unconfirmed` covers a
 module-entry path, a mocked or spied owner call with an admitted assertion (an
 unanchored or unresolved-alias call keeps no miss: its identity is unproved), a

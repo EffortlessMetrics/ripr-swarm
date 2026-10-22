@@ -197,9 +197,7 @@
           "oracle_kind": "snapshot",
           "oracle": "expect(...).toMatchSnapshot(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "relation_confidence": "high"
         }
       ],
       "typescript_preview_card": {
@@ -835,9 +833,7 @@
           "oracle_kind": "mock_expectation",
           "oracle": "expect(record).toHaveBeenCalledWith(\"audit\")",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "relation_confidence": "high"
         }
       ],
       "typescript_preview_card": {

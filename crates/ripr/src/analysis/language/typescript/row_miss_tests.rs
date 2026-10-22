@@ -172,11 +172,7 @@ fn heuristic_reference_rows_keep_no_miss() -> Result<(), String> {
         let source = format!("{IMPORT}{body}");
         let finding = classify(&RETURN_CHANGE, &source)?;
         let miss = miss_of(&finding, "works")?;
-        assert_ne!(
-            miss,
-            Some(RelatedTestMiss::NoCallPath),
-            "{label}: {finding:?}"
-        );
+        assert_eq!(miss, None, "{label}: {finding:?}");
     }
     let source = format!(
         "{IMPORT}test('works', () => {{\n  const fn = applyDiscount;\n  expect(typeof fn).toBe('function');\n}});\n"
@@ -239,6 +235,30 @@ fn weak_family_assertion_row_is_weak_assertion() -> Result<(), String> {
         miss_of(&finding, "truthy")?,
         Some(RelatedTestMiss::WeakAssertion)
     );
+    Ok(())
+}
+
+/// A medium oracle (snapshot) is not "too weak": it may pin the changed value.
+#[test]
+fn medium_snapshot_row_is_not_weak_assertion() -> Result<(), String> {
+    let source = format!(
+        "{IMPORT}test('snap', () => {{\n  expect(applyDiscount(1)).toMatchSnapshot();\n}});\n"
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(miss_of(&finding, "snap")?, None);
+    Ok(())
+}
+
+/// An uncredited mock expectation is medium, never "too weak".
+#[test]
+fn medium_mock_expectation_row_is_not_weak_assertion() -> Result<(), String> {
+    let source = format!(
+        "{IMPORT}test('mock', () => {{\n  const sink = jest.fn();\n  sink(applyDiscount(1));\n  expect(sink).toHaveBeenCalledWith(1);\n}});\n"
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    let miss = miss_of(&finding, "mock")?;
+    assert_ne!(miss, Some(RelatedTestMiss::WeakAssertion), "{finding:?}");
     Ok(())
 }
 

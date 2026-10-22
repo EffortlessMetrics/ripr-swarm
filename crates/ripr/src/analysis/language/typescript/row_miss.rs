@@ -16,6 +16,8 @@
 //! satisfies another row. A row whose own evidence is unresolved keeps
 //! `miss: None`; there is no fill-every-row fallback.
 //!
+//! `weak_assertion` is limited to weak and smoke oracles; a medium oracle keeps no miss.
+//!
 //! Shipped tokens: `weak_assertion` and `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
@@ -170,8 +172,15 @@ fn established_path_miss(
     } else {
         &row.oracle_strength
     };
-    if !is_strong(strength) {
-        return Some(RelatedTestMiss::WeakAssertion);
+    // Only a weak or smoke oracle is "too weak". A medium oracle (snapshot,
+    // an uncredited mock expectation) may pin the changed value, and an
+    // unknown or absent one says nothing, so both keep no miss.
+    match strength {
+        OracleStrength::Weak | OracleStrength::Smoke => {
+            return Some(RelatedTestMiss::WeakAssertion);
+        }
+        OracleStrength::Medium | OracleStrength::Unknown | OracleStrength::None => return None,
+        OracleStrength::Strong => {}
     }
     // 4. Predicate activation: the row's own module-derived boundary fact
     // says its input misses the boundary. The stronger `missing_input` prose
