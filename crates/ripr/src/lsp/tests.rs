@@ -87,6 +87,8 @@ use tower_lsp_server::{LspService, Server};
 
 mod analysis_thread_routing_tests;
 mod consumed_source_tests;
+mod progress_create_liveness_tests;
+mod progress_notification_isolation_tests;
 mod shutdown_clear_tests;
 
 /// Render a fixture path the way the LSP surface renders paths.
@@ -219,9 +221,45 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         WatchedFileChanges {
             config_changed: true,
             workspace_graph_changed: true,
+            typescript_input_changed: false,
             diagnostics_input_changed: false,
         }
     );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a TypeScript analysis refresh)
+    let cases = [
+        ("tsconfig.json", FileChangeType::CHANGED, true),
+        ("src/cart.ts", FileChangeType::CREATED, true),
+        ("src/cart.ts", FileChangeType::DELETED, true),
+        // An ordinary save of an existing source file is not an input.
+        ("src/cart.ts", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, refresh) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: true,
+                typescript_input_changed: refresh,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
     Ok(())
 }
 
@@ -2392,7 +2430,7 @@ fn hover_for_position_uses_latest_matching_diagnostic() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("* reach yes: related tests found"));
@@ -2565,6 +2603,7 @@ fn witness_finding() -> Finding {
         flow_sink: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
+        file: None,
         line: 12,
         text: "assert!(result.is_err())".to_string(),
         value: "result.is_err()".to_string(),
@@ -2632,7 +2671,12 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
 
-    let context_packet = crate::output::json::render_context_packet(&finding, 5, Path::new("."));
+    let context_packet = crate::output::json::render_context_packet(
+        &finding,
+        5,
+        &crate::config::RiprConfig::default(),
+        Path::new("."),
+    );
     let context_packet: serde_json::Value =
         serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
     assert_eq!(context_packet["witness"], witness);
@@ -2956,7 +3000,7 @@ fn hover_fallback_to_diagnostic_without_matching_finding() -> Result<(), String>
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("Add an exact boundary assertion."));
             assert!(
                 markup
@@ -3047,7 +3091,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("\u{2014} strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("\u{2014} strong exact value oracle: assert_eq!(total, expected)")
             );
             Ok(())
         }
@@ -8805,7 +8849,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
     assert_eq!(related[0].location.range.start.line, 11);
     assert_eq!(
         related[0].message,
-        "Fix site: related test `discount_boundary_is_exact` has strong exact_value oracle: assert_eq!(total, expected)"
+        "Fix site: related test `discount_boundary_is_exact` has strong exact value oracle: assert_eq!(total, expected)"
     );
     Ok(())
 }
@@ -9752,6 +9796,7 @@ fn initialize_stores_lsp_analysis_config() -> Result<(), String> {
 fn initialize_with_invalid_languages_config_falls_back_to_rust_defaults() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -9811,6 +9856,7 @@ enabled = ["ruby"]
 fn session_configuration_change_preserves_invalid_repository_config_health() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -10206,6 +10252,7 @@ fn malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsuppor
 fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -12463,6 +12510,387 @@ fn a_reload_that_breaks_ripr_toml_is_shown_once_without_source_text() -> Result<
             serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
         )
         .await
+    })
+}
+
+/// Collect the `window/showMessage` params sent during `refreshes`
+/// explicit refreshes in one framed session (#8583). A `base_ref` that
+/// cannot resolve makes the real analysis fail fast, the same forcing the
+/// work-done-progress wire tests use.
+async fn refresh_show_messages(
+    root: &Path,
+    capabilities: serde_json::Value,
+    base_ref: &str,
+    refreshes: u64,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    refresh_show_messages_with(root, capabilities, base_ref, refreshes, |_| Ok(())).await
+}
+
+/// [`refresh_show_messages`] with a hook that runs before each refresh
+/// (zero-based), so a test can change the workspace between refreshes.
+async fn refresh_show_messages_with(
+    root: &Path,
+    capabilities: serde_json::Value,
+    base_ref: &str,
+    refreshes: u64,
+    mut before_refresh: impl FnMut(u64) -> Result<(), String>,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let mut server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root)?;
+    let result = async {
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": { "baseRef": base_ref, "checkMode": "instant" },
+                    "capabilities": capabilities
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut reader, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        let mut shown = Vec::new();
+        let mut statuses = Vec::new();
+        for index in 0..refreshes {
+            before_refresh(index)?;
+            let notifications =
+                run_wire_refresh_collecting(&mut reader, &mut writer, 2 + index).await?;
+            shown.extend(
+                notifications
+                    .iter()
+                    .filter(|message| {
+                        message.get("method").and_then(serde_json::Value::as_str)
+                            == Some("window/showMessage")
+                    })
+                    .map(|message| message["params"].clone()),
+            );
+            statuses.extend(analysis_status_params(&notifications));
+        }
+        Ok::<_, String>((shown, statuses))
+    }
+    .await;
+    let shutdown =
+        shutdown_framed_session(&mut reader, &mut writer, &mut server_task, 2 + refreshes).await;
+    let (shown, statuses) = result?;
+    shutdown?;
+    Ok((shown, statuses))
+}
+
+#[test]
+fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -> Result<(), String>
+{
+    // #8583: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so a failed analysis must reach it on the
+    // standard channel, once per distinct failure. The VS Code
+    // integration renders the failure from its status, and a successful
+    // analysis shows nothing.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-shown")?;
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({}),
+            "ripr-lsp-progress-missing-base",
+            2,
+        )
+        .await?;
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["message"].is_string())
+        {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        // #6740: the wire payload itself, not only the in-process carrier,
+        // names the unresolvable base with the stable kind the editor reads.
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["kind"] == "base_unresolvable")
+        {
+            return Err(format!(
+                "the missing-base failure must carry failure.kind=base_unresolvable on the wire: {statuses:?}"
+            ));
+        }
+        if shown.len() != 1 {
+            return Err(format!(
+                "an unchanged failure must be shown exactly once to a generic client: {shown:?}"
+            ));
+        }
+        let text = shown[0]["message"].as_str().unwrap_or_default();
+        if shown[0]["type"].as_u64() != Some(2)
+            || !text.contains("workspace analysis failed")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the shown failure must be a bounded one-line warning: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "ripr-lsp-progress-missing-base",
+            1,
+        )
+        .await?;
+        if !statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        if statuses.iter().any(|status| status["state"] == "failed") {
+            return Err(format!(
+                "a valid base ref must not fail the analysis: {statuses:?}"
+            ));
+        }
+        if !shown.is_empty() {
+            return Err(format!(
+                "a successful analysis must not be shown: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// A committed fixture whose working tree adds one Python file that the
+/// default configuration does not enable (#8585).
+fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = boundary_gap_git_fixture_root(name)?;
+    std::fs::create_dir_all(root.path().join("zpy"))
+        .map_err(|err| format!("create zpy failed: {err}"))?;
+    std::fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 1\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    Ok(root)
+}
+
+fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    shown
+        .iter()
+        .filter(|params| {
+            params["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("python") && text.contains("not enabled"))
+        })
+        .collect()
+}
+
+#[test]
+#[cfg(not(feature = "lang-python"))]
+fn rust_only_build_reports_no_unavailable_python_row_for_a_changed_py_file() -> Result<(), String> {
+    // A build without the Python adapter routes no `.py` change to a preview
+    // advisory (`detect_preview_advisories` keeps only Perl for an adapter
+    // that is not compiled in), so the typed `unavailable_languages` field is
+    // empty and a generic client gets no per-language notice. The sibling
+    // `generic_client_is_told_once_...` test therefore needs the adapter
+    // compiled in; the `--no-default-features --features lang-rust` lane
+    // exercises this contract instead of that one.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("rust-only-no-python-row")?;
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        let succeeded = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .collect::<Vec<_>>();
+        if succeeded.is_empty()
+            || succeeded
+                .iter()
+                .any(|status| status["unavailable_languages"] != serde_json::json!([]))
+        {
+            return Err(format!(
+                "a build without the Python adapter must publish an empty typed row set: {statuses:?}"
+            ));
+        }
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "no per-language notice is owed when the adapter is not compiled in: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+// Requires the Python adapter to be compiled in: the typed unavailable row
+// and its notice come from a disabled-but-available preview advisory. The
+// Rust-only feature lane (`--no-default-features --features lang-rust`) never
+// produces one, which made this test fail there deterministically (it looked
+// load-dependent only because that lane runs on a subset of PRs).
+#[test]
+#[cfg(feature = "lang-python")]
+fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
+    // #8585: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so changed files of a language whose adapter is
+    // not enabled must reach it as one bounded notice per language, not
+    // silently read as a clean run. The VS Code integration renders the
+    // typed `unavailable_languages` status field instead.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("disabled-language-notice")?;
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 2).await?;
+        let rows = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .map(|status| status["unavailable_languages"].clone())
+            .collect::<Vec<_>>();
+        if rows.is_empty() || rows.iter().any(|row| row[0]["language"] != "python") {
+            return Err(format!(
+                "every succeeded status must carry the typed python row: {statuses:?}"
+            ));
+        }
+        let notices = unavailable_language_notices(&shown);
+        if notices.len() != 1 {
+            return Err(format!(
+                "one notice per language across repeated refreshes, got {shown:?}"
+            ));
+        }
+        let text = notices[0]["message"].as_str().unwrap_or_default();
+        if notices[0]["type"].as_u64() != Some(2)
+            || !text.contains("[languages] enabled")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the notice must be a bounded one-line warning naming recovery: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "HEAD",
+            1,
+        )
+        .await?;
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders this from its status: {shown:?}"
+            ));
+        }
+        if !statuses
+            .iter()
+            .any(|status| status["unavailable_languages"][0]["file_count"] == 1)
+        {
+            return Err(format!(
+                "the integration must still receive the typed row: {statuses:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn generic_client_failure_warning_repeats_after_recovery() -> Result<(), String> {
+    // #8698: a succeeded analysis clears the shown-failure signature, so
+    // the same failure after a recovery is shown again; without the reset
+    // a generic editor would stay silent on a recurrence.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-recurrence")?;
+        let base_ref = "ripr-lsp-recovery-base";
+        let (shown, statuses) =
+            refresh_show_messages_with(root.path(), serde_json::json!({}), base_ref, 4, |index| {
+                // Refresh 0 and 1 fail (the ref is missing), refresh 2
+                // succeeds (the ref exists), refresh 3 fails again.
+                match index {
+                    2 => run_lsp_scope_git(root.path(), &["branch", base_ref, "HEAD"]),
+                    3 => run_lsp_scope_git(root.path(), &["branch", "-D", base_ref]),
+                    _ => Ok(()),
+                }
+            })
+            .await?;
+        let states = statuses
+            .iter()
+            .filter_map(|status| status["state"].as_str())
+            .collect::<Vec<_>>();
+        let succeeded = states.iter().position(|state| *state == "succeeded");
+        let failed_after = succeeded
+            .is_some_and(|at| states[at..].contains(&"failed"));
+        if !failed_after {
+            return Err(format!(
+                "the sequence must fail, succeed, then fail again: {states:?}"
+            ));
+        }
+        if shown.len() != 2 {
+            return Err(format!(
+                "the first failure and the recurrence after recovery must each be shown once: {shown:?}"
+            ));
+        }
+        if shown[0]["message"] != shown[1]["message"] {
+            return Err(format!(
+                "the recurrence must be the same failure, shown again: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn generic_client_failure_warning_redacts_path_tokens() -> Result<(), String> {
+    // #8698: the on-screen warning passes through the same redaction as
+    // `ripr/analysisStatus`, so an absolute path in the failure never
+    // reaches a generic editor's message UI.
+    work_done_progress_runtime()?.block_on(async {
+        let root = boundary_gap_git_fixture_root("analysis-failure-redaction")?;
+        let root_text = root.path().display().to_string();
+        // Redaction is per whitespace token, and the failure quotes the ref
+        // in backticks, so a leading word keeps the path a bare token.
+        let base_ref = format!("missing {root_text}/base");
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), &base_ref, 1).await?;
+        let status_message = statuses
+            .iter()
+            .find_map(|status| status["failure"]["message"].as_str())
+            .ok_or_else(|| format!("the forced failure must reach the status: {statuses:?}"))?;
+        if !status_message.contains("<path>") {
+            return Err(format!(
+                "the forced failure must carry a path for this test to discriminate: {status_message}"
+            ));
+        }
+        let [warning] = shown.as_slice() else {
+            return Err(format!("expected one shown warning: {shown:?}"));
+        };
+        let text = warning["message"].as_str().unwrap_or_default();
+        if text.contains(&root_text) || !text.contains("<path>") {
+            return Err(format!("the shown failure must redact paths: {text}"));
+        }
+        Ok(())
     })
 }
 
@@ -14872,6 +15300,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 "boundary value missing",
             ),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),
@@ -14938,7 +15367,7 @@ fn finding_hover_response_includes_ripr_evidence_path() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("reach yes:"));
             assert!(markup.value.contains("infection yes:"));
@@ -14979,6 +15408,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
+            file: None,
             line: 12,
             text: "assert_eq!".to_string(),
             value: "amount == threshold".to_string(),
@@ -15024,7 +15454,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("strong exact value oracle: assert_eq!(total, expected)")
             );
             assert!(markup.value.contains("Add an exact boundary assertion."));
             Ok(())
@@ -15693,7 +16123,7 @@ fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("predicate"));
             assert!(markup.value.contains("## RIPR Evidence"));
             assert!(markup.value.contains("reach yes:"));
@@ -15749,7 +16179,7 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
             let HoverContents::Markup(markup) = hover.contents else {
                 return Err("expected markup hover".to_string());
             };
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("**ripr** finding: weak"));
             assert!(markup.value.contains("## RIPR Evidence"));
             // The hover highlights the line the cursor is on, not an empty span.
             assert_eq!(
@@ -15811,7 +16241,7 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
             return Err("expected refresh plan".to_string());
         };
 
-        for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+        for (character, expected) in [(inside, "weak"), (past_end, "no path")] {
             let Some(hover) =
                 backend.hover_for_position(&hover_params(uri.clone(), line, character))
             else {
@@ -15821,7 +16251,9 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
                 return Err("expected markup hover".to_string());
             };
             assert!(
-                markup.value.contains(&format!("**ripr** `{expected}`")),
+                markup
+                    .value
+                    .contains(&format!("**ripr** finding: {expected}")),
                 "hover at {line}:{character} with coarse {coarse_range:?} should describe {expected}: {}",
                 markup.value
             );
@@ -20061,7 +20493,9 @@ fn work_done_progress_success_run_ends_complete_exactly_once() -> Result<(), Str
 
         let decision = work_done_progress_request(backend, 1)?;
         let request = started_request(&decision)?;
-        backend.emit_progress_for_decision(&decision).await;
+        backend
+            .emit_recorded_progress_for_decision(&decision)
+            .await?;
 
         // Simulate the successful publish: commit a full snapshot, then end
         // the attempt with the same outcome mapping the refresh loop uses.
@@ -20115,7 +20549,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
 
         let first = work_done_progress_request(backend, 1)?;
         let first_request = started_request(&first)?;
-        backend.emit_progress_for_decision(&first).await;
+        backend.emit_recorded_progress_for_decision(&first).await?;
 
         let second = work_done_progress_request(backend, 2)?;
         if !matches!(
@@ -20127,7 +20561,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
         ) {
             return Err(format!("expected first queued request, got {second:?}"));
         }
-        backend.emit_progress_for_decision(&second).await;
+        backend.emit_recorded_progress_for_decision(&second).await?;
 
         let third = work_done_progress_request(backend, 3)?;
         if !matches!(
@@ -20141,7 +20575,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
                 "expected queued replacement superseding generation 2, got {third:?}"
             ));
         }
-        backend.emit_progress_for_decision(&third).await;
+        backend.emit_recorded_progress_for_decision(&third).await?;
 
         // The active attempt finishes and the newest queued request starts on
         // the SAME token it began with.
@@ -20232,7 +20666,7 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
 
         let first = work_done_progress_request(backend, 1)?;
         let first_request = started_request(&first)?;
-        backend.emit_progress_for_decision(&first).await;
+        backend.emit_recorded_progress_for_decision(&first).await?;
         let accepted_events = sink.events().len();
 
         // Same input while active: deduplicated, no progress.
@@ -20240,7 +20674,9 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
         if duplicate_active != RefreshDecision::Deduplicated {
             return Err(format!("expected Deduplicated, got {duplicate_active:?}"));
         }
-        backend.emit_progress_for_decision(&duplicate_active).await;
+        backend
+            .emit_recorded_progress_for_decision(&duplicate_active)
+            .await?;
         if sink.events().len() != accepted_events {
             return Err(format!(
                 "deduplicated request created progress traffic: {:?}",
@@ -20263,8 +20699,8 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
             ));
         }
         backend
-            .emit_progress_for_decision(&duplicate_completed)
-            .await;
+            .emit_recorded_progress_for_decision(&duplicate_completed)
+            .await?;
         if sink.events().len() != accepted_events {
             return Err(format!(
                 "completed-input dedup created progress traffic: {:?}",
@@ -20302,7 +20738,9 @@ fn work_done_progress_cancelled_superseded_and_not_started_terminal_ends() -> Re
         ] {
             let decision = work_done_progress_request(backend, revision)?;
             let request = started_request(&decision)?;
-            backend.emit_progress_for_decision(&decision).await;
+            backend
+                .emit_recorded_progress_for_decision(&decision)
+                .await?;
             backend.end_progress_for_attempt(&request, outcome).await;
             // Repeated terminal paths (guard + loop, invalidation + loop)
             // must stay exactly-once.
@@ -20334,7 +20772,9 @@ fn work_done_progress_failed_end_carries_kind_not_paths() -> Result<(), String> 
 
         let decision = work_done_progress_request(backend, 1)?;
         let request = started_request(&decision)?;
-        backend.emit_progress_for_decision(&decision).await;
+        backend
+            .emit_recorded_progress_for_decision(&decision)
+            .await?;
         backend
             .report_refresh_failure_after(
                 &request,
@@ -20398,6 +20838,34 @@ fn work_done_progress_no_traffic_when_root_or_config_unavailable_before_start() 
                 "config-failed refresh created progress traffic: {:?}",
                 sink.events()
             ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Result<(), String> {
+    // #8733: a refresh that finds work active used to park until the
+    // scheduler went fully idle, so the `ripr.refresh` executeCommand
+    // response (and one notification-handler slot) waited out the whole
+    // in-flight analysis. The call must return as soon as the scheduler
+    // accepts the queued request; the queued run itself is unchanged.
+    work_done_progress_runtime()?.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+
+        let first = work_done_progress_request(backend, 1)?;
+        let first_request = started_request(&first)?;
+        backend.emit_recorded_progress_for_decision(&first).await?;
+        backend.mark_attempt_running_for_test(&first_request);
+
+        backend
+            .refresh_diagnostics(RefreshScope::Full, RefreshReason::ExplicitRefresh)
+            .await;
+
+        if backend.refresh_scheduler_for_test().is_idle() {
+            return Err("queued refresh returned only after the scheduler went idle".to_string());
         }
         Ok(())
     })
@@ -23752,6 +24220,345 @@ fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), St
 
 #[test]
 #[serial]
+fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -> Result<(), String>
+{
+    // #8732: a push-only client used to see permanent silence before the
+    // first snapshot commit — byte-for-byte identical to "analysis ran and
+    // found nothing". The typed analysis-pending marker must publish per
+    // tracked URI, bound to the observed document version, and retract with
+    // the established empty clear when the first snapshot commits.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-pending-marker")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        // Break ripr.toml before initialize: the initial config load latches
+        // the typed failure, so the didOpen refresh returns before analysis
+        // and the pending state is observable on the wire.
+        std::fs::write(root.join("ripr.toml"), "mode = [")
+            .map_err(|err| format!("write broken ripr.toml failed: {err}"))?;
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        // The config failure blocks the refresh; the pending marker is the
+        // only publication a push client can receive pre-analysis.
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let published = params.first().ok_or_else(|| {
+            "push client received no publication for the opened document".to_string()
+        })?;
+        if published["version"] != serde_json::json!(1) {
+            return Err(format!(
+                "the pending marker must bind the observed document version: {published}"
+            ));
+        }
+        let diagnostics = published["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("pending publish carried no diagnostics: {published}"))?;
+        if diagnostics.len() != 1 {
+            return Err(format!(
+                "expected exactly one analysis-pending marker, got {published}"
+            ));
+        }
+        let marker = &diagnostics[0];
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!("wrong marker code: {marker}"));
+        }
+        if marker["data"]["state"] != "no_snapshot" {
+            return Err(format!("wrong marker state: {marker}"));
+        }
+        if marker["data"]["recovery"] != "fix_configuration" {
+            return Err(format!("wrong marker recovery route: {marker}"));
+        }
+
+        // Repair the configuration: the reload clears the failure, schedules
+        // the ConfigReload refresh, and the first commit retracts the marker
+        // with the established empty clear (the clean fixture has no
+        // findings, so the retraction is an honest empty set).
+        std::fs::write(root.join("ripr.toml"), "# repaired configuration\n")
+            .map_err(|err| format!("repair ripr.toml failed: {err}"))?;
+        let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 2}]}
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("refresh published nothing for the tracked URI: {notifications:?}")
+        })?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!(
+                "the pending marker must retract with the empty clear on the first commit: {last}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_withdraws_diagnostics_when_config_failure_latches() -> Result<(), String> {
+    // #8731 (push surface) / #8732: a push client that already received real
+    // diagnostics must see them withdrawn the moment a config reload failure
+    // latches — the marker names the withdrawal instead of letting the last
+    // published payload sit at full weight for the rest of the session.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-withdraw-on-latch")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Establish real published diagnostics first: open, dirty the
+        // boundary, persist it, and let the save refresh publish findings.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("the save refresh must publish diagnostics for the opened document: {notifications:?}")
+        })?;
+        let served = last["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("publish carried no diagnostics: {last}"))?;
+        if served.is_empty() {
+            return Err(format!(
+                "expected real findings before the config failure: {last}"
+            ));
+        }
+
+        // Break ripr.toml: the watched-file reload latches the failure and
+        // the withdrawal marker must replace the served findings.
+        std::fs::write(root.join("ripr.toml"), "mode = [")
+            .map_err(|err| format!("write broken ripr.toml failed: {err}"))?;
+        let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 1}]}
+            }),
+        )
+        .await?;
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let withdrawn = params
+            .first()
+            .ok_or_else(|| "config failure published no withdrawal for the tracked URI".to_string())?;
+        let diagnostics = withdrawn["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("withdrawal publish carried no diagnostics: {withdrawn}"))?;
+        if diagnostics.len() != 1 {
+            return Err(format!(
+                "expected exactly one withdrawal marker, got {withdrawn}"
+            ));
+        }
+        let marker = &diagnostics[0];
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!("wrong marker code: {marker}"));
+        }
+        if marker["data"]["state"] != "withdrawn_configuration_failure" {
+            return Err(format!(
+                "a latched failure with a retained snapshot must name the withdrawal: {marker}"
+            ));
+        }
+        if marker["data"]["recovery"] != "fix_configuration" {
+            return Err(format!("wrong marker recovery route: {marker}"));
+        }
+        let message = marker["message"]
+            .as_str()
+            .ok_or_else(|| format!("marker message missing: {marker}"))?;
+        if !message.contains("withdrawn") {
+            return Err(format!(
+                "withdrawal marker must name the withdrawn findings: {message}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_diagnostics_omit_version_without_negotiation() -> Result<(), String> {
     // #1747 negative: without `versionSupport` the push publication
     // carries no version — the fail-closed wire shape is unchanged.
@@ -26434,10 +27241,7 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(
-        lens.contains("no static discriminator (weakly_exposed)"),
-        "{lens}"
-    );
+    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"
@@ -27094,7 +27898,7 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     };
     assert_eq!(
         row("observes_score")?,
-        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); misses: assertion too weak to tell the old \
          behavior from the new"
     );
@@ -27112,10 +27916,200 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     // and keeps the oracle it could not confirm.
     assert_eq!(
         row("observer_unconfirmed")?,
-        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); unconfirmed: ripr could not confirm that this \
          assertion observes the changed behavior"
     );
+    Ok(())
+}
+
+fn oracle_wording_finding(kind: OracleKind, strength: OracleStrength) -> Finding {
+    let mut finding = sample_finding();
+    finding.class = ExposureClass::WeaklyExposed;
+    finding.related_tests = vec![RelatedTest {
+        name: "selected_observer".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq!(total, expected)".to_string()),
+        oracle_kind: kind,
+        oracle_strength: strength,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+    }];
+    finding
+}
+
+#[test]
+fn finding_hover_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            format!(
+                "- `tests/pricing.rs:12` `selected_observer` — {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn finding_diagnostic_oracle_wording_preserves_selected_row() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let witness = crate::domain::DiagnosticWitness::from_finding(&finding)
+            .ok_or_else(|| "expected witness".to_string())?;
+        let site = witness
+            .fix_site
+            .as_ref()
+            .ok_or_else(|| "expected selected fix site".to_string())?;
+        assert_eq!(
+            site.oracle_kind,
+            finding.related_tests[0].oracle_kind.as_str()
+        );
+        assert_eq!(
+            site.oracle_strength,
+            finding.related_tests[0].oracle_strength.as_str()
+        );
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected fix-site information".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.rs"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            format!(
+                "Fix site: related test `selected_observer` has {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn absent_assertion_oracle_wording_keeps_reason_only_hover() -> Result<(), String> {
+    for strength in [OracleStrength::None, OracleStrength::Unknown] {
+        let mut finding = oracle_wording_finding(OracleKind::Unknown, strength);
+        finding.related_tests[0].oracle = None;
+        finding.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoAssertion);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            "- `tests/pricing.rs:12` `selected_observer` misses: has no assertion"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_oracle_wording_follows_producer_selection_over_a_stronger_row() -> Result<(), String>
+{
+    let mut finding = oracle_wording_finding(OracleKind::Unknown, OracleStrength::Unknown);
+    finding.language = Some(LanguageId::Python);
+    finding.related_tests[0].file = PathBuf::from("tests/pricing.py");
+    finding.related_tests[0].oracle = Some("assert total == expected".to_string());
+    finding.evidence = vec![
+        "suggested_test_file: tests/pricing.py".to_string(),
+        "suggested_test_name: selected_observer".to_string(),
+        "suggested_test_line: 12".to_string(),
+    ];
+    let mut stronger = finding.related_tests[0].clone();
+    stronger.name = "another_observer".to_string();
+    stronger.file = PathBuf::from("tests/other.py");
+    stronger.line = 40;
+    stronger.oracle_kind = OracleKind::ExactValue;
+    stronger.oracle_strength = OracleStrength::Strong;
+    finding.related_tests.push(stronger);
+    for reverse in [false, true] {
+        if reverse {
+            finding.related_tests.reverse();
+        }
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected selected fix-site row".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.py"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            "Fix site: related test `selected_observer` has an unclassified oracle, not graded against this probe: assert total == expected"
+        );
+    }
     Ok(())
 }
 

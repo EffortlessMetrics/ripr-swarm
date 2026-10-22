@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_token_called_closure/input --diff <cwd>/fixtures/owner_return_pin_token_called_closure/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_token_called_closure/input --diff <cwd>/fixtures/owner_return_pin_token_called_closure/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:6ea804bb --root <cwd>/fixtures/owner_return_pin_token_called_closure/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

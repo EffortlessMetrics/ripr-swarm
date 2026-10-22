@@ -228,6 +228,136 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// Shared by every command that takes `--root` and defaults to `.`: without a
+/// typed `--root`, resolve the workspace root exactly as `ripr check` does
+/// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
+///
+/// Returns the invocation directory relative to the widened root (`crates/app`)
+/// when the root moved, so callers can bind member-relative file selectors with
+/// [`bind_member_selector_file`]; `None` when the root did not change.
+pub(in crate::cli) fn resolve_implicit_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<Option<String>, String> {
+    if root_explicit {
+        return Ok(None);
+    }
+    let mut input = CheckInput {
+        root: root.clone(),
+        ..CheckInput::default()
+    };
+    resolve_implicit_workspace_root(&mut input)?;
+    // #7468 parity: a closer member-level ripr.toml is skipped by the walk.
+    if input.root != *root
+        && let Some(warning) = skipped_closer_config_warning(Path::new("."), &input.root)
+    {
+        eprintln!("{}", terminal_safe(warning));
+    }
+    let moved = input.root != *root;
+    let prefix = if moved {
+        // Fail closed: without the invocation prefix, relative file selectors
+        // could silently resolve against a sibling member.
+        let relate = || -> Option<String> {
+            let cwd = std::fs::canonicalize(".").ok()?;
+            let base = std::fs::canonicalize(&input.root).ok()?;
+            let relative = cwd.strip_prefix(base).ok()?;
+            let text = relative
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            (!text.is_empty()).then_some(text)
+        };
+        Some(relate().ok_or_else(|| {
+            "cannot relate the current directory to the resolved workspace root; pass --root PATH to select the analysis root explicitly"
+                .to_string()
+        })?)
+    } else {
+        None
+    };
+    *root = input.root;
+    Ok(prefix)
+}
+
+/// #8767: when the root was implicitly widened, a relative file selector that
+/// names an existing file under the invocation directory means that file, so it
+/// is rewritten to its workspace-relative path before resolution; otherwise the
+/// suffix matcher could pick a sibling member's `src/lib.rs`. When the selector
+/// also exists workspace-relative, the invocation-directory file wins (the
+/// operator typed it from that directory). A selector that is neither an
+/// existing invocation-directory file nor an exact workspace-relative file is
+/// refused rather than left to repo-wide suffix matching, which could land on a
+/// sibling member. Absolute paths and an unmoved root pass through unchanged.
+pub(in crate::cli) fn bind_member_selector_file(
+    prefix: Option<&str>,
+    root: &Path,
+    file: &str,
+) -> Result<String, String> {
+    let Some(prefix) = prefix else {
+        return Ok(file.to_string());
+    };
+    let path = Path::new(file);
+    if path.is_absolute() {
+        return Ok(file.to_string());
+    }
+    if Path::new(".").join(path).is_file() {
+        return Ok(format!("{prefix}/{}", file.trim_start_matches("./")));
+    }
+    if root.join(path).is_file() {
+        return Ok(file.to_string());
+    }
+    Err(format!(
+        "`{file}` names no file under the invocation directory `{prefix}` or the workspace root; pass `--root .` to select this directory, or the full workspace-relative path (for example `{prefix}/{}`)",
+        file.trim_start_matches("./")
+    ))
+}
+
+/// [`bind_member_selector_file`] for a `file:line` repair item. Seam ids and
+/// structured ids (`gap:rust:...:3`, `repo-probe:src/lib.rs:predicate:12345678`)
+/// are not file selectors: a file path never contains `:`, so any item whose
+/// pre-line part does is passed through unchanged for the id resolvers.
+pub(super) fn bind_member_selector_item(
+    prefix: Option<&str>,
+    root: &Path,
+    item: &str,
+) -> Result<String, String> {
+    match item.rsplit_once(':') {
+        Some((file, line))
+            if line.parse::<usize>().is_ok()
+                && !file.contains(':')
+                && (file.contains('/') || file.contains('.')) =>
+        {
+            let bound = bind_member_selector_file(prefix, root, file)?;
+            if bound != file {
+                refuse_root_shadowed_selector(root, &bound)?;
+            }
+            Ok(format!("{bound}:{line}"))
+        }
+        _ => Ok(item.to_string()),
+    }
+}
+
+/// The shared `file:line` matcher also accepts a path suffix (`wanted` ends
+/// with the stored path), so a selector bound to `pkg/src/lib.rs` would match
+/// a workspace-root package's `src/lib.rs` at the same line. When a proper
+/// suffix of the bound path names a real file under the root, the path cannot
+/// distinguish the two, so the bound selector is refused instead of risking a
+/// seam of another package. `--root .` analyzes the invocation directory alone.
+pub(super) fn refuse_root_shadowed_selector(root: &Path, bound: &str) -> Result<(), String> {
+    for (index, _) in bound.match_indices('/') {
+        let suffix = &bound[index + 1..];
+        if suffix.is_empty() || suffix.split('/').any(|part| part == "..") {
+            continue;
+        }
+        if root.join(suffix).is_file() {
+            return Err(format!(
+                "`{bound}` also matches the workspace-root file `{suffix}` by path suffix, and a file:line selector cannot tell them apart; pass `--root .` to analyze this directory alone, or select the gap by its seam or gap ID"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
     let resolved = resolve_project_root(Path::new(".")).map_err(|error| {
         format!("{error}; pass --root PATH to select the analysis root explicitly")
@@ -282,6 +412,8 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--diff",
     "--candidate-tree",
     "--candidate-base",
+    "--path",
+    "--exclude",
     "--mode",
     "--format",
     "--gap-ledger",
@@ -553,6 +685,8 @@ fn check_inner(
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     if let Some(all) = help_request(args) {
         help::print_check_help(all);
         return Ok(());
@@ -588,6 +722,16 @@ fn check_inner(
             "--candidate-base" => {
                 i += 1;
                 candidate_base = Some(expect_value(args, i, "--candidate-base")?.to_string());
+            }
+            // #9277: repeatable file-scope narrowing. Not a scope provider: it
+            // filters the diff another flag (or the default base) supplies.
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
             }
             "--worktree" => {
                 scope_explicitly_provided = true;
@@ -837,6 +981,51 @@ fn check_inner(
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --candidate-tree".to_string(),
+            ));
+        }
+    }
+    // #9277: --path/--exclude narrow a diff's changed files. A repo-scoped
+    // format reads no diff, so accepting them there would claim a bound the
+    // run never applied; refuse instead. Pattern shape errors surface here,
+    // before any analysis starts.
+    if !scope_include.is_empty() || !scope_exclude.is_empty() {
+        let refusal = if input.format.is_repo_scope() {
+            Some(format!(
+                "--path/--exclude narrow a diff and do not apply to the repo-scoped format {}; \
+                 use a diff-scoped format such as --format json",
+                input.format.primary_cli_name()
+            ))
+        } else {
+            if write_artifact.is_some() || gap_ledger.is_some() || output_dir.is_some() {
+                Some(
+                    "--path/--exclude cannot be combined with --write-artifact, --gap-ledger or \
+                     --output-dir: those outputs are reusable as a whole-diff result, and a \
+                     scoped run covers only the chosen files. Drop the scope, or save the \
+                     scoped result from --format json instead"
+                        .to_string(),
+                )
+            } else {
+                match crate::analysis::DiffScopeFilter::new(
+                    std::mem::take(&mut scope_include),
+                    std::mem::take(&mut scope_exclude),
+                ) {
+                    Ok(filter) => {
+                        input.scope = filter;
+                        None
+                    }
+                    Err(error) => Some(error),
+                }
+            }
+        };
+        if let Some(message) = refusal {
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                message,
             ));
         }
     }
@@ -1352,9 +1541,10 @@ fn check_inner(
                     &input.root,
                     &report.classified,
                 );
-                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
@@ -1654,21 +1844,33 @@ fn check_inner(
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+        // #8547: both routes read seams of the selected finding's file
+        // (the repair route adds its related-test evidence files); they
+        // share one bounded seam index built once for this invocation,
+        // repair first so its wider file set covers the stub route's.
+        let mut seam_index = None;
+        let repair_route = crate::app::task_first::check_repair_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
+        let stub_route = app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
         navigation
-            .with_stub_route(app::test_stub::check_stub_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            .with_stub_route(stub_route)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
-            // keep their existing next-step contracts unchanged.
-            .with_repair_route(crate::app::task_first::check_repair_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            // keep their existing next-step contracts unchanged. #8729:
+            // the outcome carries the named refusal so a finding offered
+            // no repair start renders one advisory line naming why,
+            // instead of a silent gap on the triage screen.
+            .with_repair_route_outcome(repair_route)
     } else {
         navigation
     };

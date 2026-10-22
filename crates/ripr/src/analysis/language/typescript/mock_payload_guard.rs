@@ -11,6 +11,8 @@
 
 use super::*;
 
+mod spy;
+
 /// The facts rule 1 reads from one changed line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MockCallFacts {
@@ -18,6 +20,10 @@ pub(crate) struct MockCallFacts {
     /// Calls on the changed line made through an owner parameter that the
     /// owner body mentions nowhere else.
     calls: Vec<ParameterCall>,
+    /// Rule 4: changed-line calls on an exported module object.
+    module_calls: Vec<spy::ModuleObjectCall>,
+    /// Rule 4: related test files that may spy on a `module_calls` object.
+    spy_targets: Vec<spy::SpyTarget>,
 }
 
 /// A call `p(...)` or `p.m(...)` through the owner parameter `p` at
@@ -29,6 +35,9 @@ struct ParameterCall {
     /// `None` for `p(...)`, `Some(m)` for `p.m(...)`.
     method: Option<String>,
 }
+
+/// Modules a rule 4 test file may import besides the owner's module.
+const TEST_FRAMEWORK_MODULES: [&str; 2] = ["@jest/globals", "vitest"];
 
 impl MockCallFacts {
     /// `owner_body` is the owner's source after the change; `None` (not
@@ -77,7 +86,110 @@ impl MockCallFacts {
         Self {
             owner_name: owner_name.to_string(),
             calls,
+            ..Self::default()
         }
+    }
+
+    /// Rule 4: reads the changed line's `object.method(...)` calls on an
+    /// exported top-level `const` of the owner's module (`module_source`).
+    pub(crate) fn read_module_object_calls(
+        &mut self,
+        line_text: &str,
+        owner_source: Option<&str>,
+        owner_name: &str,
+        owner_params: &[String],
+        owner_start_line: usize,
+        module_source: Option<&str>,
+    ) {
+        let (Some(owner_source), Some(module_source)) = (owner_source, module_source) else {
+            return;
+        };
+        self.module_calls = spy::module_object_calls(
+            line_text,
+            owner_source,
+            owner_name,
+            owner_params,
+            owner_start_line,
+            module_source,
+        );
+        if !self.module_calls.is_empty() {
+            self.owner_name = owner_name.to_string();
+        }
+    }
+
+    /// Rule 4: records, for each related test file that `read_file` can
+    /// read and that installs one spy and never reruns a test or replaces a
+    /// module, every named import that `imports_owner_module` resolves to
+    /// the owner's module and that binds a `module_calls` object.
+    pub(crate) fn admit_spy_files<'t>(
+        &mut self,
+        tests: impl IntoIterator<Item = &'t TypeScriptTest>,
+        read_file: impl Fn(&std::path::Path) -> Option<String>,
+        imports_owner_module: impl Fn(&TypeScriptImport, &std::path::Path) -> bool,
+    ) {
+        if self.module_calls.is_empty() {
+            return;
+        }
+        let mut seen = Vec::new();
+        for test in tests {
+            if seen.contains(&&test.file) {
+                continue;
+            }
+            seen.push(&test.file);
+            if !read_file(&test.file).is_some_and(|source| spy::spy_safe_test_file(&source)) {
+                continue;
+            }
+            // Importing a module runs its top level before the test body, so
+            // a helper module could leave a mock with calls on the method.
+            if !test.imports_in_file.iter().all(|import| {
+                TEST_FRAMEWORK_MODULES.contains(&import.source.as_str())
+                    || imports_owner_module(import, &test.file)
+            }) {
+                continue;
+            }
+            for import in &test.imports_in_file {
+                let Some(imported) = import.imported.as_deref().filter(|_| !import.namespace)
+                else {
+                    continue;
+                };
+                for call in self
+                    .module_calls
+                    .iter()
+                    .filter(|call| call.object == imported)
+                {
+                    if imports_owner_module(import, &test.file) {
+                        self.spy_targets.push(spy::SpyTarget {
+                            test_file: test.file.clone(),
+                            local: import.local.clone(),
+                            method: call.method.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rule 1 through [`Self::credits_with_factories`], or rule 4: a spy on
+    /// a module object the changed line calls.
+    pub(crate) fn credits_in_test(
+        &self,
+        payload: &TypeScriptMockPayload,
+        test: &TypeScriptTest,
+    ) -> bool {
+        self.credits_with_factories(
+            payload,
+            &test.body_text,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ) || (payload.kind == TypeScriptMockPayloadKind::CalledWith
+            && !ts_mask_literals_and_comments(&payload.expected).contains('{')
+            && spy::credits_spy(
+                &self.spy_targets,
+                &self.owner_name,
+                &payload.target,
+                &test.file,
+                &test.body_text,
+            ))
     }
 
     /// `true` when `payload` is a primitive-literal `toHaveBeenCalledWith`
@@ -86,7 +198,7 @@ impl MockCallFacts {
     /// mentioned nowhere else but `expect(...)`.
     #[cfg(test)]
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
-        self.credits_with_factories(payload, test_body, &[])
+        self.credits_with_factories(payload, test_body, &[], &[])
     }
 
     /// [`Self::credits`], also reading `const p = f();` through the test
@@ -96,6 +208,7 @@ impl MockCallFacts {
         payload: &TypeScriptMockPayload,
         test_body: &str,
         factories: &[(String, String)],
+        spread_sources: &[(String, String)],
     ) -> bool {
         // Jest's recursive equality treats a property set to `undefined` as
         // absent, so an object payload does not pin every field.
@@ -133,7 +246,9 @@ impl MockCallFacts {
         };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
-            Some(method) => test_local_mock_property(scope, local, method, factories),
+            Some(method) => {
+                test_local_mock_property(scope, local, method, factories, spread_sources)
+            }
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -444,6 +559,7 @@ fn test_local_mock_property(
     object: &str,
     property: &str,
     factories: &[(String, String)],
+    spread_sources: &[(String, String)],
 ) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
@@ -466,7 +582,7 @@ fn test_local_mock_property(
                 // `{ ... }.inner` or `{ ... } && other` binds something else.
                 return literal_body(literal).is_some_and(|body| {
                     ends_statement(&literal[body.len() + 1..])
-                        && keys_mock_once(body, property, is_closed_mock_call)
+                        && keys_mock_once(body, property, is_closed_mock_call, spread_sources)
                 });
             }
             factories.iter().any(|(name, returned)| {
@@ -475,7 +591,7 @@ fn test_local_mock_property(
                         .strip_prefix('{')
                         .and_then(literal_body)
                         .is_some_and(|literal| {
-                            keys_mock_once(literal, property, is_bare_mock_factory)
+                            keys_mock_once(literal, property, is_bare_mock_factory, &[])
                         })
             })
         })
@@ -517,9 +633,23 @@ fn is_closed_mock_call(value: &str) -> bool {
 
 /// `true` when every entry of a flat literal body is `key: value` with a
 /// plain key and `property` is keyed exactly once, to a mock factory call.
-fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> bool {
+/// An entry `...name` is allowed when `name` is a test-file spread source
+/// (`TypeScriptTest::mock_spread_sources_in_file`) that is itself flat and
+/// has no `property` key, so the copy cannot replace the mock.
+fn keys_mock_once(
+    literal: &str,
+    property: &str,
+    is_mock: fn(&str) -> bool,
+    spread_sources: &[(String, String)],
+) -> bool {
     let mut entries = Vec::new();
     for entry in top_level_entries(literal) {
+        if let Some(name) = entry.trim().strip_prefix("...") {
+            if !spread_source_lacks(name.trim(), property, spread_sources) {
+                return false;
+            }
+            continue;
+        }
         let Some((key, value)) = entry.split_once(':') else {
             return false;
         };
@@ -534,6 +664,30 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
         (keyed.next(), keyed.next()),
         (Some((_, value)), None) if is_mock(value)
     )
+}
+
+/// `true` when `name` is a test-file spread source whose literal is flat,
+/// plain-keyed, spread-free and has neither a `property` key nor `__proto__`.
+fn spread_source_lacks(name: &str, property: &str, spread_sources: &[(String, String)]) -> bool {
+    spread_sources
+        .iter()
+        .find(|(source, _)| source == name)
+        .and_then(|(_, literal)| {
+            ts_mask_literals_and_comments(literal)
+                .strip_prefix('{')
+                .and_then(|rest| literal_body(rest).map(str::to_string))
+        })
+        .is_some_and(|body| {
+            top_level_entries(&body).into_iter().all(|entry| {
+                entry.split_once(':').is_some_and(|(key, _)| {
+                    let key = key.trim();
+                    key.starts_with(is_identifier_start)
+                        && key.chars().all(is_identifier_part)
+                        && key != property
+                        && key != "__proto__"
+                })
+            })
+        })
 }
 
 /// The text after a mock factory call `jest.fn(...)` / `vi.fn<T>(...)` that

@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast probe:src_math.ts:typescript_preview:025f98d6
   ripr context --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:025f98d6
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_math.ts:typescript_preview:025f98d6 --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast probe:src_deep_under_budget.ts:typescript_preview:85293064
   ripr context --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast --at probe:src_deep_under_budget.ts:typescript_preview:85293064
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_deep_under_budget.ts:typescript_preview:85293064 --root <cwd>/fixtures/ts_parse_depth_budget/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

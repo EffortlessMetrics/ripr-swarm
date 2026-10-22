@@ -174,6 +174,10 @@ pub(crate) struct BoundedStdinReader<R> {
     tripped: bool,
     error_reported: bool,
     trip_reason: &'static str,
+    /// Bytes read from the inner stream but withheld so a zero-length frame
+    /// is never delivered in the same read as the bytes that follow it. They
+    /// are served and observed (once, at that point) on the next poll.
+    carry: Vec<u8>,
 }
 
 enum IngressState {
@@ -201,12 +205,23 @@ impl<R> BoundedStdinReader<R> {
             tripped: false,
             error_reported: false,
             trip_reason: "ripr lsp ingress bound exceeded",
+            carry: Vec::new(),
         }
     }
 
     /// Scans `bytes` (pass-through, unmodified) and returns a static bounded
-    /// reason when a framing bound is exceeded.
-    fn observe(&mut self, bytes: &[u8]) -> Result<(), &'static str> {
+    /// reason when a framing bound is exceeded. On success returns how many
+    /// leading bytes of `bytes` may be delivered now: all of them, except that
+    /// delivery stops right after a zero-length frame (`Content-Length: 0`).
+    ///
+    /// The tower-lsp codec answers an empty body with `Ok(None)` and leaves
+    /// any bytes after it in its buffer; `FramedRead` does not re-run the
+    /// decoder until more input arrives, so a frame that shares a read with a
+    /// preceding empty frame would stall until the next message or EOF. Ending
+    /// the read at the empty frame makes the codec drain its buffer and ask
+    /// for more, which picks the withheld bytes up on the next poll. Bytes
+    /// are still delivered unmodified and in order.
+    fn observe(&mut self, bytes: &[u8]) -> Result<usize, &'static str> {
         let mut offset = 0;
         while offset < bytes.len() {
             match std::mem::replace(&mut self.state, IngressState::Header(Vec::new())) {
@@ -235,6 +250,12 @@ impl<R> BoundedStdinReader<R> {
                                 return Err(
                                     "ripr lsp ingress bound: declared Content-Length exceeds the message cap",
                                 );
+                            }
+                            Some(0) => {
+                                // Withhold everything after the empty frame
+                                // (`rest`) for a separate read; see `observe`.
+                                self.state = IngressState::Header(Vec::new());
+                                return Ok(offset - rest.len());
                             }
                             Some(length) => {
                                 let body_in_buffer = rest.len().min(length);
@@ -273,7 +294,7 @@ impl<R> BoundedStdinReader<R> {
                 }
             }
         }
-        Ok(())
+        Ok(bytes.len())
     }
 }
 
@@ -303,16 +324,34 @@ impl<R: AsyncRead + Unpin> AsyncRead for BoundedStdinReader<R> {
             )));
         }
         let before = buf.filled().len();
-        match Pin::new(&mut self.inner).poll_read(cx, buf) {
+        let polled = if self.carry.is_empty() {
+            Pin::new(&mut self.inner).poll_read(cx, buf)
+        } else {
+            let take = self.carry.len().min(buf.remaining());
+            let served: Vec<u8> = self.carry.drain(..take).collect();
+            buf.put_slice(&served);
+            Poll::Ready(Ok(()))
+        };
+        match polled {
             Poll::Ready(Ok(())) => {
                 let fresh = buf.filled()[before..].to_vec();
-                if let Err(reason) = self.observe(&fresh) {
-                    self.tripped = true;
-                    self.trip_reason = reason;
-                    self.session.trip();
-                    // The freshly read bytes are already delivered in `buf`;
-                    // the bounded error surfaces on the next poll, because an
-                    // `AsyncRead` error must not accompany newly filled bytes.
+                match self.observe(&fresh) {
+                    Ok(deliver) if deliver < fresh.len() => {
+                        buf.set_filled(before + deliver);
+                        let mut held = fresh[deliver..].to_vec();
+                        held.append(&mut self.carry);
+                        self.carry = held;
+                    }
+                    Ok(_) => {}
+                    Err(reason) => {
+                        self.tripped = true;
+                        self.trip_reason = reason;
+                        self.session.trip();
+                        // The freshly read bytes are already delivered in
+                        // `buf`; the bounded error surfaces on the next poll,
+                        // because an `AsyncRead` error must not accompany
+                        // newly filled bytes.
+                    }
                 }
                 Poll::Ready(Ok(()))
             }
@@ -595,6 +634,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zero_length_frame_does_not_share_a_read_with_the_next_frame() -> Result<(), String> {
+        // Regression: the codec returns `Ok(None)` for an empty body and
+        // leaves following bytes buffered, stalling them until more input.
+        // Every read must end at the empty frame, bytes stay unmodified.
+        let payload = b"Content-Length: 0\r\n\r\nContent-Length: 2\r\n\r\n{}Content-Length: 0\r\n\r\nContent-Length: 0\r\n\r\nContent-Length: 2\r\n\r\n{}";
+        let (mut reader, _writer) = bounds().wrap(&payload[..], tokio::io::sink());
+        let mut out = Vec::new();
+        let mut reads = Vec::new();
+        let mut chunk = [0_u8; 256];
+        loop {
+            let read = reader
+                .read(&mut chunk)
+                .await
+                .map_err(|err| format!("read failed: {err}"))?;
+            if read == 0 {
+                break;
+            }
+            reads.push(chunk[..read].to_vec());
+            out.extend_from_slice(&chunk[..read]);
+        }
+        assert_eq!(out, payload, "bytes must stay unmodified and ordered");
+        for read in &reads {
+            let empty_frames = read
+                .windows(21)
+                .enumerate()
+                .filter(|(_, window)| *window == b"Content-Length: 0\r\n\r\n")
+                .collect::<Vec<_>>();
+            for (at, _) in empty_frames {
+                assert_eq!(
+                    at + 21,
+                    read.len(),
+                    "a read must end right after a zero-length frame: {read:?}"
+                );
+            }
+        }
+        assert_eq!(
+            reads.len(),
+            4,
+            "reads must split after each empty frame: {reads:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn frames_packed_behind_an_empty_frame_survive_small_reads_and_eof() -> Result<(), String>
+    {
+        // Several non-empty frames behind an empty one, drained through tiny
+        // read buffers (so the carry is served in pieces, each observed when served),
+        // then EOF: no carried byte may be dropped or reordered.
+        let mut payload = b"Content-Length: 0\r\n\r\n".to_vec();
+        for _ in 0..5 {
+            payload.extend_from_slice(b"Content-Length: 2\r\n\r\n{}");
+        }
+        payload.extend_from_slice(b"Content-Length: 0\r\n\r\nContent-Length: 2\r\n\r\n{}");
+        for size in [1_usize, 5, 7, 64] {
+            let (mut reader, _writer) = bounds().wrap(&payload[..], tokio::io::sink());
+            let mut out = Vec::new();
+            let mut chunk = vec![0_u8; size];
+            loop {
+                let read = reader
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|err| format!("read failed at size {size}: {err}"))?;
+                if read == 0 {
+                    break;
+                }
+                out.extend_from_slice(&chunk[..read]);
+            }
+            assert_eq!(out, payload, "bytes changed with read size {size}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn body_bytes_that_look_like_headers_do_not_desync() -> Result<(), String> {
         // A body containing the header terminator bytes must be consumed as
         // body, never scanned as a header.
@@ -607,6 +720,24 @@ mod tests {
             .await
             .map_err(|err| format!("header-looking body must pass: {err}"))?;
         assert_eq!(out, stream);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bounds_still_trip_on_frames_carried_behind_an_empty_frame() -> Result<(), String> {
+        // The carried bytes are observed when served, so a violation that
+        // follows a `Content-Length: 0` frame must still trip the bound.
+        let mut over_header = b"Content-Length: 0\r\n\r\nContent-Length: 2\r\nX-Pad: ".to_vec();
+        over_header.extend_from_slice(&[b'x'; 128]);
+        over_header.extend_from_slice(b"\r\n\r\n{}");
+        let over_length = b"Content-Length: 0\r\n\r\nContent-Length: 257\r\n\r\n".to_vec();
+        for payload in [over_header, over_length] {
+            let (reader, _writer) = bounds().wrap(&payload[..], tokio::io::sink());
+            match read_all(reader).await {
+                Err(err) if err.kind() == io::ErrorKind::InvalidData => {}
+                other => return Err(format!("expected InvalidData trip, got: {other:?}")),
+            }
+        }
         Ok(())
     }
 

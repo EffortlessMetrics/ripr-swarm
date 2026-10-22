@@ -299,6 +299,20 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
         "  return { ...cfg, ok: true };",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // #8712 capped the negated oracle at weak credit; a negated identity
+    // matcher (`not.toBe`) asserts NON-identity, so it cannot pin the
+    // returned object's identity for a copy-for-identity change either. Only
+    // the unconditional structural assertion grants credit here, and rule 1
+    // demotes the copy-for-identity change.
+    let negated = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  const other = { ok: true };\n  expect(ready(cfg)).not.toBe(other);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+    let finding = settings_finding("identity-copy-negated-pin", negated, "  return cfg;")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "a negated identity matcher must not pin identity: {:?}",
+        finding.missing
+    );
     Ok(())
 }
 
@@ -765,4 +779,74 @@ fn identity_copy_subject_reads_both_directions() {
             "{old} -> {new}"
         );
     }
+}
+
+#[test]
+fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String> {
+    let head = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    // Rule 4: an `expect(` the rule 2 refusals leave uncollected is unknown.
+    for (label, body) in [
+        (
+            "refused-then-rejection-handler",
+            "  return Promise.resolve(ready(cfg)).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "refused-async-foreach",
+            "  [cfg].forEach(async (c) => { await Promise.resolve(); expect(ready(c)).toEqual(c); });\n",
+        ),
+    ] {
+        let test = format!("{head}{body}}});\n");
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+        assert!(
+            !finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("mocks a module"),
+            "{label}: {}",
+            finding.ripr.reveal.discriminate.summary
+        );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![crate::domain::StopReason::GapEvidenceUnresolved],
+            "{label}"
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("no new assertion is needed")),
+            "{label}: {:?}",
+            finding.recommended_next_step
+        );
+    }
+    // Discriminating negatives that reach the arm (same-file no-op helper,
+    // so admission is `Unresolved` and nothing is collected): the markers
+    // beside it, in code that does not hold the `expect(`, or inside a
+    // comment or string, leave the gap actionable.
+    for (label, extra) in [
+        ("plain-helper", ""),
+        (
+            "unrelated-then",
+            "  Promise.resolve(1).then((n) => n + 1);\n",
+        ),
+        (
+            "unrelated-callback-expect",
+            "  Promise.resolve(1).then(() => expect(1).toBe(1));\n",
+        ),
+        ("then-in-comment", "  // x.then((r) => expect(r).toBe(1))\n"),
+        (
+            "then-in-string",
+            "  const note = \".then(() => expect(1))\";\n",
+        ),
+    ] {
+        let test = format!(
+            "import {{ ready }} from \"../src/settings\";\nfunction check(v: unknown) {{}}\ntest(\"ready\", () => {{\n  const cfg = {{ ok: true }};\n{extra}  check(ready(cfg));\n}});\n"
+        );
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
 }

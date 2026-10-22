@@ -8,7 +8,7 @@ use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -45,12 +45,15 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         }
     };
     if subcommand != "evaluate" {
-        return Err(CommandError::from(format!(
-            "unknown gate subcommand {subcommand:?}; expected `evaluate`"
+        return Err(CommandError::from(unknown_value(
+            "gate subcommand",
+            subcommand,
+            &["evaluate"],
         )));
     }
 
     let options = parse_gate_options(rest)?;
+    crate::atomic_file::ensure_report_output_contained(&options.input.root)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     // Only `--pr-guidance` and `--gap-ledger` feed gate candidates.
@@ -476,13 +479,13 @@ mod tests {
         assert_eq!(
             gate(&args(&["inspect"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"inspect\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"inspect\". Accepted: evaluate.".to_string()
             ))
         );
         assert_eq!(
             gate(&args(&["foo"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"foo\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"foo\". Accepted: evaluate.".to_string()
             ))
         );
         assert_eq!(
@@ -525,6 +528,17 @@ mod tests {
     }
 
     #[test]
+    fn unknown_gate_subcommand_suggests_evaluate_for_evalute() {
+        assert_eq!(
+            gate(&args(&["evalute"])),
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"evalute\". Did you mean `evaluate`? Accepted: evaluate."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn gate_leading_flags_dispatch_to_evaluate() -> Result<(), CommandError> {
         // `ripr gate --pr-guidance <path> --mode visible-only` must imply
         // evaluate (#7740), not treat `--pr-guidance` as a subcommand. The
@@ -554,7 +568,7 @@ mod tests {
         assert_ne!(
             flag_result,
             Err(CommandError::Failure(
-                "unknown gate subcommand \"--pr-guidance\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"--pr-guidance\". Accepted: evaluate.".to_string()
             )),
             "leading --pr-guidance must not be a subcommand"
         );
@@ -1001,5 +1015,29 @@ mod tests {
             &out.display().to_string(),
         ]));
         assert_gate_root_refusal(result, &root, &out)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_evaluate_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let base = unique_command_test_dir("gate-review-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let result = gate(&args(&["evaluate", "--root", &root.display().to_string()]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
+        Ok(())
     }
 }

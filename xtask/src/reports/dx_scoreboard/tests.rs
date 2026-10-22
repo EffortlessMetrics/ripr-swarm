@@ -1174,6 +1174,107 @@ fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(),
 }
 
 #[test]
+fn the_nightly_row_receipt_gates_a_slower_install() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl. The summary-receipt
+    // test already gates a slower install; this one uses the row converter
+    // the lane actually reads. Slack is max(baseline * regression_pct/100,
+    // regression_floor) from the committed first_run.install_seconds row.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let install = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "first_run.install_seconds")
+        .ok_or("first_run.install_seconds missing from scoreboards.toml")?;
+    if install.regression_additive {
+        return Err(
+            "first_run.install_seconds uses additive slack; this test derives max(pct, floor)"
+                .to_string(),
+        );
+    }
+    if !install.runner_dependent {
+        return Err("first_run.install_seconds must be runner_dependent".to_string());
+    }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The row converter also emits time_to_first_useful_result_s, which moves
+    // with install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
+    let boards = vec!["first_run".to_string()];
+    let rows = |install_secs: f64| -> Result<Vec<Sample>, String> {
+        let text = [
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":{install_secs},"budget":null,"better":"lower"}}"#),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":5.0,"budget":60,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline_samples = rows(40.0)?;
+    let baseline_secs = baseline_samples
+        .iter()
+        .find(|sample| sample.metric == "first_run.install_seconds")
+        .and_then(|sample| match sample.outcome {
+            SampleOutcome::Value(value) => Some(value),
+            _ => None,
+        })
+        .ok_or("first-run rows did not yield a completed install_seconds sample")?;
+    let slack = (baseline_secs * pct / 100.0).max(floor);
+    if slack < 1.0 {
+        return Err(
+            "first_run.install_seconds slack is under 1 s; cannot place \
+             just-inside/just-outside samples"
+                .to_string(),
+        );
+    }
+    // Stay 1 s off the allowed worsening so an exact-boundary sample cannot
+    // fail from floating-point rounding of pct * baseline.
+    let inside = baseline_secs + slack - 1.0;
+    let outside = baseline_secs + slack + 1.0;
+    let baseline = build_report(
+        &gate_config,
+        &boards,
+        &baseline_samples,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &gate_config,
+            &boards,
+            &rows(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(
+        gate(inside, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(outside, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(outside, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,
@@ -1207,7 +1308,7 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
     assert_eq!(
         get("first_run.over_budget_steps")[0]["evidence"],
-        json!("a/check secs 12 > 10")
+        json!("step-occurrences-v1: a/check secs 12 > 10")
     );
     assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
     assert_eq!(
@@ -1234,6 +1335,263 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
         parse_ingest_text("{\"schema\":\"other\"}\nnot json")
             .is_err_and(|err| err.contains("line 1"))
     );
+}
+
+#[test]
+fn first_run_rows_count_a_dual_budget_breach_once_per_step_occurrence() {
+    // Rows exactly as `scoreboard_rows` exports them for one `check` step
+    // whose receipt `budget_breaches` carries both a secs and a
+    // stdout_lines breach: ingestion must agree with the public-proof
+    // renderer (one step occurrence), not count breached metric rows.
+    let text = [
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"stdout_lines","value":61,"budget":60,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"friction_count","value":2,"budget":0,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"secs","value":0.1,"budget":30,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
+    ]
+    .join("\n");
+    let value = parse_ingest_text(&text).unwrap_or_default();
+    let converted = first_run_rows_to_input(&value).unwrap_or_default();
+    let get = |id: &str| -> Vec<Value> {
+        converted["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["id"].as_str() == Some(id))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
+    // Both evidence entries stay attached to the single counted occurrence.
+    assert_eq!(
+        get("first_run.over_budget_steps")[0]["evidence"],
+        json!("step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60")
+    );
+    // Workflow size stays on its own metric.
+    assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
+}
+
+#[test]
+fn first_run_rows_count_repeated_step_occurrences_separately() {
+    let row = |metric: &str, value: &str, budget: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"{metric}","value":{value},"budget":{budget},"better":"lower"}}"#
+        )
+    };
+    // Two occurrences of `check`, each breaching both budgets: 2, not 4.
+    let dual_twice = [
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+        row("secs", "13.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "62", "60"),
+    ]
+    .join("\n");
+    let converted = first_run_rows_to_input(&parse_ingest_text(&dual_twice).unwrap_or_default())
+        .unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+    assert_eq!(
+        steps_row["evidence"],
+        json!(
+            "step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60, a/check secs 13 > 10, a/check stdout_lines 62 > 60"
+        )
+    );
+    // First occurrence breaches only stdout, second only secs: the
+    // non-breaching rows still separate the occurrences, so this is 2.
+    let split = [
+        row("secs", "5.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "10", "60"),
+    ]
+    .join("\n");
+    let converted =
+        first_run_rows_to_input(&parse_ingest_text(&split).unwrap_or_default()).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+}
+
+#[test]
+fn first_run_rows_single_budget_and_missing_rows_have_no_phantom_count() {
+    let text = [
+        // Null budgets: measured, but nothing can breach.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"secs","value":99.0,"budget":null,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"stdout_lines","value":999,"budget":null,"better":"lower"}"#,
+        // One budget breached, the other row missing entirely: counts 1.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        // Under budget with no stdout row: no phantom occurrence.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"secs","value":1.0,"budget":30,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+    ]
+    .join("\n");
+    let value = parse_ingest_text(&text).unwrap_or_default();
+    let converted = first_run_rows_to_input(&value).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(1));
+    assert_eq!(
+        steps_row["evidence"],
+        json!("step-occurrences-v1: a/check secs 12 > 10")
+    );
+}
+
+#[test]
+fn first_run_rows_missing_first_stdout_row_does_not_merge_occurrences() {
+    let row = |metric: &str, value: &str, budget: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"{metric}","value":{value},"budget":{budget},"better":"lower"}}"#
+        )
+    };
+    // First occurrence breaches only secs and has no stdout_lines row;
+    // second breaches only stdout. The second occurrence's stdout row
+    // belongs to the occurrence started by the second secs row, not to
+    // the earliest occurrence that has not seen stdout yet: 2, not 1.
+    let text = [
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("secs", "5.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+    ]
+    .join("\n");
+    let converted =
+        first_run_rows_to_input(&parse_ingest_text(&text).unwrap_or_default()).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+    assert_eq!(
+        steps_row["evidence"],
+        json!("step-occurrences-v1: a/check secs 12 > 10, a/check stdout_lines 61 > 60")
+    );
+}
+
+#[test]
+fn first_run_over_budget_baseline_from_breached_row_grain_is_not_compared() -> Result<(), String> {
+    let config = parse_config(
+        r#"
+schema_version = "ripr-dx-scoreboards-v1"
+
+[[corpus]]
+id = "serde"
+url = "https://github.com/serde-rs/serde"
+sha = "dd18663450ec3ee38e35e3a4ee141932614e662c"
+
+[[metric]]
+id = "first_run.over_budget_steps"
+board = "first_run"
+title = "First-run steps over budget"
+unit = "steps"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+"#,
+    )?;
+    let boards = vec!["first_run".to_string()];
+    let with_detail = |value: f64, detail: &str| Sample {
+        metric: "first_run.over_budget_steps".to_string(),
+        repo: None,
+        outcome: SampleOutcome::Value(value),
+        detail: detail.to_string(),
+    };
+    // Pre-change baseline: one dual breach counted as 2 breached rows.
+    // Current: two single-breach occurrences also count 2. Comparing
+    // across grains would hide the added over-budget step.
+    let old_baseline = build_report(
+        &config,
+        &boards,
+        &[with_detail(
+            2.0,
+            "ingested from first-run: a/check secs 12 > 10, a/check stdout_lines 61 > 60",
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let current = vec![with_detail(
+        2.0,
+        "ingested from first-run: step-occurrences-v1: a/check secs 12 > 10, a/pilot stdout_lines 61 > 60",
+    )];
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&old_baseline),
+        true,
+    );
+    let row = metric(&report, "first_run.over_budget_steps")?;
+    assert_eq!(row["baseline"]["comparable"].as_bool(), Some(false));
+    let reason = row["baseline"]["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("step-occurrences-v1"), "{reason}");
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert!(
+        report["gate"]["uncompared"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item["metric"] == "first_run.over_budget_steps")),
+        "{}",
+        report["gate"]
+    );
+    // A baseline recorded at the step-occurrence grain still compares,
+    // and a rise past its zero margin still regresses.
+    let new_baseline = build_report(
+        &config,
+        &boards,
+        &[with_detail(
+            1.0,
+            "ingested from first-run: step-occurrences-v1: a/check secs 12 > 10",
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&new_baseline),
+        true,
+    );
+    let row = metric(&report, "first_run.over_budget_steps")?;
+    assert_eq!(row["baseline"]["comparable"].as_bool(), Some(true));
+    assert_eq!(row["baseline"]["regressed"].as_bool(), Some(true));
+    Ok(())
 }
 
 #[test]
@@ -2488,6 +2846,184 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
         .filter(|metric| metric.starts_with("ranking."))
         .collect();
     assert_eq!(uncompared.len(), 9, "{}", crossed["gate"]);
+    Ok(())
+}
+
+/// The refuted counts may rise by the picks the run admitted (7167): the
+/// stale baseline (top 5: 1 confirmed, 11 refuted of 21 picks; top 10: 1/16 of
+/// 32) against the grown run (3/14 of 24; 7/19 of 39) must pass, while a
+/// refuted pick that was not admitted by growth, a worse mix and a shrinking
+/// pick count must still fail.
+#[test]
+fn ranking_gate_allows_refuted_counts_to_grow_with_admitted_picks_only() -> Result<(), String> {
+    let cut = |picks: u64, confirmed: u64, refuted: u64| {
+        let scored = confirmed + refuted;
+        json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": refuted,
+            "unscored": picks - scored,
+            "precision": confirmed as f64 / scored as f64,
+            "scored_share": scored as f64 / picks as f64,
+            "distinct_functions": picks,
+            "distinct_function_share": 1.0,
+        })
+    };
+    let receipt = |top5: Value, top10: Value| {
+        json!({
+            "schema_version": "ripr-pilot-ranking-v1",
+            "corpus_version": "test",
+            "status": "complete",
+            "repos_total": 5,
+            "unavailable_repos": 0,
+            "pooled": {"top5": top5, "top10": top10},
+        })
+    };
+    let config = load_config(&committed_config())?;
+    let boards = vec!["ranking".to_string()];
+    let report = |value: &Value, baseline: Option<&Value>| -> Result<Value, String> {
+        let samples = parse_ingest(value, &config)?;
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("r"),
+            baseline,
+            true,
+        ))
+    };
+    let regressed = |report: &Value| {
+        report["gate"]["regressions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["metric"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let baseline = report(&receipt(cut(21, 1, 11), cut(32, 1, 16)), None)?;
+
+    // The stale-baseline run from #8903: precision and shares improve and the
+    // refuted counts rise by fewer than the picks added.
+    let grown = report(&receipt(cut(24, 3, 14), cut(39, 7, 19)), Some(&baseline))?;
+    assert!(regressed(&grown).is_empty(), "{}", grown["gate"]);
+
+    // The same baseline still catches a refuted count above what growth adds:
+    // 4 more refuted top-5 picks for 3 more picks.
+    let beyond = regressed(&report(
+        &receipt(cut(24, 3, 15), cut(39, 7, 19)),
+        Some(&baseline),
+    )?);
+    assert_eq!(beyond, vec!["ranking.pilot_refuted_top5".to_string()]);
+
+    // Without growth the count is as strict as before: one more refuted pick
+    // at the same pick count fails.
+    let flat = regressed(&report(
+        &receipt(cut(21, 1, 11), cut(32, 1, 17)),
+        Some(&baseline),
+    )?);
+    assert!(
+        flat.contains(&"ranking.pilot_refuted_top10".to_string()),
+        "{flat:?}"
+    );
+
+    // A shrinking pick count earns no margin either.
+    let shrunk = regressed(&report(
+        &receipt(cut(20, 1, 12), cut(32, 1, 16)),
+        Some(&baseline),
+    )?);
+    assert!(
+        shrunk.contains(&"ranking.pilot_refuted_top5".to_string()),
+        "{shrunk:?}"
+    );
+
+    // From the refreshed baseline, three more picks that are all refuted pass
+    // the refuted counts (they are admitted growth) but drag top-10 precision
+    // from 7/26 to 7/29, past its floor, so the precision row still fails.
+    let fresh = report(&receipt(cut(24, 3, 14), cut(39, 7, 19)), None)?;
+    let diluted = regressed(&report(
+        &receipt(cut(27, 3, 17), cut(42, 7, 22)),
+        Some(&fresh),
+    )?);
+    assert_eq!(diluted, vec!["ranking.pilot_precision_top10".to_string()]);
+    Ok(())
+}
+
+/// Across repositories each one's own verdict decides a growth-allowance
+/// metric: an unchanged repository must not revoke another's allowance, and a
+/// repository that worsens without admitting picks must still fail.
+#[test]
+fn pick_growth_allowance_is_judged_per_repository() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let def = config
+        .metric
+        .iter()
+        .find(|def| def.id == "ranking.pilot_refuted_top10")
+        .ok_or("refuted metric is configured")?;
+    let sample = |repo: &str, refuted: u64, picks: u64| {
+        json!({
+            "repo": repo,
+            "status": "below_target",
+            "value": refuted as f64,
+            "detail": format!("0 confirmed, {refuted} refuted of {picks} picks"),
+        })
+    };
+    let row = |a: (u64, u64), b: (u64, u64)| {
+        let worst = a.0.max(b.0) as f64;
+        json!({
+            "id": def.id,
+            "value": worst,
+            "samples": [sample("a", a.0, a.1), sample("b", b.0, b.1)],
+        })
+    };
+    let compare = |now: &Value, before: &Value| {
+        compare_with_baseline(def, now, &context("r"), Some(&json!({"metrics": [before]})))
+    };
+    let before = row((0, 5), (10, 20));
+    // Only repository b admitted picks (20 -> 22) and its refuted count rose
+    // by that many; repository a is unchanged.
+    let grown = compare(&row((0, 5), (12, 22)), &before);
+    assert_eq!(grown["regressed"], json!(false), "{grown}");
+    // Repository b refuted one more pick without admitting any: fails.
+    let flipped = compare(&row((0, 5), (11, 20)), &before);
+    assert_eq!(flipped["regressed"], json!(true), "{flipped}");
+    // Growth in repository a does not excuse repository b.
+    let borrowed = compare(&row((2, 7), (11, 20)), &before);
+    assert_eq!(borrowed["regressed"], json!(true), "{borrowed}");
+    // A baseline whose evidence lacks the pick count gets no margin.
+    let mut legacy = before.clone();
+    legacy["samples"][1]["detail"] = json!("10 refuted");
+    let strict = compare(&row((0, 5), (12, 22)), &legacy);
+    assert_eq!(strict["regressed"], json!(true), "{strict}");
+    Ok(())
+}
+
+#[test]
+fn evidence_picks_reads_the_pick_count_only_from_the_ranking_wording() {
+    assert_eq!(
+        evidence_picks(
+            "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6) over 5 of 5 repositories"
+        ),
+        Some(39)
+    );
+    assert_eq!(
+        evidence_picks("7 confirmed, 19 refuted of 39 results"),
+        None
+    );
+    assert_eq!(evidence_picks("23 distinct functions in 32 picks"), None);
+    assert_eq!(evidence_picks("refuted of picks"), None);
+}
+
+#[test]
+fn pick_growth_allowance_is_limited_to_lower_is_better_ingested_metrics() -> Result<(), String> {
+    let text = fs::read_to_string(committed_config()).map_err(|err| err.to_string())?;
+    let marker = "id = \"ranking.pilot_confirmed_top5\"\n";
+    assert!(text.contains(marker));
+    let flagged = text.replace(marker, &format!("{marker}pick_growth_allowance = true\n"));
+    assert!(
+        parse_config(&flagged).is_err_and(|err| err.contains("pick_growth_allowance")),
+        "a higher-is-better metric must not take a growth margin"
+    );
+    parse_config(&text)?;
     Ok(())
 }
 

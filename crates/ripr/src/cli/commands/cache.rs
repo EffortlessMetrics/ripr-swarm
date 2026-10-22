@@ -2,7 +2,7 @@ use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
     inspect_cache_root,
 };
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
 use std::ffi::OsStr;
@@ -629,8 +629,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         "status" => run_status(rest),
         "export" => run_export(rest),
         "clear" => run_clear(rest),
-        other => Err(format!(
-            "unknown cache subcommand {other:?}; expected `status`, `export` or `clear`"
+        other => Err(unknown_value(
+            "cache subcommand",
+            other,
+            &["status", "export", "clear"],
         )),
     }
 }
@@ -1937,6 +1939,17 @@ mod tests {
             return Err("unknown cache subcommand unexpectedly passed".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn unknown_cache_subcommand_suggests_status_for_stat() {
+        assert_eq!(
+            run(&["stat".to_string()]),
+            Err(
+                "unknown cache subcommand \"stat\". Did you mean `status`? Accepted: status, export, clear."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

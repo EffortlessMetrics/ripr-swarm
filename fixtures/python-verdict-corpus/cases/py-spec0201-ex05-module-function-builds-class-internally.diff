@@ -1,0 +1,11 @@
+diff --git a/reach/prepared.py b/reach/prepared.py
+--- a/reach/prepared.py
++++ b/reach/prepared.py
+@@ -1,6 +1,6 @@
+ class PreparedRequest:
+     def _encode(self, body):
+-        return body.upper()
++        return body.lower()
+ 
+     def prepare(self, body):
+         return self._encode(body)

@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-cart-method-total.json",
-    "sha256": "115cb43dd2bc9773a9142db697071398d75786920175d04379610c83161e06c6",
+    "sha256": "afb2736b83638c30a818f0183020731119033a4d707844040069050a6c04ba78",
     "provenance": "producer"
   }
 }

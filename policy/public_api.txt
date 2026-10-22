@@ -109,7 +109,17 @@ pub fn ripr::output::receipt_lifecycle::receipt_lifecycle_state_is_present
 # cargo test -p ripr --lib output::mutation_calibration,
 # cargo test -p xtask mutation_calibration_imports_cargo_mutants_27_1,
 # cargo xtask check-public-api.
+# Issue #6708: same owner; reason: expose retained runtime spans, location
+# conflict, and the span-containment join so xtask mutation-calibration
+# cannot keep a file/line-only copy; covered_by:
+# cargo test -p ripr --lib output::mutation_calibration,
+# cargo test -p xtask reports::mutation,
+# cargo xtask check-public-api.
+pub use ripr::output::CargoMutantsLocationJoin
 pub use ripr::output::CargoMutantsOutcomeRecord
+pub use ripr::output::CargoMutantsRuntimeSpan
+pub use ripr::output::CargoMutantsSeamLocation
+pub use ripr::output::join_cargo_mutants_location
 pub use ripr::output::parse_cargo_mutants_outcomes_json
 pub fn ripr::output::start_here_state::normalize_start_here_output_state
 pub fn ripr::output::start_here_state::start_here_output_state_is_known
@@ -158,6 +168,7 @@ pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
 pub use ripr::CheckInput
 pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
+pub use ripr::DiffScopeFilter
 pub use ripr::ExposureClass
 pub use ripr::Finding
 pub use ripr::GitCandidateBase
@@ -203,6 +214,7 @@ pub use ripr::Summary
 pub use ripr::SuppressedCheckFinding
 pub use ripr::TestEvidenceEntry
 pub use ripr::TestEvidenceSummary
+pub use ripr::analysis::DiffScopeFilter
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope

@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values,
+    is_computed_value_expression, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
@@ -266,6 +266,26 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     owner: Option<&FunctionSummary>,
     owner_has_other_callers: bool,
 ) -> StageEvidence {
+    // A returned bare comparison with a resolved missing boundary
+    // discriminator reads the predicate lens's gap, never a better reading:
+    // only a `weak` result replaces the return-value reading, which is
+    // otherwise unchanged (#9094).
+    if let Some(mut predicate) = returned_comparison_view(probe)
+        && !activation.missing_discriminators.is_empty()
+    {
+        predicate.family = ProbeFamily::Predicate;
+        let evidence = infection_evidence_for_owner(
+            &predicate,
+            related_tests,
+            activation,
+            unresolved_boundary,
+            owner,
+            owner_has_other_callers,
+        );
+        if matches!(evidence.state, StageState::Weak) {
+            return evidence;
+        }
+    }
     match probe.family {
         ProbeFamily::Predicate => {
             let probe_literals = boundary_literals(&probe.expression);
@@ -435,7 +455,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown",
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it",
                         probe_literals.join(", ")
                     ),
                 )
@@ -606,7 +626,15 @@ fn balanced(text: &str) -> bool {
 }
 
 fn unresolved_boundary_summary(reason: &str) -> String {
-    format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown")
+    // An operand that is a local or computed value comes from somewhere ripr
+    // cannot trace (a test input it cannot fold, the runtime, a random draw).
+    // Name what it can read, so the unknown ends in a next step.
+    let next = if reason.starts_with("boundary operand") {
+        "; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+    } else {
+        ""
+    };
+    format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown{next}")
 }
 
 /// Numeric, char or byte: (quoted, byte-prefixed).
@@ -644,9 +672,35 @@ fn no_literal_boundary_summary(expression: &str) -> String {
         Some(name) => format!(
             "Predicate compares against constant {name}; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a matching literal input, or an argument naming {name} would resolve it), so activation/infection is unknown"
         ),
-        None => "Predicate changed, but no literal boundary was visible in the changed expression"
-            .to_string(),
+        None => match comparison_operands(expression) {
+            // Neither side spells a value (`val > surrogate_start`): say
+            // what ripr compared and what would settle it, instead of
+            // sending the reader after a literal that is not there.
+            Some((left, right))
+                if is_plain_path(&left)
+                    && is_plain_path(&right)
+                    && super::activation::literal_operand_value(&left).is_none()
+                    && super::activation::literal_operand_value(&right).is_none() =>
+            {
+                format!(
+                    "Predicate compares `{left}` with `{right}`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"
+                )
+            }
+            _ => "Predicate changed, but no literal boundary was visible in the changed expression"
+                .to_string(),
+        },
     }
+}
+
+/// An operand that is one identifier, field or module path
+/// (`val`, `self.count`, `limits::MAX`): the only shape the splitter cuts
+/// cleanly out of a compound predicate such as `ready && total < base * 3`.
+fn is_plain_path(operand: &str) -> bool {
+    !operand.is_empty()
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':'))
+        && !operand.starts_with(|ch: char| ch.is_ascii_digit())
 }
 
 /// Returns true iff the expression is an exact wildcard discard that provably
@@ -662,6 +716,19 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
+        let local = unresolved_boundary_summary(
+            "boundary operand `unit` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches",
+        );
+        assert!(local.ends_with(
+            "activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+        ));
+        // A reason that is not about an operand keeps its own ending.
+        let other = unresolved_boundary_summary("a compared argument is computed");
+        assert!(other.ends_with("activation/infection is unknown"));
+    }
+
     use super::super::super::rust_index::LiteralFact;
     use super::*;
     use std::path::PathBuf;
@@ -712,7 +779,7 @@ mod tests {
         let parameter = probe(ProbeFamily::Predicate, "amount >= threshold");
         assert_eq!(
             infection_evidence(&parameter, &[&test], &ActivationEvidence::default()).summary,
-            "Predicate changed, but no literal boundary was visible in the changed expression"
+            "Predicate compares `amount` with `threshold`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"
         );
     }
 
@@ -779,7 +846,7 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it"
         );
     }
 
@@ -886,6 +953,7 @@ mod tests {
             observed_values: facts
                 .iter()
                 .map(|(value, context)| ValueFact {
+                    file: None,
                     line: 1,
                     text: String::new(),
                     value: (*value).to_string(),
