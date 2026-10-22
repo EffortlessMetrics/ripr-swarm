@@ -88,7 +88,10 @@ jobs:
       - name: Wait for server manifest
         run: |
           version="${RAW_VERSION#v}"
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/ripr-server-manifest-v${version}.json"
+          # The manifest is keyed by distribution generation (X.Y.Z), while an
+          # RC places it under its own tag (the editor's rcManifestUrl).
+          generation="${version%%[-+]*}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/ripr-server-manifest-v${generation}.json"
           for attempt in $(seq 1 90); do
             status="$(curl -L -sS -o /dev/null -w "%{http_code}" "$url" || true)"
             if [ "$status" = "200" ]; then
