@@ -1,4 +1,10 @@
 {
+  "analysis_scope": {
+    "changed_files": [
+      "src/gone.rs"
+    ],
+    "scope": "gap_ledger_artifact"
+  },
   "baseline": {
     "entries": 3,
     "invalid": 1,
