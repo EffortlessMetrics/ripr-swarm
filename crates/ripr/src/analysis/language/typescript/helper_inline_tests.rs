@@ -18,6 +18,20 @@ fn assertion_count(source: &str) -> usize {
         .map_or(0, |test| test.assertions.len())
 }
 
+/// 1 when the helper-inline pass itself rewrites the source, else 0. The
+/// extraction path also runs the same-file assertion-helper pre-pass
+/// (RIPR-SPEC-0243 decision 19), which credits some shapes this pass refuses,
+/// so the refusal tests measure this pass directly.
+fn inline_rewrites(source: &str) -> usize {
+    let allocator = oxc_allocator::Allocator::default();
+    let file = Path::new("tests/lib.test.ts");
+    let ret = oxc_parser::Parser::new(&allocator, source, source_type_for(file)).parse();
+    usize::from(
+        ret.errors.is_empty()
+            && super::helper_inline::inline_test_helpers(&ret.program.body, source).is_some(),
+    )
+}
+
 fn finding_for(source: &str) -> Result<Finding, String> {
     let owners = extract_owners(Path::new("src/lib.ts"), OWNER);
     let tests = extract_tests(Path::new("tests/lib.test.ts"), source);
@@ -162,7 +176,7 @@ fn ts_shapes_that_are_not_provably_straight_line_stay_unknown() {
     ];
     for (label, helper, body) in cases {
         let text = source(&helper, body);
-        assert_eq!(assertion_count(&text), 0, "{label}: {text}");
+        assert_eq!(inline_rewrites(&text), 0, "{label}: {text}");
     }
 }
 
@@ -189,10 +203,10 @@ fn ts_test_with_a_declaration_or_parameter_is_not_inlined() {
         HELPER,
         "  const passes = () => true;\n  checkPass(50, true);\n",
     );
-    assert_eq!(assertion_count(&with_local), 0);
+    assert_eq!(inline_rewrites(&with_local), 0);
     let with_parameter =
         format!("{IMPORTS}{HELPER}test(\"pass mark\", (t) => {{\n  checkPass(50, true);\n}});\n");
-    assert_eq!(assertion_count(&with_parameter), 0);
+    assert_eq!(inline_rewrites(&with_parameter), 0);
 }
 
 #[test]
@@ -223,7 +237,7 @@ fn ts_this_arguments_or_assertion_named_parameters_are_not_inlined() {
             "  checkPass(50, true);\n"
         };
         let text = source(helper, call);
-        assert_eq!(assertion_count(&text), 0, "{helper}");
+        assert_eq!(inline_rewrites(&text), 0, "{helper}");
     }
 }
 
@@ -259,7 +273,7 @@ fn ts_the_rewrite_is_exactly_the_substituted_assertions() -> Result<(), String> 
 fn ts_opaque_files_are_not_inlined() {
     for line in ["eval(\"1\");\n", "const s = \"\\u0041\";\n"] {
         let text = format!("{line}{}", source(HELPER, "  checkPass(50, true);\n"));
-        assert_eq!(assertion_count(&text), 0, "{line}");
+        assert_eq!(inline_rewrites(&text), 0, "{line}");
     }
 }
 
@@ -272,7 +286,7 @@ fn ts_callbacks_that_are_not_plain_sync_arrows_are_not_inlined() {
         "test(\"pass mark\", (t) =>",
     ] {
         let text = raw(head, "  checkPass(50, true);\n");
-        assert_eq!(assertion_count(&text), 0, "{head}");
+        assert_eq!(inline_rewrites(&text), 0, "{head}");
     }
 }
 
@@ -281,7 +295,7 @@ fn ts_a_test_nested_in_describe_is_not_inlined() {
     let text = format!(
         "{IMPORTS}{HELPER}describe(\"suite\", () => {{\n  test(\"pass mark\", () => {{\n    checkPass(50, true);\n  }});\n}});\n"
     );
-    assert_eq!(assertion_count(&text), 0);
+    assert_eq!(inline_rewrites(&text), 0);
 }
 
 #[test]
@@ -292,7 +306,7 @@ fn ts_a_call_that_does_not_own_its_lines_is_not_inlined() {
         "  checkPass(\n    50, true);\n",
     ] {
         let text = source(HELPER, body);
-        assert_eq!(assertion_count(&text), 0, "{body}");
+        assert_eq!(inline_rewrites(&text), 0, "{body}");
     }
 }
 
@@ -311,7 +325,7 @@ fn ts_an_assertion_the_substitution_cannot_prove_is_not_inlined() {
             "function checkPass(score: number, want: boolean): void {{\n  {assertion}\n}}\n\n"
         );
         let text = source(&helper, "  checkPass(50, true);\n");
-        assert_eq!(assertion_count(&text), 0, "{assertion}");
+        assert_eq!(inline_rewrites(&text), 0, "{assertion}");
     }
 }
 
@@ -319,7 +333,7 @@ fn ts_an_assertion_the_substitution_cannot_prove_is_not_inlined() {
 fn ts_a_body_with_a_non_expression_statement_is_not_inlined() {
     for first in ["const x = 1;", "if (true) {}", "let y;"] {
         let text = source(HELPER, &format!("  {first}\n  checkPass(50, true);\n"));
-        assert_eq!(assertion_count(&text), 0, "{first}");
+        assert_eq!(inline_rewrites(&text), 0, "{first}");
     }
 }
 
@@ -343,5 +357,5 @@ fn ts_a_rewrite_that_fails_to_parse_keeps_the_files_other_tests() {
     let tests = extract_tests(Path::new("tests/lib.test.ts"), &text);
     let other = tests.iter().find(|test| test.local_name == "other");
     assert_eq!(other.map(|test| test.assertions.len()), Some(1));
-    assert_eq!(assertion_count(&text), 0);
+    assert_eq!(inline_rewrites(&text), 1);
 }
