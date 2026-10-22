@@ -1287,6 +1287,7 @@ mod unix_stubs {
             != [
                 "execution-scrubbed-path",
                 "execution-owned-cwd",
+                "execution-decoy-repository",
                 "execution-stale-artifact",
                 "execution-snapshot-isolation",
                 "execution-cleanup-failure",
