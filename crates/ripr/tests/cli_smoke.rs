@@ -3570,6 +3570,43 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         "{}",
         String::from_utf8_lossy(&nothing.stderr)
     );
+    // The `--json` refusal is the non-consumable analysis_failed envelope:
+    // no findings, nothing downstream may consume it, and the message carries
+    // the scope identity and the files the pattern missed.
+    let envelope: serde_json::Value = serde_json::from_slice(&nothing.stdout)
+        .map_err(|err| format!("matched-nothing refusal must be JSON: {err}"))?;
+    for (pointer, expected) in [
+        ("/analysis_scope/run_status", "analysis_failed"),
+        ("/run_limitations/0/category", "analysis_failed"),
+    ] {
+        assert_eq!(
+            envelope
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str),
+            Some(expected),
+            "{pointer}: {envelope}"
+        );
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        assert_eq!(
+            envelope.pointer(pointer),
+            Some(&serde_json::Value::Bool(false)),
+            "{pointer}: {envelope}"
+        );
+    }
+    assert_eq!(envelope["findings"].as_array().map(Vec::len), Some(0));
+    let message = envelope["run_limitations"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        message.starts_with("scope_filter_matched_nothing:")
+            && message.contains("--path nowhere/**")
+            && message.contains("src/big.rs"),
+        "{message}"
+    );
 
     // A scope that keeps the oversized file still trips the guard.
     let still_big = run(&["--path", "src/big.rs"]);
@@ -3590,6 +3627,14 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     // Malformed patterns and repo-scoped formats are refused up front.
     let bad = run(&["--path", "../escape"]);
     assert_eq!(bad.status.code(), Some(2));
+    // The refusal names the rejected pattern and the reason, so a regression
+    // to a generic failure is caught.
+    let bad_stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        bad_stderr.contains("--path pattern \"../escape\"")
+            && bad_stderr.contains("contains a `..` segment"),
+        "{bad_stderr}"
+    );
     let repo_format = run_ripr_with_env(
         &[
             "check",
