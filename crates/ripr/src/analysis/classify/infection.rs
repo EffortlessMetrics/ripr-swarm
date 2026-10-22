@@ -455,7 +455,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown",
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures, so the compared value is read from the input at run time); activation/infection is unknown, and a test input that sits exactly on the boundary would settle it",
                         probe_literals.join(", ")
                     ),
                 )
@@ -643,9 +643,35 @@ fn no_literal_boundary_summary(expression: &str) -> String {
         Some(name) => format!(
             "Predicate compares against constant {name}; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a matching literal input, or an argument naming {name} would resolve it), so activation/infection is unknown"
         ),
-        None => "Predicate changed, but no literal boundary was visible in the changed expression"
-            .to_string(),
+        None => match comparison_operands(expression) {
+            // Neither side spells a value (`val > surrogate_start`): say
+            // what ripr compared and what would settle it, instead of
+            // sending the reader after a literal that is not there.
+            Some((left, right))
+                if is_plain_path(&left)
+                    && is_plain_path(&right)
+                    && super::activation::literal_operand_value(&left).is_none()
+                    && super::activation::literal_operand_value(&right).is_none() =>
+            {
+                format!(
+                    "Predicate compares `{left}` with `{right}`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"
+                )
+            }
+            _ => "Predicate changed, but no literal boundary was visible in the changed expression"
+                .to_string(),
+        },
     }
+}
+
+/// An operand that is one identifier, field or module path
+/// (`val`, `self.count`, `limits::MAX`): the only shape the splitter cuts
+/// cleanly out of a compound predicate such as `ready && total < base * 3`.
+fn is_plain_path(operand: &str) -> bool {
+    !operand.is_empty()
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':'))
+        && !operand.starts_with(|ch: char| ch.is_ascii_digit())
 }
 
 /// Returns true iff the expression is an exact wildcard discard that provably
@@ -711,7 +737,7 @@ mod tests {
         let parameter = probe(ProbeFamily::Predicate, "amount >= threshold");
         assert_eq!(
             infection_evidence(&parameter, &[&test], &ActivationEvidence::default()).summary,
-            "Predicate changed, but no literal boundary was visible in the changed expression"
+            "Predicate compares `amount` with `threshold`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"
         );
     }
 
@@ -778,7 +804,7 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures, so the compared value is read from the input at run time); activation/infection is unknown, and a test input that sits exactly on the boundary would settle it"
         );
     }
 

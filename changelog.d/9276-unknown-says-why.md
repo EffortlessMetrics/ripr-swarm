@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- An unresolved boundary now says why and what would settle it: when the compared value is read from the test input at run time the message says so and asks for an input exactly on the boundary, and when neither side of a plain comparison is a literal or readable constant it names both operands (`val > surrogate_start`) instead of reporting that no literal boundary was visible (#9276).
