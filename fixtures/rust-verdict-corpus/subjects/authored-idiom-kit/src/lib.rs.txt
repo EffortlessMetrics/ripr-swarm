@@ -1,0 +1,28 @@
+//! Authored subject for standard-library test forms: should_panic,
+//! Result-returning tests, hand-rolled mocks, seeded loops, tables, helper and
+//! macro assertions, doctests, integration tests and out-of-line test modules.
+
+pub mod display;
+pub mod guards;
+pub mod helpers;
+pub mod mocks;
+pub mod ranges;
+pub mod results;
+pub mod seeded;
+pub mod tables;
+pub mod unwinding;
+
+/// ```
+/// assert_eq!(idiomkit::cube(3), 27);
+/// ```
+pub fn cube(n: u32) -> u32 {
+    n * n * n
+}
+
+pub fn slugify(title: &str) -> String {
+    title.trim().to_lowercase().replace(' ', "-")
+}
+
+pub const NAME: &str = "idiomkit";
+pub const KIND: &str = "std test forms";
+pub const SCOPE: &str = "authored";

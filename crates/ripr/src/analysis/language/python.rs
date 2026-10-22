@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod arm_activation;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -78,6 +79,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
@@ -109,8 +111,8 @@ use no_behavior::{
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
 use probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, contains_mock_initializer,
-    looks_like_call_expression,
+    canonical_python_gap_for, classify_probe_shape, classify_probe_shape_with_old,
+    contains_mock_initializer, looks_like_call_expression,
 };
 #[cfg(test)]
 use related_tests::{
@@ -207,6 +209,11 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Whether a `from <owner module> import *` binds this owner: the name is
+    /// public and the module's `__all__` is absent or lists it. `false` until
+    /// the workspace pass fills it, and when the module source is unavailable
+    /// or its `__all__` is unresolved (`reexports.rs`).
+    star_exported: bool,
     /// Src-layout short module names of this owner's file that another
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
@@ -308,6 +315,9 @@ struct PythonTest {
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
+    /// Receivers the test's class builds once in a setup hook (`self.stock =
+    /// Stock(5)`); empty outside an unambiguous class (#9417).
+    setup_receivers: Vec<setup_receivers::SetupReceiver>,
     /// Definitions the `fixtures` parameters resolve to, in the test's module
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
@@ -1082,6 +1092,9 @@ impl PythonAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod arm_activation_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;

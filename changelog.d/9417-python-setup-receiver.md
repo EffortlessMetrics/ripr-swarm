@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: a receiver a test class builds once in `setUp`, `setUpClass`, `setup_method` or `setup_class` (`self.stock = Stock(5)`) now binds the owner's class for `self.stock.take(...)`, so an assertion on it reads `exposed` instead of `weakly_exposed`. The binding is read only when the attribute is assigned once in the class, the test does not rebind it and no local class subclasses the test class (#9417).

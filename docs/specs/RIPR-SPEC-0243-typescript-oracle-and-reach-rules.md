@@ -723,7 +723,8 @@ prove its condition costs an abstention or a gap, never a credit.
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
    `null`/`undefined` by equality; a member path only by the same text, and
-   not when the test body rebinds the path's root (`const Level = ...`). The
+   not when the test body rebinds the path's root (`const Level = ...`) or
+   imports it from a module other than the owner's. The
    assertion must observe the owner's whole result (not `price(150) > 0`),
    through the owner's name or an import alias, and an expected value that
    provably equals neither the old nor the new arm is dead and credits
