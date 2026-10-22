@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #9277
+- #9331
 
 Linked PRs:
 
@@ -55,7 +56,11 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 `--exclude` wins over `--path`.
 
 1. The filter is applied once at pipeline intake, before the diff-size guards
-   and before any adapter, so the guards measure only the chosen files. When the
+   and before any adapter, so the guards measure only the chosen files. It is
+   applied as the diff parser registers each file section, so a section the
+   scope rejects is not retained and does not count toward the changed-file
+   bound (`RIPR_MAX_DIFF_INDEX_FILES`) either. The limitation reports the exact
+   number of files left out and names the first few. When the
    chosen files alone exceed a guard, the guard fires with its existing text,
    which now also names `--path`/`--exclude`.
 2. Every changed file the filter removes is named in one
@@ -86,12 +91,12 @@ glob dialect. No `--path` admits every file the excludes do not remove;
   complete.
 - A scope matching nothing, and one excluding everything, are errors.
 - Scope keeping the oversized file still trips the cap.
+- A diff naming more files than the changed-file bound parses when the scope
+  removes the excess, and the limitation reports the exact number removed.
 
 ## Non-Goals
 
 - Scope flags on the printed `explain`/`context` drill-in commands.
-- Narrowing the parse-time changed-file-count bound
-  (`RIPR_MAX_DIFF_INDEX_FILES`), which runs before the filter.
 - A scope for repo-scoped formats, the LSP or MCP.
 - Treating a bare `vendor/` directory as vendored; only `cargo vendor` crates
   are, and `--exclude vendor` covers the rest.

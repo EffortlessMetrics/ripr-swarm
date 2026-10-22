@@ -1,15 +1,46 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
     ChangedFile, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker,
     parse_old_path_marker, parser_state, path_marker_exceeds_depth_bound,
 };
 
+/// How many scoped-out paths the parse keeps by name. The pipeline's
+/// disclosure lists only the first few, so the tally stays constant-size even
+/// when a vendored tree puts tens of thousands of sections out of scope.
+const OUT_OF_SCOPE_SAMPLE: usize = 3;
+
+/// Sections the operator's scope removed during the parse (#9331). Counted but
+/// never retained, so they neither trip the file-count bound nor hold memory.
+#[derive(Default)]
+struct OutOfScopeTally {
+    count: usize,
+    sample: Vec<PathBuf>,
+    last: Option<PathBuf>,
+}
+
+impl OutOfScopeTally {
+    fn record(&mut self, path: &Path) {
+        // A rename's metadata and its `+++` header register the same path
+        // back to back; sections are contiguous, so comparing with the last
+        // path dedupes without keeping a set that grows with the diff.
+        if self.last.as_deref() == Some(path) {
+            return;
+        }
+        self.last = Some(path.to_path_buf());
+        self.count = self.count.saturating_add(1);
+        if self.sample.len() < OUT_OF_SCOPE_SAMPLE {
+            self.sample.push(path.to_path_buf());
+        }
+    }
+}
+
 pub(super) fn parse_unbounded(input: &str) -> ParsedDiff {
     match parse_lines(
         input.lines(),
+        |_| true,
         |_| Ok::<(), Infallible>(()),
         |_| Ok::<(), Infallible>(()),
     ) {
@@ -22,8 +53,20 @@ pub(super) fn parse_bounded_lines<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
+    parse_bounded_lines_scoped(lines, limit, |_| true)
+}
+
+/// `keep` is the operator's `--path`/`--exclude` scope: a section it rejects
+/// is dropped as soon as its path registers, before the file-count bound
+/// sees it, and is tallied on the result so the caller can still disclose it.
+pub(super) fn parse_bounded_lines_scoped<'a>(
+    lines: impl Iterator<Item = &'a str>,
+    limit: usize,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<ParsedDiff, String> {
     parse_lines(
         lines,
+        keep,
         |count| {
             if count <= limit {
                 return Ok(());
@@ -57,11 +100,13 @@ pub(super) fn parse_bounded_lines<'a>(
 /// could accidentally turn a refused parse into an empty successful result.
 fn parse_lines<'a, E>(
     lines: impl Iterator<Item = &'a str>,
+    keep: impl Fn(&Path) -> bool,
     mut admit_file_count: impl FnMut(usize) -> Result<(), E>,
     mut admit_line: impl FnMut(&str) -> Result<(), E>,
 ) -> Result<ParsedDiff, E> {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
     let mut state = parser_state::ParserState::default();
+    let mut out_of_scope = OutOfScopeTally::default();
     // One-line lookahead preserves plain ---/+++ section boundaries without
     // collecting the whole input. The input &str itself is already in memory;
     // this file-count policy does not bound its bytes or a single large hunk.
@@ -110,11 +155,13 @@ fn parse_lines<'a, E>(
         }
 
         if state.handle_rename_metadata(raw, &mut files) {
+            drop_if_out_of_scope(&mut state, &mut files, &keep, &mut out_of_scope);
             admit_file_count(files.len())?;
             continue;
         }
 
         if state.register_path_marker(raw, &mut files) {
+            drop_if_out_of_scope(&mut state, &mut files, &keep, &mut out_of_scope);
             admit_file_count(files.len())?;
             continue;
         }
@@ -142,7 +189,29 @@ fn parse_lines<'a, E>(
         truncated_file_sections: state.truncated_file_sections(),
         raw_line1_bom_paths: state.raw_line1_bom_paths(),
         limitations: state.limitations(),
+        out_of_scope_file_count: out_of_scope.count,
+        out_of_scope_sample: out_of_scope.sample,
     })
+}
+
+/// Remove the section that just registered when the scope rejects its path.
+/// Its hunk lines are then consumed without a file to record into, the same
+/// inert handling the parser already gives a path it never registered.
+fn drop_if_out_of_scope(
+    state: &mut parser_state::ParserState,
+    files: &mut BTreeMap<PathBuf, ChangedFile>,
+    keep: &impl Fn(&Path) -> bool,
+    out_of_scope: &mut OutOfScopeTally,
+) {
+    let Some(path) = state.current_path().cloned() else {
+        return;
+    };
+    if keep(&path) {
+        return;
+    }
+    files.remove(&path);
+    out_of_scope.record(&path);
+    state.disown_section();
 }
 
 #[cfg(test)]
@@ -150,3 +219,6 @@ mod tests;
 
 #[cfg(test)]
 mod path_admission_tests;
+
+#[cfg(test)]
+mod scope_tests;
