@@ -4116,7 +4116,23 @@ fn bound_constant_rows(
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
 pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
-    table_column(fn_text, name).map(|(column, _)| column)
+    table_column(fn_text, name, None).map(|(column, _, _)| column)
+}
+
+/// [`constant_table_column`] for a loop that opens with one skip guard,
+/// `if SKIPPED.contains(&row_key) { continue; }`, over a `const SKIPPED:
+/// &[&str]` of plain string literals declared once in `module_source`
+/// (RIPR-SPEC-0229 decision 7): the cells of the rows the guard lets
+/// through, so a listed row never counts as run. `None` when any part is
+/// not established, including when the loop holds no such guard.
+pub(crate) fn skipping_table_column(
+    fn_text: &str,
+    name: &str,
+    module_source: &str,
+) -> Option<Vec<String>> {
+    table_column(fn_text, name, Some(module_source))
+        .filter(|(_, _, guarded)| *guarded)
+        .map(|(column, _, _)| column)
 }
 
 /// [`constant_table_column`], but only when the table's loop body holds
@@ -4127,12 +4143,19 @@ pub(crate) fn constant_table_column_around(
     name: &str,
     at: usize,
 ) -> Option<Vec<String>> {
-    let (column, body) = table_column(fn_text, name)?;
+    let (column, body, _) = table_column(fn_text, name, None)?;
     body.contains(&at).then_some(column)
 }
 
-/// The column and the byte range of its loop body.
-fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Range<usize>)> {
+/// The column, the byte range of its loop body, and whether a skip guard
+/// filtered the rows. `module_source` admits the one guard shape
+/// [`skipping_table_column`] reads; without it any `if` or `continue` in the
+/// body refuses the table.
+fn table_column(
+    fn_text: &str,
+    name: &str,
+    module_source: Option<&str>,
+) -> Option<(Vec<String>, std::ops::Range<usize>, bool)> {
     // Most tests hold no `for` at all; skip the parse for them.
     if !fn_text.contains("for") || !fn_text.contains(name) {
         return None;
@@ -4161,11 +4184,20 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
         return None;
     }
     let parent = pattern.syntax().parent()?;
+    let mut row_keys: Vec<(String, Option<usize>)> = Vec::new();
     let (table, position) = if let Some(table) = ast::ForExpr::cast(parent.clone()) {
+        row_keys.push((name.to_string(), None));
         (table, None)
     } else {
         let tuple = ast::TuplePat::cast(parent)?;
         let fields: Vec<_> = tuple.fields().collect();
+        for (index, field) in fields.iter().enumerate() {
+            if let ast::Pat::IdentPat(ident) = field
+                && let Some(bound) = ident.name()
+            {
+                row_keys.push((bound.text().to_string(), Some(index)));
+            }
+        }
         if fields
             .iter()
             .any(|field| !matches!(field, ast::Pat::IdentPat(_) | ast::Pat::WildcardPat(_)))
@@ -4194,10 +4226,13 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     // `|` may open a closure that never runs, and `&&` or `||` may skip the
     // call on its right.
     let body = table.loop_body()?;
+    let guard = module_source.and_then(|source| skip_guard(&body, &row_keys, source));
+    let guard_range = guard.as_ref().map(|found| found.range);
     if body
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
+        .filter(|token| !guard_range.is_some_and(|range| range.contains_range(token.text_range())))
         .any(|token| {
             matches!(
                 token.text(),
@@ -4244,11 +4279,11 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     let rows = constant_row_array(&table, &function)?;
     let range = body.syntax().text_range();
     let body_range = usize::from(range.start())..usize::from(range.end());
-    let column = rows
-        .exprs()
-        .map(|row| match position {
+    let arity = row_arity(&table)?;
+    let cell = |row: &ast::Expr, at: Option<usize>| -> Option<String> {
+        match at {
             None => Some(row.syntax().text().to_string()),
-            Some((index, arity)) => {
+            Some(index) => {
                 let ast::Expr::TupleExpr(tuple) = row else {
                     return None;
                 };
@@ -4260,9 +4295,200 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
                     .get(index)
                     .map(|cell| cell.syntax().text().to_string())
             }
+        }
+    };
+    let mut column = Vec::new();
+    for row in rows.exprs() {
+        let skipped = match &guard {
+            Some(found) => found.skips(&cell(&row, found.position)?)?,
+            None => false,
+        };
+        let value = cell(&row, position.map(|(index, _)| index))?;
+        if !skipped {
+            column.push(value);
+        }
+    }
+    Some((column, body_range, guard.is_some()))
+}
+
+/// The arity of the tuple pattern a `for` binds, 0 for a plain identifier.
+fn row_arity(table: &ast::ForExpr) -> Option<usize> {
+    match table.pat()? {
+        ast::Pat::TuplePat(tuple) => Some(tuple.fields().count()),
+        _ => Some(0),
+    }
+}
+
+/// A loop body's opening `if SKIPPED.contains(&key) { continue; }`.
+struct SkipGuard {
+    /// The guard statement's range, left out of the early-exit scan.
+    range: ra_ap_syntax::TextRange,
+    /// The tuple position of `key`, `None` when the pattern is `key` alone.
+    position: Option<usize>,
+    /// The skipped cells, plain string literals.
+    skipped: Vec<String>,
+}
+
+impl SkipGuard {
+    /// Whether the row whose key cell is `cell` is skipped; `None` when the
+    /// cell is not a plain string literal and so cannot be compared.
+    fn skips(&self, cell: &str) -> Option<bool> {
+        plain_string_literal(cell)?;
+        Some(self.skipped.iter().any(|listed| listed == cell))
+    }
+}
+
+/// A `"..."` literal with no escape, so equal text is equal value.
+fn plain_string_literal(text: &str) -> Option<&str> {
+    let inner = text.strip_prefix('"')?.strip_suffix('"')?;
+    (!inner.contains(['"', '\\'])).then_some(inner)
+}
+
+/// The guard `if SKIPPED.contains(&key) { continue; }` as the first
+/// statement of `body`, `key` bound by the loop pattern and `SKIPPED` a
+/// `const &[&str]` of plain string literals declared once in `source` and
+/// named by no `use`.
+fn skip_guard(
+    body: &ast::BlockExpr,
+    row_keys: &[(String, Option<usize>)],
+    source: &str,
+) -> Option<SkipGuard> {
+    let statements = body.stmt_list()?;
+    let first = statements.statements().next()?;
+    let ast::Stmt::ExprStmt(statement) = first else {
+        return None;
+    };
+    let ast::Expr::IfExpr(branch) = statement.expr()? else {
+        return None;
+    };
+    if branch.else_branch().is_some() {
+        return None;
+    }
+    let ast::Expr::MethodCallExpr(call) = branch.condition()? else {
+        return None;
+    };
+    if call.name_ref()?.text() != "contains" || call.generic_arg_list().is_some() {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let ast::Expr::RefExpr(reference) = arguments.next()? else {
+        return None;
+    };
+    if arguments.next().is_some() || reference.mut_token().is_some() {
+        return None;
+    }
+    let key = single_name(&reference.expr()?)?;
+    let list = single_name(&call.receiver()?)?;
+    let position = row_keys
+        .iter()
+        .find(|(bound, _)| *bound == key)
+        .map(|(_, position)| *position)?;
+    let then = branch.then_branch()?;
+    let only = then.stmt_list()?;
+    if only.tail_expr().is_some() {
+        return None;
+    }
+    let mut inside = only.statements();
+    let ast::Stmt::ExprStmt(exit) = inside.next()? else {
+        return None;
+    };
+    if inside.next().is_some()
+        || !matches!(exit.expr()?, ast::Expr::ContinueExpr(ref jump) if jump.lifetime().is_none())
+    {
+        return None;
+    }
+    Some(SkipGuard {
+        range: statement.syntax().text_range(),
+        position,
+        skipped: skip_list(source, &list)?,
+    })
+}
+
+/// `name` when `expr` is a bare, unqualified identifier path.
+fn single_name(expr: &ast::Expr) -> Option<String> {
+    let ast::Expr::PathExpr(path) = expr else {
+        return None;
+    };
+    let path = path.path()?;
+    (path.qualifier().is_none() && path.segment()?.generic_arg_list().is_none())
+        .then(|| {
+            path.segment()?
+                .name_ref()
+                .map(|name| name.text().to_string())
         })
-        .collect::<Option<Vec<_>>>()?;
-    Some((column, body_range))
+        .flatten()
+}
+
+/// The string literals of `const NAME: &[&str] = &[..];` when `source`
+/// declares `NAME` exactly once, with no attribute, and no `use` names it.
+fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let mut declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::AnyHasName::cast)
+        .filter(|named| named.name().is_some_and(|bound| bound.text() == name));
+    let declaration = ast::Const::cast(declarations.next()?.syntax().clone())?;
+    // A glob import may bring in another module's `name`, and this reads the
+    // file's only declaration, so any glob but `super::*` inside an inline
+    // `mod` (which re-exports this file's own names) leaves the binding open.
+    let globbed = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let inline_super = item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && item.use_tree().is_some_and(|tree| {
+                tree.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "super::*"
+            });
+            !inline_super
+                && item.syntax().descendants().any(|node| {
+                    ast::UseTree::cast(node).is_some_and(|inner| inner.star_token().is_some())
+                })
+        });
+    if globbed
+        || declarations.next().is_some()
+        || declaration
+            .syntax()
+            .children()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+        || tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Use::cast)
+            .any(|item| {
+                item.syntax()
+                    .descendants()
+                    .filter_map(ast::NameRef::cast)
+                    .any(|used| used.text() == name)
+            })
+    {
+        return None;
+    }
+    let ast::Expr::RefExpr(reference) = declaration.body()? else {
+        return None;
+    };
+    let ast::Expr::ArrayExpr(items) = reference.expr()? else {
+        return None;
+    };
+    if items.semicolon_token().is_some() {
+        return None;
+    }
+    items
+        .exprs()
+        .map(|item| {
+            let text = item.syntax().text().to_string();
+            plain_string_literal(&text)?;
+            Some(text)
+        })
+        .collect()
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
@@ -4967,5 +5193,154 @@ mod binding_free_index_tests {
             1,
             "wrapper facts must be collected once per parsed file, not once per macro"
         );
+    }
+}
+
+#[cfg(test)]
+mod skipping_table_tests {
+    use super::*;
+
+    const SOURCE: &str = "const SKIPPED: &[&str] = &[\"gopher\"];\n";
+
+    /// The table written in the loop header, as `constant_row_array` reads it.
+    fn inline(guard: &str) -> String {
+        format!(
+            "fn rows() {{\n    for (scheme, want) in [(\"http\", Some(80)), (\"gopher\", Some(71)), (\"ftp\", Some(21))] {{\n        {guard}\n        assert_eq!(port(scheme), want);\n    }}\n}}\n"
+        )
+    }
+
+    const GUARD: &str = "if SKIPPED.contains(&scheme) { continue; }";
+
+    /// A glob import may bring a different `SKIPPED` into scope than the
+    /// file's own declaration, so the list is not read.
+    #[test]
+    fn a_glob_import_leaves_the_list_unestablished() {
+        let globbed = format!("use external_lists::*;\n{SOURCE}");
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "scheme", &globbed),
+            None
+        );
+        // `super::*` inside an inline module only re-exports this file's names.
+        let inner = format!("mod tests {{\n    use super::*;\n}}\n{SOURCE}");
+        assert!(skipping_table_column(&inline(GUARD), "scheme", &inner).is_some());
+    }
+
+    #[test]
+    fn a_listed_row_is_dropped_from_every_column() {
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "scheme", SOURCE),
+            Some(vec!["\"http\"".into(), "\"ftp\"".into()])
+        );
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "want", SOURCE),
+            Some(vec!["Some(80)".into(), "Some(21)".into()])
+        );
+    }
+
+    #[test]
+    fn the_plain_column_reader_still_refuses_a_guarded_loop() {
+        assert_eq!(constant_table_column(&inline(GUARD), "scheme"), None);
+    }
+
+    #[test]
+    fn a_loop_without_the_guard_is_not_a_skipping_table() {
+        let plain = inline("").replace("        \n", "");
+        assert_eq!(skipping_table_column(&plain, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn only_the_exact_guard_shape_is_read() {
+        for (label, guard) in [
+            (
+                "an else branch",
+                "if SKIPPED.contains(&scheme) { continue; } else { }",
+            ),
+            (
+                "a labeled continue",
+                "if SKIPPED.contains(&scheme) { continue 'rows; }",
+            ),
+            ("a break", "if SKIPPED.contains(&scheme) { break; }"),
+            ("a return", "if SKIPPED.contains(&scheme) { return; }"),
+            (
+                "an extra statement",
+                "if SKIPPED.contains(&scheme) { let _x = 1; continue; }",
+            ),
+            (
+                "a negated test",
+                "if !SKIPPED.contains(&scheme) { continue; }",
+            ),
+            (
+                "a key the loop does not bind",
+                "if SKIPPED.contains(&other) { continue; }",
+            ),
+            (
+                "a different method",
+                "if SKIPPED.starts_with(&scheme) { continue; }",
+            ),
+            (
+                "a mutable borrow",
+                "if SKIPPED.contains(&mut scheme) { continue; }",
+            ),
+            (
+                "a qualified list",
+                "if m::SKIPPED.contains(&scheme) { continue; }",
+            ),
+        ] {
+            assert_eq!(
+                skipping_table_column(&inline(guard), "scheme", SOURCE),
+                None,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_skip_list_must_be_one_plain_literal_const() {
+        for (label, source) in [
+            (
+                "declared twice",
+                "const SKIPPED: &[&str] = &[\"gopher\"];\nmod m { const SKIPPED: &[&str] = &[\"ftp\"]; }\n",
+            ),
+            ("not declared", "const OTHER: &[&str] = &[\"gopher\"];\n"),
+            ("a static", "static SKIPPED: &[&str] = &[\"gopher\"];\n"),
+            (
+                "computed entry",
+                "const SKIPPED: &[&str] = &[\"gopher\", name()];\n",
+            ),
+            (
+                "an escaped entry",
+                "const SKIPPED: &[&str] = &[\"go\\u{70}her\"];\n",
+            ),
+            (
+                "a repeat form",
+                "const SKIPPED: &[&str] = &[\"gopher\"; 1];\n",
+            ),
+            (
+                "an attribute",
+                "#[cfg(any())]\nconst SKIPPED: &[&str] = &[\"gopher\"];\n",
+            ),
+            (
+                "an import of the name",
+                "use other::SKIPPED;\nconst SKIPPED: &[&str] = &[\"gopher\"];\n",
+            ),
+        ] {
+            assert_eq!(
+                skipping_table_column(&inline(GUARD), "scheme", source),
+                None,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_cell_that_is_not_a_plain_string_cannot_be_compared() {
+        let numbers = inline(GUARD).replace("\"http\"", "'h'");
+        assert_eq!(skipping_table_column(&numbers, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn a_column_is_never_read_for_a_loop_that_skips_for_another_reason() {
+        let extra = inline("if want.is_none() { continue; }");
+        assert_eq!(skipping_table_column(&extra, "scheme", SOURCE), None);
     }
 }
