@@ -438,3 +438,50 @@ fn with_entry_whose_target_may_not_be_the_manager_is_not_bound() -> Check {
     );
     Ok(())
 }
+
+const NOTER: &str = "class Recorder:\n    def __init__(self):\n        self.events = []\n        self.last = None\n\n    def note(self, kind):\n        if kind == \"error\":\n            self.last = \"error\"\n            self.events.append(\"error\")\n";
+
+fn noter_test(body: &str) -> String {
+    format!("from shapes.noter import Recorder\n\n\ndef test_it():\n{body}\n")
+}
+
+fn classify_note(line_text: &str, old: &str, test_src: &str) -> Result<Finding, String> {
+    classify(
+        &NOTER.replace(old.trim(), line_text.trim()),
+        "shapes/noter.py",
+        "note",
+        line_text,
+        old,
+        test_src,
+    )
+}
+
+#[test]
+fn guarded_self_field_write_in_an_ordinary_method_is_not_credited() -> Check {
+    // The test never takes the `if kind == "error"` arm, so the edited write
+    // never runs and an exact read of the untouched state cannot notice it.
+    let never_runs =
+        noter_test("    rec = Recorder()\n    rec.note(\"ok\")\n    assert rec.last == None");
+    let finding = classify_note(
+        "            self.last = \"fault\"",
+        "            self.last = \"error\"",
+        &never_runs,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn unguarded_self_field_write_in_an_ordinary_method_stays_credited() -> Check {
+    let direct = "class Recorder:\n    def __init__(self):\n        self.last = None\n\n    def note(self, kind):\n        self.last = \"fault\"\n";
+    let finding = classify(
+        direct,
+        "shapes/noter.py",
+        "note",
+        "        self.last = \"fault\"",
+        "        self.last = \"error\"",
+        &noter_test("    rec = Recorder()\n    rec.note(\"ok\")\n    assert rec.last == \"error\""),
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}

@@ -434,6 +434,75 @@ and writes the finding the same way. Nothing is credited. Corpus effect:
 and `idiom-hand-mock-exact-line` (#9610) move from `gap` to `limited`, which
 their cases accept.
 
+### Exact pins on shapes the owner pin does not read
+
+An isolated test that calls the owner directly and pins its whole result with
+a plain `assert_eq!` is a real oracle, but the owner-return pin (RIPR-SPEC-0197)
+credits it only when the changed expression is a tail it can read. Three owner
+shapes fall outside that reading, and each left a certain `weakly_exposed`
+claim ("no assertion text references this probe's changed expression") on a
+test that may notice the change (#9440):
+
+- **closure tail**: a `return_value` probe whose changed line overlaps the
+  owner's tail expression, where that tail holds a closure and nothing outside
+  closures branches, loops, short-circuits or applies an argument only on some
+  inputs. `Option` / `Result` combinators (`map`, `and_then`, `then`, ...) are
+  such inputs; `map` and `filter` count as unconditional only on a receiver
+  chain that reaches an iterator source (`iter`, `into_iter`, `chars`,
+  `windows`, ..., or a range) through iterator adaptors alone, so
+  `xs.iter().next().map(..)` stays an `Option` combinator. The changed line
+  must overlap a closure of the tail. A spawned thread joined in the tail, a returned closure
+  the test applies, and an adaptor chain the owner or the test collects are
+  this shape. The owner has no `return`, `?`, `break` or `continue` outside
+  closures.
+- **returned receiver**: a `call_deletion` or `side_effect` probe whose
+  changed statement is a method call on `x`, in an owner whose tail is exactly
+  `x` (`v.sort_by_key(..); v.truncate(2); v`).
+- **let-else exit**: a `return_value` probe whose changed line is inside the
+  `else` block of a `let ... else` (not its initializer), in an owner whose
+  every other `return`, `?`, `break` or `continue` outside closures is inside
+  an `else` block too.
+
+`pinned_shape::withhold_pinned_shape_gap` withholds a `weakly_exposed` finding
+with no `static_limit_kind` under `rust_pinned_shape_unresolved` when the
+shape holds, reach and infection read `yes` and propagation reads `yes` or
+`weak`, the discriminator reads `(observation_unverified)`, and some related
+`direct_owner_call` test (not `#[ignore]`, no `#[should_panic]`) has a strong
+exact-value `assert_eq!` with one operand that is the owner's call itself
+(`owner(..)`, applied again as `owner(..)(..)`, or consumed by `.collect()` /
+`.unwrap()`, never a projection such as `.len()`, an operator or a wrapping
+call) and the other not naming the owner. A call on an empty or zero input
+(`[]`, `vec![]`, `""`, `None`, `::new()`, a bare `0`) is not such a pin: the
+closure or exit may not run, so the gap stays. One matching test suffices.
+The rule runs after the framework-oracle rule and before
+`withhold_unsupported_gap`, writes the finding the same way, and credits
+nothing.
+
+The slice-parameter adaptor tail of RIPR-SPEC-0265 is left to that spec's own
+pin: it credits a non-empty literal input and keeps the gap for an empty one
+(`trap-iter-empty-slice`, `grid-iter-property`), so this rule skips any owner
+whose body that spec admits.
+
+Decision (#9440, reversible): withhold rather than credit. Whether the pinned
+input runs the changed closure or takes the `else` exit is a question ripr
+does not answer here, so neither the gap nor credit is established. Crediting
+the shapes whose closure the call runs on every input (a spawned and joined
+closure, a returned closure the test applies, a `Result` collect) needs those
+shapes added to the pin rules with runtime controls; that is follow-up work,
+not part of this rule. The cost is that a true gap in these shapes reads
+`static_unknown` too: `shape-let-else-branch-unreached` and
+`shape-windows-strict-vs-loose`, whose cases accept `limited`. The zero-input
+rule keeps the gap for `shape-closure-returned-zero-input`.
+
+Corpus effect on main: `shape-thread-join-result`,
+`shape-sort-direction-truncate` and `shape-let-else-branch-pinned` move from
+`false_actionable` to `abstained`; `shape-let-else-branch-unreached` and
+`shape-windows-strict-vs-loose` move from `ideal` to `abstained`. The cases
+`shape-closure-returned-adder`, `shape-collect-result-short-circuit` and
+`shape-impl-trait-return-filter` (same rule, `false_actionable` to
+`abstained`) and `shape-closure-returned-zero-input` (gap kept) are added by
+#9463; their rows are blessed there. No other row moves.
+
 ### Methods the language calls implicitly (#9441)
 
 A trait-impl method often runs with no call that names it: `Money(2) +
@@ -592,6 +661,10 @@ Two reading defects behind a neighbouring row are fixed instead of limited:
 - A paired fixture: a default-feature `cfg` test is withheld
   (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
   (`gap_kept_ignored_test`).
+- `pinned_shape_limit.rs` pins each shape's withholding and the controls that
+  keep the gap: `Option::map`, another exit, a non-exact, non-isolated,
+  ignored or `#[should_panic]` pin, the RIPR-SPEC-0265 empty slice, an effect
+  on a value the owner does not return, and an `if` guard exit.
 - Every runtime control in `owner_pin_execution` and `match_arm_*` keeps its
   class. The one control that changes, an unresolved `#[macro_use]` whose test
   catches the mutant at runtime, moves from a false gap to `static_unknown`.

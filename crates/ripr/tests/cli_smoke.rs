@@ -16103,12 +16103,19 @@ fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), Str
         &out_arg,
     ]);
     assert_success(&output);
+    // #9806: creation-time warnings ride stderr like every other advisory
+    // surface, so piping stdout cannot drop them.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("source gate-decision report carries no subject.analyzer_version"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Warnings: 1"), "{stderr}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("source gate-decision report carries no subject.analyzer_version"),
-        "{stdout}"
+        stdout.contains("Wrote "),
+        "stdout keeps only the write confirmation: {stdout}"
     );
-    assert!(stdout.contains("Warnings: 1"), "{stdout}");
 
     let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
     assert!(
@@ -26211,8 +26218,8 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     assert_eq!(
         command,
         format!(
-            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
-            root_arg.replace('\\', "/")
+            "ripr agent repair --root {} --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            renderer_shell_arg(&rendered_path(&root_arg))
         )
     );
 
@@ -26880,8 +26887,8 @@ fn agent_status_keeps_the_gap_open_when_the_receipt_did_not_improve()
     assert_eq!(
         command,
         format!(
-            "ripr agent repair --root '{}' --seam-id {REPAIR_ROUTE_SEAM} --phase before",
-            root_arg.replace('\\', "/")
+            "ripr agent repair --root {} --seam-id {REPAIR_ROUTE_SEAM} --phase before",
+            renderer_shell_arg(&rendered_path(&root_arg))
         )
     );
     repair_route_before(&root)?;
@@ -27107,7 +27114,7 @@ fn agent_status_follows_a_focused_test_committed_between_the_phases()
     let rerun = repair_route_after(&root, &attempt_id);
     assert_failure(&rerun);
     let stderr = String::from_utf8_lossy(&rerun.stderr);
-    let root_arg = shell_single_quoted(&root.to_string_lossy().replace('\\', "/"));
+    let root_arg = renderer_shell_arg(&rendered_path(&root.to_string_lossy()));
     for needle in [
         "already finished".to_string(),
         "state `ready_to_finish`".to_string(),
