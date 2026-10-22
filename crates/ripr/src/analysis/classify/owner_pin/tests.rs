@@ -12468,3 +12468,180 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
 }
+
+const WIDGET_LIB: &str = "pub struct Widget {\n    n: u32,\n}\n\nimpl Widget {\n    pub fn new() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub fn make_sync() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub async fn make() -> Self {\n        Widget { n: 4 }\n    }\n\n    pub fn read(&self) -> u32 {\n        self.n\n    }\n\n    pub fn peek(&self) -> u32 {\n        self.n\n    }\n}\n";
+
+/// Whether the inherent `Widget::{owner}` is a direct owner call of the one
+/// test whose body is `body`, through the full shared receiver refusal.
+fn widget_owner_call(owner: &str, lib: &str, body: &str, syntax: &OwnerPinSyntax) -> bool {
+    widget_owner_call_under(owner, lib, body, syntax, &widget_root("plain", ""))
+}
+
+/// A workspace whose manifest declares `dependencies`, so a qualified
+/// `std`/`core` root can be proved unbound (or aliased) from Cargo.
+fn widget_root(label: &str, dependencies: &str) -> PathBuf {
+    let manifest = format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
+    );
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        &format!("owner-pin-widget-{label}"),
+        &[("Cargo.toml", &manifest)],
+    );
+    assert!(root.is_ok(), "temp workspace");
+    root.unwrap_or_default()
+}
+
+fn widget_owner_call_under(
+    owner: &str,
+    lib: &str,
+    body: &str,
+    syntax: &OwnerPinSyntax,
+    root: &Path,
+) -> bool {
+    // File-level `use` lines (a rebound root) are hoisted out of the fn.
+    let (uses, body): (Vec<_>, Vec<_>) = body.lines().partition(|l| l.trim().starts_with("use "));
+    let (uses, body) = (uses.join("\n"), body.join("\n"));
+    let tests = format!("use demo::Widget;\n{uses}\n\n#[test]\nfn t() {{\n    {body}\n}}\n");
+    let mut index = index(&[(LIB, lib), (TESTS, &tests)]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner && function.file == Path::new(LIB));
+    assert!(function.is_some(), "{owner} must be indexed");
+    let Some(function) = function else {
+        return false;
+    };
+    let test = index.tests().iter().find(|test| test.name == "t");
+    assert!(test.is_some(), "the test must be indexed");
+    let Some(test) = test else { return false };
+    crate::analysis::classify::inherent_owner_call_resolves(test, function, &index, syntax)
+}
+
+/// Devin 9611: a `std`/`core`-qualified assertion evaluates the same
+/// operands as the bare one, so its receiver earns the same attribution; a
+/// rebound root or a different receiver type still earns nothing.
+#[test]
+fn qualified_standard_assertion_operands_give_receiver_identity() {
+    for (body, expected) in [
+        ("assert_eq!(Widget::new().read(), 4);", true),
+        ("std::assert_eq!(Widget::new().read(), 4);", true),
+        ("core::assert_eq!(Widget::new().read(), 4);", true),
+        ("std::assert!(Widget::new().read() == 4);", true),
+        ("std::assert_ne!(4, Widget::new().read());", true),
+        ("std::assert_eq!(Other::new().read(), 4);", false),
+        // An operand past the evaluated ones is only a message argument.
+        (
+            "std::assert_eq!(1, 1, \"{}\", Widget::new().read());",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", WIDGET_LIB, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+    // Cargo rebinding the root to another package defeats the qualification
+    // even though the source spelling is identical.
+    let aliased = widget_root(
+        "aliased",
+        "std = { package = \"fake-std\", version = \"1\" }\n",
+    );
+    assert!(!widget_owner_call_under(
+        "read",
+        WIDGET_LIB,
+        "std::assert_eq!(Widget::new().read(), 4);",
+        &OwnerPinSyntax::default(),
+        &aliased
+    ));
+}
+
+/// Devin 9611: an `async` factory yields a future, not `Self`. The indexed
+/// body starts at `fn`, so the qualifier must be read from the declaration.
+#[test]
+fn async_factories_give_no_receiver_identity() {
+    for (body, expected) in [
+        (
+            "let w = Widget::make_sync();\n    assert_eq!(w.read(), 4);",
+            true,
+        ),
+        ("assert_eq!(Widget::make_sync().read(), 4);", true),
+        (
+            "let w = Widget::make();\n    assert_eq!(w.read(), 4);",
+            false,
+        ),
+        ("assert_eq!(Widget::make().read(), 4);", false),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", WIDGET_LIB, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+    // The constructor-name convention must not bypass the declaration.
+    let async_new = WIDGET_LIB.replace("pub fn new()", "pub async fn new()");
+    for (body, expected) in [
+        (
+            "let w = Widget::new();\n    assert_eq!(w.read(), 4);",
+            false,
+        ),
+        ("assert_eq!(Widget::new().read(), 4);", false),
+        (
+            "let w = Widget::make_sync();\n    assert_eq!(w.read(), 4);",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            widget_owner_call("read", &async_new, body, &OwnerPinSyntax::default()),
+            expected,
+            "{body}"
+        );
+    }
+}
+
+/// Devin 9611: owner/test pairs share the run's syntax memo, so the workspace
+/// macro-site scan is paid once, not once per pair.
+#[test]
+fn receiver_checks_over_many_owners_share_one_workspace_scan() {
+    let shared = OwnerPinSyntax::default();
+    let fresh_passes: u32 = ["read", "peek", "read", "peek"]
+        .iter()
+        .map(|owner| {
+            let fresh = OwnerPinSyntax::default();
+            assert!(widget_owner_call(
+                owner,
+                WIDGET_LIB,
+                &format!("assert_eq!(Widget::new().{owner}(), 4);"),
+                &fresh
+            ));
+            fresh.workspace_scan_passes()
+        })
+        .sum();
+    assert!(fresh_passes >= 4, "each fresh memo pays its own scan");
+    let index_text = format!(
+        "use demo::Widget;\n\n#[test]\nfn t() {{\n    assert_eq!(Widget::new().read(), 4);\n    assert_eq!(Widget::new().peek(), 4);\n}}\n"
+    );
+    let index = index(&[(LIB, WIDGET_LIB), (TESTS, &index_text)]);
+    let test = index.tests().iter().find(|test| test.name == "t");
+    assert!(test.is_some());
+    let Some(test) = test else { return };
+    for _ in 0..3 {
+        for owner in ["read", "peek"] {
+            let function = index
+                .functions()
+                .iter()
+                .find(|function| function.name == owner);
+            assert!(function.is_some());
+            let Some(function) = function else { return };
+            assert!(crate::analysis::classify::inherent_owner_call_resolves(
+                test, function, &index, &shared
+            ));
+        }
+    }
+    assert_eq!(
+        shared.workspace_scan_passes(),
+        1,
+        "six pair checks over one index must share one workspace scan"
+    );
+}

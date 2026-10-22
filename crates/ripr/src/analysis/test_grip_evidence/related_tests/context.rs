@@ -683,6 +683,9 @@ impl<'a> CompactGripContext<'a> {
                     self.index,
                     HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
                     &mut BTreeSet::new(),
+                    // The run's shared instance: the lock bounds one
+                    // memoized (test, owner) walk, not the whole stage.
+                    &memo(&self.pin_syntax),
                 )
             })
         });
@@ -4174,6 +4177,7 @@ fn inherent_helper_path_reaches_owner(
     index: &RustIndex,
     remaining: usize,
     visited: &mut BTreeSet<(PathBuf, usize, String)>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
     if remaining == 0 {
         return false;
@@ -4199,9 +4203,9 @@ fn inherent_helper_path_reaches_owner(
             continue;
         }
         let entry_resolves = if requires_inherent_receiver_identity(helper) {
-            inherent_owner_call_resolves(caller, helper, index)
+            inherent_owner_call_resolves(caller, helper, index, pin_syntax)
         } else {
-            free_helper_call_resolves(caller, helper, index)
+            free_helper_call_resolves(caller, helper, index, pin_syntax)
         };
         if !entry_resolves {
             continue;
@@ -4221,8 +4225,15 @@ fn inherent_helper_path_reaches_owner(
             nested_fn_names: helper.nested_fn_names.clone(),
             let_bindings: helper.let_bindings.clone(),
         };
-        if inherent_owner_call_resolves(&body, owner, index)
-            || inherent_helper_path_reaches_owner(&body, owner, index, remaining - 1, visited)
+        if inherent_owner_call_resolves(&body, owner, index, pin_syntax)
+            || inherent_helper_path_reaches_owner(
+                &body,
+                owner,
+                index,
+                remaining - 1,
+                visited,
+                pin_syntax,
+            )
         {
             return true;
         }

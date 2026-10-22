@@ -291,7 +291,12 @@ pub(super) fn match_direct_owner_call(
             // Every inherent entry borrows the complete shared owner refusal,
             // independently of the legacy impl-name ambiguity shortcut.
             if !owner.inherent_owner.is_some_and(|function| {
-                inherent_owner_call_resolves(indexed.test, function, context.index)
+                inherent_owner_call_resolves(
+                    indexed.test,
+                    function,
+                    context.index,
+                    &context::memo(context.pin_syntax_mutex()),
+                )
             }) {
                 continue;
             }

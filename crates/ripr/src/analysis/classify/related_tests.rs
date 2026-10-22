@@ -713,6 +713,15 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::FullScan => None,
     };
     let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
+    // Run-scoped: a fresh instance per (owner, test) would rescan the
+    // workspace macro sites for each pair.
+    #[cfg(test)]
+    let full_scan_pin_syntax = super::OwnerPinSyntax::default();
+    let pin_syntax = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.owner_pin_syntax(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => &full_scan_pin_syntax,
+    };
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -1214,6 +1223,7 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
+                pin_syntax,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -2810,15 +2820,42 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
 /// `Type::factory(..)` where the one workspace declaration of `factory` in
 /// `impl Type` is a plain associated fn returning `Self`/`Type` (#7415).
 /// The call spelling alone never names the result type.
+/// What the one indexed `Type::name` associated fn is declared to return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FactoryReturn {
+    /// A synchronous fn returning `Self`/`Type`.
+    OwnSync,
+    /// An `async fn` (or an unreadable declaration): the call is a future.
+    Future,
+    /// Undeclared, ambiguous or any other return type.
+    Other,
+}
+
+/// A constructor-named call (`Site::new()`) reads as `Site` by convention
+/// unless the one indexed declaration is `async`: that call is a future.
+fn constructor_head_names_type(
+    expr: &str,
+    impl_type: &str,
+    factory: &dyn Fn(&str, &str) -> FactoryReturn,
+) -> bool {
+    initializer_type_head(expr) == Some(impl_type)
+        && !matches!(
+            type_head(expr),
+            Some((segments, Some(b'(')))
+                if matches!(segments.as_slice(), [.., ty, name]
+                    if *ty == impl_type && factory(ty, name) == FactoryReturn::Future)
+        )
+}
+
 fn factory_call_names_type(
     expr: &str,
     impl_type: &str,
-    factory: &dyn Fn(&str, &str) -> bool,
+    factory: &dyn Fn(&str, &str) -> FactoryReturn,
 ) -> bool {
     matches!(
         type_head(expr),
         Some((segments, Some(b'(')))
-            if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name))
+            if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name) == FactoryReturn::OwnSync)
     )
 }
 
@@ -2826,33 +2863,37 @@ fn factory_call_names_type(
 /// associated fn (no `self`) whose entire return type is `Self` or `ty`.
 /// Zero or several declarations, `Result<Self>`-style wrappers and `async`
 /// fail closed.
-fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> FactoryReturn {
     let mut declarations = index.functions().iter().filter(|function| {
         function.name == name
             && matches!(&function.item.container,
                 FunctionContainer::Inherent { self_ty } if self_ty == ty)
     });
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
-        return false;
+        return FactoryReturn::Other;
     };
     if function.item.has_self_param || !function.item.has_body {
-        return false;
+        return FactoryReturn::Other;
+    }
+    // The indexed body starts at `fn`, so `async` is only visible in the full
+    // declaration. An async factory returns a future, never `Self`; an
+    // unknown declaration fails closed too.
+    if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {
+        return FactoryReturn::Future;
     }
     let masked = mask_comments_and_strings(&function.body);
     let Some(signature) = masked.split('{').next() else {
-        return false;
+        return FactoryReturn::Other;
     };
-    if signature
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .any(|word| word == "async")
-    {
-        return false;
-    }
     let Some((_, returned)) = signature.rsplit_once("->") else {
-        return false;
+        return FactoryReturn::Other;
     };
     let returned = returned.split("where").next().unwrap_or(returned).trim();
-    returned == "Self" || returned == ty
+    if returned == "Self" || returned == ty {
+        FactoryReturn::OwnSync
+    } else {
+        FactoryReturn::Other
+    }
 }
 
 /// CamelCase final segment (`Circle`), read as an enum tuple variant.
@@ -3386,6 +3427,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     method: &str,
     impl_type: &str,
     index: Option<&RustIndex>,
+    pin_syntax: &super::OwnerPinSyntax,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -3393,16 +3435,17 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    let pin_syntax = super::OwnerPinSyntax::default();
     let unit_struct = |name: &str| {
         index.is_some_and(|index| {
-            super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
+            super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
     let factory = |ty: &str, name: &str| {
-        index.is_some_and(|index| associated_fn_returns_own_type(index, ty, name))
+        index.map_or(FactoryReturn::Other, |index| {
+            associated_fn_returns_own_type(index, ty, name)
+        })
     };
-    executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
+    executable_call_resolves(test, index, pin_syntax, &|node, scope| {
         inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
     })
 }
@@ -3414,12 +3457,12 @@ pub(in crate::analysis) fn free_helper_call_resolves(
     caller: &TestSummary,
     helper: &FunctionSummary,
     index: &RustIndex,
+    pin_syntax: &super::OwnerPinSyntax,
 ) -> bool {
     if helper.item.container != FunctionContainer::Free {
         return false;
     }
-    let syntax = super::OwnerPinSyntax::default();
-    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
+    executable_call_resolves(caller, Some(index), pin_syntax, &|node, _| {
         let Some(call) = ast::CallExpr::cast(node) else {
             return false;
         };
@@ -3450,7 +3493,7 @@ pub(in crate::analysis) fn free_helper_call_resolves(
             helper,
             prefix.as_deref(),
             index,
-            &syntax,
+            pin_syntax,
         )
     })
 }
@@ -3526,7 +3569,7 @@ fn inherent_call_node_resolves(
     method: &str,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
-    factory: &dyn Fn(&str, &str) -> bool,
+    factory: &dyn Fn(&str, &str) -> FactoryReturn,
 ) -> bool {
     if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
         return false;
@@ -3591,21 +3634,30 @@ fn assertion_arguments_resolve(
         return false;
     };
     let name = path.syntax().text().to_string();
-    let operands = match name.trim() {
+    // A qualified `std`/`core`/drop-in assertion evaluates the same operands.
+    // Its root and binding were verified by the caller's macro-binding gate
+    // when an index is present; without an index there is nothing to verify.
+    let qualified = crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim());
+    if qualified.is_some() && index.is_none() {
+        return false;
+    }
+    let operands = match qualified.unwrap_or(name.trim()) {
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
         "assert" | "debug_assert" => 1,
         _ => return false,
     };
-    if call.syntax().ancestors().any(|scope| {
-        ast::StmtList::cast(scope).is_some_and(|list| {
-            list.syntax().children().any(|node| {
-                ast::MacroRules::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
-                    .is_some_and(|bound| bound.text() == name.trim())
+    if qualified.is_none()
+        && call.syntax().ancestors().any(|scope| {
+            ast::StmtList::cast(scope).is_some_and(|list| {
+                list.syntax().children().any(|node| {
+                    ast::MacroRules::cast(node.clone())
+                        .and_then(|item| item.name())
+                        .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
+                        .is_some_and(|bound| bound.text() == name.trim())
+                })
             })
         })
-    }) {
+    {
         return false;
     }
     let Some(tree) = call.token_tree() else {
@@ -3657,7 +3709,7 @@ fn scoped_receiver_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
-    factory: &dyn Fn(&str, &str) -> bool,
+    factory: &dyn Fn(&str, &str) -> FactoryReturn,
 ) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
@@ -3690,7 +3742,7 @@ fn scoped_receiver_names_type(
     }
     let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
     initializer_is_one_head_expr(&text)
-        && (initializer_type_head(&text) == Some(impl_type)
+        && (constructor_head_names_type(&text, impl_type, factory)
             || factory_call_names_type(&text, impl_type, factory))
 }
 
@@ -3699,7 +3751,7 @@ fn visible_receiver_binding_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
-    factory: &dyn Fn(&str, &str) -> bool,
+    factory: &dyn Fn(&str, &str) -> FactoryReturn,
 ) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
@@ -3782,7 +3834,7 @@ fn visible_receiver_binding_names_type(
                 return binding.initializer().is_some_and(|initializer| {
                     let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
                     initializer_is_one_head_expr(&text)
-                        && (initializer_type_head(&text) == Some(impl_type)
+                        && (constructor_head_names_type(&text, impl_type, factory)
                             || factory_call_names_type(&text, impl_type, factory)
                             // A bare type name is a value only for a verified
                             // unit struct, not a same-spelled constant/import.
@@ -3803,6 +3855,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
     caller: &TestSummary,
     owner: &FunctionSummary,
     index: &RustIndex,
+    pin_syntax: &super::OwnerPinSyntax,
 ) -> bool {
     requires_inherent_receiver_identity(owner)
         && owner_call_relation_reason(
@@ -3816,6 +3869,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
                 .map(|facts| facts.data().source.as_ref()),
             index,
             false,
+            pin_syntax,
         ) == RelationReason::DirectOwnerCall
 }
 
@@ -3827,6 +3881,7 @@ fn owner_call_relation_reason(
     test_source: Option<&str>,
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
+    pin_syntax: &super::OwnerPinSyntax,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -3968,7 +4023,13 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
+        return if inherent_receiver_call_resolves(
+            test,
+            owner_name,
+            &impl_type,
+            Some(index),
+            pin_syntax,
+        ) {
             RelationReason::DirectOwnerCall
         } else {
             RelationReason::WeakTokenSubstring
@@ -10683,7 +10744,13 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty, None),
+                inherent_receiver_call_resolves(
+                    &summary,
+                    method,
+                    ty,
+                    None,
+                    &crate::analysis::classify::OwnerPinSyntax::default()
+                ),
                 expected,
                 "{body}"
             );
