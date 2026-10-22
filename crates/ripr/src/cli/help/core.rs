@@ -146,8 +146,6 @@ Common options:
                     local origin/HEAD ref, then origin/main, origin/master,
                     main, and master in order.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
-  --path GLOB       Analyze only changed files matching GLOB; --exclude GLOB
-                    skips some (both repeatable; see --help --all).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
   --committed       Compare committed history only (base...HEAD).
@@ -172,7 +170,7 @@ Examples:
   ripr check --base origin/main --json
 
 More:
-  ripr check --help --all   Every option, format, and environment variable.
+  ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
