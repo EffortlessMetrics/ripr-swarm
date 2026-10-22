@@ -766,9 +766,9 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
-**Rule 16. Playwright Test specs of pure functions (#9434).** A spec that
-imports `expect` and `test` from `@playwright/test` reads like its plain
-form in four places:
+**Rule 16. Playwright Test specs of pure functions (#9434, #9652).** A spec
+that imports `expect` and `test` from `@playwright/test` reads like its
+plain form in five places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -790,6 +790,16 @@ form in four places:
    the expected value is one of the two arms. An argument outside that
    interval, an expected value equal to neither arm, a wrapped call and
    equal arms keep the old reading.
+5. A message that is one template literal with interpolations (`not a
+   count: ${text}` becoming `not a number: ${text}`, the same expressions
+   in both) is read as fixed text around holes. An anchored `toThrow`
+   pattern separates the versions when its literal text can be the whole
+   message of exactly one version for some filling of the holes, and the
+   same call fills both. The test's literal argument then yields the text
+   the pattern pins on one version and cannot on the other. A pattern that
+   fits neither or both versions, a changed or different interpolated
+   expression, a second throw site, and unanchored, flagged or substring
+   payloads (`toThrow("...")`) keep the old reading.
 
 ### Static limits
 
@@ -1249,6 +1259,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
     `break`, stay `weakly_exposed` (rule 11).
+38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
+    threw `` `not a count: ${text}` ``, and the Playwright spec runs
+    `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
+    `exact_error_variant` / strong, `exposed` (the pinned text fits only the
+    old pieces for some fill of `${text}`). With `/^something else$/`,
+    `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
+    unchanged.
 
 ## Test Mapping
 
