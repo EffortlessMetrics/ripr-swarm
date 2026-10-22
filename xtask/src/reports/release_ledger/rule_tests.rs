@@ -57,7 +57,10 @@ fn facts(mut commits: Vec<CommitFacts>) -> GitFacts {
             repository: "example/ledger".to_string(),
             base_sha: sha(1),
             cut_sha: cut.clone(),
-            cut_tree_sha: sha(200),
+            cut_tree_sha: commits
+                .iter()
+                .find(|c| c.commit_sha == cut)
+                .map_or_else(|| sha(200), |c| c.tree_sha.clone()),
             main_sha: cut,
         },
         range: Range {
@@ -266,12 +269,15 @@ fn deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row() -> Result<(), St
 
 #[test]
 fn derived_ledger_validates_and_overrides_resolve_blocking_rows() -> Result<(), String> {
+    // The merge reaches commit 7 through its second parent, so the range is connected.
     let mut merge = commit(6, Some(2), "present_effective", &["crates/ripr/src/a.rs"]);
-    merge.parent_shas.push(sha(77));
+    merge.parent_shas.push(sha(7));
+    let mut side = commit(7, None, "present_but_superseded", &["docs/a.md"]);
+    side.parent_shas = vec![sha(5)];
     let input = facts(vec![
         commit(5, Some(1), "present_effective", &["xtask/src/a.rs"]),
         merge,
-        commit(7, None, "present_but_superseded", &["docs/a.md"]),
+        side,
     ]);
     let blocked = derive(&DeriveInput {
         facts: &input,
