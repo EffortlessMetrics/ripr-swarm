@@ -1629,7 +1629,7 @@ fn else_arm_return_no_strong_call_enters_is_weakly_exposed() -> Result<(), Strin
     let reason = missing_boundary(&finding, "not (x > 0)")
         .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
     assert!(
-        reason.contains("`if`/`elif` chain whose `else` arm holds the changed line (`x > 0`)"),
+        reason.contains("`else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold"),
         "{reason}"
     );
     assert!(observed(&finding, "x = 5"), "{finding:?}");
@@ -1662,7 +1662,7 @@ fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), Stri
     let reason = missing_boundary(&finding, "not (s >= 90) and not (s >= 80)")
         .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
     assert!(
-        reason.contains("at least one condition of the `if`/`elif` chain"),
+        reason.contains("`else` arm of an `if`/`elif` chain (`s >= 90`, `s >= 80`)"),
         "{reason}"
     );
     // A call that fails both conditions enters the `else` arm.
@@ -1673,6 +1673,45 @@ fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), Stri
         "        return \"D\"",
     )?;
     assert_eq!(entered.class, ExposureClass::Exposed, "{entered:?}");
+    Ok(())
+}
+
+#[test]
+fn else_text_inside_a_docstring_is_not_an_else_arm() -> Result<(), String> {
+    // The `else:` line lives in a docstring inside the real `if` arm, so the
+    // changed return belongs to that arm and `f(5)` runs it: it stays exposed.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 0:\n        \"\"\"\n    else:\n        \"\"\"\n        return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(5) == 2\n",
+        6,
+        "        return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row()
+-> Result<(), String> {
+    // f(-1, -1) fails the outer guard `x > 0` and never reaches the inner
+    // chain; the reason must not say the input satisfies an inner condition.
+    let finding = classify_added_case(
+        "def f(x, y):\n    if x > 0:\n        if y > 0:\n            return 1\n        else:\n            return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(-1, -1) == 0\n",
+        6,
+        "            return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (y > 0) and x > 0")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        !reason.contains("satisfies at least one condition"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("by this chain or an enclosing guard"),
+        "{reason}"
+    );
     Ok(())
 }
 

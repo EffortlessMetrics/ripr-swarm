@@ -187,7 +187,7 @@ pub(super) fn python_guarded_arm_gap(
         observed.sort();
         observed.dedup();
         parts.push(format!(
-            "each strong related test input satisfies at least one condition of the `if`/`elif` chain whose `else` arm holds the changed line ({names}) and takes an earlier arm{}",
+            "the changed line sits in the `else` arm of an `if`/`elif` chain ({names}) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard{}",
             if observed.is_empty() {
                 String::new()
             } else {
@@ -304,7 +304,12 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
     let mut threshold = leading_whitespace(changed);
     let mut conditions = Vec::new();
     let mut else_chains = Vec::new();
+    // Docstring text that reads like `else:` / `if X:` is not a branch.
+    let in_string = lines_inside_triple_quotes(&lines);
     for index in (owner.start_line..changed_index).rev() {
+        if in_string[index] {
+            continue;
+        }
         let raw = lines[index];
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
