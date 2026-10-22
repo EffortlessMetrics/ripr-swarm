@@ -573,7 +573,33 @@ fn guarded_self_field_write_stays_uncredited_for_shapes_the_reader_does_not_mode
         "        if kind == \"\":\n            return\n",
         "        if kind == \"error\":",
     );
-    for source in [elif, looped, early_exit] {
+    // An entered outer guard does not enter the inner one, an `else` arm is
+    // taken by inputs the guard rejects, and `while` or `with` before the
+    // write can loop on or swallow an error.
+    let head = "class Recorder:\n    def __init__(self):\n        self.last = None\n\n    def note(self, kind):\n";
+    let nested = format!(
+        "{head}        if kind == \"error\":\n            if kind == \"fault\":\n                self.last = \"fault\"\n"
+    );
+    let else_arm = format!(
+        "{head}        if kind == \"ok\":\n            self.last = None\n        else:\n            self.last = \"fault\"\n"
+    );
+    let while_before = guarded_note_source(
+        "        while kind != \"error\":\n            kind = \"error\"\n",
+        "        if kind == \"error\":",
+    );
+    let with_before = guarded_note_source(
+        "        with open(kind):\n            pass\n",
+        "        if kind == \"error\":",
+    );
+    for source in [
+        elif,
+        looped,
+        early_exit,
+        nested,
+        else_arm,
+        while_before,
+        with_before,
+    ] {
         let finding = classify_guarded(&source, entering)?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
     }
