@@ -145,6 +145,13 @@ fn given_a_mismatched_or_shadowed_call_when_resolving_then_it_stays_unresolved()
         test.assertions.is_empty(),
         "a locally rebound name is not the helper"
     );
+    let imported_twice = test_source("check_equal(sq(3), 9)")
+        .replace("\r\n\r\n\r\ndef", "\r\nfrom tests.other import check_equal\r\n\r\n\r\ndef");
+    let test = resolved(&imported_twice, EQ_HELPER);
+    assert!(
+        test.assertions.is_empty(),
+        "two imports of one alias leave the bound target ambiguous"
+    );
     let redefined = format!(
         "{}\r\n\r\ndef check_equal(a, b):\r\n    pass\r\n",
         test_source("check_equal(sq(3), 9)")

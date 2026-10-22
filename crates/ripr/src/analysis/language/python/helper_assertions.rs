@@ -61,6 +61,10 @@ pub(super) fn collect_helper_module(
         if imported.contains(&name) {
             continue;
         }
+        // Unsupported shapes are skipped before the binding scan.
+        let Some(helper) = helper_of(source, function) else {
+            continue;
+        };
         // The def must be the module's only binding of the name.
         let mut others = BTreeSet::new();
         bound_names(&statements[..index], &mut others);
@@ -68,9 +72,7 @@ pub(super) fn collect_helper_module(
         if others.contains(&name) {
             continue;
         }
-        if let Some(helper) = helper_of(source, function) {
-            module.helpers.push(helper);
-        }
+        module.helpers.push(helper);
     }
     module
 }
@@ -280,7 +282,12 @@ fn resolve_helper<'a>(
     modules: &'a BTreeMap<PathBuf, PythonHelperModule>,
 ) -> Option<&'a PythonAssertionHelper> {
     let own = modules.get(&test.file);
-    let import = test.imports.iter().find(|import| import.alias == name);
+    // Two imports of one alias leave the bound target order-dependent.
+    let mut matching = test.imports.iter().filter(|import| import.alias == name);
+    let import = matching.next();
+    if matching.next().is_some() {
+        return None;
+    }
     let (module, helper_name) = match import {
         Some(import) => {
             // A name the test module also defines or rebinds is ambiguous.
