@@ -1048,7 +1048,7 @@ fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<
         "this file pins to [\"rust\"]",
         "enables languages it detects from project markers",
         "deleting this file is not identical",
-        "Validate edits with `ripr config validate`",
+        `ripr config validate`,
     ] {
         if !generated.contains(needle) {
             return Err(format!("generated init config banner is missing: {needle}"));
