@@ -860,7 +860,7 @@ fn workflow_block_scalar_ends_at_key_column_for_list_items() {
         );
     }
     let nested =
-        "jobs:\n  p:\n    steps:\n      - name: x\n        with:\n          run: npm publish\n";
+        "jobs:\n  job:\n    steps:\n      - name: x\n        with:\n          run: npm publish\n";
     assert!(has_violation(&workflow_violations(nested), "wf.yml:6"));
     assert!(!workflow_violations("      FOO=1 npm publish\n").is_empty());
     // Positive controls: sibling metadata after a `- run: |` body is not script.
