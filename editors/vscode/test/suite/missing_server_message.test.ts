@@ -121,6 +121,7 @@ suite('Missing-server message actions (#8588)', () => {
     );
 
     await controller.start();
+    await controller.settleServerMessage();
 
     assert.strictEqual(errorCalls.length, 1, `expected one error popup, got ${JSON.stringify(errorCalls)}`);
     assert.ok(!errorCalls[0].items.includes(COPY_INSTALL), JSON.stringify(errorCalls[0]));
@@ -146,6 +147,7 @@ suite('Missing-server message actions (#8588)', () => {
     );
 
     await controller.start();
+    await controller.settleServerMessage();
 
     assert.strictEqual(errorCalls.length, 1, `expected one error popup, got ${JSON.stringify(errorCalls)}`);
     assert.ok(errorCalls[0].items.includes(COPY_INSTALL), JSON.stringify(errorCalls[0]));
@@ -166,10 +168,36 @@ suite('Missing-server message actions (#8588)', () => {
         []
       );
       await controller.start();
+      await controller.settleServerMessage();
       assert.strictEqual(errorCalls.length, 1, `${kind}: ${JSON.stringify(errorCalls)}`);
       assert.ok(!errorCalls[0].items.includes(COPY_INSTALL), `${kind}: ${JSON.stringify(errorCalls[0])}`);
       assert.ok(errorCalls[0].items.includes(SHOW_OUTPUT), `${kind}: ${JSON.stringify(errorCalls[0])}`);
     }
+  });
+
+  test('start() resolves while the missing-server popup is still unanswered (#9526)', async () => {
+    const errorCalls: Array<{ message: string; items: string[] }> = [];
+    const { controller } = controllerForFailure(
+      { message: 'ripr server is not available.', detail: 'ripr.exe --version timed out.', kind: 'other' },
+      errorCalls,
+      [],
+      undefined,
+      true
+    );
+
+    const outcome = await Promise.race([
+      controller.start().then(() => 'returned'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('blocked on the popup'), 2000))
+    ]);
+
+    assert.strictEqual(outcome, 'returned');
+    assert.strictEqual(errorCalls.length, 1, JSON.stringify(errorCalls));
+    // A later start() must not be folded into a pending start.
+    const second = await Promise.race([
+      controller.start().then(() => 'returned'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('blocked on the popup'), 2000))
+    ]);
+    assert.strictEqual(second, 'returned');
   });
 });
 
@@ -177,7 +205,8 @@ function controllerForFailure(
   failure: ResolveFailure,
   errorCalls: Array<{ message: string; items: string[] }>,
   clipboardWrites: string[],
-  selectedAction?: string
+  selectedAction?: string,
+  neverAnswer = false
 ): { controller: RiprClientController } {
   const runtime: RiprClientRuntime = {
     getConfig: () => enabledConfig,
@@ -203,6 +232,9 @@ function controllerForFailure(
     showWarningMessage: async () => undefined,
     showErrorMessage: async (message: string, ...items: string[]) => {
       errorCalls.push({ message, items });
+      if (neverAnswer) {
+        return new Promise<string | undefined>(() => undefined);
+      }
       return selectedAction;
     }
   };

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0310: pure reformats seed no probes
+# RIPR-SPEC-0311: pure reformats seed no probes
 
 Status: proposed
 

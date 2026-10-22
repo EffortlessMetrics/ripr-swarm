@@ -200,11 +200,12 @@ Options:
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --before PATH    Before `repo-exposure-json` snapshot.
-  --after PATH     After `repo-exposure-json` snapshot.
+  --before PATH    Before `repo-exposure-json` or `check-findings-json` snapshot.
+  --after PATH     After snapshot of the same format.
   --json           Required until a human verify surface exists.
 
-The verify command compares two saved static repo-exposure artifacts and emits
+The verify command compares two saved static artifacts (`repo-exposure-json`,
+or `check-findings-json` for a diff-scoped TypeScript gap) and emits
 an agent-focused before/after summary. Snapshot paths must resolve under
 `--root`. The command remains advisory and static; it does not run analysis,
 mutation testing, generate tests, edit files, change cache behavior, or touch
