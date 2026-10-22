@@ -183,12 +183,14 @@ pub(crate) fn collect_callback_assertions(
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
+    let table_consts = table_loop_consts(statements, source);
     let context = AssertionContext {
         receiver,
         bindings,
         returns_to_runner,
         literal_consts: &literal_consts,
         match_object_consts: &match_object_consts,
+        table_consts: &table_consts,
     };
     let mut out = Vec::new();
     for stmt in statements {
@@ -303,6 +305,7 @@ pub(crate) fn statements_collect_assertion_probe(
         returns_to_runner: false,
         literal_consts: &[],
         match_object_consts: &[],
+        table_consts: &[],
     };
     let mut probe = Vec::new();
     for stmt in statements {
@@ -331,6 +334,9 @@ pub(crate) struct AssertionContext<'a> {
     /// The test body's top-level object `const`s a `toMatchObject` argument
     /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
     match_object_consts: &'a [MatchObjectConst],
+    /// The test body's top-level literal table `const`s a `for...of` loop may
+    /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
+    table_consts: &'a [TableConst],
 }
 
 impl<'a> AssertionContext<'a> {
@@ -343,6 +349,7 @@ impl<'a> AssertionContext<'a> {
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
             match_object_consts: &[],
+            table_consts: &[],
         }
     }
 }
@@ -489,7 +496,17 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_in_statement(&for_in.body, source, &nested, out);
         }
         Statement::ForOfStatement(for_of) => {
-            collect_expect_assertions_in_statement(&for_of.body, source, &nested, out);
+            if let Some(rows) = table_loop_assertions(
+                for_of,
+                source,
+                context.bindings,
+                context.returns_to_runner,
+                context.table_consts,
+            ) {
+                out.extend(rows);
+            } else {
+                collect_expect_assertions_in_statement(&for_of.body, source, &nested, out);
+            }
         }
         Statement::LabeledStatement(labeled) => {
             collect_expect_assertions_in_statement(&labeled.body, source, &nested, out);
@@ -859,12 +876,14 @@ fn collect_nested_callback_assertions(
             };
             let literal_consts = loose_literal_consts(statements, source);
             let match_object_consts = match_object_consts(statements, source);
+            let table_consts = table_loop_consts(statements, source);
             let subtest = AssertionContext {
                 receiver: first_plain_parameter(callback),
                 bindings: context.bindings,
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
+                table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }

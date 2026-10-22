@@ -2336,6 +2336,18 @@ tests = [
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_discloses_version_crossing_when_both_sides_recorded",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_keeps_same_or_unversioned_builds_resolved",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_withholds_achieved_on_analyzer_version_identity_discontinuity",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_and_update_keep_out_of_scope_gaps_not_evaluated",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_unrelated_diff_resolves_nothing_and_missing_scope_fails_closed",
+  "crates/ripr/src/output/baseline_delta.rs::tests::absence_predicate_covers_scope_edge_cases",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_update_reports_preserved_not_evaluated_entries",
+  "crates/ripr/src/output/gate/tests.rs::e2e_pr_guidance_scope_resolves_only_analyzed_absent_gap",
+  "crates/ripr/src/output/gate/tests.rs::e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated",
+  "crates/ripr/src/output/gate/tests.rs::e2e_malformed_scope_counters_and_lists_fail_closed",
+  "crates/ripr/src/output/gate/tests.rs::e2e_gap_ledger_path_fails_closed_until_analyzed_files_are_disclosed",
+  "crates/ripr/src/output/gate/tests.rs::e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated",
+  "crates/ripr/src/output/gate/tests.rs::e2e_non_rust_changed_files_are_not_covered_by_seam_analysis",
+  "crates/ripr/src/output/gate/tests.rs::e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated",
+  "crates/ripr/src/output/gate/tests.rs::e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -11409,6 +11421,7 @@ id = "RIPR-SPEC-0158"
 name = "Bounded value transfer from exact test inputs"
 spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
+  "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
@@ -11425,6 +11438,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/value_transfer.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
 ]
 outputs = []
 metrics = [
@@ -16220,6 +16234,15 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_unreached_catch_arm_withdraws_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_rejecting_test_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_edit_outside_the_catch_arm_is_unchanged",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_guarded_call_that_can_fail_by_itself_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_dot_catch_handler_is_a_catch_arm",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_signal_in_a_comment_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_module_mock_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::every_related_test_must_lack_a_signal",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_operator_on_the_call_result_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::owner_tie_reads_multi_line_chains_and_member_or_generic_calls",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::multi_line_then_chain_reads_static_unknown_through_the_classifier",
 ]
@@ -16227,6 +16250,7 @@ fixtures = [
   "fixtures/typescript-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
@@ -17376,6 +17400,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::only_an_unconditional_dict_literal_is_read_as_the_table",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_rebound_builtin_class_is_not_read_as_the_builtin",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_that_masks_the_edited_field_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_rule_fails_open_when_the_result_is_read_otherwise",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
@@ -17584,6 +17610,7 @@ tests = [
   "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_on_a_field_or_parameter_is_not_an_item_span",
   "xtask/src/reports/release_ledger/capture_tests.rs::editor_rust_is_scanned_and_same_line_product_edits_stay_product",
   "xtask/src/reports/release_ledger/capture_tests.rs::changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit",
+  "xtask/src/reports/release_ledger/capture_tests.rs::blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit",
   "xtask/src/reports/release_ledger/rule_tests.rs::inline_test_only_product_paths_count_as_evidence",
   "xtask/src/reports/release_ledger/capture_tests.rs::inline_test_edits_are_detected_per_hunk_from_real_git",
   "xtask/src/reports/release_ledger/rule_tests.rs::short_commit_ids_do_not_panic_the_override_reference",
@@ -17597,6 +17624,10 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::input_over_the_byte_cap_is_rejected_not_truncated",
   "xtask/src/reports/release_ledger/tests.rs::audit_file_digest_must_match_the_recorded_sha",
   "xtask/src/reports/release_ledger/tests.rs::editing_the_audit_file_after_derivation_fails_validation",
+  "xtask/src/reports/release_ledger/tests.rs::finalize_defaults_to_the_pinned_base_and_output_directory",
+  "xtask/src/reports/release_ledger/tests.rs::finalize_requires_the_frozen_cut_as_a_full_sha",
+  "xtask/src/reports/release_ledger/tests.rs::finalize_requires_cut_packet_and_audit",
+  "xtask/src/reports/release_ledger/tests.rs::finalize_rejects_unknown_repeated_and_valueless_flags",
   "xtask/src/reports/release_ledger/rule_tests.rs::product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",

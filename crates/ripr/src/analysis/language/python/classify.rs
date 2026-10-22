@@ -484,6 +484,19 @@ pub(super) fn classify_change_for_owner(
                         &focus,
                     )
                 })
+                .or_else(|| {
+                    // #9429: an owner observed only through a further method
+                    // call on its result.
+                    arm_activation::python_chained_receiver_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();
@@ -664,15 +677,23 @@ pub(super) fn classify_change_for_owner(
         // changed line never executes under an observed input and the oracle
         // cannot discriminate a line it never runs (#7392).
         guarded_arm_downgraded = true;
+        let message = if gap.chained_receiver {
+            format!(
+                "A strong Python oracle reaches `{}`, but every strong assertion reads its result only through a further method call, and that method does not return the edited state directly, so the edited value is not observed (observation_unverified). {}.",
+                owner.name, gap.reason,
+            )
+        } else {
+            format!(
+                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
+                owner.name, gap.discriminator,
+            )
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Yes,
             StageState::Yes,
             StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
-                owner.name, gap.discriminator,
-            )],
+            vec![message],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -860,6 +881,12 @@ pub(super) fn classify_change_for_owner(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if guarded_arm_downgraded
+            && guarded_arm_gap
+                .as_ref()
+                .is_some_and(|gap| gap.chained_receiver)
+        {
+            "Related tests reach the changed owner, but every strong assertion reads its result only through a further method call that does not return the edited state.".to_string()
         } else if guarded_arm_downgraded {
             "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {
