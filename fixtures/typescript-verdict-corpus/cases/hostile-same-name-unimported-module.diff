@@ -1,9 +1,0 @@
-diff --git a/src/b/price.ts b/src/b/price.ts
-index 0000000..1111111 100644
---- a/src/b/price.ts
-+++ b/src/b/price.ts
-@@ -1,3 +1,3 @@
- export function price(n: number): number {
--  return n * 7;
-+  return n * 8;
- }

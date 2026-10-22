@@ -1,9 +1,0 @@
-diff --git a/src/tags.ts b/src/tags.ts
-index 0000000..1111111 100644
---- a/src/tags.ts
-+++ b/src/tags.ts
-@@ -1,3 +1,3 @@
- export function normalizeTags(tags: string[]): string[] {
--  return [...new Set(tags.map((t) => t.toLowerCase()))].sort();
-+  return [...new Set(tags.map((t) => t.toLowerCase()))];
- }
