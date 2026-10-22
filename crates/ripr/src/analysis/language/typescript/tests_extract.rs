@@ -3862,7 +3862,7 @@ impl UnextractedTestFinder<'_> {
         // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
         // ...)`) registers nothing and its callback never runs, so a
         // registration inside it is not one the extractor dropped.
-        if statement_position && callee_is_skipped_describe(call) {
+        if callee_is_skipped_describe(call) {
             return;
         }
         if statement_position && self.gap.is_none() {

@@ -935,6 +935,13 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
             "{header}"
         );
     }
+    // A skipped suite bound to a variable is not walked either.
+    let source = "import { medal } from \"../src/rank\";\nconst suite = describe.skip(\"medal\", () => {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "variable-initializer skipped suite"
+    );
     // Controls: a dynamic skip, a spread, `fails` and `expectFailure` leave
     // the suite active, so its unindexed registration stays disclosed.
     for options in [
