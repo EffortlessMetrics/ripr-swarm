@@ -14478,6 +14478,8 @@ tests = [
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_real_durable_attempt_edit_refresh_and_corruption_recovery",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_byte_pages_preserve_every_invalid_identity",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_near_cap_keeps_structured_pages_for_small_and_escaped_ids",
+  "crates/ripr/tests/mcp_stdio.rs::mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams",
+  "crates/ripr/src/mcp/gaps.rs::tests::inline_admission_lifts_only_the_matching_non_surface_fix_site",
   "crates/ripr/src/mcp/repair.rs::tests::complete_route_creates_one_replay_resistant_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::missing_producer_facts_never_create_a_misleading_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::stale_snapshot_and_unknown_items_fail_closed",
