@@ -80,6 +80,7 @@ jobs:
           nextest_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null || echo "$nextest_pid")
           (
+            set +e
             for _ in $(seq 1 264); do
               sleep 10
               kill -0 "$nextest_pid" 2> /dev/null || exit 0
