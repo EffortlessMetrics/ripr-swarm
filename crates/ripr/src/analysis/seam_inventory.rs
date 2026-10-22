@@ -1585,15 +1585,35 @@ mod bound_inventory_reuse {
 
     static ENTRIES: Mutex<VecDeque<Entry>> = Mutex::new(VecDeque::new());
 
+    #[cfg(test)]
+    std::thread_local! {
+        static ON_HIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Run `hook` once, inside the next lookup that hits. Tests use it to
+    /// cancel after every earlier checkpoint and before the hit returns.
+    #[cfg(test)]
+    pub(super) fn on_next_hit(hook: Box<dyn FnOnce()>) {
+        ON_HIT.with(|slot| *slot.borrow_mut() = Some(hook));
+    }
+
     pub(super) fn lookup(
         key: &RepoSeamCacheKey,
         identity: &[u8],
     ) -> Option<ScopedClassifiedSeamInventory> {
         let entries = ENTRIES.lock().ok()?;
-        entries
+        let hit = entries
             .iter()
             .find(|(entry_key, entry_identity, _)| entry_key == key && entry_identity == identity)
-            .map(|(_, _, inventory)| inventory.clone())
+            .map(|(_, _, inventory)| inventory.clone());
+        #[cfg(test)]
+        if hit.is_some()
+            && let Some(hook) = ON_HIT.with(|slot| slot.borrow_mut().take())
+        {
+            hook();
+        }
+        hit
     }
 
     pub(super) fn store(
@@ -8326,19 +8346,25 @@ marker = "libtest_mimic::Trial"
         inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
 
         let token = cancellation::AnalysisCancellationToken::new();
-        token.cancel(cancellation::AnalysisAbortKind::Cancelled);
-        evaluation_probe::reset();
+        let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+        let cancel_token = token.clone();
+        let hook_fired = std::rc::Rc::clone(&fired);
+        // Cancel only once the lookup has hit, after the entry checkpoint and
+        // workspace collection, so only the hit's own checkpoint can notice.
+        bound_inventory_reuse::on_next_hit(Box::new(move || {
+            hook_fired.set(true);
+            cancel_token.cancel(cancellation::AnalysisAbortKind::Cancelled);
+        }));
         let result = cancellation::with_token(&token, || {
             inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)
         });
-        let hit = evaluation_probe::evaluated() == 0;
         let _ = std::fs::remove_dir_all(&root);
 
-        assert!(hit, "the second call must be a reuse hit");
+        assert!(fired.get(), "the second call must reach a reuse hit");
         assert_eq!(
             result.err().as_deref(),
             Some("analysis cancelled: Cancelled"),
-            "a cancelled run must not commit a reused inventory"
+            "a run cancelled during a reuse hit must not commit the reused inventory"
         );
         Ok(())
     }
