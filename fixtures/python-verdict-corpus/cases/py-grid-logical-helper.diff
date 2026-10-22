@@ -1,0 +1,12 @@
+diff --git a/grid_logical/core.py b/grid_logical/core.py
+--- a/grid_logical/core.py
++++ b/grid_logical/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def is_visible(hidden):
+-    return not hidden
++    return hidden is False
+ 
+ 
+ def should_retry(timed_out, attempts_left):
