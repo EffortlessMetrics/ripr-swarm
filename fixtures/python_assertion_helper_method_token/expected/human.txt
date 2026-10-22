@@ -20,8 +20,8 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1
   Changed behavior: self.writes += 1
-  Missing discriminator: A strong Python oracle reaches `record_write`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated.…
-  Related test: tests/test_stats.py:6 test_writes (ripr could not confirm that this assertion observes the changed behavior)
+  Missing discriminator: Related Python test reaches `record_write` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
+  Related test: tests/test_stats.py:6 test_writes
   Suggested test file: tests/test_stats.py
   Suggested test: test_writes
   Test node: tests/test_stats.py::test_writes

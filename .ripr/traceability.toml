@@ -16143,6 +16143,11 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_shadowed_class_bindings",
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_literal_owner_calls",
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_receiver_or_field_modification",
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_derived_expected_values",
+  "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_receiver_rebinding",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_definition_time_calls",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_inactive_owner_calls",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_ambiguous_same_line_order",
@@ -16161,6 +16166,15 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_assertion_helper_rebound_class",
+  "fixtures/python_assertion_helper_literal_call",
+  "fixtures/python_assertion_helper_method_rebinding",
+  "fixtures/python_assertion_helper_module_method",
+  "fixtures/python_assertion_helper_overwritten_field",
+  "fixtures/python_assertion_helper_derived_expected",
+  "fixtures/python_assertion_helper_aliased_expected",
+  "fixtures/python_assertion_helper_rebound_receiver",
+  "fixtures/python_assertion_helper_import_rebound_receiver",
   "fixtures/python_assertion_helper_definition_call",
   "fixtures/python_assertion_helper_inactive_call",
   "fixtures/python_assertion_helper_same_line_order",

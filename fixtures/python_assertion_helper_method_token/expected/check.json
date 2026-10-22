@@ -40,15 +40,15 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `record_write`"},
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`"},
         "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `record_write`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: self.writes += 1 (line 7)", "related test tests/test_stats.py:6 test_writes uses strong exact value oracle: assert stats.record_write == method"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `record_write`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: self.writes += 1 (line 7)", "related test tests/test_stats.py:6 test_writes uses no oracle"],
       "flow_sinks": [
         {"kind":"unknown","text":"self.writes += 1","line":7}
       ],
-      "evidence": ["owner: Stats.record_write", "owner_kind: method", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_stats.py", "suggested_test_name: test_writes", "suggested_test_node_id: tests/test_stats.py::test_writes", "suggested_verify_command: python -m pytest tests/test_stats.py::test_writes", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle: exact_value strong (test_writes)", "test_oracle_shape: field_assertion (test_writes)"],
-      "missing": ["A strong Python oracle reaches `record_write`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "evidence": ["owner: Stats.record_write", "owner_kind: method", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_stats.py", "suggested_test_name: test_writes", "suggested_test_node_id: tests/test_stats.py::test_writes", "suggested_verify_command: python -m pytest tests/test_stats.py::test_writes", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle_shape: reach_only (test_writes)", "test_assertion_admission: assertion_like_present_but_unresolved (test_writes)"],
+      "missing": ["Related Python test reaches `record_write` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary."],
       "assertion_texts": {
       },
       "activation": {
@@ -67,11 +67,9 @@
           "name": "test_writes",
           "file": "tests/test_stats.py",
           "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert stats.record_write == method",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
         }
       ],
       "repair_placement": {
@@ -82,17 +80,16 @@
         "verify_command_confidence": "high"
        },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
       "recommended_next_step": "",
       "suggested_next_action": "",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "method",
       "changed_sink": "writes",
-      "observed_sink": "assert stats.record_write == method",
-      "oracle_alignment": "orthogonal",
-      "alignment_reason": "strong_oracle_observes_different_sink",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
       "source_currentness": "candidate_current"
     }
   ],

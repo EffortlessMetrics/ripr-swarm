@@ -48,6 +48,21 @@ fn a_same_file_assertion_helper_observes_the_written_field() -> Result<(), Strin
             .ok_or("the test must contain the helper call")?
             + 1
     );
+    for (helper, call) in [
+        (
+            "def check_writes(obj):\n    assert obj.writes == 2\n",
+            "check_writes(stats)",
+        ),
+        (
+            "def check_writes(want, obj):\n    assert want == obj.writes\n",
+            "check_writes(2, stats)",
+        ),
+    ] {
+        assert_eq!(
+            finding(&test_source(helper, call))?.class,
+            ExposureClass::Exposed
+        );
+    }
     Ok(())
 }
 
@@ -198,6 +213,117 @@ fn a_same_file_assertion_helper_refuses_definition_time_calls() -> Result<(), St
             "from src.stats import Stats\n\n{HELPER}\nstats = Stats()\n\ndef test_writes{header}:\n    stats = Stats()\n    check_writes(stats, 0)\n"
         );
         assert_ne!(finding(&source)?.class, ExposureClass::Exposed, "{source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_receiver_or_field_modification() -> Result<(), String> {
+    for body in [
+        "stats.record_write = ignore\n    stats.record_write()",
+        "stats.__setattr__('record_write', ignore)\n    stats.record_write()",
+        "stats.record_write()\n    stats.writes = 0",
+    ] {
+        let source = format!(
+            "from src.stats import Stats\n\n{HELPER}\ndef ignore():\n    pass\n\ndef test_writes():\n    stats = Stats()\n    {body}\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(
+            finding(&source)?.class,
+            ExposureClass::WeaklyExposed,
+            "{source}"
+        );
+    }
+    for replacement in [
+        "Stats.record_write = ignore",
+        "alias = Stats\nalias.record_write = ignore",
+        "type.__setattr__(Stats, 'record_write', ignore)",
+    ] {
+        let source = format!(
+            "from src.stats import Stats\n\n{HELPER}\ndef ignore(self):\n    pass\n\n{replacement}\n\ndef test_writes():\n    stats = Stats()\n    stats.record_write()\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(
+            finding(&source)?.class,
+            ExposureClass::WeaklyExposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_derived_expected_values() -> Result<(), String> {
+    for source in [
+        test_source(HELPER, "want = stats.writes\n    check_writes(stats, want)"),
+        test_source(
+            "def check_writes(obj, other):\n    assert obj.writes == other.writes\n",
+            "other = stats\n    check_writes(stats, other)",
+        ),
+    ] {
+        assert_eq!(
+            finding(&source)?.class,
+            ExposureClass::WeaklyExposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_receiver_rebinding() -> Result<(), String> {
+    for replacement in [
+        "saved = stats; stats = Other()",
+        "saved = stats = Other()",
+        "(stats) = Other()",
+        "import stats",
+        "from other import stats",
+    ] {
+        let source = format!(
+            "from src.stats import Stats\n\n{HELPER}\nclass Other:\n    writes = 0\n\ndef test_writes():\n    stats = Stats()\n    stats.record_write()\n    {replacement}\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(
+            finding(&source)?.class,
+            ExposureClass::WeaklyExposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_literal_owner_calls() -> Result<(), String> {
+    for literal in [
+        "\"\"\"documentation:\nstats.record_write()\n\"\"\"",
+        "'documentation:\\\nstats.record_write()'",
+    ] {
+        let source = format!(
+            "from src.stats import Stats\n\n{HELPER}\ndef test_writes():\n    stats = Stats()\n    text = {literal}\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(
+            finding(&source)?.class,
+            ExposureClass::WeaklyExposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_file_assertion_helper_refuses_shadowed_class_bindings() -> Result<(), String> {
+    let other = "class Other:\n    writes = 0\n    def record_write(self):\n        pass\n";
+    for (prefix, header, setup, expected) in [
+        ("Stats = Other\n", "()", "", ExposureClass::WeaklyExposed),
+        (
+            "",
+            "()",
+            "Stats = Other\n    ",
+            ExposureClass::WeaklyExposed,
+        ),
+        ("", "(Stats)", "", ExposureClass::StaticUnknown),
+    ] {
+        let source = format!(
+            "from src.stats import Stats\n\n{HELPER}\n{other}\n{prefix}\ndef test_writes{header}:\n    {setup}stats = Stats()\n    stats.record_write()\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(finding(&source)?.class, expected, "{source}");
     }
     Ok(())
 }

@@ -176,14 +176,20 @@ so a read before the changed owner runs does not observe its later effect.
 
 This bounded form requires a plain, undecorated top-level helper with one
 to four positional parameters, no defaults or variadic parameters, and a
-single comparison between parameters, their direct fields, or literals.
-Call arguments must be bare names or scalar constant expressions, supplied
-positionally. The test must be a plain top-level function with a straight
-line body of imports, simple assignments and eager name, literal, attribute or
-call expressions, with no other statement sharing a helper call's start line.
+single comparison between one parameter's direct field and a scalar literal.
+A parameter used as the expected value must receive a literal directly;
+copying the observed field to an expected-value local supplies no discriminator.
+Call arguments must be bare names or scalar literals, supplied positionally.
+The test must be a plain top-level function with a straight line body of
+single-name assignments and eager name, literal, attribute or call expressions.
+Each local name is assigned once and each statement has a distinct start line.
+Multiline literals in the test body stay opaque, so their contents cannot
+supply a call to the existing line-based effect matcher.
 Helper and test definitions have no parameter defaults, annotations or type
 parameters, so definition-time or deferred calls cannot supply local effects.
-Imported helpers, rebinding, references to executable code or global namespaces,
+Imported helpers, local imports, rebinding or shadowing of module bindings,
+writes to the observed field or
+called method, references to executable code or global namespaces,
 decorators, expression-level branching or deferred execution,
 computed operands, nested helpers and unresolved arguments retain their
 previous classification. This does not add a relation to an owner called

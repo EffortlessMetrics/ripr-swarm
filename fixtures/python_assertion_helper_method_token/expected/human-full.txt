@@ -34,13 +34,13 @@ Evidence
   - reach yes: 1 related Python test(s) found for owner `record_write`
   - infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`
   - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
-  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
-  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
+  - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape
   - local flow reaches unknown sink: self.writes += 1 (line 7) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_stats.py:6 test_writes uses strong exact value oracle: assert stats.record_write == method; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_stats.py:6 test_writes uses no oracle
 
 Weakness
-  - A strong Python oracle reaches `record_write`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+  - Related Python test reaches `record_write` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
 
 Repair placement
   suggested file: tests/test_stats.py

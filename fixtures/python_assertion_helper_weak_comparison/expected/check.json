@@ -40,15 +40,15 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `record_write`"},
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`"},
         "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `record_write`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: self.writes += 1 (line 7)", "related test tests/test_stats.py:6 test_writes uses weak relational check oracle: assert stats.writes >= 0"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `record_write`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: self.writes += 1 (line 7)", "related test tests/test_stats.py:6 test_writes uses no oracle"],
       "flow_sinks": [
         {"kind":"unknown","text":"self.writes += 1","line":7}
       ],
-      "evidence": ["owner: Stats.record_write", "owner_kind: method", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_stats.py", "suggested_test_name: test_writes", "suggested_test_node_id: tests/test_stats.py::test_writes", "suggested_verify_command: python -m pytest tests/test_stats.py::test_writes", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle: relational_check weak (test_writes)", "test_oracle_shape: field_assertion (test_writes)"],
-      "missing": ["Related Python test reaches `record_write` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed boundary."],
+      "evidence": ["owner: Stats.record_write", "owner_kind: method", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_stats.py", "suggested_test_name: test_writes", "suggested_test_node_id: tests/test_stats.py::test_writes", "suggested_verify_command: python -m pytest tests/test_stats.py::test_writes", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle_shape: reach_only (test_writes)", "test_assertion_admission: assertion_like_present_but_unresolved (test_writes)"],
+      "missing": ["Related Python test reaches `record_write` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary."],
       "assertion_texts": {
       },
       "activation": {
@@ -67,11 +67,9 @@
           "name": "test_writes",
           "file": "tests/test_stats.py",
           "line": 6,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert stats.writes >= 0",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
         }
       ],
       "repair_placement": {
@@ -82,8 +80,8 @@
         "verify_command_confidence": "high"
        },
       "stop_reasons": [],
-      "oracle_kind": "relational_check",
-      "oracle_strength": "weak",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
       "recommended_next_step": "",
       "suggested_next_action": "",
       "language": "python",

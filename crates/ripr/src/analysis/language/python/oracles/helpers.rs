@@ -3,11 +3,12 @@
 //! control flow stay opaque. Oracle grading and sink alignment keep their owners.
 
 use super::super::admission::PythonAssertionAdmission;
+use super::super::module_constants::PythonTestRebinding;
 use super::super::source_facts::parse_module_result;
 use super::super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::super::{PythonAssertion, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const MAX_HELPER_ARGUMENTS: usize = 4;
@@ -53,6 +54,7 @@ impl<'a> ComparisonHelper<'a> {
         &self,
         call: &ast::ExprCall,
         source: &SourceText<'_>,
+        rebinding: &PythonTestRebinding,
     ) -> Option<PythonAssertion> {
         if call.args.len() != self.parameters.len()
             || !call.keywords.is_empty()
@@ -61,6 +63,24 @@ impl<'a> ComparisonHelper<'a> {
                 .iter()
                 .all(|argument| matches!(argument, Expr::Name(_) | Expr::Constant(_)))
         {
+            return None;
+        }
+        // Exactly one observed field, compared with a literal. Two fields or
+        // a caller-derived expected value can be the same changed value twice.
+        let left_field = matches!(self.comparison.left.as_ref(), Expr::Attribute(_));
+        let right_field = matches!(self.comparison.comparators.first()?, Expr::Attribute(_));
+        if left_field == right_field {
+            return None;
+        }
+        let field = if left_field {
+            self.comparison.left.as_ref()
+        } else {
+            self.comparison.comparators.first()?
+        };
+        let Expr::Attribute(field) = field else {
+            return None;
+        };
+        if rebinding.assigns_attribute(field.attr.as_str()) {
             return None;
         }
         let operand = |expression: &Expr| self.operand(expression, &call.args, source);
@@ -111,11 +131,13 @@ impl<'a> ComparisonHelper<'a> {
                 .and_then(|index| arguments.get(index))
         };
         match expression {
-            Expr::Name(name) => Some(
-                text_for_range(source, argument(name.id.as_str())?.range())
-                    .trim()
-                    .to_string(),
-            ),
+            Expr::Name(name) => {
+                let actual = argument(name.id.as_str())?;
+                if !matches!(actual, Expr::Constant(_)) {
+                    return None;
+                }
+                Some(text_for_range(source, actual.range()).trim().to_string())
+            }
             Expr::Attribute(attribute) => {
                 let Expr::Name(parameter) = attribute.value.as_ref() else {
                     return None;
@@ -168,8 +190,19 @@ pub(in crate::analysis::language::python) fn attach_same_file_assertions(
     }
     for test in tests {
         if test.constant_rebinding.opaque
-            || super::super::mentions_python_name(source, "__code__")
-            || super::super::mentions_python_name(source, "__globals__")
+            // A rebound or locally shadowed module binding can replace the
+            // imported class or helper behind the existing receiver facts.
+            || test.constant_rebinding.names.iter().any(|name| {
+                test.constant_rebinding.module_bound.contains(name)
+            })
+            || test
+                .constant_rebinding
+                .attributes
+                .iter()
+                .any(|name| name.starts_with("__"))
+            || ["__code__", "__globals__", "__setattr__", "__getattribute__"]
+                .iter()
+                .any(|name| super::super::mentions_python_name(source, name))
         {
             continue;
         }
@@ -178,15 +211,26 @@ pub(in crate::analysis::language::python) fn attach_same_file_assertions(
         };
         if !function.decorator_list.is_empty()
             || !function_header_has_no_expressions(function)
-            || !function.body.iter().all(straight_line_statement)
+            || !function.body.iter().all(|statement| {
+                straight_line_statement(statement, &test.constant_rebinding, source)
+            })
         {
             continue;
         }
-        let mut statements_per_line = BTreeMap::new();
-        for statement in &function.body {
-            *statements_per_line
-                .entry(line_for_range_start(source, statement.range()))
-                .or_insert(0usize) += 1;
+        let mut statement_lines = BTreeSet::new();
+        let mut assigned_names = BTreeSet::new();
+        if function.body.iter().any(|statement| {
+            if !statement_lines.insert(line_for_range_start(source, statement.range())) {
+                return true;
+            }
+            if let Stmt::Assign(assignment) = statement
+                && let [Expr::Name(name)] = assignment.targets.as_slice()
+            {
+                return !assigned_names.insert(name.id.as_str());
+            }
+            false
+        }) {
+            continue;
         }
         let assertions: Vec<_> = function
             .body
@@ -201,11 +245,6 @@ pub(in crate::analysis::language::python) fn attach_same_file_assertions(
                 let Expr::Name(name) = call.func.as_ref() else {
                     return None;
                 };
-                // Line-based effect ordering cannot distinguish an earlier
-                // helper and a later owner call separated by a semicolon.
-                if statements_per_line.get(&line_for_range_start(source, call.range)) != Some(&1) {
-                    return None;
-                }
                 if test
                     .constant_rebinding
                     .names
@@ -214,7 +253,9 @@ pub(in crate::analysis::language::python) fn attach_same_file_assertions(
                 {
                     return None;
                 }
-                helpers.get(name.id.as_str())?.instantiate(call, source)
+                helpers
+                    .get(name.id.as_str())?
+                    .instantiate(call, source, &test.constant_rebinding)
             })
             .collect();
         if !assertions.is_empty() {
@@ -248,24 +289,18 @@ fn function_header_has_no_expressions(function: &ast::StmtFunctionDef) -> bool {
             .is_none_or(|arg| arg.annotation.is_none())
 }
 
-fn straight_line_statement(statement: &Stmt) -> bool {
+fn straight_line_statement(
+    statement: &Stmt,
+    rebinding: &PythonTestRebinding,
+    source: &SourceText<'_>,
+) -> bool {
     match statement {
-        Stmt::Expr(expression) => eager_expression(&expression.value),
+        Stmt::Expr(expression) => eager_expression(&expression.value, rebinding, source),
         Stmt::Assign(assignment) => {
-            assignment.targets.iter().all(simple_target) && eager_expression(&assignment.value)
+            matches!(assignment.targets.as_slice(), [Expr::Name(_)])
+                && eager_expression(&assignment.value, rebinding, source)
         }
-        Stmt::AugAssign(assignment) => {
-            simple_target(&assignment.target) && eager_expression(&assignment.value)
-        }
-        Stmt::Import(_) | Stmt::ImportFrom(_) | Stmt::Pass(_) => true,
-        _ => false,
-    }
-}
-
-fn simple_target(expression: &Expr) -> bool {
-    match expression {
-        Expr::Name(_) => true,
-        Expr::Attribute(attribute) => simple_target(&attribute.value),
+        Stmt::Pass(_) => true,
         _ => false,
     }
 }
@@ -273,17 +308,29 @@ fn simple_target(expression: &Expr) -> bool {
 // Statement shape alone does not establish execution: BoolOp, IfExp, lambda
 // and comprehensions can hide an owner call from the effect scan's ordering.
 // Admit only eager construction/call expressions in this bounded helper path.
-fn eager_expression(expression: &Expr) -> bool {
+fn eager_expression(
+    expression: &Expr,
+    rebinding: &PythonTestRebinding,
+    source: &SourceText<'_>,
+) -> bool {
     match expression {
-        Expr::Name(_) | Expr::Constant(_) => true,
-        Expr::Attribute(attribute) => eager_expression(&attribute.value),
+        Expr::Name(_) => true,
+        // Existing line-based call scans cannot distinguish text on an interior
+        // literal line from code. Keep those fake calls out of helper credit.
+        Expr::Constant(_) => !text_for_range(source, expression.range()).contains('\n'),
+        Expr::Attribute(attribute) => {
+            !rebinding.assigns_attribute(attribute.attr.as_str())
+                && eager_expression(&attribute.value, rebinding, source)
+        }
         Expr::Call(call) => {
-            eager_expression(&call.func)
-                && call.args.iter().all(eager_expression)
+            eager_expression(&call.func, rebinding, source)
                 && call
-                    .keywords
+                    .args
                     .iter()
-                    .all(|keyword| keyword.arg.is_some() && eager_expression(&keyword.value))
+                    .all(|arg| eager_expression(arg, rebinding, source))
+                && call.keywords.iter().all(|keyword| {
+                    keyword.arg.is_some() && eager_expression(&keyword.value, rebinding, source)
+                })
         }
         _ => false,
     }
