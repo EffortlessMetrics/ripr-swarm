@@ -611,37 +611,20 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
     let counts = PerlRowCounts::load(&root.join("fixtures/perl-verdict-corpus"))?;
-    for (metric, n, d, status) in [
+    for (metric, n, d) in [
         (
             "false_verdict",
             counts.false_actionable + counts.false_exposed + counts.false_silent,
             counts.producer,
-            "meets_target",
         ),
         (
             "false_actionable",
             counts.false_actionable,
             counts.discriminated,
-            "meets_target",
         ),
-        (
-            "false_exposed",
-            counts.false_exposed,
-            counts.not_fully,
-            "below_target",
-        ),
-        (
-            "false_silent",
-            counts.false_silent,
-            counts.not_fully,
-            "meets_target",
-        ),
-        (
-            "abstention",
-            counts.producer_abstained,
-            counts.producer,
-            "below_target",
-        ),
+        ("false_exposed", counts.false_exposed, counts.not_fully),
+        ("false_silent", counts.false_silent, counts.not_fully),
+        ("abstention", counts.producer_abstained, counts.producer),
     ] {
         let id = format!("trust.perl_verdict_corpus_{metric}");
         let row = current["metrics"]
@@ -651,7 +634,20 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
             .find(|row| row["id"] == id)
             .ok_or("Perl metric missing")?;
         assert_eq!(row["value"], json!(round(n as f64 / d as f64)));
-        assert_eq!(row["status"], status);
+        // All five metrics are lower-is-better: meeting the target means the
+        // measured rate is at or under it.
+        let target = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or("Perl metric definition missing")?
+            .target;
+        let expected_status = if n as f64 / d as f64 <= target {
+            "meets_target"
+        } else {
+            "below_target"
+        };
+        assert_eq!(row["status"], expected_status, "{id}");
         let population: Population =
             serde_json::from_value(row["samples"][0]["population"].clone())
                 .map_err(|err| err.to_string())?;
