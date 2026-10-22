@@ -49,15 +49,24 @@ impl RowResult {
 pub(crate) enum Family {
     RustNesting,
     PythonNesting,
+    PathGlobSuppression,
+    PathGlobGeneratedFile,
 }
 
 impl Family {
-    pub(crate) const ALL: [Family; 2] = [Family::RustNesting, Family::PythonNesting];
+    pub(crate) const ALL: [Family; 4] = [
+        Family::RustNesting,
+        Family::PythonNesting,
+        Family::PathGlobSuppression,
+        Family::PathGlobGeneratedFile,
+    ];
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::RustNesting => "rust_nesting",
             Self::PythonNesting => "python_nesting",
+            Self::PathGlobSuppression => "path_glob_suppression",
+            Self::PathGlobGeneratedFile => "path_glob_generated_file",
         }
     }
 }
@@ -69,7 +78,8 @@ impl Family {
 pub(crate) enum Role {
     /// Ordinary or deep-but-supported input: full analysis, no new limitation.
     Control,
-    /// Previously aborted or hung; must end in a typed limitation.
+    /// Previously aborted or hung; must end in a typed limitation (or, for
+    /// globs, an unsuppressed/unexcluded nonmatch).
     Discriminator,
     /// Comment/string text that looks like the hazard and must not consume the
     /// budget.

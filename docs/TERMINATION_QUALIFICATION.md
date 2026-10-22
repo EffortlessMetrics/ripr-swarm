@@ -2,14 +2,16 @@
 
 `cargo xtask termination-qualification --binary <path>` runs one deterministic
 adversarial corpus against one exact `ripr` binary and writes a JSON and a
-Markdown packet from a single DTO (#4505, #4511, #4512; the path-glob family,
-#4513, follows in a stacked PR). It changes no product behavior, builds or
-installs nothing, and does not decide qualification: #2769 consumes the packet.
+Markdown packet from a single DTO (#4505, #4511, #4512, #4513). It changes no
+product behavior, builds or installs nothing, and does not decide
+qualification: #2769 consumes the packet.
 
 ```bash
 cargo xtask termination-qualification --binary <path-to-ripr> \
   --removal-control rust_nesting=<repairs-disabled-ripr> \
-  --removal-control python_nesting=<repairs-disabled-ripr>
+  --removal-control python_nesting=<repairs-disabled-ripr> \
+  --removal-control path_glob_suppression=<repairs-disabled-ripr> \
+  --removal-control path_glob_generated_file=<repairs-disabled-ripr>
 ```
 
 Outputs: `target/ripr/reports/termination-qualification.{json,md}`. Other
@@ -27,6 +29,8 @@ and bounded drains.
 |---|---|---|
 | `rust_nesting` | `ripr check --diff` and `ripr pilot` | nested blocks, `if`, parentheses, closures, prefix operators, generic arguments, `else if` chains, long operator chains; a below-budget control; comment, string, char and raw-string lookalikes |
 | `python_nesting` | `ripr check --diff` | long binary, ternary, `not`, unary minus and `await` runs; long `elif` chain; a deep-but-supported control; comment and string lookalikes |
+| `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, many-star and many-segment nonmatches |
+| `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
 and a changed file whose finding must stay visible. `pilot` is the only route
@@ -61,7 +65,8 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
 
 A repairs-disabled binary is a build of the candidate source with the guards
 neutralised (`rust_nesting_refusal` returns `None`, the Python tree-depth
-budget is `usize::MAX`) and must report the candidate's `--version`.
+budget is `usize::MAX`, `path_glob_matches` is the recursive matcher kept in
+`analysis/path_glob.rs` tests) and must report the candidate's `--version`.
 
 ## Packet identity
 
@@ -87,3 +92,6 @@ Known gaps against the child issues, each deliberate for this first harness:
   `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
 - A removal control is bound to the candidate by `--version` only, not by a
   source or build identity.
+- Glob corpus omits mixed separators, root-relative boundaries and an empty
+  path, and the generated-file family omits `.`/empty-segment and
+  adjacent-`**` rows.
