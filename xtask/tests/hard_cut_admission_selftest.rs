@@ -131,6 +131,10 @@ struct Extras {
     proposed: Option<String>,
     base_raw: Option<String>,
     files: Option<&'static str>,
+    /// Serve a 3,100-line PR whose file list is `files`; with `head_moves` the
+    /// PR head advances after the first read, before the file-list check.
+    big_pr: bool,
+    head_moves: bool,
 }
 
 fn run_scenario_full(
@@ -216,6 +220,14 @@ fn run_scenario_full(
         std::fs::write(tmp.join("files.json"), extras.files.unwrap_or(PRODUCT_ONLY))
             .map_err(|e| e.to_string())?;
     }
+    if extras.big_pr {
+        std::fs::write(tmp.join("big_pr"), "1").map_err(|e| e.to_string())?;
+        std::fs::write(tmp.join("files.json"), extras.files.unwrap_or(PRODUCT_ONLY))
+            .map_err(|e| e.to_string())?;
+    }
+    if extras.head_moves {
+        std::fs::write(tmp.join("head_moves"), "1").map_err(|e| e.to_string())?;
+    }
     let gh = r#"#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in repos/*) url="$a";; esac; done
 case "$url" in
@@ -237,7 +249,7 @@ case "$url" in
     base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
-  *) if [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
+  *) if [ -e "$CONTROL_TMP/big_pr" ]; then n=$(cat "$CONTROL_TMP/pull_reads" 2>/dev/null || echo 0); echo $((n+1)) > "$CONTROL_TMP/pull_reads"; sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; if [ -e "$CONTROL_TMP/head_moves" ] && [ "$n" -ge 1 ]; then sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi; printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"'"$sha"'","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":3,"additions":3000,"deletions":100,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
 esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
@@ -570,6 +582,7 @@ fn wrapper_activation_must_bind_the_exact_live_main() -> Result<(), String> {
         proposed: Some(packet_json("active", "cut-2", sha, tree)),
         base_raw: Some(packet_json("inactive", "cut-1", "", "")),
         files: Some(PACKET_ONLY),
+        ..Extras::default()
     };
     let run = |e: Extras| -> Result<(i32, String), String> {
         let (code, outputs, _) = run_scenario_full("inactive", false, None, false, false, &e)?;
@@ -602,6 +615,7 @@ fn wrapper_unusable_base_packet_refuses_products_but_admits_the_repair() -> Resu
             proposed,
             base_raw: Some("{broken".to_string()),
             files: Some(files),
+            ..Extras::default()
         };
         let (code, outputs, _) = run_scenario_full("inactive", false, None, false, false, &extras)?;
         let reason = outputs
@@ -644,6 +658,47 @@ fn wrapper_unreadable_head_packet_fails_closed_for_a_packet_only_pr() -> Result<
     if code != 1 || !outputs.contains("cut_reason=cut_packet_transition_invalid") {
         return Err(format!(
             "unreadable head packet must refuse, got {code}: {outputs}"
+        ));
+    }
+    Ok(())
+}
+
+const LOCKFILE_HEAVY: &str = r#"[{"filename":"web/package-lock.json","status":"modified","additions":1700,"deletions":50},{"filename":"src/lib.rs","status":"modified","additions":1300,"deletions":50}]"#;
+
+fn admission_status(outputs: &str) -> &str {
+    outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("status="))
+        .unwrap_or("")
+}
+
+#[test]
+fn wrapper_hands_the_lockfile_list_to_admission_and_drops_it_when_the_head_moves()
+-> Result<(), String> {
+    let run = |head_moves: bool| {
+        let extras = Extras {
+            files: Some(LOCKFILE_HEAVY),
+            big_pr: true,
+            head_moves,
+            ..Extras::default()
+        };
+        run_scenario_full("inactive", false, None, false, false, &extras)
+    };
+    let (_, outputs, _) = run(false)?;
+    if admission_status(&outputs) != "admitted" {
+        return Err(format!(
+            "lockfile discount must admit through the wrapper, got:\n{outputs}"
+        ));
+    }
+    if !outputs.contains("changed_lines=3100") {
+        return Err(format!(
+            "changed_lines must stay the raw total, got:\n{outputs}"
+        ));
+    }
+    let (code, outputs, _) = run(true)?;
+    if code == 0 || !outputs.contains("reason=qualification_scope_oversized") {
+        return Err(format!(
+            "a head that moved after the snapshot must not borrow the file list, got {code}:\n{outputs}"
         ));
     }
     Ok(())
