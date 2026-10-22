@@ -672,13 +672,19 @@ impl RustIndex {
     /// Cancellation is checked every [`SLACK_CHECKPOINT_STRIDE`] facts, so a
     /// superseded analysis stops within a bounded slice of the pass.
     fn release_build_slack(&mut self) -> Result<(), String> {
+        self.release_build_slack_in_strides(SLACK_CHECKPOINT_STRIDE)
+    }
+
+    /// The stride is a parameter so a test can cross several checkpoints
+    /// without building a multi-thousand-fact index.
+    fn release_build_slack_in_strides(&mut self, stride: usize) -> Result<(), String> {
         self.function_order.shrink_to_fit();
         self.test_order.shrink_to_fit();
         self.function_positions.shrink_to_fit();
         self.test_positions.shrink_to_fit();
         self.function_facts.records.shrink_to_fit();
         for (visited, fact) in self.function_facts.iter_mut().enumerate() {
-            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+            if visited % stride == 0 {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
@@ -710,7 +716,7 @@ impl RustIndex {
         }
         self.test_facts.records.shrink_to_fit();
         for (visited, fact) in self.test_facts.iter_mut().enumerate() {
-            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+            if visited % stride == 0 {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
@@ -744,7 +750,7 @@ impl RustIndex {
             }
         }
         for (visited, file) in self.files.values_mut().enumerate() {
-            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+            if visited % stride == 0 {
                 crate::analysis::cancellation::checkpoint()?;
             }
             file.functions.shrink_to_fit();
