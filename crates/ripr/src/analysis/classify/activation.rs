@@ -73,6 +73,8 @@ pub(in crate::analysis) fn activation_evidence_with_value_facts(
 pub(in crate::analysis) struct ActivationWithBoundaryInput {
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) unresolved_boundary: Option<String>,
+    pub(in crate::analysis) literal_length_boundary:
+        Option<super::literal_length_boundary::LiteralLengthBoundary>,
 }
 
 /// `activation_evidence_with_value_facts` that also returns the
@@ -140,6 +142,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
             missing_discriminators,
         },
         unresolved_boundary,
+        literal_length_boundary: None,
     }
 }
 

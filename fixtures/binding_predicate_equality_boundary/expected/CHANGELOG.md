@@ -322,3 +322,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_equality_boundary (20)
+
+Reason:
+RIPR-SPEC-0157 and RIPR-SPEC-0158 (#9637): retain the changed-binding causal relation and remove syntax-only unresolved disclosure after actual infection authority is Yes; no verdict or oracle changes.
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

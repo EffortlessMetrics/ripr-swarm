@@ -5355,9 +5355,9 @@ mod tests {
 
     // #3294: a changed binding that reaches its same-function equality
     // predicate directly retargets the probe to the predicate. The
-    // finding is predicate-shaped, the generic changed-syntax limitation
-    // is gone, and the operand-value limitation names the earliest
-    // initializer operation.
+    // finding is predicate-shaped and the generic changed-syntax limitation
+    // is gone. These bare integration-test calls have no admitted import,
+    // so operand provenance and its earliest-operation disclosure stay unknown.
     #[test]
     fn diff_analysis_retargets_changed_binding_to_predicate_use() -> Result<(), String> {
         let (root, result) = binding_value_crate(
@@ -5383,6 +5383,10 @@ mod tests {
                 .contains("binding_predicate_relation: changed binding `end` initializer")),
             "relation evidence missing: {:?}",
             finding.evidence
+        );
+        assert_eq!(
+            finding.ripr.infect.state,
+            crate::domain::StageState::Unknown
         );
         assert!(
             finding.evidence.iter().any(|line| line.contains(
@@ -5421,6 +5425,16 @@ mod tests {
                     && finding.probe.expression.contains("end == start")
             })
             .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding.ripr.infect.state,
+            crate::domain::StageState::Unknown
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_predicate_relation:"))
+        );
         assert!(
             finding.evidence.iter().any(|line| line.contains(
                 "binding_predicate_value_unresolved: operand value of `start` unresolved at earliest initializer operation `.chars(`"

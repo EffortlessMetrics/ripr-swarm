@@ -323,3 +323,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_family_matrix (21)
+
+Reason:
+RIPR-SPEC-0157 and RIPR-SPEC-0158 (#9637): retain the changed-binding causal relation and remove syntax-only unresolved disclosure after actual infection authority is Yes; no verdict or oracle changes.
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
