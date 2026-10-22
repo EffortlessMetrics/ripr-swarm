@@ -4887,7 +4887,12 @@ mod tests {
         // read `no_static_path` and drop their two orthogonal cards.
         // #9424: the `python_pytest_oracle_shapes` caplog finding now abstains
         // (`static_unknown`), so it no longer carries a no-strong-oracle card.
-        if (direct, no_strong, orthogonal, family_selection) != (6, 26, 14, 1) {
+        // #9429: `python_unreached_match_arm` and `python_unreached_get_default`
+        // downgrade a changed arm or `.get` default no observed input reaches
+        // to `weakly_exposed` (RIPR-SPEC-0260); each card names the missing
+        // discriminator and stays direct-aligned. Their `_control` twins reach
+        // the edit, stay exposed and carry no card.
+        if (direct, no_strong, orthogonal, family_selection) != (8, 26, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

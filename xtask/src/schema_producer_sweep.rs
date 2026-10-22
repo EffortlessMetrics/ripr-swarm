@@ -1,4 +1,4 @@
-//! Release-only sweep of committed producer documents against every published
+//! Sweep of committed producer documents against every published
 //! schema (#3920).
 //!
 //! `check-verification-contracts` validates one hand-picked subject per
@@ -16,7 +16,10 @@
 //! tree, so a dirty or artifact-littered release checkout cannot change the
 //! denominator or pass bytes the candidate does not carry.
 //!
-//! It is not wired into a required check. The binding table below is the
+//! The required Rust gate runs it on the candidate (#9505), feeding the
+//! `doctor`, `pr-evidence` and `review-comments` runtime rows from that run's
+//! own producer output; `repair-attempt` and `execution_result` stay unrun
+//! there. The binding table below is the
 //! reviewed rule for which committed bytes are producer output, which are
 //! consumer-input stimulus, and which schemas have no committed producer bytes
 //! at all and must be fed live artifacts with `--artifact`.
@@ -1279,6 +1282,39 @@ mod tests {
             {
                 return Err(format!("binding names unpublished {}", binding.schema_path));
             }
+        }
+        Ok(())
+    }
+
+    /// The sweep is only a control if the required gate runs it. Pin the
+    /// wiring: the step exists and feeds every runtime row the gate can
+    /// produce, so deleting the step or an `--artifact` fails here (#9505).
+    #[test]
+    fn the_required_rust_gate_runs_the_sweep_with_live_producer_artifacts() -> Result<(), String> {
+        let gates = include_str!("../../.github/workflows/rust-gates.yml");
+        let step = gates
+            .split("- name: Schema producer sweep")
+            .nth(1)
+            .and_then(|rest| rest.split("\n      - name:").next())
+            .ok_or("rust-gates.yml has no `Schema producer sweep` step")?;
+        assert!(step.contains("cargo xtask schema-producer-sweep"));
+        let guard = step
+            .find("\"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\"")
+            .ok_or("pr-evidence and review-comments feeds are not guarded to the events that run PR evidence")?;
+        for schema in ["pr-evidence", "review-comments"] {
+            let feed = step
+                .find(&format!("--artifact schemas/ripr/{schema}.schema.json="))
+                .ok_or_else(|| format!("sweep step does not feed {schema}"))?;
+            assert!(
+                feed > guard,
+                "{schema} feed sits outside the pull_request/merge_group guard"
+            );
+        }
+        for schema in ["doctor", "pr-evidence", "review-comments"] {
+            assert!(
+                step.contains(&format!("--artifact schemas/ripr/{schema}.schema.json=")),
+                "sweep step does not feed the {schema} runtime row"
+            );
         }
         Ok(())
     }

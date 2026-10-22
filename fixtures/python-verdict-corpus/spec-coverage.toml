@@ -678,16 +678,6 @@ issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
-case = "py-shapes-match-wildcard-arm"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-relative-import-missing-tier"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-idioms-unittest-setup-sign"
 issue = 9412
 reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
@@ -726,11 +716,6 @@ reason = "False actionable: module-level edit related only by a same-stem heuris
 case = "py-hostile-module-constant-pinned"
 issue = 9423
 reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
-
-[[known_false]]
-case = "py-hostile-star-import-exported"
-issue = 9415
-reason = "False actionable: `from m import *` is not resolved to public names (#9415)."
 
 [[known_false]]
 case = "py-grid-arithmetic-property"
