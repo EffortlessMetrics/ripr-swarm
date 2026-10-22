@@ -659,7 +659,90 @@ impl RustIndex {
         );
         crate::analysis::cancellation::checkpoint()?;
         self.refresh_memberships()?;
-        crate::analysis::cancellation::checkpoint()
+        crate::analysis::cancellation::checkpoint()?;
+        self.release_build_slack();
+        Ok(())
+    }
+    /// The parse producers push facts one at a time, so every growable
+    /// buffer ends up with spare capacity: about a quarter of a cold
+    /// workspace index. A finished index never grows, so give the spare back.
+    fn release_build_slack(&mut self) {
+        self.function_facts.records.shrink_to_fit();
+        for fact in self.function_facts.iter_mut() {
+            fact.name.shrink_to_fit();
+            fact.calls.shrink_to_fit();
+            fact.returns.shrink_to_fit();
+            fact.literals.shrink_to_fit();
+            fact.attrs.shrink_to_fit();
+            fact.impl_attrs.shrink_to_fit();
+            fact.nested_fn_names.shrink_to_fit();
+            fact.let_bindings.shrink_to_fit();
+            for call in &mut fact.calls {
+                call.name.shrink_to_fit();
+            }
+            for ret in &mut fact.returns {
+                ret.text.shrink_to_fit();
+            }
+            for literal in &mut fact.literals {
+                literal.value.shrink_to_fit();
+            }
+            for attr in fact.attrs.iter_mut().chain(&mut fact.impl_attrs) {
+                attr.shrink_to_fit();
+            }
+            for name in &mut fact.nested_fn_names {
+                name.shrink_to_fit();
+            }
+            for binding in &mut fact.let_bindings {
+                binding.name.shrink_to_fit();
+            }
+        }
+        self.test_facts.records.shrink_to_fit();
+        for fact in self.test_facts.iter_mut() {
+            fact.name.shrink_to_fit();
+            fact.calls.shrink_to_fit();
+            fact.assertions.shrink_to_fit();
+            fact.literals.shrink_to_fit();
+            fact.attrs.shrink_to_fit();
+            fact.nested_fn_names.shrink_to_fit();
+            fact.let_bindings.shrink_to_fit();
+            for call in &mut fact.calls {
+                call.name.shrink_to_fit();
+            }
+            for assertion in &mut fact.assertions {
+                assertion.text.shrink_to_fit();
+                assertion.observed_tokens.shrink_to_fit();
+                for token in &mut assertion.observed_tokens {
+                    token.shrink_to_fit();
+                }
+            }
+            for literal in &mut fact.literals {
+                literal.value.shrink_to_fit();
+            }
+            for attr in &mut fact.attrs {
+                attr.shrink_to_fit();
+            }
+            for name in &mut fact.nested_fn_names {
+                name.shrink_to_fit();
+            }
+            for binding in &mut fact.let_bindings {
+                binding.name.shrink_to_fit();
+            }
+        }
+        for file in self.files.values_mut() {
+            file.functions.shrink_to_fit();
+            file.tests.shrink_to_fit();
+            file.data.returns.shrink_to_fit();
+            file.data.literals.shrink_to_fit();
+            file.data.probe_shapes.shrink_to_fit();
+            for ret in &mut file.data.returns {
+                ret.text.shrink_to_fit();
+            }
+            for literal in &mut file.data.literals {
+                literal.value.shrink_to_fit();
+            }
+            file.data.module_declarations.shrink_to_fit();
+            file.data.unresolved_property_macros.shrink_to_fit();
+        }
     }
     pub(super) fn validate_memberships(&self) -> Result<(), String> {
         validate(

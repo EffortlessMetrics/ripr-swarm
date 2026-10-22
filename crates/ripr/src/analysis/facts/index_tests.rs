@@ -601,3 +601,58 @@ fn unresolved_property_macros_survive_file_view_wire_and_owned_round_trip() -> R
     assert_eq!(decoded.owned_file(&path).as_ref(), Some(&facts));
     Ok(())
 }
+
+fn spare_capacity(index: &RustIndex) -> usize {
+    let mut spare = index.function_facts.records.capacity() - index.function_facts.len();
+    spare += index.test_facts.records.capacity() - index.test_facts.len();
+    for fact in index.function_facts.iter() {
+        spare += fact.calls.capacity() - fact.calls.len();
+        spare += fact.returns.capacity() - fact.returns.len();
+        spare += fact.literals.capacity() - fact.literals.len();
+        spare += fact.let_bindings.capacity() - fact.let_bindings.len();
+        spare += fact.name.capacity() - fact.name.len();
+        for call in &fact.calls {
+            spare += call.name.capacity() - call.name.len();
+        }
+    }
+    for fact in index.test_facts.iter() {
+        spare += fact.calls.capacity() - fact.calls.len();
+        spare += fact.assertions.capacity() - fact.assertions.len();
+        spare += fact.literals.capacity() - fact.literals.len();
+        spare += fact.let_bindings.capacity() - fact.let_bindings.len();
+        for assertion in &fact.assertions {
+            spare += assertion.text.capacity() - assertion.text.len();
+        }
+    }
+    for file in index.files.values() {
+        spare += file.data.probe_shapes.capacity() - file.data.probe_shapes.len();
+        spare += file.data.returns.capacity() - file.data.returns.len();
+        spare += file.data.literals.capacity() - file.data.literals.len();
+        spare += file.functions.capacity() - file.functions.len();
+        spare += file.tests.capacity() - file.tests.len();
+    }
+    spare
+}
+
+#[test]
+fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<(), String> {
+    let mut facts = large_file()?;
+    // Producers push facts one at a time; model that growth pattern.
+    let mut grown = Vec::new();
+    for call in facts.tests[0].calls.clone() {
+        grown.push(call);
+    }
+    facts.tests[0].calls = grown;
+    facts.tests[0].assertions.reserve_exact(64);
+    facts.tests[0].calls.reserve_exact(64);
+    facts.probe_shapes.reserve_exact(64);
+    facts.tests[0].name.reserve_exact(64);
+    let mut index = RustIndex::default();
+    let path = PathBuf::from("tests/large.rs");
+    index.insert_file(path.clone(), facts, true);
+    let before = spare_capacity(&index);
+    assert!(before >= 256, "the fixture left only {before} spare slots");
+    index.finalize()?;
+    assert_eq!(spare_capacity(&index), 0);
+    Ok(())
+}
