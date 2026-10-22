@@ -3810,7 +3810,12 @@ fn eager_path(
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
             if block.async_token().is_some() {
-                return Err("an `async` block");
+                // `tokio::spawn(async { .. }).await.unwrap()` re-raises the
+                // task's panic on the test task, like a joined thread.
+                let Some(joined) = spawned_task_reaching_test(&block, function) else {
+                    return Err("an `async` block");
+                };
+                return eager_path(joined, function, true, first_return);
             }
             if block.const_token().is_some()
                 || block.gen_token().is_some()
@@ -4552,6 +4557,77 @@ fn spawned_thread_reaching_test(
         return Some(spawn.syntax().clone());
     }
     joined_and_unwrapped(spawn.syntax())
+}
+
+/// Where a spawned task's panic reaches the test task, for an `async` block
+/// that is the only argument of `tokio::spawn(..)` chained directly into
+/// `.await.unwrap()` or `.await.expect(..)` (RIPR-SPEC-0197): the awaited
+/// `JoinHandle` yields the task's panic as a `JoinError`, which `unwrap`
+/// re-raises. The test must be a `#[tokio::test]` that
+/// [`tokio_test_runs_body`] admits, and nothing in the file may be named
+/// `tokio` or `spawn`, so the path names the real crate's function.
+///
+/// Returns the expression from which the test task continues. A detached
+/// task, a handle kept in a binding, and an `.await` whose result is dropped,
+/// matched or converted lose the panic and stay refused.
+fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Option<SyntaxNode> {
+    if block.const_token().is_some()
+        || block.gen_token().is_some()
+        || block.try_block_modifier().is_some()
+        || block.label().is_some()
+    {
+        return None;
+    }
+    let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if text.strip_prefix("::").unwrap_or(&text) != "tokio::spawn"
+        || path
+            .path()?
+            .segments()
+            .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    if !function
+        .attrs()
+        .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
+    {
+        return None;
+    }
+    let file = function.syntax().ancestors().last()?;
+    if file
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .any(|name| matches!(unraw(name.text()), "tokio" | "spawn"))
+    {
+        return None;
+    }
+    let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
+    if awaited.expr()?.syntax() != call.syntax() {
+        return None;
+    }
+    let parent = awaited.syntax().parent()?;
+    let outer = ast::MethodCallExpr::cast(parent)?;
+    let arguments = outer.arg_list()?.args().count();
+    let name = outer.name_ref()?;
+    ((outer.receiver()?.syntax() == awaited.syntax())
+        && outer.generic_arg_list().is_none()
+        && ((name.text() == "unwrap" && arguments == 0)
+            || (name.text() == "expect" && arguments == 1)))
+        .then(|| outer.syntax().clone())
 }
 
 /// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
