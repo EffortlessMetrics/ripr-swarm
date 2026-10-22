@@ -606,7 +606,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
+        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
         "{md}"
     );
     assert!(
@@ -620,7 +620,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
     assert!(!md.contains("Seam limit reached"), "{md}");
     assert!(
-        md.contains("- Actionable seams: 3 total, showing up to 1\n"),
+        md.contains("- Actionable seams: 3 total, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n"),
         "{md}"
     );
     assert!(
@@ -879,6 +879,88 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     );
     assert!(terminal.contains(expected_next), "{terminal}");
     assert!(!terminal.contains("No gap to test:"), "{terminal}");
+}
+
+/// #9368: the terminal shows the top 1 seam; it must also disclose the
+/// #9368: the terminal shows the top 1 seam; it must also disclose the
+/// actionable total and where the full ranked list lives, so one unexplained
+/// pick out of an undisclosed count does not read as arbitrariness.
+#[test]
+fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
+    use crate::domain::LanguageId;
+
+    let entries = [
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 2),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "c::h", 3),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let ranked =
+        "more ranked in target/ripr/pilot/pilot-summary.md; pass --max-seams N to rank more";
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(&format!(
+            "  actionable seams: 3 total, showing 1 ({ranked})\n"
+        )),
+        "{terminal}"
+    );
+
+    // A seam limit cut the classified seams, so the total is a lower bound,
+    // mirroring the JSON summary's predicate (#6739).
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let limited = PilotSummaryContext {
+        seam_limit: Some(&limit),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains(&format!(
+            "  actionable seams: at least 3, showing 1 ({ranked})\n"
+        )),
+        "{terminal}"
+    );
+
+    // Declined Rust files also under-credit the run, so the total stays a
+    // lower bound without a seam limit.
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let declined_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, declined_context);
+    assert!(
+        terminal.contains("  actionable seams: at least 3, showing 1"),
+        "{terminal}"
+    );
+
+    // A single actionable seam needs no pointer.
+    let single = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::f",
+        1,
+    )];
+    let terminal = render_pilot_terminal(&single, context);
+    assert!(
+        terminal.contains("  actionable seams: 1 total, showing 1\n"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("--max-seams N to rank more"),
+        "{terminal}"
+    );
 }
 
 #[test]
@@ -4083,7 +4165,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The Inspected block names the change-first scope when there is a change.
     assert!(
         terminal.contains(
-            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n\n"
+            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n  actionable seams: 1 total, showing 1\n\n"
         ),
         "{terminal}"
     );

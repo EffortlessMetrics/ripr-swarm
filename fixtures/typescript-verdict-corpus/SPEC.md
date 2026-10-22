@@ -41,6 +41,11 @@ under this repository's license, grouped by test runner:
   No browser is launched.
 - jest with `experimentalDecorators`: `authored-ts-jest-decorators` (method,
   class and property decorators, wrapped values and unread side effects).
+- mocha hooks and nesting: `authored-ts-mocha-hooks` (nested `describe`, `before`
+  and `beforeEach` hooks, `done` callbacks, `it.skip` and `describe.skip`,
+  chai `closeTo`, `include` and `throw` with a class or message).
+- node:test mocks: `authored-ts-nodetest-mocks` (`mock.method`, `t.mock.fn`
+  call counts, `assert.match`, `assert.rejects`, `t.skip` inside a test).
 - mocha with chai: `authored-ts-mocha-ledger` (`expect` and `assert` styles,
   async tests, `.not`, chai `throw` with a message, `deep` equality, and a
   jest-style `toBe` swallowed by `try`/`catch`).
