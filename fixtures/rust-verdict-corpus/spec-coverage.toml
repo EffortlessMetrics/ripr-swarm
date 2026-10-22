@@ -852,11 +852,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 
 
 
-[[known_false]]
-case = "regex-syntax-max-scalar-two-byte"
-issue = 5503
-reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
-
 
 [[known_false]]
 case = "shape-thread-join-result"
@@ -913,21 +908,6 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-impl-trait-return-filter"
 issue = 9440
 reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-op-add-impl"
-issue = 9441
-reason = "Implicit-call impl is not followed (#9441)."
-
-[[known_false]]
-case = "shape-drop-impl-side-effect"
-issue = 9441
-reason = "Implicit-call Drop impl is not followed (#9441)."
-
-[[known_false]]
-case = "shape-dyn-trait-method-exact"
-issue = 9441
-reason = "Dyn-trait method call is not followed (#9441)."
 
 [[known_false]]
 case = "shape-async-fn-block-on"
