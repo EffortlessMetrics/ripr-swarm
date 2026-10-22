@@ -527,3 +527,54 @@ fn rejects_regex_stays_weak_with_another_throwing_path() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+/// Negative: a test that spies its own local `sink` and calls the owner
+/// directly says nothing about the owner's module-level `sink`, even though
+/// the names match.
+#[test]
+fn void_replacement_stays_unrecognised_for_a_same_named_local_spy() -> Result<(), String> {
+    let test = "import { mock, test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { record } from \"../src/audit\";\n\ntest(\"record writes once\", () => {\n  const sink = { write(line: string): void { void line; } };\n  const write = mock.method(sink, \"write\", () => undefined);\n  record(\"login\");\n  assert.equal(write.mock.callCount(), 1);\n});\n";
+    let finding = finding_for(
+        "void-own-local-spy",
+        NODE_TEST,
+        &[("src/audit.ts", AUDIT_AFTER), ("test/audit.test.ts", test)],
+        &replace_diff("src/audit.ts", 9, "  sink.write(line);", "  void line;"),
+        9,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const EMIT_AFTER: &str = "export function emit(sink: { write(line: string): void }, event: string): void {\n  void event;\n}\n";
+
+fn emit_test(call: &str) -> String {
+    format!(
+        "import {{ mock, test }} from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ emit }} from \"../src/emit\";\n\ntest(\"emit writes once\", () => {{\n  const sink = {{ write(line: string): void {{ void line; }} }};\n  const other = {{ write(line: string): void {{ void line; }} }};\n  const write = mock.method(sink, \"write\", () => undefined);\n  {call}\n  assert.equal(write.mock.callCount(), 1);\n}});\n"
+    )
+}
+
+fn emit_finding(call: &str, label: &str) -> Result<Finding, String> {
+    finding_for(
+        label,
+        NODE_TEST,
+        &[
+            ("src/emit.ts", EMIT_AFTER),
+            ("test/emit.test.ts", &emit_test(call)),
+        ],
+        &replace_diff("src/emit.ts", 2, "  sink.write(event);", "  void event;"),
+        2,
+    )
+}
+
+/// The spied local is what the test passes for the owner's receiver
+/// parameter, so the removed call lowers the counted calls.
+#[test]
+fn void_replacement_is_exposed_when_the_spied_local_is_passed_as_the_receiver() -> Result<(), String>
+{
+    let finding = emit_finding("emit(sink, \"a\");", "void-param-spied")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Negative: the spied local is not the one passed for the parameter.
+    let finding = emit_finding("emit(other, \"a\");", "void-param-other")?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

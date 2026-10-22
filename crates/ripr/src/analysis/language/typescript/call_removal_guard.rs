@@ -60,25 +60,44 @@ fn is_plain_identifier(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
-/// Whether some oracle-eligible related test spies on `receiver.method` with
-/// `mock.method(receiver, "method", ...)` bound to a local and asserts a
-/// positive call count on that local with a strong assertion.
+/// Whether some oracle-eligible related test spies on the removed call's
+/// receiver with `mock.method(local, "method", ...)` bound to a local and
+/// asserts a positive call count on that local with a strong assertion.
+///
+/// The spied value must be the owner's receiver itself, not a local that only
+/// shares its name. Two shapes tie them: the receiver is a parameter of the
+/// owner and the test passes the spied local for it (`emit(sink, "a")`), or
+/// the receiver is a module binding the test imports from the owner's own
+/// module and does not redeclare. Every other shape does not credit.
 pub(crate) fn call_count_pins_removed_call(
     receiver: &str,
     method: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> bool {
+    let param_index = owner.params.iter().position(|param| param == receiver);
     candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .any(|candidate| {
-            spy_bindings(&candidate.test.body_text, receiver, method)
+            let body = &candidate.test.body_text;
+            let spied: Vec<String> = match param_index {
+                Some(index) => passed_arguments(body, &owner.name, index),
+                None if imports_receiver_from_owner(candidate.test, receiver, &owner.file)
+                    && !declares_local(body, receiver) =>
+                {
+                    vec![receiver.to_string()]
+                }
+                None => Vec::new(),
+            };
+            spied
                 .iter()
+                .flat_map(|local| spy_bindings(body, local, method))
                 .any(|binding| {
                     candidate.test.assertions.iter().any(|assertion| {
                         assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                             && matches!(assertion.oracle_kind, OracleKind::ExactValue)
-                            && observes_call_count(assertion, binding)
+                            && observes_call_count(assertion, &binding)
                             && assertion
                                 .expected_value_or_variant
                                 .as_deref()
@@ -87,6 +106,90 @@ pub(crate) fn call_count_pins_removed_call(
                     })
                 })
         })
+}
+
+/// The test file imports `receiver` by name from a relative specifier whose
+/// last segment is the owner file's stem (`../src/audit` for `src/audit.ts`).
+fn imports_receiver_from_owner(test: &TypeScriptTest, receiver: &str, owner_file: &Path) -> bool {
+    let Some(stem) = owner_file.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    test.imports_in_file.iter().any(|import| {
+        !import.namespace
+            && import.local == receiver
+            && import.imported.as_deref() == Some(receiver)
+            && import.source.starts_with('.')
+            && import
+                .source
+                .rsplit('/')
+                .next()
+                .map(|last| last.split('.').next().unwrap_or(last))
+                == Some(stem)
+    })
+}
+
+/// Whether `body` declares `name` as its own binding (`const` / `let` /
+/// `var`), which shadows an import of the same name.
+fn declares_local(body: &str, name: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(body);
+    ["const", "let", "var"].iter().any(|word| {
+        let needle = format!("{word} {name}");
+        masked.match_indices(&needle).any(|(at, _)| {
+            let before = masked[..at].chars().next_back();
+            let after = masked[at + needle.len()..].chars().next();
+            !before.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+                && !after.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+        })
+    })
+}
+
+/// The plain-identifier arguments a test passes at `index` in calls to
+/// `owner_name(...)`, read from code only.
+fn passed_arguments(body: &str, owner_name: &str, index: usize) -> Vec<String> {
+    let masked = ts_mask_literals_and_comments(body);
+    if masked.len() != body.len() || owner_name.is_empty() {
+        return Vec::new();
+    }
+    let needle = format!("{owner_name}(");
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = masked[from..].find(&needle) {
+        let start = from + at;
+        from = start + needle.len();
+        if masked[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+        {
+            continue;
+        }
+        // Split the argument list at top-level commas up to the matching `)`.
+        let mut depth = 0usize;
+        let mut arg_start = from;
+        let mut args: Vec<&str> = Vec::new();
+        for (offset, ch) in masked[from..].char_indices() {
+            let here = from + offset;
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    args.push(&masked[arg_start..here]);
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    args.push(&masked[arg_start..here]);
+                    arg_start = here + 1;
+                }
+                _ => {}
+            }
+        }
+        if let Some(arg) = args.get(index).map(|arg| arg.trim())
+            && is_plain_identifier(arg)
+        {
+            found.push(arg.to_string());
+        }
+    }
+    found
 }
 
 fn observes_call_count(assertion: &TypeScriptAssertion, binding: &str) -> bool {
@@ -114,6 +217,14 @@ fn spy_bindings(body: &str, receiver: &str, method: &str) -> Vec<String> {
     while let Some(found) = masked[search_from..].find("mock.method(") {
         let at = search_from + found;
         search_from = at + "mock.method(".len();
+        // `xmock.method(` is another receiver, not the test runner's mock.
+        if masked[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+        {
+            continue;
+        }
         let args = &body[search_from..];
         let Some(first) = args.strip_prefix(receiver) else {
             continue;
@@ -148,7 +259,15 @@ fn spy_bindings(body: &str, receiver: &str, method: &str) -> Vec<String> {
             .map_or(0, |(i, c)| i + c.len_utf8());
         let name = &before[name_start..];
         let keyword = before[..name_start].trim_end();
-        if is_plain_identifier(name) && (keyword.ends_with("const") || keyword.ends_with("let")) {
+        let is_declaration = ["const", "let"].iter().any(|word| {
+            keyword.strip_suffix(word).is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+            })
+        });
+        if is_plain_identifier(name) && is_declaration {
             bindings.push(name.to_string());
         }
     }
@@ -217,8 +336,23 @@ mod tests {
             )
             .is_empty()
         );
+        // Another receiver ending in `mock`, or a name ending in `const`.
+        assert!(
+            spy_bindings("const w = xmock.method(sink, \"write\");", "sink", "write").is_empty()
+        );
+        assert!(
+            spy_bindings("myconst w = mock.method(sink, \"write\");", "sink", "write").is_empty()
+        );
         // A spy spelled inside a string or a comment binds nothing.
         let phantom = "const note = 'const write = mock.method(sink, \"write\")';\n// const write = mock.method(sink, \"write\");\n";
         assert!(spy_bindings(phantom, "sink", "write").is_empty());
+    }
+
+    #[test]
+    fn passed_arguments_reads_the_argument_at_the_parameter_index() {
+        let body = "emit(sink, \"a\"); other.emit(x, 1); emit(f(1, 2), 3); emit(second, 4);";
+        assert_eq!(passed_arguments(body, "emit", 0), vec!["sink", "second"]);
+        assert!(passed_arguments(body, "emit", 1).is_empty());
+        assert!(passed_arguments("// emit(sink)", "emit", 0).is_empty());
     }
 }

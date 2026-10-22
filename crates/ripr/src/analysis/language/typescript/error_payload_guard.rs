@@ -241,12 +241,55 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
         }
         let before: String = chars[..start].iter().collect();
         let before = before.trim_end();
-        if KEYWORDS.contains(&word.as_str()) || params.contains(&word) || before.ends_with("new") {
+        if KEYWORDS.contains(&word.as_str()) {
+            continue;
+        }
+        // `new Error(..)` and other built-in constructions run no user code;
+        // `new Custom(..)` can throw from its constructor.
+        if before.ends_with("new") && NON_THROWING_BUILTINS.contains(&word.as_str()) {
+            continue;
+        }
+        if before.ends_with("new") && BUILTIN_ERROR_CLASSES.contains(&word.as_str()) {
+            continue;
+        }
+        // A parameter callback may throw its own error. It is exempt only
+        // inside a `try` block of a body that has a `catch`, where what it
+        // throws is caught and cannot be the owner's thrown value.
+        if params.contains(&word) && body.contains("catch") && inside_try_block(&chars, at) {
             continue;
         }
         return true;
     }
     false
+}
+
+const NON_THROWING_BUILTINS: &[&str] = &[
+    "Map", "Set", "WeakMap", "WeakSet", "Date", "Array", "Object", "RegExp",
+];
+
+/// Whether position `at` of the masked `chars` sits inside a `try { ... }`
+/// block (the catch and finally blocks are not part of it).
+fn inside_try_block(chars: &[char], at: usize) -> bool {
+    let mut stack: Vec<bool> = Vec::new();
+    for (index, ch) in chars[..at].iter().enumerate() {
+        match ch {
+            '{' => {
+                let head: String = chars[..index].iter().collect();
+                let head = head.trim_end();
+                let is_try = head.ends_with("try")
+                    && !head[..head.len() - 3]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'));
+                stack.push(is_try);
+            }
+            '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.contains(&true)
 }
 
 /// The built-in class a `throw new X(...)` / `throw X(...)` run constructs.
@@ -521,9 +564,25 @@ impl ErrorChangeFacts {
         mut self,
         owner_source: Option<&str>,
         owner_params: &[String],
+        changed_line: &str,
     ) -> Self {
         self.sole_throw_site = owner_source.is_some_and(|source| {
             let masked = ts_mask_literals_and_comments(source);
+            // The one throw site must be the changed line itself: another
+            // sole throw elsewhere says nothing about the pinned change.
+            let changed_is_the_throw = masked.len() == source.len()
+                && masked
+                    .lines()
+                    .zip(source.lines())
+                    .find(|(masked_line, _)| {
+                        masked_line
+                            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                            .any(|word| word == "throw")
+                    })
+                    .is_some_and(|(_, line)| line.trim() == changed_line.trim());
+            if !changed_is_the_throw {
+                return false;
+            }
             let count = |word: &str| {
                 masked
                     .match_indices(word)
@@ -1120,7 +1179,7 @@ mod tests {
 
     fn sole_site(source: &str) -> bool {
         ErrorChangeFacts::default()
-            .with_owner_source(Some(source), &["fn".to_string()])
+            .with_owner_source(Some(source), &["fn".to_string()], "throw new Error(\"x\");")
             .sole_throw_site
     }
 
@@ -1128,7 +1187,15 @@ mod tests {
     fn sole_throw_site_reads_code_only_and_fails_closed_on_rejection_constructs() {
         let base = "function f(fn) {\n  BODY\n  throw new Error(\"x\");\n}";
         let with = |body: &str| base.replace("BODY", body);
-        assert!(sole_site(&with("fn();")));
+        // A parameter callback is exempt only inside a `try` with a `catch`.
+        assert!(!sole_site(&with("fn();")));
+        assert!(sole_site(&with(
+            "try { await fn(); } catch (e) { void e; }"
+        )));
+        assert!(!sole_site(&with("try { void 1; } catch (e) { fn(); }")));
+        // `new` of a built-in runs no user code; a user class may throw.
+        assert!(sole_site(&with("const m = new Map();")));
+        assert!(!sole_site(&with("const c = new Custom(1);")));
         // Words in a string or a comment are not throw sites.
         assert!(sole_site(&with(
             "const m = 'throw reject new Promise'; // throw reject"
@@ -1143,6 +1210,18 @@ mod tests {
         // A generic call is an outside call; an arrow `=>(` is not.
         assert!(!sole_site(&with("other<T>(1);")));
         assert!(sole_site(&with("const h = (a) =>(a);")));
+    }
+
+    #[test]
+    fn sole_throw_site_must_be_the_changed_line() {
+        let source = "function f() {\n  throw new Error(\"other\");\n}";
+        let sole = |line: &str| {
+            ErrorChangeFacts::default()
+                .with_owner_source(Some(source), &[], line)
+                .sole_throw_site
+        };
+        assert!(sole("throw new Error(\"other\");"));
+        assert!(!sole("throw new Error(\"x\");"));
     }
 
     #[test]

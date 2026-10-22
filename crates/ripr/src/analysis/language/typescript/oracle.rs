@@ -1944,7 +1944,7 @@ fn assert_call_assertion(
         anchored_match_literal,
         resolved_const.or(loose_number_literal),
     ) {
-        (Some(literal), _) => (Some(format!("{literal:?}")), false),
+        (Some(literal), _) => (Some(js_double_quoted(&literal)), false),
         (None, Some(literal)) => (Some(literal.to_string()), false),
         (None, None) => expected_argument_metadata(expected_arg, source),
     };
@@ -3097,4 +3097,41 @@ pub(crate) fn collect_related_mock_paths(
         }
     }
     paths
+}
+
+/// `text` as a JavaScript double-quoted string literal. Rust's `{:?}` is not
+/// JavaScript escaping (`\u{..}`, `\0`), so the escapes are written out.
+fn js_double_quoted(text: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod js_literal_tests {
+    use super::js_double_quoted;
+
+    #[test]
+    fn js_double_quoted_writes_javascript_escapes() {
+        assert_eq!(js_double_quoted("a-b"), "\"a-b\"");
+        assert_eq!(js_double_quoted("say \"hi\"\\"), "\"say \\\"hi\\\"\\\\\"");
+        assert_eq!(js_double_quoted("é"), "\"é\"");
+        assert_eq!(js_double_quoted("a\u{0}b\u{2028}"), "\"a\\u0000b\\u2028\"");
+    }
 }
