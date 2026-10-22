@@ -741,3 +741,23 @@ reason = "False actionable: module-level edit related only by a same-stem heuris
 case = "py-hostile-star-import-exported"
 issue = 9415
 reason = "False actionable: `from m import *` is not resolved to public names (#9415)."
+
+[[known_false]]
+case = "py-grid-arithmetic-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-arithmetic-table"
+issue = 9594
+reason = "False actionable: table-loop assertion not credited for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-delete-helper"
+issue = 9594
+reason = "False actionable: field update read through a same-file helper is not credited (#9594)."
+
+[[known_false]]
+case = "py-grid-returns-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for a returns edit (#9594)."
