@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance
   Changed behavior: return max(0, self._balance)
   Missing discriminator (1 of 2): A strong Python oracle reaches `balance`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount
+  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_account.py
   Suggested test: test_balance_starts_at_the_opening_amount
   Test node: tests/test_account.py::test_balance_starts_at_the_opening_amount
