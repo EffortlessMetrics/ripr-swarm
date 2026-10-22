@@ -286,6 +286,9 @@ async function main() {
         matrixRoot
       );
       const matrixUserData = path.join(userDataPath, 'multiroot');
+      // This disposable test profile is reused. Its historical logs must not
+      // consume the bounded retention budget before the current host's logs.
+      resetHostLogDir(matrixUserData);
       fs.mkdirSync(path.join(matrixUserData, 'User'), { recursive: true });
       fs.writeFileSync(path.join(matrixUserData, 'User', 'settings.json'),
         `${JSON.stringify({

@@ -528,6 +528,64 @@ suite('VS Code test host diagnostics', () => {
       assert.ok(logged.some(args => String(args[0]).includes('Failed to retain')));
     } finally { restore(); }
   });
+
+  test('reused matrix setup keeps historical logs from crowding out the current failure', () => {
+    // Execute the actual runner's pre-launch matrix setup with real filesystem
+    // APIs. This checks its reset wiring without bootstrapping an editor.
+    const runnerPath = [path.resolve(__dirname, '../runTest.ts'),
+      path.resolve(__dirname, '../../../test/runTest.ts')].find(file => fs.existsSync(file));
+    assert.ok(runnerPath, 'runner source must be available to the harness regression');
+    const source = fs.readFileSync(runnerPath, 'utf8');
+    const marker = "      const matrixUserData = path.join(userDataPath, 'multiroot');";
+    assert.strictEqual(source.split(marker).length, 2, 'bind exactly one matrix setup');
+    const start = source.indexOf(marker);
+    const end = source.indexOf('      await runTests({', start);
+    assert.ok(end > start, 'matrix setup must end before the native host launch');
+    const prepare = new Function('fs', 'path', 'process', 'userDataPath', 'matrixRoot',
+      'testServerPath', 'resetHostLogDir',
+      `let matrixDiagnostics;\n${source.slice(start, end)}\nreturn matrixDiagnostics;`);
+    const firstProfile = resolveUserDataDir(root);
+    const matrixProfile = path.join(firstProfile, 'multiroot');
+    const matrixLogDir = resolveLogDir(matrixProfile);
+    writeLog(root, 'first.log', 'PRESERVE_FIRST_HOST');
+    fs.mkdirSync(matrixLogDir, { recursive: true });
+    for (let i = 0; i < 24; i++) {
+      fs.writeFileSync(path.join(matrixLogDir, `20000101-${String(i).padStart(2, '0')}.log`),
+        '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    }
+    const unrelated = path.join(matrixProfile, 'untouched.txt');
+    fs.writeFileSync(unrelated, 'PRESERVE_NON_LOG_PROFILE_DATA');
+    const otherProfile = path.join(root, 'unrelated-profile', 'logs', 'other.log');
+    fs.mkdirSync(path.dirname(otherProfile), { recursive: true });
+    fs.writeFileSync(otherProfile, 'PRESERVE_OTHER_PROFILE');
+    const matrixRoot = path.join(root, 'matrix-fixture');
+    fs.mkdirSync(matrixRoot);
+    const matrix = prepare(fs, path, { env: {} }, firstProfile, matrixRoot,
+      '/unused/test-server', resetHostLogDir) as { userDataDir: string; receiptPath: string };
+    assert.strictEqual(matrix.userDataDir, matrixProfile);
+    fs.mkdirSync(matrixLogDir, { recursive: true });
+    fs.writeFileSync(path.join(matrixLogDir, '99999999-current.log'), 'CURRENT_MATRIX_FAILURE');
+    fs.writeFileSync(matrix.receiptPath, '{"outcome":"failed","phase":"select root A"}');
+    const original = new Error('CURRENT_MATRIX_CANCELLATION');
+    const logged: unknown[][] = [];
+    const restore = replaceConsoleError((...args) => logged.push(args));
+    try {
+      const result = finalizeHostRun({ artifactRoot: root, userDataDir: firstProfile, matrix, error: original });
+      assert.strictEqual(result.exitCode, 1);
+      assert.ok(logged.some(args => args[1] === original));
+      assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
+        '{"outcome":"failed","phase":"select root A"}');
+      const current = path.join(result.retention.diagnosticsDir, 'logs', '99999999-current.log');
+      assert.ok(fs.existsSync(current),
+        `historical logs crowded out the current failure: ${JSON.stringify(result.retention.copiedFiles)}`);
+      assert.strictEqual(fs.readFileSync(current, 'utf8'), 'CURRENT_MATRIX_FAILURE');
+      assert.deepStrictEqual(result.retention.copiedFiles, ['99999999-current.log']);
+      assert.ok(result.retention.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
+      assert.strictEqual(fs.readFileSync(path.join(resolveLogDir(firstProfile), 'first.log'), 'utf8'), 'PRESERVE_FIRST_HOST');
+      assert.strictEqual(fs.readFileSync(unrelated, 'utf8'), 'PRESERVE_NON_LOG_PROFILE_DATA');
+      assert.strictEqual(fs.readFileSync(otherProfile, 'utf8'), 'PRESERVE_OTHER_PROFILE');
+    } finally { restore(); }
+  });
 });
 
 function writeLog(artifactRoot: string, relative: string, contents: string): void {
