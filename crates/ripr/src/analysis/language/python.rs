@@ -57,6 +57,7 @@ use std::{
     path::{Path, PathBuf},
 };
 mod arm_activation;
+mod bool_oracle;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -79,6 +80,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
@@ -110,8 +112,8 @@ use no_behavior::{
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
 use probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, contains_mock_initializer,
-    looks_like_call_expression,
+    canonical_python_gap_for, classify_probe_shape, classify_probe_shape_with_old,
+    contains_mock_initializer, looks_like_call_expression,
 };
 #[cfg(test)]
 use related_tests::{
@@ -314,6 +316,9 @@ struct PythonTest {
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
+    /// Receivers the test's class builds once in a setup hook (`self.stock =
+    /// Stock(5)`); empty outside an unambiguous class (#9417).
+    setup_receivers: Vec<setup_receivers::SetupReceiver>,
     /// Definitions the `fixtures` parameters resolve to, in the test's module
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
@@ -373,6 +378,24 @@ struct PythonAssertion {
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     oracle_shape: PythonOracleShape,
+    /// Set for a bare `assert f(lit, ..)` / `assert not f(lit, ..)`: an
+    /// assertion on a call whose arguments are all literals. Extraction reads
+    /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
+    /// boolean pin once the callee is known to return `bool`.
+    bare_bool_call: Option<PythonBareBoolCall>,
+}
+
+/// The call under a bare boolean assertion (`bool_oracle.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonBareBoolCall {
+    /// The bare callee name; dotted callees are never resolved.
+    callee: String,
+    /// The call's source text, without the `not`.
+    call_text: String,
+    /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
+    /// literal, by position.
+    bool_arguments: Vec<Option<bool>>,
+    negated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -769,6 +792,9 @@ impl PythonAdapter {
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
         related_tests::apply_src_module_ambiguity(
             &mut all_owners,
             workspace_files.iter().filter(|file| !is_test_file(file)),
@@ -1094,6 +1120,9 @@ mod arm_activation_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod bool_oracle_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;

@@ -740,7 +740,8 @@ prove its condition costs an abstention or a gap, never a credit.
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
    `null`/`undefined` by equality; a member path only by the same text, and
-   not when the test body rebinds the path's root (`const Level = ...`). The
+   not when the test body rebinds the path's root (`const Level = ...`) or
+   imports it from a module other than the owner's. The
    assertion must observe the owner's whole result (not `price(150) > 0`),
    through the owner's name or an import alias, and an expected value that
    provably equals neither the old nor the new arm is dead and credits
@@ -921,6 +922,29 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
+18. **Field updates a test reads (2026-10-22, #9515).** Adopted: a changed
+    `this.f += e` / `this.f = this.f + e` in a class method is a
+    return-value change when the method has one write to `this.f`, the
+    statement sits at the top level of the method body, and a strong,
+    pinned, exact-value assertion whose observed expression is exactly
+    `recv.f` reads it from a `const`/`let recv = new Class(..)` the test
+    called the method on, in the read's own scope, as a statement of its
+    own, before the read. The method body has no `return` or `throw` before
+    the statement, no nested function or arrow, and uses `this` only as
+    `this.name`; the old line updated the same field. The receiver is only
+    ever used as `recv.name` (no computed access, alias, or pass to another
+    function) and is not reassigned, written through, or mutated by another
+    method call; the owner
+    call's argument is not a neutral literal (`0`, `""`, `false`, `null`);
+    and the expected value is not one (a zero equals the field's initial
+    state). Rejected: early exits, computed or escaped writes, other
+    mutators, neutral arguments or expectations, derived observed
+    expressions, calls in a braceless conditional or a loop that may not run,
+    reads before the call, calls inside a branch or callback, rebound or
+    factory-made receivers, `do { } while` bodies, and tables or helpers as
+    the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
+    gaps until the adapter resolves literal tables and same-file helper
+    assertions, #9534). A getter-backed field is not detected.
 
 ## Required Evidence
 

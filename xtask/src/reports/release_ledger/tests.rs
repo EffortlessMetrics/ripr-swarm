@@ -504,3 +504,132 @@ fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> 
         "present_effective needs a last-toucher path or a blamed line",
     )
 }
+
+#[test]
+fn markdown_projection_shows_every_records_theme() -> Result<(), String> {
+    let mut ledger = valid();
+    let total = ledger.records.len();
+    if total < 2 {
+        return Err("the fixture needs at least two records".to_string());
+    }
+    ledger.records[0].theme = "automation".to_string();
+    ledger.records[1].theme = "release_or_control".to_string();
+    let markdown = super::report_markdown(&ledger, "pass", &[]);
+    for expected in [
+        "| Theme | Count |".to_string(),
+        "| Disposition | Theme |".to_string(),
+        "| `automation` | 1 |".to_string(),
+        "| `release_or_control` | 1 |".to_string(),
+        format!("| `core` | {} |", total - 2),
+    ] {
+        if !markdown.contains(&expected) {
+            return Err(format!("missing `{expected}` in:\n{markdown}"));
+        }
+    }
+    for record in &ledger.records {
+        let cell = format!("| `{}` |", record.theme);
+        let shown = markdown
+            .lines()
+            .any(|line| line.contains(&record.commit_sha) && line.contains(&cell));
+        if !shown {
+            return Err(format!("{} lacks its theme cell", record.commit_sha));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn input_over_the_byte_cap_is_rejected_not_truncated() -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-input-cap-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("input.json");
+    let path = path.to_string_lossy().to_string();
+    std::fs::write(&path, b"0123456789").map_err(|error| error.to_string())?;
+    let at_cap = super::read_capped(&path, "facts", 10)?;
+    if at_cap.len() != 10 {
+        return Err(format!(
+            "a file exactly at the cap read {} bytes",
+            at_cap.len()
+        ));
+    }
+    let over = match super::read_capped(&path, "facts", 9) {
+        Ok(bytes) => return Err(format!("an oversize file read {} bytes", bytes.len())),
+        Err(error) => error,
+    };
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    if !over.contains("facts") || !over.contains("9-byte release-ledger input limit") {
+        return Err(format!(
+            "the error does not name the input and limit: {over}"
+        ));
+    }
+    Ok(())
+}
+
+fn audited_ledger(path: &str, sha256: &str) -> Ledger {
+    let mut ledger = valid();
+    ledger.audit = Some(super::dto::AuditRef {
+        path: path.to_string(),
+        sha256: sha256.to_string(),
+    });
+    ledger
+}
+
+#[test]
+fn audit_file_digest_must_match_the_recorded_sha() -> Result<(), String> {
+    let recorded = "ab".repeat(32);
+    let ledger = audited_ledger("audit.md", &recorded);
+    for (current, expected) in [
+        (Ok(recorded.clone()), None),
+        (Ok("cd".repeat(32)), Some("not the recorded")),
+        (Err("no such file".to_string()), Some("cannot be re-read")),
+    ] {
+        let context = Context {
+            audit_file_sha256: Some(current),
+            ..Context::default()
+        };
+        let found = validate(&ledger, &context);
+        let hit = found.iter().any(|reason| reason.contains("audit file"));
+        match (expected, hit) {
+            (None, false) => {}
+            (Some(text), true) if found.iter().any(|reason| reason.contains(text)) => {}
+            _ => return Err(format!("unexpected audit reasons: {found:?}")),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn editing_the_audit_file_after_derivation_fails_validation() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-audit-bind-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let audit = dir.join("audit.md").to_string_lossy().to_string();
+    std::fs::write(&audit, "audited").map_err(|error| error.to_string())?;
+    let digest = format!("{:x}", Sha256::digest(b"audited"));
+    let input = dir.join("ledger.json").to_string_lossy().to_string();
+    let json = serde_json::to_string(&audited_ledger(&audit, &digest))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(&input, json).map_err(|error| error.to_string())?;
+    let base = sha(1);
+    let args = ["--input", input.as_str(), "--expected-base", base.as_str()]
+        .map(String::from)
+        .to_vec();
+    let before = super::release_ledger(&args);
+    std::fs::write(&audit, "audited, then edited").map_err(|error| error.to_string())?;
+    let after = super::release_ledger(&args);
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    before.map_err(|error| format!("an unedited audit should validate: {error}"))?;
+    match after {
+        Ok(()) => Err("an audit edited after derivation still validated".to_string()),
+        Err(error) if error.contains("audit file") || error.contains("invalid") => Ok(()),
+        Err(error) => Err(format!("unexpected error: {error}")),
+    }
+}

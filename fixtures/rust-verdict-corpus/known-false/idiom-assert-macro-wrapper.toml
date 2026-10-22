@@ -1,0 +1,3 @@
+case = "idiom-assert-macro-wrapper"
+issue = 7089
+reason = "A user macro_rules! wrapping assert_eq! reads as a weak gap; it should be credited, or at worst limited under the macro-wrapped limit (#7089)."
