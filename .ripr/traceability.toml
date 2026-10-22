@@ -17758,6 +17758,26 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0318"
+name = "Pilot next steps name the dirty-target precondition and the continue command"
+spec = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/pilot/render/complete.rs",
+  "crates/ripr/src/output/pilot/commands.rs",
+  "crates/ripr/src/output/pilot/current_change.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0290"
 name = "Pilot repair start root display preserves literal backslashes"
 spec = "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md"

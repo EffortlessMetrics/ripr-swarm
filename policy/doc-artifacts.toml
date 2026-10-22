@@ -1796,6 +1796,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #9277 records the oversized-diff subset contract: repeatable --path/--exclude narrow the changed files before the size guards, every removed file is named in a limitation and never reads as clean, a scope matching nothing is an error, and the guards still fire on an oversized in-scope diff."
 
 [[artifact]]
+id = "RIPR-SPEC-0318"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #3896 and PR #8520 record the pilot next-step contract: when the current change is uncommitted and the repair targets an inline test module the terminal and Markdown summaries say to commit or stash the target before the repair start, and the final step names the continue command that step 1 prints."
+
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"

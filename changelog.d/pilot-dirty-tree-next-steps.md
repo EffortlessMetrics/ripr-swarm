@@ -1,5 +1,5 @@
 <!-- section: Fixed -->
-- `ripr pilot` next steps now say to commit or stash uncommitted edits to the
-  repair target before step 1 when the repair start would refuse it, name the
-  `ripr continue --attempt ...` command in the final step, and print no
-  "after adding the focused test" block when no seam was recommended (#8520).
+- `ripr pilot` next steps (terminal and Markdown) now say to commit or stash
+  uncommitted edits to the repair target before the repair start when it would
+  refuse that file, and name the `ripr continue` command that step 1 prints
+  instead of an `--attempt ... --phase after` spelling it never prints (#8520).

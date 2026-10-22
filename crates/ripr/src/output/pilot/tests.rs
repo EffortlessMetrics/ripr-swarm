@@ -2087,6 +2087,20 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
         "{inline_dirty}"
     );
 
+    // The saved Markdown summary carries the same precondition, ahead of the
+    // repair introduction and without a placeholder command a user could run.
+    let mut md_context = pilot_context(&artifacts);
+    md_context.current_change = Some(&dirty);
+    let markdown = render_pilot_summary_md(std::slice::from_ref(&inline_entry), md_context);
+    assert!(
+        markdown.contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("then run the `ripr continue` command it prints:"),
+        "{markdown}"
+    );
+
     // Negatives: clean tree, no change, and a tests/ target under a dirty tree.
     assert!(!render(&inline_entry, &clean)?.contains("uncommitted edits"));
     let no_change = PilotCurrentChange::NoChange { base: None };

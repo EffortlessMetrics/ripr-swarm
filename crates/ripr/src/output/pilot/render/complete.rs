@@ -428,8 +428,19 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
+            if context
+                .current_change
+                .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
+                && let Some(file) = top
+                    .first()
+                    .and_then(|entry| repair_inline_target_file(entry))
+            {
+                out.push_str(&format!(
+                    "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
+                ));
+            }
             out.push_str(&format!(
-                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `ripr continue --attempt ...` command it prints:\n\n",
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `ripr continue` command it prints:\n\n",
             ));
             vec![command]
         }
