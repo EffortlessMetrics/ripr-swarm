@@ -986,7 +986,7 @@ fn observed_value_facts_for_test(
     // separately because they don't fit the per-arg shape. These only
     // count when method names align with seam tokens; the env enforces
     // that filter.
-    observed.extend(env.builder_facts());
+    observed.extend(env.builder_facts(&indexed.test.body));
     for fact in &mut observed {
         fact.file = Some(indexed.test.file.clone());
     }

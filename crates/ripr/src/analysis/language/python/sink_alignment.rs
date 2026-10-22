@@ -1204,7 +1204,7 @@ pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &Pyt
 /// (`name := ...`), which binds in the enclosing function scope wherever the
 /// expression sits. Textual on purpose: a comment or string match only
 /// withholds credit.
-fn binds_by_walrus(body_text: &str, name: &str) -> bool {
+pub(super) fn binds_by_walrus(body_text: &str, name: &str) -> bool {
     body_text.match_indices(name).any(|(idx, _)| {
         let before_ok = body_text[..idx]
             .chars()
@@ -1221,7 +1221,7 @@ fn binds_by_walrus(body_text: &str, name: &str) -> bool {
 
 /// Whether a `match` case pattern captures `name` (`case fee:`,
 /// `case [*fee]`, `case {**fee}`, `case Cls() as fee`).
-fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
+pub(super) fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
     let named =
         |bound: &Option<ast::Identifier>| bound.as_ref().is_some_and(|id| id.as_str() == name);
     let any =

@@ -3770,7 +3770,9 @@ identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`
-and `agent receipt` compare the stable producer/version, base, mode, and
+and `agent receipt` require `artifact.producer.version` to equal the consuming
+executable's version exactly (an artifact from any other RIPR build is refused
+with a regenerate diagnostic, #9500), and compare the base, mode, and
 profile fields separately, and reject unchanged identities when the declared
 repository commits differ. `analysis.command` and `analysis.profile` state the
 producer operation used.
