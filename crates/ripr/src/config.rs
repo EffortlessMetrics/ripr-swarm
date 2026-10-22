@@ -104,7 +104,12 @@ pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
 pub(crate) const DEFAULT_LSP_SEAM_DIAGNOSTICS: bool = true;
 const DEFAULT_SUPPRESSIONS_PATH: &str = ".ripr/suppressions.toml";
-const INIT_CONFIG_TEXT: &str = r#"[analysis]
+const INIT_CONFIG_TEXT: &str = r#"# ripr.toml — every value below is the built-in default. Missing ripr.toml is
+# the normal first-run state and behaves identically, so you can ignore or
+# delete this file; edit only the settings you actually want to change.
+# Validate edits with `ripr config validate`; `ripr doctor` reports the state.
+
+[analysis]
 # Default analysis mode when CLI flags or LSP initialization options do not
 # set one explicitly. Valid: instant, draft, fast, deep, ready.
 mode = "draft"
