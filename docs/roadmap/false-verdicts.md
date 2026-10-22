@@ -6,8 +6,8 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main 50
 | Language | False | Cases |
 | --- | --- | --- |
 | Rust | 12 | 535 |
-| TypeScript | 11 | 216 |
-| Python | 9 | 111 |
+| TypeScript | 17 | 243 |
+| Python | 13 | 135 |
 | Perl | 1 | 60 |
 
 Every false row is listed once in the `[[known_false]]` tables of
@@ -38,6 +38,8 @@ spec or the analyzer. Never exclude or reclassify it.
 | TS credit on unreached arms | `shape-nullish-middle-operand`, `-template-plural-boundary`, `-async-catch-fallback-unexercised`, `-static-factory-rounding` | #9437 |
 | TS silent enum member edit | `shape-enum-member-value-unread` | #9436 |
 | Python language shapes | nine `py-shapes-*` cases | #9412 |
+| Python idioms | `py-idioms-caplog-message`, `-caplog-level` (#9424), `-approx-constant-within-tolerance` (#9428), `-unittest-setup-sign` (#9412) | see each |
+| TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436), `hostile-minified-line-pinned` (#9435) | see each |
 
 ## Gate
 
