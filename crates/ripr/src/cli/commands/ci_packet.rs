@@ -1222,6 +1222,9 @@ impl PacketRun {
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
+                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
+                // `ignore = all`) would silently empty a gitlink bump (#8209).
+                "--ignore-submodules=none",
                 "--src-prefix=a/",
                 "--dst-prefix=b/",
                 "--unified=3",
@@ -1257,6 +1260,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
+                    "--ignore-submodules=none",
                     "-z",
                     &range,
                 ],
@@ -2507,6 +2511,70 @@ mod tests {
             );
             assert_eq!(leaked, 0, "{link}");
         }
+        Ok(())
+    }
+
+    /// `diff.ignoreSubmodules=all` in the repository config must not empty
+    /// the captured pull-request diff for a gitlink-only change.
+    #[test]
+    fn captured_pr_diff_keeps_a_gitlink_bump_under_ignore_submodules_all() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-gitlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let run_git = |args: &[&str]| -> Result<String, String> {
+            crate::git::run_git(&root, args).map_err(|err| err.to_string())
+        };
+        run_git(&["init", "--initial-branch=main"])?;
+        run_git(&["config", "user.email", "ripr@example.invalid"])?;
+        run_git(&["config", "user.name", "ripr test"])?;
+        run_git(&["config", "commit.gpgSign", "false"])?;
+        run_git(&["config", "diff.ignoreSubmodules", "all"])?;
+        let first = "1111111111111111111111111111111111111111";
+        let second = "2222222222222222222222222222222222222222";
+        run_git(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{first},vendor/lib"),
+        ])?;
+        run_git(&["commit", "-m", "base"])?;
+        let base = run_git(&["rev-parse", "HEAD"])?;
+        run_git(&["update-ref", "refs/remotes/origin/main", &base])?;
+        run_git(&[
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{second},vendor/lib"),
+        ])?;
+        run_git(&["commit", "-m", "bump"])?;
+        let mut run = PacketRun {
+            root: root.clone(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings {
+                base_ref: "main".to_string(),
+                ..CiSettings::default()
+            },
+            only: Vec::new(),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: None,
+        };
+        let result = run.capture_pull_request_diff();
+        let diff = fs::read(root.join("target/ripr/reports/pr.diff")).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&root);
+        result?;
+        let diff = String::from_utf8_lossy(&diff?).to_string();
+        assert!(
+            diff.contains("vendor/lib"),
+            "gitlink bump was hidden: {diff:?}"
+        );
         Ok(())
     }
 }

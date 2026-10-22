@@ -1482,9 +1482,10 @@ fn check_inner(
                     &input.root,
                     &report.classified,
                 );
-                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
