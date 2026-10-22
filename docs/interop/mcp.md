@@ -241,7 +241,7 @@ validate every document the server emits:
 | Workspace status | `ripr-mcp-workspace-status-v1` | `ripr_workspace_status` result |
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
-| Refresh progress | `ripr-mcp-refresh-v1` | refresh notifications |
+| Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
 | Gap list | `ripr-mcp-gap-list-v2` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
