@@ -15,6 +15,19 @@ Updated:
 ## Pending — ts_field_update_overwrite_computed (2)
 
 Reason:
+RIPR-SPEC-0224: TypeScript row-local miss on main's new fixture (#5495)
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_field_update_overwrite_computed (3)
+
+Reason:
 RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
 
 Command:

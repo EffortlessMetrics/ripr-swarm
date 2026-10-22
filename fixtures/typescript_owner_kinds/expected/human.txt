@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return this.items.length + 1;
   Missing discriminator (1 of 2): Related test reaches `total` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
-  Related test: tests/owners.test.ts:7 cart total smoke
+  Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
     exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
     actionable repair packet is emitted until verify, receipt, and edit-boundary fields are

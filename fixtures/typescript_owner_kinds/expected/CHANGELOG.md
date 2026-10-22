@@ -516,6 +516,7 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
 ## Pending — typescript_owner_kinds (12)
 
 Reason:
@@ -615,7 +616,7 @@ Updated:
 ## Pending — typescript_owner_kinds (20)
 
 Reason:
-A column-zero module scalar const edit (DEFAULT_RATE = 0.09) is now a return_value/value probe instead of the ambiguous predicate fallback (RIPR-SPEC-0027).
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
 
 Command:
 `cargo xtask goldens bless typescript_owner_kinds --reason "..."`
@@ -627,7 +628,7 @@ Updated:
 ## Pending — typescript_owner_kinds (21)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0224: TypeScript row-miss narrowed to proven paths (#5495)
 
 Command:
 `cargo xtask goldens bless typescript_owner_kinds --reason "..."`
@@ -637,6 +638,30 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — typescript_owner_kinds (22)
+
+Reason:
+A column-zero module scalar const edit (DEFAULT_RATE = 0.09) is now a return_value/value probe instead of the ambiguous predicate fallback (RIPR-SPEC-0027).
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_owner_kinds (23)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_owner_kinds (24)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
