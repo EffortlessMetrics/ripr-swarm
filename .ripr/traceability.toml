@@ -335,6 +335,7 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::typed_command_specs_are_validated_before_projection",
   "crates/ripr/src/agent/command_specs.rs::tests::typed_agent_routes_preserve_argv_and_disclose_shell_redirection",
   "crates/ripr/src/agent/command_specs.rs::tests::typed_route_recovery_rejects_arbitrary_test_commands",
+  "crates/ripr/src/agent/command_specs.rs::tests::traversing_relative_root_display_keeps_no_typed_authority",
   "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
   "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
   "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
@@ -1056,6 +1057,8 @@ tests = [
   "crates/ripr/src/config.rs::tests::parse_error_hint_matches_discovery_after_the_broken_file_is_removed",
   "crates/ripr/src/config.rs::tests::unreadable_config_error_ends_with_a_recovery_line",
   "crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal",
+  "crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::malformed_candidate_config_names_recovery_without_changing_json_refusal",
+  "crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::repaired_and_config_free_candidates_ignore_a_broken_worktree_config",
   "crates/ripr/tests/cli_smoke.rs::doctor_verbose_malformed_config_omits_the_loader_recovery_line",
   "crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults",
@@ -7410,6 +7413,7 @@ tests = [
   # G-G derived boundary input (#4215 follow-up)
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::missed_literal_boundary_with_input_fact_derives_the_boundary_call",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::resolved_constant_boundary_with_input_fact_is_delegatable",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::member_path_boundaries_fail_closed_while_immutable_const_resolves",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::mismatched_input_facts_keep_the_packet_closed",
   "crates/ripr/src/analysis/language/typescript/boundary_input_tests.rs::same_file_integer_const_resolves_to_the_boundary_input",
   "crates/ripr/src/analysis/language/typescript/boundary_input_tests.rs::rebindable_or_non_literal_constants_stay_unresolved",
@@ -14126,6 +14130,8 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean",
+  "crates/ripr/tests/mcp_stdio.rs::unwritable_stderr_does_not_abort_unusable_root_session",
   "crates/ripr/tests/mcp_stdio.rs::gap_details_disclose_pre_cap_related_test_totals_across_refreshes",
   "crates/ripr/src/mcp/gaps.rs::tests::related_test_totals_bind_equal_windows_to_distinct_evidence",
   "crates/ripr/src/mcp/gaps.rs::tests::legacy_serialized_findings_project_retained_totals_without_digest_drift",
