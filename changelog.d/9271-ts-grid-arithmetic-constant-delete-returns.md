@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- The TypeScript verdict corpus gains the operator-grid cases for arithmetic, constant, delete and return mutations (21 cases). Five rows are visible false verdicts: `ts-grid-arithmetic-property` and `ts-grid-returns-property` are false exposed (circular or idempotent property checks credited), and `ts-grid-delete-exact`, `ts-grid-delete-helper` and `ts-grid-delete-table` are false actionable (field-write deletes read as weak). Fixture-only; no analyzer change (#9271).

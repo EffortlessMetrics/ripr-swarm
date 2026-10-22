@@ -1,0 +1,58 @@
+{
+  "case_id": "ts-grid-logical-none",
+  "subject_id": "authored-ts-grid-logical",
+  "diff": "cases/ts-grid-logical-none.diff",
+  "anchor": {
+    "file": "src/logical.ts",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boolean",
+  "test_shape": "nodetest_smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return attemptsLeft || timedOut;",
+        "mutated_line": "return attemptsLeft || timedOut;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      },
+      {
+        "replacement": "return true;",
+        "mutated_line": "return true;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      },
+      {
+        "replacement": "return false;",
+        "mutated_line": "return false;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: logical x no assertion. The test only calls shouldRetry.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
