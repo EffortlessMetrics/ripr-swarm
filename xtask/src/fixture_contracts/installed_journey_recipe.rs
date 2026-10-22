@@ -75,6 +75,17 @@ fn recipe_commits(recipe: &[&str]) -> Vec<RecipeCommit> {
 /// Hermetic git invocation: no user or system configuration, no signing, no
 /// hooks, so the object ids depend only on the recipe and the snapshot bytes.
 fn recipe_git(dir: &Path, args: &[&str], dates: Option<&str>) -> Result<String, String> {
+    recipe_git_inheriting(dir, args, dates, &[])
+}
+
+/// `recipe_git` with extra variables the child would inherit from its parent;
+/// the regression test uses it to prove the repository selectors are stripped.
+fn recipe_git_inheriting(
+    dir: &Path,
+    args: &[&str],
+    dates: Option<&str>,
+    inherited: &[(&str, &str)],
+) -> Result<String, String> {
     let mut full: Vec<String> = [
         "-c",
         "commit.gpgsign=false",
@@ -84,12 +95,23 @@ fn recipe_git(dir: &Path, args: &[&str], dates: Option<&str>) -> Result<String, 
         "core.autocrlf=false",
         "-c",
         "core.hooksPath=/dev/null",
+        "-c",
+        "core.excludesFile=/dev/null",
+        "-c",
+        "core.fileMode=true",
     ]
     .iter()
     .map(|arg| arg.to_string())
     .collect();
     full.extend(args.iter().map(|arg| arg.to_string()));
+    // Host identity, repository-redirecting and ignore-file settings must not
+    // reach the rebuild: an inherited `GIT_AUTHOR_*` changes every commit id,
+    // `GIT_INDEX_FILE` (set inside git hooks) redirects the index, and the
+    // default `$XDG_CONFIG_HOME/git/ignore` would drop snapshot files.
+    let scratch_home = dir.to_string_lossy().into_owned();
     let mut envs = vec![
+        ("HOME", scratch_home.as_str()),
+        ("XDG_CONFIG_HOME", scratch_home.as_str()),
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
         ("GIT_CONFIG_NOSYSTEM", "1"),
         ("GIT_TERMINAL_PROMPT", "0"),
@@ -98,8 +120,28 @@ fn recipe_git(dir: &Path, args: &[&str], dates: Option<&str>) -> Result<String, 
         envs.push(("GIT_AUTHOR_DATE", date));
         envs.push(("GIT_COMMITTER_DATE", date));
     }
-    let output = crate::run::capture_process_output_in("git", &full, Some(dir), &[], &[], &envs)
-        .map_err(|error| error.message)?;
+    const INHERITED_GIT_ENV: [&str; 11] = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    ];
+    let output = crate::run::capture_process_output_in(
+        "git",
+        &full,
+        Some(dir),
+        inherited,
+        &INHERITED_GIT_ENV,
+        &envs,
+    )
+    .map_err(|error| error.message)?;
     Ok(String::from_utf8_lossy(&output).trim().to_string())
 }
 
@@ -126,6 +168,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
         std::fs::read_dir(from).map_err(|error| format!("read {}: {error}", from.display()))?
     {
         let entry = entry.map_err(|error| format!("read {}: {error}", from.display()))?;
+        if entry.file_name() == ".git" {
+            return Err(format!(
+                "snapshot path {} is git metadata, which would redirect the scratch repository",
+                entry.path().display()
+            ));
+        }
         let target = to.join(entry.file_name());
         let kind = entry
             .file_type()
@@ -199,6 +247,10 @@ pub(crate) fn installed_journey_recipe_rebuild_violations(
         .and_then(|repository| repository.get("snapshots"))
         .and_then(Value::as_object)
     else {
+        violations.push(format!(
+            "blind journey installed {label} manifest is missing repository.snapshots, so no \
+             recorded id can be rebuilt from the recipe"
+        ));
         return violations;
     };
     let manifest_text = match std::fs::read_to_string(root.join("manifest.json")) {
@@ -229,6 +281,26 @@ pub(crate) fn installed_journey_recipe_rebuild_violations(
         .filter(|name| *name != "base" && *name != "head")
         .collect();
     let base_day = base_commit.date.split('T').next().unwrap_or_default();
+    if !variants.is_empty() {
+        // The variant commits are rebuilt by the derivation documented in the
+        // recipe's prose step; refuse a recipe that no longer states it.
+        let states_derivation = recipe.iter().any(|step| {
+            step.contains("branch variant/<name>")
+                && step.contains("'variant: <name>'")
+                && step.contains(&format!("{base_day}T00:0N:00Z"))
+                && step.contains("increments by one")
+                && step.contains("listed under `repository.snapshots`")
+        });
+        if !states_derivation {
+            violations.push(format!(
+                "blind journey installed {label} construction_recipe must state the variant \
+                 branch, message, date and snapshot-order derivation the rebuild applies to its \
+                 {} variant snapshots",
+                variants.len()
+            ));
+            return violations;
+        }
+    }
 
     let scratch = std::env::temp_dir().join(format!(
         "ripr-installed-{label}-recipe-{}-{}",
@@ -366,6 +438,7 @@ mod installed_journey_recipe_tests {
     fn a_tampered_recorded_commit_id_is_refused() -> Result<(), String> {
         let contract = &INSTALLED_PYTHON_CONTRACT;
         let root = scratch_fixture(contract, "commit")?;
+        let _cleanup = ScratchRepository(root.clone());
         let manifest_path = root.join("manifest.json");
         let text = std::fs::read_to_string(&manifest_path)
             .map_err(|error| format!("read manifest: {error}"))?;
@@ -379,7 +452,6 @@ mod installed_journey_recipe_tests {
             .map_err(|error| format!("write manifest: {error}"))?;
         let tampered: Value = read_json_value(&manifest_path)?;
         let violations = installed_journey_recipe_rebuild_violations(contract, &root, &tampered);
-        std::fs::remove_dir_all(&root).map_err(|error| format!("clean scratch: {error}"))?;
         if !violations.iter().any(|violation| {
             violation.contains("snapshot `head` records commit")
                 && violation.contains(&forged)
@@ -404,13 +476,13 @@ mod installed_journey_recipe_tests {
     fn a_tampered_snapshot_byte_is_refused_by_the_rebuilt_tree() -> Result<(), String> {
         let contract = &INSTALLED_TYPESCRIPT_CONTRACT;
         let root = scratch_fixture(contract, "byte")?;
+        let _cleanup = ScratchRepository(root.clone());
         let source = root.join("repository/head/src/pricing.ts");
         let mut bytes = std::fs::read(&source).map_err(|error| format!("read source: {error}"))?;
         bytes.extend_from_slice(b"\n// tampered\n");
         std::fs::write(&source, bytes).map_err(|error| format!("write source: {error}"))?;
         let manifest = committed_manifest(contract)?;
         let violations = installed_journey_recipe_rebuild_violations(contract, &root, &manifest);
-        std::fs::remove_dir_all(&root).map_err(|error| format!("clean scratch: {error}"))?;
         for kind in ["commit", "tree"] {
             if !violations
                 .iter()
@@ -449,6 +521,80 @@ mod installed_journey_recipe_tests {
         {
             return Err(format!(
                 "an unstructured recipe must not be silently skipped, got: {violations:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_repository_selectors_do_not_redirect_the_rebuild() -> Result<(), String> {
+        let contract = &INSTALLED_PYTHON_CONTRACT;
+        let root = scratch_fixture(contract, "selectors")?;
+        let _cleanup = ScratchRepository(root.clone());
+        let foreign = root.join("foreign");
+        let scratch = root.join("scratch");
+        for dir in [&foreign, &scratch] {
+            std::fs::create_dir_all(dir).map_err(|error| format!("create {dir:?}: {error}"))?;
+            recipe_git(dir, &["init", "-q", "-b", "main", "."], None)?;
+        }
+        let foreign_git = foreign.join(".git").to_string_lossy().into_owned();
+        let seen = recipe_git_inheriting(
+            &scratch,
+            &["rev-parse", "--absolute-git-dir"],
+            None,
+            &[("GIT_DIR", foreign_git.as_str())],
+        )?;
+        if seen.contains("foreign") || !seen.ends_with("scratch/.git") {
+            return Err(format!(
+                "an inherited GIT_DIR must not redirect the rebuild, git used `{seen}`"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_git_metadata_is_refused() -> Result<(), String> {
+        let contract = &INSTALLED_PYTHON_CONTRACT;
+        let root = scratch_fixture(contract, "dotgit")?;
+        let _cleanup = ScratchRepository(root.clone());
+        std::fs::create_dir_all(root.join("repository/base/.git"))
+            .map_err(|error| format!("plant .git: {error}"))?;
+        let manifest = committed_manifest(contract)?;
+        let violations = installed_journey_recipe_rebuild_violations(contract, &root, &manifest);
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("git metadata"))
+        {
+            return Err(format!(
+                "a snapshot carrying .git must be refused, got: {violations:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_recipe_that_drops_the_variant_derivation_is_refused() -> Result<(), String> {
+        let contract = &INSTALLED_TYPESCRIPT_CONTRACT;
+        let mut manifest = committed_manifest(contract)?;
+        let steps = manifest["repository"]["construction_recipe"]
+            .as_array_mut()
+            .ok_or("construction_recipe is not an array")?;
+        steps.retain(|step| {
+            !step
+                .as_str()
+                .is_some_and(|text| text.contains("variant/<name>"))
+        });
+        let violations = installed_journey_recipe_rebuild_violations(
+            contract,
+            &fixture_root(contract),
+            &manifest,
+        );
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("must state the variant"))
+        {
+            return Err(format!(
+                "a recipe without the variant step must be refused, got: {violations:?}"
             ));
         }
         Ok(())

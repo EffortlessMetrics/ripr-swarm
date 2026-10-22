@@ -129,8 +129,10 @@ offered.
 
 `cargo xtask check-fixture-contracts` also rebuilds the snapshot repository
 from `repository/<snapshot>/` using the manifest `construction_recipe` (offline,
-one scratch `git init`, with user and system git configuration, signing and
-hooks disabled) and refuses any recorded commit or tree id the recipe does not
+a handful of local git calls in one scratch repository, with the user and system
+git configuration, host identity and index environment, global ignore file,
+signing and hooks all neutralized; the variant commit dates and messages follow
+the recipe's documented derivation) and refuses any recorded commit or tree id the recipe does not
 reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 
 ## Required Evidence
@@ -208,7 +210,9 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
   recorded commit and tree id from `construction_recipe`; a forged but
   well-formed commit id is refused; a changed snapshot byte changes the
   rebuilt ids and is refused; a recipe without the base and head steps fails
-  closed.
+  closed; inherited git repository selectors do not redirect the rebuild; a
+  snapshot carrying `.git` is refused; a recipe that no longer states the
+  variant derivation is refused.
 - `xtask/src/fixture_contracts/general_validators.rs`
   (`installed_python_fixture_tests`): committed manifest binds the snapshot
   bytes; committed scenarios exist in the executor corpus; an unknown
