@@ -343,7 +343,7 @@ fn constructor_values(
             inputs.entry(name).or_insert(value);
         }
         // Every name the expression reads is a ctor parameter or a constant
-        // that survived the same-file, declared-once, not-rebound,
+        // that passed the same-file, declared-once, not-rebound,
         // not-imported rule.
         if free_identifiers(expression).iter().any(|name| {
             !inputs.contains_key(name) || (!parameters.contains(name) && !is_constant_like(name))
