@@ -14,8 +14,8 @@ test("area table", () => {
 });
 
 test("scaling by one keeps the quantity", () => {
-  for (let qty = 1; qty < 5; qty++) {
-    assert.equal(scaled(qty, 1), qty);
+  for (let unit = 1; unit < 5; unit++) {
+    assert.equal(scaled(1, unit), unit);
   }
 });
 

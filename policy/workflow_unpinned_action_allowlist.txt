@@ -1,0 +1,41 @@
+# Reviewed exceptions to the third-party action SHA-pin rule (check-workflows, #9303).
+#
+# Format:
+# path|action@ref|max_count|reason
+#
+# Third-party actions must be pinned to a full 40-hex commit SHA (with the tag in
+# a trailing comment). The jobs that hold secrets or write tokens (publish,
+# coverage, test-analytics, badge-endpoints) are already pinned. Rows below are
+# remaining tag pins in read-only, secret-free build jobs. The list is a ratchet:
+# a row larger than the actual count fails, so pinning an action must lower or
+# remove its row. Do not add a row for a job that holds a secret or write token.
+
+.github/workflows/ci.yml|Swatinem/rust-cache@v2|3|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/ci.yml|dtolnay/rust-toolchain@1.95.0|4|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/dx-scoreboard.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/dx-scoreboard.yml|dtolnay/rust-toolchain@stable|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/first-run-archive.yml|dtolnay/rust-toolchain@stable|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/first-run-install.yml|dtolnay/rust-toolchain@stable|2|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/future-clippy.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/future-clippy.yml|dtolnay/rust-toolchain@1.95.0|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/macos-advisory.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/macos-advisory.yml|dtolnay/rust-toolchain@1.95|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/pilot-ranking.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/pilot-ranking.yml|dtolnay/rust-toolchain@1.95.0|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/printed-command-paste.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/printed-command-paste.yml|dtolnay/rust-toolchain@1.95|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/public-proof.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/public-proof.yml|dtolnay/rust-toolchain@stable|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/routed-rust.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/routed-rust.yml|dtolnay/rust-toolchain@v1|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/rust-corpus.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/rust-corpus.yml|dtolnay/rust-toolchain@stable|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/rust-gates.yml|Swatinem/rust-cache@v2|1|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/rust-gates.yml|dtolnay/rust-toolchain@v1|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/rust-gates.yml|taiki-e/install-action@v2|1|Tool installer in a job with no secrets and a read-only token; the ref selects the tool, so SHA pinning also needs `with: tool:`. Burn-down: #9303 follow-up.
+.github/workflows/security.yml|dtolnay/rust-toolchain@stable|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/security.yml|taiki-e/install-action@cargo-deny|1|Tool installer in a job with no secrets and a read-only token; the ref selects the tool, so SHA pinning also needs `with: tool:`. Burn-down: #9303 follow-up.
+.github/workflows/source-of-truth.yml|dtolnay/rust-toolchain@stable|2|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/windows-advisory.yml|Swatinem/rust-cache@v2|2|Cache action in a job with no secrets and a read-only token; SHA pinning needs the cache-continuity and routing test contracts updated. Burn-down: #9303 follow-up.
+.github/workflows/windows-advisory.yml|dtolnay/rust-toolchain@1.95|2|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.
+.github/workflows/zed-extension.yml|dtolnay/rust-toolchain@1.95.0|1|Toolchain installer in a job with no secrets and a read-only token; the ref selects the toolchain, so SHA pinning also needs an explicit `with: toolchain:` and test-contract updates. Burn-down: #9303 follow-up.

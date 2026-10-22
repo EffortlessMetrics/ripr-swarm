@@ -5,8 +5,8 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 13 | 558 |
-| TypeScript | 33 | 309 |
+| Rust | 17 | 579 |
+| TypeScript | 32 | 309 |
 | Python | 25 | 191 |
 | Perl | 1 | 60 |
 
@@ -22,7 +22,6 @@ spec or the analyzer. Never exclude or reclassify it.
 | Case | Outcome | Root cause | Fix, in | Owner | Pinned by |
 | --- | --- | --- | --- | --- | --- |
 | `regex-syntax-max-scalar-two-byte` (Rust) | false actionable | The match-arm selector domain through a bounded caller loop is not derived. | Analyzer | #5503 | Row, with `regex-syntax-word-byte` as the negative |
-| `jest-mined-private-impl-dispatcher` (TS) | false actionable | A module-private impl behind an exported dispatcher reads as a gap and the repair names a private symbol. | Analyzer: follow the exported caller | #6655 | Row |
 | `perl-testmore-tier-far-from-boundary` (Perl) | false exposed | No row-owned predicate discriminator fact, so inputs far from the changed threshold look aligned. | Producer fact, then consumer | #8979 (perl-lsp-swarm#17237, #5562) | Row |
 
 ### Rows from the language-shape coverage batches
@@ -30,11 +29,11 @@ spec or the analyzer. Never exclude or reclassify it.
 | Group | Cases | Owner |
 | --- | --- | --- |
 | Rust exact pin read as gap | `shape-thread-join-result`, `shape-sort-direction-truncate`, `shape-let-else-branch-pinned`, `-closure-returned-adder`, `-collect-result-short-circuit`, `-impl-trait-return-filter` | #9440 |
+| Rust std test forms (`idiom-*`) | `idiom-assert-macro-wrapper` (#7089), `idiom-display-string-pin` (#9608), `idiom-fixture-builder-total` (#9609), `idiom-hand-mock-exact-line` (#9610) | see each |
 | Rust async owner | `shape-async-fn-block-on` | #9443 |
 | Rust generated and fn-value owners | `shape-hostile-owner-as-path-value`, `-owner-through-fn-pointer`, `-cfg-attr-test`, `-macro-defined-owner` | #9442 |
 | Rust const-generic and cast | `shape-cast-truncation-mask` | #9444 |
 | TS credit on unreached arms | `shape-nullish-middle-operand`, `-template-plural-boundary`, `-async-catch-fallback-unexercised`, `-static-factory-rounding` | #9437 |
-| TS silent enum member edit | `shape-enum-member-value-unread` | #9436 |
 | Python language shapes | nine `py-shapes-*` cases | #9412 |
 | Python idioms | `py-idioms-caplog-message`, `-caplog-level` (#9424), `-approx-constant-within-tolerance` (#9428), `-unittest-setup-sign` (#9412) | see each |
 | TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436) | see each |
