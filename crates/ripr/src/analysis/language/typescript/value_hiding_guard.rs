@@ -57,18 +57,49 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
     })
 }
 
-/// `true` when `old` and `new` are both `return <operand> <op> <operand>;`
-/// with the same commutative operator (`*` or `+`) over the same two
-/// operands, in either order. Any other edit (a changed operator, a dropped
-/// or replaced term) changes the value, so a test that passes the identity
-/// can still pin it.
-pub(crate) fn ts_operands_rewritten_in_place(old: &str, new: &str) -> bool {
-    let (Some((old_ops, old_op)), Some((new_ops, new_op))) = (operands(old), operands(new)) else {
+/// `true` when the identity input for the new line's right operand also
+/// hides the edit from `old`, so the edit changes the value only where that
+/// operand is not the identity:
+/// - the same commutative operator (`*` or `+`) over the same two operands,
+///   in either order;
+/// - the inverse operator over the same operands in the same order
+///   (`a / b` against `a * b`, `a - b` against `a + b`);
+/// - the old line is the new line's left operand alone (`return a;` against
+///   `return a * b;`), an added factor or term.
+/// Any other edit (a changed operand, a dropped term, an unrelated operator)
+/// can be pinned by an identity input, so the credit stays.
+pub(crate) fn ts_identity_hides_edit(old: &str, new: &str) -> bool {
+    let Some((new_ops, new_op)) = operands(new) else {
         return false;
     };
-    let mut swapped = old_ops.clone();
-    swapped.reverse();
-    old_op == new_op && matches!(new_op, '*' | '+') && (new_ops == old_ops || new_ops == swapped)
+    if let Some((old_ops, old_op)) = operands(old) {
+        let mut swapped = old_ops.clone();
+        swapped.reverse();
+        let commutative = old_op == new_op
+            && matches!(new_op, '*' | '+')
+            && (new_ops == old_ops || new_ops == swapped);
+        let inverse = new_ops == old_ops
+            && matches!(
+                (old_op, new_op),
+                ('/', '*') | ('*', '/') | ('-', '+') | ('+', '-')
+            );
+        return commutative || inverse;
+    }
+    single_operand(old).is_some_and(|operand| new_ops.first() == Some(&operand))
+}
+
+/// `return <operand>;` with a plain identifier or number.
+fn single_operand(line: &str) -> Option<String> {
+    let masked = ts_mask_literals_and_comments(line.trim());
+    let operand = masked
+        .trim()
+        .strip_prefix("return")
+        .filter(|rest| rest.starts_with(char::is_whitespace))?
+        .trim()
+        .strip_suffix(';')?
+        .trim();
+    (is_plain_identifier(operand) || numeric_literal_value(operand).is_some())
+        .then(|| operand.to_string())
 }
 
 fn operands(line: &str) -> Option<(Vec<String>, char)> {

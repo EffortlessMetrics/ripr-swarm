@@ -201,12 +201,14 @@ fn identity_operand_rule_needs_an_in_place_operand_rewrite() {
         ("return a + b;", "return a * b;", false),
         ("return a * b + 5;", "return a * b;", false),
         ("return x * q;", "return y * q;", false),
+        ("return a / b;", "return a * b;", true),
+        ("return a * b;", "return a / b;", true),
+        ("return a - b;", "return a + b;", true),
+        ("return a;", "return a * b;", true),
+        ("return b;", "return a * b;", false),
+        ("return a;", "return b * a;", false),
     ] {
-        assert_eq!(
-            ts_operands_rewritten_in_place(old, new),
-            want,
-            "{old} -> {new}"
-        );
+        assert_eq!(ts_identity_hides_edit(old, new), want, "{old} -> {new}");
     }
 }
 
@@ -241,5 +243,113 @@ fn identity_operand_rule_keeps_credit_for_calls_outside_the_assertions() -> Resu
     let setup = "  const out = normalize(\" a \");\n  expect(out).toBe(\"a\");\n  expect(normalize(normalize(\"b\"))).toEqual(normalize(\"b\"));";
     let finding = normalize_finding("relation-setup-call", setup)?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn identity_input_also_hides_an_added_factor_and_an_inverse_swap() -> Result<(), String> {
+    let test = |body: &str| {
+        format!(
+            "import {{ scaled }} from \"../src/lib\";\ntest(\"scaled\", () => {{\n{body}\n}});\n"
+        )
+    };
+    // `qty` becomes `qty * unit`; every tested call passes `unit == 1`.
+    let owner = "export function scaled(qty: number, unit: number): number {\n  return qty;\n}\n";
+    let hidden = test("  expect(scaled(5, 1)).toBe(5);");
+    let finding = finding_for(
+        "added-factor",
+        owner,
+        "  return qty;",
+        "  return qty * unit;",
+        &hidden,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let pinned = test("  expect(scaled(5, 3)).toBe(15);");
+    let finding = finding_for(
+        "added-factor-pinned",
+        owner,
+        "  return qty;",
+        "  return qty * unit;",
+        &pinned,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // `qty / unit` becomes `qty * unit`.
+    let owner =
+        "export function scaled(qty: number, unit: number): number {\n  return qty / unit;\n}\n";
+    let finding = finding_for(
+        "inverse-swap",
+        owner,
+        "  return qty / unit;",
+        "  return qty * unit;",
+        &hidden,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn owner_mentions_the_call_counter_cannot_read_keep_the_credit() -> Result<(), String> {
+    let run = |label: &str, body: &str| {
+        let test = format!(
+            "import {{ scaled }} from \"../src/lib\";\ntest(\"scaled\", () => {{\n{body}\n}});\n"
+        );
+        finding_for(
+            label,
+            SCALED,
+            "  return qty * unit;",
+            "  return unit * qty;",
+            &test,
+        )
+    };
+    let property = "  expect(scaled(1, 2)).toBe(2);";
+    let finding = run("mention-baseline", property)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    for (label, extra) in [
+        (
+            "mention-map",
+            "  expect([3, 4].map(scaled)).toEqual([3, 4]);",
+        ),
+        (
+            "mention-generic",
+            "  expect(scaled<number>(3, 7)).toBe(21);",
+        ),
+        (
+            "mention-alias",
+            "  const g = scaled;\n  expect(g(3, 7)).toBe(21);",
+        ),
+    ] {
+        let finding = run(label, &format!("{property}\n{extra}"))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_only_relation_reads_node_assert_and_object_returns() -> Result<(), String> {
+    let node = "import assert from \"node:assert/strict\";\nimport { normalize } from \"../src/lib\";\nimport { test } from \"node:test\";\ntest(\"idempotent\", () => {\n  assert.equal(normalize(normalize(\" a \")), normalize(\" a \"));\n});\n";
+    let finding = finding_for(
+        "relation-node-assert",
+        NORMALIZE,
+        "  return text.trim();",
+        "  return text.replace(/^\\s+|\\s+$/g, \"\");",
+        node,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+
+    let owner = "export function clean(text: string) {\n  return { text: text.trim() };\n}\n";
+    let test = "import { clean } from \"../src/lib\";\ntest(\"idempotent\", () => {\n  expect(clean(clean(\" a \"))).toEqual(clean(\" a \"));\n});\n";
+    let finding = finding_for(
+        "relation-object",
+        owner,
+        "  return { text: text.trim() };",
+        "  return { text: text.replace(/^\\s+|\\s+$/g, \"\") };",
+        test,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
