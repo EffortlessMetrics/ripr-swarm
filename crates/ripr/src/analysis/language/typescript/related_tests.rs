@@ -1496,12 +1496,13 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
     // The qualified needle forms leave the callee qualifier (`vi.` / `jest.`)
     // at the end of the prefix.
     if let Some(stripped) = prefix.strip_suffix('.') {
-        let qualifier_len = stripped
+        let qualifier_bytes = stripped
             .chars()
             .rev()
             .take_while(|ch| is_javascript_identifier_char(*ch))
-            .count();
-        prefix = &stripped[..stripped.len() - qualifier_len];
+            .map(char::len_utf8)
+            .sum::<usize>();
+        prefix = &stripped[..stripped.len() - qualifier_bytes];
     }
     if let Some(stripped) = strip_trailing_await_keyword(prefix) {
         prefix = stripped;
@@ -2113,9 +2114,9 @@ fn test_references_owner(
 
 /// Bare identifier reference: identifier boundaries on both sides, not a
 /// member property (`x.name`), not an object-literal key (`{ name: 1 }`), and
-/// not inside a comment or string literal. Boundaries use the ASCII
-/// identifier set of `is_javascript_identifier_char`, so a non-ASCII
-/// identifier character next to the name counts as a boundary.
+/// not inside a comment or string literal. Boundaries use the Unicode
+/// alphanumeric identifier set of `is_javascript_identifier_char`, so a
+/// non-ASCII letter next to the name extends it instead of ending it.
 fn contains_identifier_reference(body_text: &str, identifier: &str) -> bool {
     if !is_safe_javascript_identifier(identifier) {
         return false;
@@ -4178,5 +4179,23 @@ mod module_extension_tests {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod spy_binding_unicode_tests {
+    use super::*;
+
+    /// A non-ASCII identifier run before `.spyOn(` is measured in bytes, not
+    /// chars; a char count used to slice inside the multibyte letter.
+    #[test]
+    fn a_non_ascii_qualifier_before_the_spy_call_does_not_split_a_char() {
+        let name = |qualifier: &str| {
+            let body = format!("const spy = {qualifier}.spyOn(mod, 'owner');");
+            let start = body.find("spyOn").map_or(0, |idx| idx);
+            spy_bound_variable_name(&body, start)
+        };
+        // Must not panic, and must read the same as the ASCII spelling.
+        assert_eq!(name("évi"), name("evi"));
     }
 }
