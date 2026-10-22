@@ -7190,6 +7190,13 @@ fn ts_unquoted(text: &str) -> &str {
         .unwrap_or(text)
 }
 
+/// Two literal texts denote one value. Quotes only drop when both sides are
+/// quoted strings, so `11` and `'11'` (number vs string) stay different.
+fn ts_same_literal(a: &str, b: &str) -> bool {
+    let quoted = |text: &str| ts_unquoted(text).len() != text.len();
+    quoted(a) == quoted(b) && ts_unquoted(a) == ts_unquoted(b)
+}
+
 /// `true` when an oracle-bearing related test asserts the bare `owner` against
 /// exactly `literal` (`expect(LIMIT).toBe(11)`).
 fn ts_candidates_expect_literal(
@@ -7204,9 +7211,7 @@ fn ts_candidates_expect_literal(
                     && assertion
                         .expected_value_or_variant
                         .as_deref()
-                        .is_some_and(|expected| {
-                            ts_unquoted(expected.trim()) == ts_unquoted(literal)
-                        })
+                        .is_some_and(|expected| ts_same_literal(expected.trim(), literal))
             })
     })
 }

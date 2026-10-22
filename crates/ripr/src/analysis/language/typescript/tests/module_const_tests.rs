@@ -131,6 +131,16 @@ fn a_test_expecting_the_edited_literal_does_not_credit_the_edit() -> Result<(), 
             const_finding_expecting(label, &format!("{line}\n"), "LIMIT", line, expected)?;
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
     }
+    // A string never equals the number, boolean or null the edit wrote.
+    for (label, line, expected) in [
+        ("str-for-num", "export const LIMIT = 11;", "'11'"),
+        ("str-for-bool", "export const LIMIT = true;", "'true'"),
+        ("str-for-null", "export const LIMIT = null;", "'null'"),
+    ] {
+        let finding =
+            const_finding_expecting(label, &format!("{line}\n"), "LIMIT", line, expected)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{label}");
+    }
     // The previous value is pinned instead: the edit is caught.
     let line = "export const LIMIT = 11;";
     let finding = const_finding_expecting("old", &format!("{line}\n"), "LIMIT", line, "10")?;
