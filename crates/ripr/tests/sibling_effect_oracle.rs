@@ -285,6 +285,39 @@ fn free_and_inherent_trait_method_names_do_not_admit_decoys() -> Result<(), Stri
 }
 
 #[test]
+fn inherent_method_shadowing_the_trait_method_does_not_witness_dispatch() -> Result<(), String> {
+    // `counter.next()` resolves to the inherent method, so a loop over it
+    // says nothing about the trait impl's write.
+    let source = format!(
+        "{}\nimpl Counter {{ fn next(&mut self) -> Option<()> {{ self.sink.set(1); None }} }}\n",
+        ITERATOR_OBSERVER
+    )
+    .replace_checked(
+        "for _ in counter {}",
+        "let mut counter = counter;\n    while counter.next().is_some() {}",
+    )
+    .replace_checked(
+        "let _ = counter.next();",
+        "let _ = Iterator::next(&mut counter);",
+    );
+    let finding = finding(
+        &source,
+        &changed_effect(&source, "self.sink.set(1)"),
+        "self.sink.set(1)",
+        "call_deletion",
+    )?;
+    assert!(
+        finding["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?
+            .iter()
+            .all(|r| !(r["name"] == "implicit_observer" && r["miss"].is_null())),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
 fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String> {
     let source = ITERATOR_OBSERVER.replace_checked("#[test]\nfn direct_smoke() {\n    let mut counter = Counter { sink: Rc::new(Cell::new(0)), finished: false };\n    let _ = counter.next();\n}\n", "");
     assert!(!source.contains("fn direct_smoke"));

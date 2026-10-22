@@ -939,6 +939,26 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
 }
 
 impl OwnerReach<'_, '_> {
+    /// An inherent method of the same name on the same type takes precedence
+    /// over the trait method in `value.method()` syntax, so that call syntax
+    /// cannot witness the trait impl. Withhold the witness (fail closed).
+    fn inherent_method_shadows(&self, function: &FunctionSummary) -> bool {
+        let FunctionContainer::TraitImpl { self_ty, .. } = &function.item.container else {
+            return false;
+        };
+        self.graph
+            .by_name
+            .get(function.name.as_str())
+            .is_some_and(|same_name| {
+                same_name.iter().any(|candidate| {
+                    matches!(
+                        &candidate.item.container,
+                        FunctionContainer::Inherent { self_ty: other } if other == self_ty
+                    )
+                })
+            })
+    }
+
     /// Indexed implicit dispatch witnessed by this test, rather than a trait
     /// declaration elsewhere on the reverse owner path. Unknown calls retain
     /// reach uncertainty but cannot supply effect-observation authority.
@@ -949,6 +969,7 @@ impl OwnerReach<'_, '_> {
     ) -> bool {
         let dispatches = |function: &FunctionSummary| {
             IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && !self.inherent_method_shadows(function)
                 && super::related_tests::test_dispatches_trait_impl(test, function)
         };
         dispatches(owner)
@@ -978,6 +999,7 @@ impl OwnerReach<'_, '_> {
     ) -> bool {
         let observes = |function: &FunctionSummary| {
             IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && !self.inherent_method_shadows(function)
                 && super::related_tests::test_dispatches_trait_impl(test, function)
                 && super::implicit_effect::assertion_observes_dispatch(
                     function, owner, expression, test, assertion, source, expansion,
