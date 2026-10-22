@@ -250,6 +250,11 @@ pub(super) fn validate_launcher(
     }
 }
 
+/// SemVer prerelease detection ignores build metadata after `+`.
+pub(crate) fn is_prerelease_version(version: &str) -> bool {
+    version.split('+').next().unwrap_or_default().contains('-')
+}
+
 /// A SemVer prerelease (version containing `-`) must publish under an explicit
 /// non-`latest` dist-tag; a stable version must not be diverted off `latest`.
 pub(super) fn validate_publish_tag(
@@ -258,24 +263,22 @@ pub(super) fn validate_publish_tag(
     tag: Option<&str>,
     violations: &mut Vec<String>,
 ) {
-    let is_prerelease = version.contains('-');
+    let is_prerelease = is_prerelease_version(version);
     match (is_prerelease, tag) {
         (true, None) => violations.push(format!(
             "{path}: prerelease version `{version}` must set publishConfig.tag to an explicit non-`latest` dist-tag so a plain `npm publish` cannot take `latest`"
         )),
-        (true, Some(tag)) if tag.trim().is_empty() || tag.trim() == "latest" => {
+        (true, Some(tag)) if tag.trim().is_empty() || tag.trim().eq_ignore_ascii_case("latest") => {
             violations.push(format!(
                 "{path}: prerelease version `{version}` must not publish with publishConfig.tag `{tag}`; use a non-`latest` dist-tag such as `next`"
             ));
         }
-        (false, Some(tag)) if tag.trim() != "latest" => violations.push(format!(
+        (false, Some(tag)) if !tag.trim().eq_ignore_ascii_case("latest") => violations.push(format!(
             "{path}: stable version `{version}` must not set publishConfig.tag `{tag}`; stable releases take `latest` only through the reviewed operator step"
         )),
         _ => {}
     }
 }
-
-const COMMAND_SEPARATORS: &[&str] = &["&&", "||", ";", "|", "&"];
 
 /// Joins shell `\`-continued lines so a command split across physical lines is
 /// evaluated as one logical command. Returns each logical line with the
@@ -326,31 +329,120 @@ fn literal_non_latest_tag(token: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ShellToken {
+    Word(String),
+    Separator,
+}
+
+/// Small shell-aware tokenizer: quotes group words (and are stripped), `#` at
+/// the start of a word outside quotes begins a comment, and `;`, `&`, `|`, `(`
+/// and `)` outside quotes end a command even when glued to a word. A quoted
+/// word that itself begins with `npm ` is re-tokenized so `run: 'npm publish'`
+/// is still seen.
+fn shell_tokens(line: &str) -> Vec<ShellToken> {
+    let mut tokens = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    let mut quoted_word = false;
+    let flush =
+        |tokens: &mut Vec<ShellToken>, word: &mut String, in_word: &mut bool, quoted: &mut bool| {
+            if *in_word {
+                let text = std::mem::take(word);
+                if *quoted && text.trim_start().starts_with("npm ") {
+                    tokens.push(ShellToken::Separator);
+                    tokens.extend(shell_tokens(&text));
+                    tokens.push(ShellToken::Separator);
+                } else {
+                    tokens.push(ShellToken::Word(text));
+                }
+            }
+            *in_word = false;
+            *quoted = false;
+        };
+    for ch in line.chars() {
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            } else {
+                word.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                in_word = true;
+                quoted_word = true;
+            }
+            '#' if !in_word => break,
+            ';' | '&' | '|' | '(' | ')' => {
+                flush(&mut tokens, &mut word, &mut in_word, &mut quoted_word);
+                if tokens.last() != Some(&ShellToken::Separator) {
+                    tokens.push(ShellToken::Separator);
+                }
+            }
+            c if c.is_whitespace() => {
+                flush(&mut tokens, &mut word, &mut in_word, &mut quoted_word);
+            }
+            c => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    flush(&mut tokens, &mut word, &mut in_word, &mut quoted_word);
+    tokens
+}
+
+const VALUE_FLAGS: &[&str] = &[
+    "--otp",
+    "--registry",
+    "--workspace",
+    "-w",
+    "--userconfig",
+    "--access",
+    "--provenance-file",
+];
+
 /// Fails when a workflow publishes or tags npm without exactly one literal
-/// non-`latest` tag. Backslash-continued lines are joined first. In-tree
-/// workflows have no npm publish step; this keeps it that way unless the step
-/// names its tag, and rejects `latest` outright.
+/// non-`latest` tag. Backslash-continued lines are joined first, global npm
+/// flags may precede the subcommand, and `--dry-run` publishes are exempt. In-tree
+/// workflows have no npm publish step; this keeps it that way. Out of scope:
+/// `pnpm`/`yarn publish`, `NPM_CONFIG_TAG`, and composite or reusable actions.
 pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mut Vec<String>) {
     for (number, line) in logical_lines(text) {
-        let code = line.split(" #").next().unwrap_or_default();
-        let tokens = code.split_whitespace().collect::<Vec<_>>();
-        for (index, token) in tokens.iter().enumerate() {
-            if *token != "npm" {
-                continue;
+        let mut command: Vec<String> = Vec::new();
+        let mut commands: Vec<Vec<String>> = Vec::new();
+        for token in shell_tokens(&line) {
+            match token {
+                ShellToken::Word(word) => command.push(word),
+                ShellToken::Separator => commands.push(std::mem::take(&mut command)),
             }
-            let rest = &tokens[index + 1..];
-            let end = rest
-                .iter()
-                .position(|t| COMMAND_SEPARATORS.contains(t))
-                .unwrap_or(rest.len());
-            let command = &rest[..end];
-            let Some(subcommand) = command.iter().position(|t| !t.starts_with('-')) else {
+        }
+        commands.push(command);
+        for command in commands {
+            let Some(npm) = command.iter().position(|t| t == "npm") else {
                 continue;
             };
-            let args = &command[subcommand + 1..];
-            match command[subcommand] {
-                "publish" => check_publish_args(path, number, args, violations),
-                "dist-tag" => check_dist_tag_args(path, number, args, violations),
+            let args = command[npm + 1..]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let Some(sub) = args.iter().position(|t| {
+                matches!(
+                    *t,
+                    "publish" | "dist-tag" | "dist-tags" | "run" | "run-script" | "exec" | "x"
+                )
+            }) else {
+                continue;
+            };
+            match args[sub] {
+                "publish" => check_publish_args(path, number, &args, violations),
+                "dist-tag" | "dist-tags" => {
+                    check_dist_tag_args(path, number, &args[sub + 1..], violations)
+                }
                 _ => {}
             }
         }
@@ -358,6 +450,12 @@ pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mu
 }
 
 fn check_publish_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
+    if args
+        .iter()
+        .any(|a| *a == "--dry-run" || a.starts_with("--dry-run=") && !a.ends_with("=false"))
+    {
+        return;
+    }
     let mut tags = Vec::new();
     let mut position = 0;
     while position < args.len() {
@@ -386,9 +484,28 @@ fn check_publish_args(path: &str, number: usize, args: &[&str], violations: &mut
 }
 
 fn check_dist_tag_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
-    if let ["add" | "set", _package, tag, ..] = args {
-        if let Err(reason) = literal_non_latest_tag(tag) {
-            violations.push(format!("{path}:{number}: `npm dist-tag` {reason}"));
+    let mut positionals = Vec::new();
+    let mut position = 0;
+    while position < args.len() {
+        let arg = args[position];
+        if VALUE_FLAGS.contains(&arg) {
+            position += 1;
+        } else if !arg.starts_with('-') {
+            positionals.push(arg);
+        }
+        position += 1;
+    }
+    if let ["add" | "set", rest @ ..] = positionals.as_slice() {
+        match rest {
+            [_package] => violations.push(format!(
+                "{path}:{number}: `npm dist-tag` without a tag argument defaults to `latest`"
+            )),
+            [_package, tag, ..] => {
+                if let Err(reason) = literal_non_latest_tag(tag) {
+                    violations.push(format!("{path}:{number}: `npm dist-tag` {reason}"));
+                }
+            }
+            [] => {}
         }
     }
 }

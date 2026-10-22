@@ -14,6 +14,7 @@ use std::path::Path;
 use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 
 pub(crate) use contract::{DistributionContract, TargetContract};
+pub(crate) use npm_launcher::is_prerelease_version;
 pub(crate) use version::pep440_version;
 
 pub(crate) const CONTRACT_PATH: &str = "policy/distribution.toml";
@@ -309,7 +310,17 @@ fn evaluate_contract(
 fn scan_workflow_npm_tags(dir: &Path, violations: &mut Vec<String>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Fail closed when the repository's `.github` exists but its
+            // workflows directory cannot be found (e.g. wrong working directory).
+            if dir.parent().is_some_and(Path::is_dir) {
+                violations.push(format!(
+                    "{}: workflow directory not found next to an existing parent; run from the repository root",
+                    dir.display()
+                ));
+            }
+            return;
+        }
         Err(err) => {
             violations.push(format!(
                 "{}: failed to read workflow directory: {err}",

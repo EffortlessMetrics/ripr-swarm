@@ -74,6 +74,9 @@ The package `@effortlessmetrics/ripr`:
 - rejects any in-tree workflow `npm publish` that lacks exactly one literal
   non-`latest` `--tag` (including `\`-continued, chained, interpolated or
   repeated forms) and any `npm dist-tag add/set` of a non-literal or `latest` tag;
+- scopes the workflow scan to `npm publish` and `npm dist-tag(s)` commands only:
+  `pnpm`/`yarn publish`, `NPM_CONFIG_TAG` and composite or reusable actions are
+  out of scope, and `npm publish --dry-run` is exempt;
 - runs tests through a guarded runner that fails unless the required named
   package, negative, and signal controls actually execute and pass.
 
@@ -218,5 +221,7 @@ The package `@effortlessmetrics/ripr`:
 - `xtask/src/policy/distribution/tests.rs::workflow_multiline_and_chained_npm_publish_is_not_skipped`
 - `xtask/src/policy/distribution/tests.rs::workflow_interpolated_or_repeated_tag_options_are_rejected`
 - `xtask/src/policy/distribution/tests.rs::workflow_directory_scan_reports_multiline_publish_and_read_failures`
+- `xtask/src/policy/distribution/tests.rs::workflow_global_flags_dry_run_comments_and_glued_separators`
+- `xtask/src/policy/distribution/tests.rs::prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive`
 - `xtask/src/version.rs::npm_launcher_version_tests::stable_to_prerelease_adds_next_tag_and_back_removes_it`
 - `xtask/src/version.rs::npm_launcher_version_tests::compact_manifest_prerelease_bump_round_trips`

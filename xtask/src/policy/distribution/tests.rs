@@ -762,7 +762,10 @@ fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Resu
 
     let mut missing = Vec::new();
     scan_workflow_npm_tags(&dir.join("absent"), &mut missing);
-    assert!(missing.is_empty());
+    assert!(has_violation(&missing, "run from the repository root"));
+    let mut orphan = Vec::new();
+    scan_workflow_npm_tags(&dir.join("no-parent").join("absent"), &mut orphan);
+    assert!(orphan.is_empty());
     let mut not_a_dir = Vec::new();
     scan_workflow_npm_tags(&dir.join("publish.yml"), &mut not_a_dir);
     assert!(has_violation(
@@ -771,4 +774,48 @@ fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Resu
     ));
     let _ = fs::remove_dir_all(&dir);
     Ok(())
+}
+
+#[test]
+fn workflow_global_flags_dry_run_comments_and_glued_separators() {
+    for text in [
+        "      - run: npm -w pkg publish\n",
+        "      - run: npm --workspace x publish\n",
+        "      - run: npm --otp 123 publish\n",
+        "      - run: npm --tag latest publish\n",
+        "      - run: echo \"a #b\"; npm publish\n",
+        "      - run: foo;npm publish\n",
+        "      - run: (npm publish)\n",
+        "      - run: 'npm publish'\n",
+        "      - run: npm publish --tag next;npm publish\n",
+        "      - run: npm dist-tag add pkg@1.0.0-rc.1\n",
+        "      - run: npm dist-tags add pkg@1.0.0-rc.1\n",
+        "      - run: npm dist-tag add --otp 123 pkg@1.0.0 latest\n",
+    ] {
+        assert!(!workflow_violations(text).is_empty(), "{text}");
+    }
+    for text in [
+        "      - run: npm publish --dry-run\n",
+        "# npm publish\n",
+        "      - run: echo done # npm publish\n",
+        "      - run: npm --otp 123 publish --tag next;\n",
+        "      - run: npm -w pkg publish --tag=next\n",
+        "      - run: npm run publish\n",
+        "      - run: npm dist-tag add --otp 123 pkg@1.0.0 next\n",
+        "      - run: npm dist-tag ls pkg\n",
+    ] {
+        assert!(
+            workflow_violations(text).is_empty(),
+            "{text}: {:?}",
+            workflow_violations(text)
+        );
+    }
+}
+
+#[test]
+fn prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive() {
+    assert!(publish_tag_violations("1.0.0+build-1", None).is_empty());
+    assert!(!publish_tag_violations("1.0.0-rc.1+build", None).is_empty());
+    assert!(!publish_tag_violations("1.0.0-rc.1", Some("LATEST")).is_empty());
+    assert!(publish_tag_violations("1.0.0", Some("Latest")).is_empty());
 }

@@ -324,7 +324,10 @@ fn replace_npm_launcher_versions(
             new_version,
         )?;
     }
-    set_npm_launcher_publish_tag(&updated, new_version.contains('-'))
+    set_npm_launcher_publish_tag(
+        &updated,
+        crate::policy::distribution::is_prerelease_version(new_version),
+    )
 }
 
 /// Keeps `publishConfig.tag` consistent with the target version: a prerelease
