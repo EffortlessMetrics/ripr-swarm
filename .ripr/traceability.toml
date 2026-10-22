@@ -17654,6 +17654,7 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0294"
