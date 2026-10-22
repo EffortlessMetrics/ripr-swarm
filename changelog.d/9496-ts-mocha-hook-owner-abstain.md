@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: a synchronous mocha `before`/`beforeEach`/`beforeAll` hook that calls the changed function now reads `static_unknown` (`gap_evidence_unresolved`) instead of an actionable `weakly_exposed` when no test witnesses the changed effect. It credits nothing (RIPR-SPEC-0246 rule 7, #9496).

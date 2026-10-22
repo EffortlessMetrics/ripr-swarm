@@ -16274,6 +16274,14 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_operator_on_the_call_result_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::owner_tie_reads_multi_line_chains_and_member_or_generic_calls",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::multi_line_then_chain_reads_static_unknown_through_the_classifier",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_before_hook_that_calls_the_owner_abstains",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::the_same_suite_without_a_hook_keeps_the_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_before_each_hook_and_an_enclosing_describe_hook_abstain",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_hook_in_a_sibling_describe_keeps_the_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::async_done_returning_and_expression_hooks_are_not_synchronous_setup",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_hook_that_does_not_call_the_owner_keeps_the_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_hook_the_file_declares_or_imports_elsewhere_is_not_the_runner_hook",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_jest_or_vitest_file_is_not_a_mocha_file",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -16281,6 +16289,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/hook_owner_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
 ]
