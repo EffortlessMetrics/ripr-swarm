@@ -825,10 +825,12 @@ id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
 
+
 [[spec]]
 id = "RIPR-SPEC-0300"
 scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
+
 
 [[spec]]
 id = "RIPR-SPEC-0309"
@@ -841,11 +843,6 @@ id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
 
-[[spec]]
-id = "RIPR-SPEC-0310"
-scope = "out"
-reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
-
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
 # listed row is no longer false, so a bless cannot absorb a new false verdict
@@ -853,10 +850,6 @@ reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
 
-[[known_false]]
-case = "regex-syntax-max-scalar-two-byte"
-issue = 5503
-reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
 
 
 
@@ -895,6 +888,7 @@ case = "shape-hostile-macro-defined-owner"
 issue = 9442
 reason = "Macro-defined owner is not resolved (#9442)."
 
+
 [[known_false]]
 case = "shape-cast-truncation-mask"
 issue = 9444
@@ -915,7 +909,15 @@ case = "shape-impl-trait-return-filter"
 issue = 9440
 reason = "Rust exact pin read as gap (#9440)."
 
+
+
+
 [[known_false]]
 case = "shape-async-fn-block-on"
 issue = 9443
 reason = "Async fn driven by block_on is not followed (#9443)."
+
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
