@@ -453,7 +453,7 @@ and single-platform CI was the root cause enabling both.
   the whole lane (#9272, run 39549631529). Each cargo step also carries its
   own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
   no status file, which the summarizer reports as missing evidence. The job
-  deadline (150 minutes) exceeds the sum of the cargo step deadlines, so
+  deadline (270 minutes) exceeds the sum of the cargo step deadlines (15+45+15+75+75), so
   those steps alone cannot exhaust it (setup, summary compilation and the
   manual isolation repeats have no separate deadline). The manual nested-alias
   isolation repeats use the same redirect-and-replay form.
@@ -473,7 +473,8 @@ and single-platform CI was the root cause enabling both.
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
   the Windows process-ownership (`process_owner::tests`), xtask timed-capture
-  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, the VS Code managed-server install lock suite under
+  plain mocha on Node (#9498), and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new

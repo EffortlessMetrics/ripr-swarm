@@ -19,7 +19,11 @@ fn classify(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
-    let owners = extract_owners(Path::new(OWNER_FILE), owner);
+    let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
+    // The workspace pass fills the star-export fact from the module source.
+    reexports::apply_package_reexports(&mut owners, |file| {
+        (file == Path::new(OWNER_FILE)).then_some(owner)
+    });
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
     let new_line = owner
         .lines()
@@ -1742,5 +1746,225 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
             "{old}"
         );
     }
+    Ok(())
+}
+
+const STOCK: &str = "class Stock:\n    def __init__(self, count):\n        self.count = count\n\n    def take(self, n):\n        self.count -= n\n        return self.count\n";
+const STOCK_OLD: &str = "        self.count += n";
+const STOCK_IMPORT: &str = "import unittest\n\nfrom src.shop import Stock";
+
+fn stock_class(class_body: &str) -> Result<ExposureClass, String> {
+    classify(STOCK, 6, STOCK_OLD, &test_module(STOCK_IMPORT, class_body))
+}
+
+const STOCK_TEST: &str =
+    "    def test_take(self):\n        self.assertEqual(self.stock.take(2), 3)\n";
+
+#[test]
+fn a_receiver_built_in_set_up_is_the_owners_class() -> Result<(), String> {
+    // #9417: `self.stock = Stock(5)` in `setUp` binds the receiver the test
+    // calls, as `stock = Stock(5)` in the test body does.
+    assert_eq!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // `setUpClass` binds `cls.stock`, which the test reads as `self.stock`.
+    assert_eq!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n        cls.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // pytest's `setup_method` on a plain `Test` class.
+    assert_eq!(
+        stock_class(
+            "class TestStock:\n    def setup_method(self):\n        self.stock = Stock(5)\n\n    def test_take(self):\n        assert self.stock.take(2) == 3\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_set_up_receiver_that_is_not_unambiguously_the_owners_class_does_not_credit()
+-> Result<(), String> {
+    let hook = "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n\n";
+    // Rebound in the test body, so the setUp instance is not the receiver.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def test_take(self):\n        self.stock = Mock()\n        self.assertEqual(self.stock.take(2), 3)\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // Reassigned by a helper method of the same class.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def reset(self):\n        self.stock = make_stock()\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // A second assignment in the hook itself.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n        self.stock = Stock(1)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The hook builds a different class than the owner's.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Other(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // A subclass may replace the hook the inherited test runs under.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}{STOCK_TEST}\n\nclass Variant(StockTests):\n    def setUp(self):\n        self.stock = Mock()\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The call is on another attribute than the one the hook builds.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def test_take(self):\n        self.assertEqual(self.other.take(2), 3)\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_set_up_hook_the_framework_does_not_run_or_that_shadows_the_class_does_not_credit()
+-> Result<(), String> {
+    // A plain pytest class never runs `setUp`; the class-level fallback is what
+    // `self.stock` resolves to.
+    assert_ne!(
+        stock_class(
+            "class TestStock:\n    stock = Other(5)\n\n    def setUp(self):\n        self.stock = Stock(5)\n\n    def test_take(self):\n        assert self.stock.take(2) == 3\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // The xunit hook of a `TestCase` is not run by unittest either.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    stock = Other(5)\n\n    def setup_method(self):\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // Two writes on one line: the second replaces the first.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5); self.stock = Other(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The hook rebinds the constructor name locally.
+    for rebind in [
+        "from other import Stock",
+        "Stock = Other",
+        "import other as Stock",
+    ] {
+        assert_ne!(
+            stock_class(&format!(
+                "class StockTests(unittest.TestCase):\n    def setUp(self):\n        {rebind}\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+            ))?,
+            ExposureClass::Exposed,
+            "{rebind}"
+        );
+    }
+    Ok(())
+}
+
+/// A star import names every public owner of its module, so a strong exact
+/// assertion on the starred name observes the owner. Private names stay out
+/// of a star import, and an import from another module never binds it.
+#[test]
+fn star_import_binds_a_public_owner_for_the_strong_oracle() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    for (import, expected) in [
+        ("from src.shop import fee", ExposureClass::Exposed),
+        ("from src.shop import *", ExposureClass::Exposed),
+        ("from src.other import *", ExposureClass::WeaklyExposed),
+    ] {
+        assert_eq!(
+            classify(FEE, 2, FEE_OLD, &test_module(import, body))?,
+            expected,
+            "{import}"
+        );
+    }
+    let private = "def _fee(amount):\n    return amount * 3\n";
+    assert_eq!(
+        classify(
+            private,
+            2,
+            FEE_OLD,
+            &test_module(
+                "from src.shop import *",
+                "def test_fee():\n    assert _fee(2) == 6\n"
+            )
+        )?,
+        ExposureClass::WeaklyExposed,
+        "a private name is not exported by a star import"
+    );
+    Ok(())
+}
+
+/// A star import binds only what the module exports: `__all__` decides when
+/// declared, an absent `__all__` exports every public name, and an `__all__`
+/// this reader cannot resolve fails closed.
+#[test]
+fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    for (all, expected, why) in [
+        (
+            "",
+            ExposureClass::Exposed,
+            "no __all__ exports every public name",
+        ),
+        (
+            "__all__ = ['fee']\n\n\n",
+            ExposureClass::Exposed,
+            "a listed name is exported",
+        ),
+        (
+            "__all__ = ['charge']\n\n\n",
+            ExposureClass::WeaklyExposed,
+            "a name omitted from __all__ is not exported",
+        ),
+        (
+            "__all__ = make_all()\n\n\n",
+            ExposureClass::WeaklyExposed,
+            "an unresolved __all__ fails closed",
+        ),
+    ] {
+        let owner = format!("{all}{FEE}");
+        let line = 2 + all.matches('\n').count();
+        assert_eq!(
+            classify(
+                &owner,
+                line,
+                FEE_OLD,
+                &test_module("from src.shop import *", body)
+            )?,
+            expected,
+            "{why}"
+        );
+    }
+    // The omitted owner is not credited even when the test calls the same name
+    // from a module it did import.
+    let owner = format!("__all__ = ['charge']\n\n\n{FEE}");
+    assert_eq!(
+        classify(
+            &owner,
+            5,
+            FEE_OLD,
+            &test_module("from src.shop import *\nfrom src.other import fee", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "fee comes from src.other, not the starred module"
+    );
     Ok(())
 }

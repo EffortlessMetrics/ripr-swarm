@@ -23,6 +23,17 @@ floor = 32
 # Raising it is a reviewed edit with a reason.
 missed_credit_ceiling = 15
 
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 8
+trap_floor = 0
+false_credit_ceiling = 0
+
 [[spec]]
 id = "RIPR-SPEC-0235"
 scope = "in"
@@ -531,6 +542,11 @@ reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a 
 id = "RIPR-SPEC-0309"
 scope = "out"
 reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
 
 # Release ledger direct-main contract
 [[spec]]
