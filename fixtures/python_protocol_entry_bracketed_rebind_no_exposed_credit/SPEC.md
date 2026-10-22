@@ -11,6 +11,9 @@ Spec: RIPR-SPEC-0028
 Two further tests replace `r` through the non-adjacent targets
 `(x, (r)) = 2, [1]` and `[a, [r]] = [2, [[1]]]` (#9531).
 
+Four review controls cover an unbracketed outer tuple, a chained outer
+assignment, and inline loop/with suites. Each must remain uncredited.
+
 ## When
 
 `cargo xtask fixtures python_protocol_entry_bracketed_rebind_no_exposed_credit`

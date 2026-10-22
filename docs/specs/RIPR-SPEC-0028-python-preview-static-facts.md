@@ -363,7 +363,8 @@ comments, strings, and docstrings:
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
   `for ((r), x) in ...`; #9178; non-adjacent single-line targets
-  `(x, (r)) = ...` and `[a, [r]] = ...` too; #9531), loop, `with`, walrus or augmented target, or not the whole bound
+  `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
+  loop/with targets too; #9531), loop, `with`, walrus or augmented target, or not the whole bound
   value, is not credited. Extra, keyword, starred or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
