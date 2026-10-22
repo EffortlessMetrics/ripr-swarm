@@ -23,6 +23,10 @@ pub(crate) const CHILD_PATH: &str = "";
 /// working directory; a caller's values must not reach the child.
 const GIT_REDIRECT_ENV: [&str; 3] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
 
+/// Per-stream cap on one case's retained output. The largest real case writes
+/// a few kilobytes; a binary that emits more is failing, not being verbose.
+pub(crate) const CHILD_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
 /// Placeholder for the owned case root in every retained string.
 pub(crate) const ROOT_TOKEN: &str = "<case-root>";
 
@@ -270,13 +274,18 @@ fn launch(
     let removed = removed_env();
     let mut removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
     removed_refs.extend(GIT_REDIRECT_ENV);
-    let timed = run::capture_bytes_in_dir_with_timeout(
+    // A binary that floods a stream is a failed row, not a reason to hold the
+    // whole run's memory: overflow refuses instead of truncating.
+    let timed = run::capture_bytes_in_dir_with_env_budget(
         &binary.path,
         &case.args,
         root,
-        &envs,
-        &removed_refs,
-        deadline,
+        (&envs, &removed_refs),
+        run::ByteCaptureBudget {
+            timeout: deadline,
+            stdout_bytes: CHILD_OUTPUT_BYTES,
+            stderr_bytes: CHILD_OUTPUT_BYTES,
+        },
         &format!("termination case {} via {}", case.id, binary.path.display()),
     )?;
     let (aborted, termination) = match timed.status {

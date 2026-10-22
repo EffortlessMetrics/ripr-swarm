@@ -68,8 +68,12 @@ Each row ends in exactly one #4505 state. Only `passed_supported_analysis`
 failing states are `semantic_failure` (wrong limitation class, false limit on a
 supported input, non-JSON output), `process_abort`, `nonterminal_deadline`,
 `missing_or_false_clean_limitation`, `wrong_subject` (the changed file's
-evidence was lost), `instrument_failure` (launch, workspace or cleanup) and
-`not_run`.
+evidence was lost), `instrument_failure` (launch, workspace, cleanup or output
+over budget) and `not_run`.
+
+Each case's stdout and stderr are read through a 16 MiB per-stream budget. A
+binary that writes more fails its row as `instrument_failure` naming the stream;
+the output is refused, not truncated and kept.
 
 ## Controls
 

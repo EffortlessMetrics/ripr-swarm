@@ -184,9 +184,10 @@ Order, first match wins:
    `included_historical_reachable_only`; its tree effect stays a separate field.
 2. `present_but_superseded` is `included_superseded_by_later_fix`.
 3. `history_reachable_no_final_blob_effect` is `included_historical_reachable_only`.
-4. A subject naming the owner issue of a packet claim resolved
-   `accepted_defer_with_non_claim` is `included_with_release_nonclaim`, with
-   `claim_ref`.
+4. A non-product commit whose subject names the owner issue of a packet claim
+   resolved `accepted_defer_with_non_claim` is `included_with_release_nonclaim`,
+   with `claim_ref`. A product-class commit naming that issue landed behavior
+   and takes rule 5, so a fix is never reported as a non-claim.
 5. Otherwise the strongest class present: product is
    `included_accepted_product`, control is
    `included_accepted_release_or_control` (automation, `xtask`, keeps that
@@ -281,6 +282,9 @@ valid-ledger control that yields no reasons.
   `markdown_with_a_conflicting_second_digest_line_is_rejected`,
   `markdown_projection_shows_every_records_theme`,
   `input_over_the_byte_cap_is_rejected_not_truncated`,
+  `audit_file_digest_must_match_the_recorded_sha`,
+  `editing_the_audit_file_after_derivation_fails_validation`,
+  `product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim`,
   `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
   `valid_ledger_has_no_reasons`).
 

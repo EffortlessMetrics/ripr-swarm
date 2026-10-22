@@ -1,0 +1,3 @@
+case = "py-hostile-crlf-test-helper-assert"
+issue = 9419
+reason = "False actionable: an assertion inside a helper function in another file reads as reach-only (#9419)."

@@ -1198,6 +1198,29 @@ mod unix_stubs {
     }
 
     #[test]
+    fn a_flooding_stub_is_an_instrument_failure_naming_the_stream() -> TestResult {
+        let root = scratch("flood")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nhead -c 20000000 /dev/zero\n",
+        )?;
+        let options = stub_options(&root, binary);
+        let packet = build_packet(&options)?;
+        let _ = fs::remove_dir_all(&root);
+        if packet.rows.is_empty()
+            || packet.rows.iter().any(|row| {
+                row.result != RowResult::InstrumentFailure
+                    || !row.detail.contains("stdout exceeds its")
+            })
+        {
+            return Err(
+                "every row of a stdout-flooding binary must be an instrument failure".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_binary_with_the_wrong_digest_is_refused_before_any_row_runs() -> TestResult {
         let root = scratch("digest")?;
         let binary = stub(

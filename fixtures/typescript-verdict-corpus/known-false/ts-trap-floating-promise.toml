@@ -1,0 +1,3 @@
+case = "ts-trap-floating-promise"
+issue = 9686
+reason = "False actionable: an unawaited promise assertion that node:test still fails reads as weak (#9686)."

@@ -6252,7 +6252,7 @@ fn ts_apply_post_ladder_rules(
         && let Some(change) = ts_neutral_operand_change(context.line_text)
         && context
             .old_line_text
-            .is_some_and(|old| ts_operands_rewritten_in_place(old, context.line_text))
+            .is_some_and(|old| ts_identity_hides_edit(old, context.line_text))
         && ts_neutral_operand_hides(&change, context)
     {
         verdict.class = ExposureClass::WeaklyExposed;
@@ -6722,6 +6722,25 @@ fn ts_owner_calls_in(text: &str, names: &[&str], receivers: &[String]) -> usize 
         .sum()
 }
 
+/// How many times `text` names the owner as a whole identifier, call or not
+/// (`.map(scaled)`, `scaled<number>(..)`, `other.scaled(..)`), on text whose
+/// literals and comments are already masked (a test title may name the
+/// owner). A mention the call counter cannot read must keep the credit.
+fn ts_owner_mentions_in(text: &str, names: &[&str]) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    names
+        .iter()
+        .map(|name| {
+            text.match_indices(name)
+                .filter(|(at, _)| {
+                    !text[..*at].chars().next_back().is_some_and(is_word)
+                        && !text[at + name.len()..].chars().next().is_some_and(is_word)
+                })
+                .count()
+        })
+        .sum()
+}
+
 /// RIPR-SPEC-0248 rule 2: the changed line only rewrites one operator's
 /// operands in place (`a * b` against `b * a`), every owner call of every
 /// related test sits in a value assertion on its whole result, and each such
@@ -6801,7 +6820,12 @@ fn ts_neutral_operand_hides(
             accounted += calls;
             seen = true;
         }
-        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted
+            || ts_owner_mentions_in(
+                &ts_mask_literals_and_comments(&candidate.test.body_text),
+                &names,
+            ) != accounted
+        {
             return false;
         }
     }
@@ -6857,18 +6881,80 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
             .is_some();
             let expected_is_owner_call =
                 ts_whole_owner_call_arguments(expected, &names, owner, &receivers).is_some();
-            if !(ts_is_value_assertion(assertion) && observes_call && expected_is_owner_call) {
+            let one_hop_binding = ts_one_hop_owner_binding(
+                &candidate.test.body_text,
+                observed,
+                expected,
+                &names,
+                owner,
+                &receivers,
+            );
+            if !(ts_is_value_assertion(assertion)
+                && observes_call
+                && (expected_is_owner_call || one_hop_binding.is_some()))
+            {
                 return false;
             }
+            // The expected side is either an owner call or a local bound to
+            // one; the binding's call is the one the declaration adds.
+            let expected_calls = one_hop_binding.unwrap_or(expected);
             accounted += ts_owner_calls_in(observed, &names, &receivers)
-                + ts_owner_calls_in(expected, &names, &receivers);
+                + ts_owner_calls_in(expected_calls, &names, &receivers);
             relational = true;
         }
-        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {
+        if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted
+            || ts_owner_mentions_in(
+                &ts_mask_literals_and_comments(&candidate.test.body_text),
+                &names,
+            ) != accounted
+        {
             return false;
         }
     }
     relational
+}
+
+/// RIPR-SPEC-0248 rule 3, one-hop spelling: the matcher argument `expected`
+/// is a plain local bound by exactly one single-line
+/// `const local = <whole owner call>;` and named nowhere else in the body
+/// except inside `observed`
+/// (`const once = normalize(t); expect(normalize(once)).toEqual(once)`).
+/// Returns the initializer so the caller accounts for the call it adds. A
+/// `let`, a reassignment, a second declaration, a type annotation, a
+/// multi-line initializer or any other mention of the local returns `None`,
+/// which keeps the credit.
+fn ts_one_hop_owner_binding<'a>(
+    body_text: &'a str,
+    observed: &str,
+    expected: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> Option<&'a str> {
+    let local = expected.trim();
+    if !is_plain_identifier(local) {
+        return None;
+    }
+    let mentions =
+        |text: &str| ts_owner_mentions_in(&ts_mask_literals_and_comments(text), &[local]);
+    // The declaration and the matcher argument each name the local once.
+    if mentions(body_text) != mentions(observed) + 2 {
+        return None;
+    }
+    let mut initializers = body_text.lines().filter_map(|line| {
+        let rest = line.trim().strip_prefix("const ")?.trim_start();
+        let rest = rest.strip_prefix(local)?;
+        let rest = rest.trim_start().strip_prefix('=')?;
+        (!rest.starts_with('=')).then(|| {
+            let init = rest.trim();
+            init.strip_suffix(';').unwrap_or(init).trim()
+        })
+    });
+    let init = initializers.next()?;
+    if initializers.next().is_some() {
+        return None;
+    }
+    ts_whole_owner_call_arguments(init, names, owner, receivers).map(|_| init)
 }
 
 /// The names a related test calls the owner by: its own name, plus the
