@@ -3,9 +3,15 @@ use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
 };
+use super::source_facts::parse_module_result;
 use super::source_utils::SourceText;
-use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
+use super::{
+    PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
+    split_python_assignment,
+};
 use crate::domain::{OracleStrength, StaticLimitKind};
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
@@ -812,16 +818,56 @@ fn related_candidates_have_log_membership_limit(
                 .is_some_and(|assertion| {
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    assertion
-                        .gate_text
-                        .split_once(" in caplog.text")
-                        .is_some_and(|(checked, _)| {
-                            let checked = checked.trim_start();
-                            let checked = checked.strip_prefix("assert").unwrap_or(checked);
-                            words(checked).iter().any(|word| changed.contains(word))
-                        })
+                    caplog_membership_literals(&assertion.gate_text)
+                        .iter()
+                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
                 })
         })
+}
+
+/// The string literals an assertion checks for membership in `caplog.text`,
+/// read from the parsed expression so spacing, parentheses, line breaks and
+/// implicit literal concatenation do not change what is recognized.
+fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    let expression = gate_text.trim_start();
+    let expression = expression.strip_prefix("assert").unwrap_or(expression);
+    let source = format!("_ = (\n{expression}\n)\n");
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &source) else {
+        return Vec::new();
+    };
+    let mut literals = Vec::new();
+    for stmt in &module.body {
+        if let Stmt::Assign(assign) = stmt {
+            collect_caplog_membership_literals(assign.value.as_ref(), &mut literals);
+        }
+    }
+    literals
+}
+
+fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                collect_caplog_membership_literals(value, out);
+            }
+        }
+        Expr::Compare(compare)
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In)
+                && compare
+                    .comparators
+                    .first()
+                    .and_then(expr_full_name)
+                    .is_some_and(|name| name == "caplog.text") =>
+        {
+            if let Expr::Constant(constant) = compare.left.as_ref()
+                && let ast::Constant::Str(text) = &constant.value
+            {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
+    }
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(
