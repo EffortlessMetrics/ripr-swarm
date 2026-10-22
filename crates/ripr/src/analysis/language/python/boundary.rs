@@ -500,7 +500,16 @@ pub(super) fn python_comprehension_filter(line_text: &str) -> Option<Comprehensi
     let [(start, len)] = relational_operators(condition)[..] else {
         return None;
     };
-    simple_comparison_operands(condition, start, len)?;
+    let (left, right) = simple_comparison_operands(condition, start, len)?;
+    // The comparison must be the whole clause: a trailing `and False` or a
+    // further `if` clause can exclude the very element that meets the bound.
+    let whole_sides = is_simple_operand(&left)
+        && is_simple_operand(&right)
+        && condition.get(..start)?.trim() == left
+        && condition.get(start + len..)?.trim() == right;
+    if !whole_sides {
+        return None;
+    }
     Some(ComprehensionFilter {
         condition,
         local,
@@ -1197,12 +1206,16 @@ fn parametrize_case_row(
     case: &BTreeMap<String, String>,
 ) -> CallRow {
     let mut bindings = bindings.clone();
+    let mut elements = elements.clone();
     let mut shown = Vec::new();
     for (parameter, argname) in case_arguments {
         let Some(value) = case.get(argname) else {
             continue;
         };
         shown.push(format!("{argname}={value}"));
+        if let Some(literals) = literal_elements(value) {
+            elements.insert(parameter.clone(), literals);
+        }
         if let Some(value) = literal_value(value) {
             bindings.insert(
                 parameter.clone(),
@@ -1217,7 +1230,7 @@ fn parametrize_case_row(
         line,
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,
-        elements: elements.clone(),
+        elements,
     }
 }
 

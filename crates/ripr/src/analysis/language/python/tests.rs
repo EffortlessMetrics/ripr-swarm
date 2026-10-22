@@ -7738,7 +7738,83 @@ fn only_a_single_simple_comprehension_filter_is_a_predicate_line() {
             "    return sum(p for p in prices)",
             ProbeFamily::ReturnValue,
         ),
+        (
+            "    return sum(p for p in prices if p > 1 and False)",
+            ProbeFamily::ReturnValue,
+        ),
     ] {
         assert_eq!(classify_probe_shape(line).0, family, "{line}");
     }
+}
+
+#[test]
+fn an_unchanged_comprehension_filter_keeps_the_return_value_shape() {
+    let old = "    return sum(p * 2 for p in prices if p > 1)";
+    // Only the yielded element changed: the filter bound did not move.
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 3 for p in prices if p > 1)", Some(old))
+            .0,
+        ProbeFamily::ReturnValue
+    );
+    // The filter itself changed (and with no old line the filter is all we know).
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 2 for p in prices if p > 2)", Some(old))
+            .0,
+        ProbeFamily::Predicate
+    );
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 2 for p in prices if p > 1)", None).0,
+        ProbeFamily::Predicate
+    );
+}
+
+#[test]
+fn an_edit_under_an_unchanged_filter_is_credited_by_any_exact_result() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/agg.py"),
+        "def total(prices):\n    return sum(p * 3 for p in prices if p > 1)\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_agg.py"),
+        "from src.agg import total\n\n\ndef test_total():\n    assert total([3, 4]) == 14\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/agg.py"),
+        2,
+        "    return sum(p * 3 for p in prices if p > 1)",
+        Some("    return sum(p * 2 for p in prices if p > 1)"),
+        &owners,
+        &tests,
+    )
+    .ok_or("the yield change must classify")?;
+    // No element sits at the bound, which would matter had the filter changed.
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), String> {
+    let owners = extract_owners(Path::new("src/agg.py"), FILTER_BOUNDARY_OWNER);
+    for (cases, class) in [
+        ("[[3, 1, 4]]", ExposureClass::Exposed),
+        ("[[3, -1, 4]]", ExposureClass::WeaklyExposed),
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/test_agg.py"),
+            &format!(
+                "import asyncio\nimport pytest\n\nfrom src.agg import fetch_total\n\n\n@pytest.mark.parametrize(\"prices\", {cases})\ndef test_total(prices):\n    assert asyncio.run(fetch_total(prices)) == 7\n"
+            ),
+        );
+        assert_eq!(tests.len(), 1, "fixture must parse one test for {cases}");
+        let finding = classify_change(
+            Path::new("src/agg.py"),
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| format!("filter change should classify for {cases}"))?;
+        assert_eq!(finding.class, class, "{cases}");
+    }
+    Ok(())
 }
