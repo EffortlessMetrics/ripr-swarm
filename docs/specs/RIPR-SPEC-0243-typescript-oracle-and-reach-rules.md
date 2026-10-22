@@ -738,8 +738,13 @@ prove its condition costs an abstention or a gap, never a credit.
    same enum declaration also withholds credit; a bare call to an unrelated
    imported function is not an enum mutation. A namespace enum-object read
    (`levels.Level`) can escape, while a proven scalar member read
-   (`levels.Level.High`) retains identity. The test check covers the whole
-   file, including setup hooks. Distinct source files collapsed by extension
+   (`levels.Level.High`) retains identity. Calls through a grouped enum
+   member, including non-null/optional invocation and a tagged template,
+   are possible receiver escapes; cast
+   and generic-call tails also remain unknown. Grouping a scalar member
+   read alone does not withdraw a separate canonical witness. The test check
+   covers the whole file, including setup hooks. Distinct source files
+   collapsed by extension
    stripping (for example `constants.ts` and `constants.mts`) make that
    module's enum identity unknown, even when an import names its extension.
    A re-export statement supplies an exported binding, never a local import

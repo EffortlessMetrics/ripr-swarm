@@ -6,6 +6,106 @@ const ENUM: &str = "export enum Level { Low = 1, High = 2 }\nexport const Other 
 const OLD: &str = "  return level === Level.High ? 10 : 10;";
 
 #[test]
+fn grouped_enum_member_callees_never_establish_read_only_identity() -> Result<(), String> {
+    let test = "import { expect, it } from 'vitest';\nimport { weight } from '../src/level';\nimport { Level } from '../src/constants';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
+    for (label, imports, member_call) in [
+        (
+            "direct",
+            "import { Level } from './constants';",
+            "Level.valueOf()",
+        ),
+        (
+            "direct-tagged",
+            "import { Level } from './constants';",
+            "Level.valueOf``",
+        ),
+        (
+            "grouped",
+            "import { Level } from './constants';",
+            "(Level.valueOf)()",
+        ),
+        (
+            "nested-groups",
+            "import { Level } from './constants';",
+            "((Level.valueOf))()",
+        ),
+        (
+            "non-null",
+            "import { Level } from './constants';",
+            "(Level.valueOf)!()",
+        ),
+        (
+            "cast",
+            "import { Level } from './constants';",
+            "(Level.valueOf as Function)()",
+        ),
+        (
+            "optional",
+            "import { Level } from './constants';",
+            "(Level.valueOf)?.()",
+        ),
+        (
+            "generic-call",
+            "import { Level } from './constants';",
+            "(Level.valueOf)<unknown>()",
+        ),
+        (
+            "generic-function-type",
+            "import { Level } from './constants';",
+            "(Level.valueOf)<() => unknown>()",
+        ),
+        (
+            "tagged",
+            "import { Level } from './constants';",
+            "(Level.valueOf)``",
+        ),
+        (
+            "namespace",
+            "import * as levels from './constants'; import { Level } from './constants';",
+            "(levels.Level.valueOf)()",
+        ),
+        (
+            "namespace-tagged",
+            "import * as levels from './constants'; import { Level } from './constants';",
+            "(levels.Level.valueOf)``",
+        ),
+    ] {
+        let source = format!(
+            "{imports} const other = {member_call};\nexport function weight(level: number): number {{\n  Object.assign(other, {{ High: 1 }});\n  return level === Level.High ? 11 : 10;\n}}\n"
+        );
+        let finding = classify_enum_source(
+            label,
+            &source,
+            test,
+            &[(
+                "src/constants.ts",
+                "export enum Level { Low = 1, High = 2 }\n",
+            )],
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn grouped_scalar_enum_reads_preserve_a_canonical_witness() -> Result<(), String> {
+    for (label, setup) in [
+        ("grouped-scalar", "const high = (Level.High);"),
+        ("nested-scalar", "const high = ((Level.High));"),
+        ("namespace-scalar", "const high = (levels.Level.High);"),
+        ("scalar-comparison", "const low = Level.High < 3;"),
+        ("namespace-comparison", "const low = levels.Level.High < 3;"),
+    ] {
+        let test = format!(
+            "import {{ expect, it }} from 'vitest';\nimport {{ weight, Level }} from '../src/level';\nimport * as levels from '../src/level';\n{setup}\nit('high', () => {{ expect(weight(Level.High)).toBe(10); }});\n"
+        );
+        let finding = classify_enum_source(label, ENUM, &test, &[])?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
 fn reexports_do_not_invent_local_enum_bindings() -> Result<(), String> {
     let test = "import { expect, it } from 'vitest';\nimport { weight, Level } from '../src/level';\nit('high', () => { expect(weight(Level.High)).toBe(10); });\n";
     for (label, source, expected) in [

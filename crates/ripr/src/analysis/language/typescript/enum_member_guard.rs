@@ -80,8 +80,69 @@ pub(crate) fn enum_member_root_is_read_only(code: &str, root: &str, namespace: b
                     }
                     rest = &member[length..];
                 }
-                true
+                enum_member_tail_is_read_only(rest)
             })
+}
+
+/// Parentheses and non-null assertions can preserve a member reference as
+/// a callee, including its receiver (`(Level.valueOf)()`). Merely reading a
+/// grouped scalar remains safe. Cast/generic-call tails are unknown rather
+/// than an opportunity to infer a scalar value through another grammar.
+fn enum_member_tail_is_read_only(rest: &str) -> bool {
+    let rest = enum_after_grouping_wrappers(rest);
+    !rest.starts_with('(')
+        && !rest.starts_with("?.(")
+        && !rest.starts_with('`')
+        && !enum_generic_invocation_tail(rest)
+        && !["as", "satisfies"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                !tail.starts_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'))
+            })
+        })
+}
+
+fn enum_after_grouping_wrappers(mut rest: &str) -> &str {
+    loop {
+        rest = rest.trim_start();
+        if let Some(tail) = rest.strip_prefix(')') {
+            rest = tail;
+        } else if let Some(tail) = rest.strip_prefix('!').filter(|tail| !tail.starts_with('=')) {
+            rest = tail;
+        } else {
+            break;
+        }
+    }
+    rest
+}
+
+/// A plain less-than comparison remains a scalar read. Only a balanced
+/// type-argument-shaped span followed by invocation creates this uncertainty.
+fn enum_generic_invocation_tail(rest: &str) -> bool {
+    let Some(arguments) = rest.strip_prefix('<') else {
+        return false;
+    };
+    let mut depth = 1usize;
+    let mut braces = 0usize;
+    for (at, ch) in arguments.char_indices() {
+        match ch {
+            '{' => braces += 1,
+            '}' => braces = braces.saturating_sub(1),
+            ';' if braces == 0 => return false,
+            '<' => depth += 1,
+            '>' if arguments[..at].ends_with('=') => {}
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    let tail = enum_after_grouping_wrappers(&arguments[at + 1..]);
+                    return tail.starts_with('(')
+                        || tail.starts_with("?.(")
+                        || tail.starts_with('`');
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 pub(crate) fn ts_same_enum_member(
