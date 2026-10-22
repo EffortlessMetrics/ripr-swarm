@@ -2066,6 +2066,14 @@ impl Backend {
         kind: AnalysisFailureKind,
         message: &str,
     ) {
+        // The save-dedup ledger (#1908) records a digest when a save is
+        // accepted, before its refresh runs. A failed refresh analyzed
+        // nothing, so those digests no longer prove "already analyzed": drop
+        // them so an identical re-save retries instead of being swallowed
+        // until the content happens to change.
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.clear();
+        }
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };

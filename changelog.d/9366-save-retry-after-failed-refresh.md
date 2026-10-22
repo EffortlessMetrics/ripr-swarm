@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The language server's didSave de-duplication no longer swallows the retry save after a failed refresh: a refresh failure clears the saved-content ledger, so re-saving unchanged bytes once the environment recovers schedules a refresh instead of leaving the document without evidence until it is edited or `ripr.refresh` runs. Unchanged re-saves after a successful refresh still de-duplicate (#9366).

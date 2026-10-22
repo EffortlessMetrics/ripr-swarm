@@ -9099,6 +9099,104 @@ async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Resul
     Ok(())
 }
 
+#[test]
+#[serial]
+fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> Result<(), String> {
+    // The dedup ledger records a save digest before its refresh runs. When
+    // that refresh fails nothing analyzed those bytes, so an identical
+    // re-save (the natural retry once the environment recovers) must
+    // schedule a refresh instead of being swallowed as "unchanged".
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("save-retry-after-failed-refresh")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes every analysis attempt fail
+                    // fast, like a transiently unusable repository.
+                    "initializationOptions": {"baseRef": "ripr-lsp-save-retry-missing-base"},
+                    "capabilities": {}
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri.as_str(), "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let save = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didSave",
+            "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
+        });
+        write_lsp_message(&mut client_write, save.clone()).await?;
+        let first = log_notification_messages(
+            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
+        );
+        if !first
+            .iter()
+            .any(|message| message.starts_with("ripr analysis refresh failed"))
+        {
+            return Err(format!("expected the first refresh to fail: {first:?}"));
+        }
+
+        write_lsp_message(&mut client_write, save).await?;
+        let second = log_notification_messages(
+            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
+        );
+        if second
+            .iter()
+            .any(|message| message.contains("didSave deduplicated"))
+        {
+            return Err(format!(
+                "re-save after a failed refresh was deduplicated: {second:?}"
+            ));
+        }
+        if !second
+            .iter()
+            .any(|message| message.starts_with("ripr analysis refresh queued"))
+        {
+            return Err(format!("re-save did not schedule a refresh: {second:?}"));
+        }
+        server_task.abort();
+        Ok(())
+    })
+}
+
 #[tokio::test]
 async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
