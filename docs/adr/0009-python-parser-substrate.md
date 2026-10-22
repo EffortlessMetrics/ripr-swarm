@@ -1,8 +1,10 @@
 # ADR 0009: Python Parser Substrate
 
 Status: accepted (superseding its own original decision recorded in commit
-`d70f1802`). Amended 2026-10-22: permits one bounded, syntax-only workspace
-import-edge index (see the Amendment section); the parser pick is unchanged.
+`d70f1802`). Amended 2026-10-22: records the rules under which one bounded,
+syntax-only workspace import-edge index could be built (see the Amendment
+section); nothing is authorized until its slice 1 payoff gate passes. The
+parser pick is unchanged.
 
 Date: 2026-05-12
 
@@ -243,8 +245,10 @@ because the sound rule is narrow.
 
 ### Decision
 
-The Python adapter may compute a **workspace import-edge index** and, from it,
-a **sealed reach set** and an **isolated target** check, under these rules.
+Subject to the slice 1 payoff gate (nothing below is authorized until it
+passes), the Python adapter may compute a **workspace import-edge index** and,
+from it, a **sealed reach set** and an **isolated target** check, under these
+rules.
 Nothing else about the adapter's no-runtime, no-type-checker, no-subprocess
 stance changes. Every result is a static reachability statement under the
 residual list below, not a runtime claim.
@@ -323,9 +327,14 @@ all of these hold:
    binds at top level by `def`, `class` or plain assignment, never by an
    import (a target like `helpers.fmt.json.dumps` mutates the shared stdlib
    `json` module that `T` merely holds, so it is open); no `__init__.py` on
-   the target's chain binds that name by alias (`from . import impl as mod`),
-   because then the patch lands on a different object than the file; `T` has no
-   module `__getattr__`; and the patch does not pass `create=True`. A target
+   the target's chain binds **any** component of the dotted path by import,
+   alias or assignment (`from . import impl as mod`, `import json as mod`,
+   `mod = json`): each submodule name must be bound only by the implicit
+   import, so that walking every hop with `getattr` reaches the file `T`
+   itself, because `mock` resolves the target by `getattr` from the top
+   package and otherwise the patch lands on a different object; `T` has no
+   module `__getattr__`; and the patch passes neither `create=True` nor
+   `raising=False`. A target
    that does not exist raises at patch entry, so the test is not a
    discriminator at all and the limit is not dropped on its account;
 7. `T` is not in `S`, and the closure of `T` with its parent `__init__` chain
@@ -335,23 +344,31 @@ all of these hold:
    for the overlap check; any other parent `__init__.py` shared with `S`
    makes the target not isolated;
 8. no workspace module imports `T` or any module in its closure except from
-   inside that closure itself, and no string reference to `T`'s dotted name
+   inside that closure itself (the implicit import of a parent `__init__.py`
+   that condition 7 ignores because it is empty or declarative-only is not an
+   import of `T` and is exempt; any other shared parent `__init__.py` means a
+   same-package target never qualifies), and no string reference to `T`'s dotted name
    exists outside the mock sites themselves (`console_scripts`, entry points,
    settings, `setup.cfg`/`pyproject.toml`), and `T`'s file name does not match
    pytest's `python_files` (a collected `test_*.py` is imported with no
    edge): a test file outside `S` that imports `T` in the same pytest process
    can register `T`'s objects in a process-global registry (a logging
    handler, a codec, an `atexit` hook) that code in `S` then uses;
-9. the closure of `T` and its parent `__init__` chain pass conditions 1 to 3,
-   and every top level in them is **declarative**: imports, `def`, `class`,
-   constants and docstrings only. A top-level call, `with`, loop, `if` body
-   with a call, or attribute assignment on an imported object is not
-   declarative. `patch()` imports `T` during the test and runs its top level,
-   and import side effects (`decimal.getcontext().prec = ...`,
+9. the closure of `T` and its parent `__init__` chain pass conditions 1 to 3
+   and 5 (an unparsed or over-budget closure is open), and every top level in
+   them is **declarative** in this strict sense: `import` statements; undecorated
+   `def` with literal-only defaults and annotations that are plain names;
+   `class` with plain-name bases, no keywords or metaclass, no decorators and a
+   body of such `def`s or literal assignments; and assignments of literals
+   (numbers, strings, tuples/lists/dicts of literals). A top-level call, `with`,
+   loop, `if`, decorator, default-argument expression, metaclass or base-class
+   expression, or attribute assignment is not declarative, because each of them
+   runs code at import time. `patch()` imports `T` during the test and runs its
+   top level, and import side effects (`decimal.getcontext().prec = ...`,
    `random.seed(0)`, `locale.setlocale`, `os.environ[...] = ...`,
-   `logging.disable`, `os.chdir`) can change what `S` observes. This is a
-   syntactic rule, so it holds even when `decimal` or `random` is on the inert
-   allowlist.
+   `logging.disable`, `os.chdir`, or a decorator in another module that does
+   so) can change what `S` observes. This is a syntactic rule, so it holds even
+   when `decimal` or `random` is on the inert allowlist.
 
 Expect this to qualify very little. Conditions 7 and 8 together describe a
 module that nothing in the test's reach shares a package with and nothing
@@ -380,7 +397,9 @@ enumerator does not map to a classified, isolated site keeps `mocked_module`.
 
 ### Safety argument
 
-Claim (static): if `S` is sealed and the target is isolated, no static path
+Claim (static, about the patched target `T` only; other patches outside `S`
+are not covered and the old detector does not see them either): if `S` is
+sealed and the target is isolated, no static path
 exists from the test, its fixtures or the owner to the patched attribute, so
 the patch cannot change what they observe except through the residual list.
 
@@ -400,7 +419,8 @@ make `S` open.
 Residual by design, stated as non-claims: environment-level injection that is
 not in the workspace (an installed `sitecustomize`, installed third-party
 pytest plugins, C extensions that import by name, `PYTHONSTARTUP`);
-`multiprocessing` start methods; forward-reference evaluation through
+a non-editable install of the same package name (tests then import
+site-packages, not the workspace); `multiprocessing` start methods; forward-reference evaluation through
 `typing.get_type_hints` or `singledispatch`; and extractor bugs. Extractor bugs
 are why every slice is corpus-first with runtime-labeled adversarial negatives
 and a fresh-reviewer pass aimed at a counterexample.
@@ -456,7 +476,10 @@ import owner.
    current detector marks `mocked_module`; for each, decide on paper, using the
    roots the adapter already infers (src layout, exact-path matching), whether
    conditions 1 to 9 hold; count only rows where dropping the limit would
-   change the verdict. Attach the table to the PR. Go only if at least five
+   change the verdict. Run each qualifying row's test once with and without the patch's target
+imported to confirm the verdict-relevant behavior does not change (a runtime
+label for the row), so a wrong "qualifies" is caught here. Attach the table to
+the PR. Go only if at least five
    distinct such rows qualify, none of them by a condition the measurement had
    to guess. Otherwise record the count in this ADR, keep the status quo, and
    stop: slices 2 to 7 are not built and no spec or doc changes land.
@@ -476,7 +499,11 @@ import owner.
    `__init__`, `pkg.sub` attribute access without an import, an `__init__`
    alias, a stdlib-shadowing workspace file, an aliased `patch` name next to a
    literal one, `helpers.fmt.json.dumps` through an imported name, a stale
-   target, and a target matching `python_files`). Issue #9098's acceptance text
+   target, a package `__init__` that rebinds an intermediate hop
+   (`import json as mod`), a target whose top level is decorated by a function
+   that mutates `decimal` state, a metaclass or default-argument call, a test
+   whose only oracle is an assertion on the mock itself, and a target matching
+   `python_files`). Issue #9098's acceptance text
    is rewritten at this slice to this rule, since its `os.getcwd` example is
    deferred.
 3. **Edge extraction and resolution.** Pure function from parsed files to
@@ -522,7 +549,7 @@ the conservative vocabulary of [ADR 0002](0002-static-exposure-language.md).
 
 - [RIPR-SPEC-0026: Language adapter contract](../specs/RIPR-SPEC-0026-language-adapter-contract.md)
 - [RIPR-SPEC-0028: Python preview static facts](../specs/RIPR-SPEC-0028-python-preview-static-facts.md)
-  (slice 1 of the Amendment's plan updates it)
+  (slice 2 of the Amendment's plan updates it, only if the slice 1 payoff gate passes)
 - [RIPR-PROP-0001: Multi-Language Adapter Preview](../proposals/RIPR-PROP-0001-multi-language-adapter-preview.md)
 - [ADR 0008: TypeScript Parser Substrate](0008-typescript-parser-substrate.md)
 - Campaign 27: Language Adapter Preview (active in
