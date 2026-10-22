@@ -971,3 +971,50 @@ fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
+
+/// RIPR-SPEC-0246 rule 4 also covers a node:assert call in a floating
+/// `.then` callback (#9686): whether a late rejection fails the run depends on
+/// the runner, so the grade is unknown, not an actionable gap.
+#[test]
+fn floating_then_node_assert_reads_static_unknown() -> Result<(), String> {
+    let head = "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { ready } from \"../src/settings\";\nfunction check(v: unknown) {}\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    for (label, body) in [
+        (
+            "floating-assert-equal",
+            "  Promise.resolve(ready(cfg)).then((r) => {\n    assert.equal(r, cfg);\n  }, () => {});\n",
+        ),
+        (
+            "floating-bare-assert",
+            "  Promise.resolve(ready(cfg)).then((r) => {\n    assert(r);\n  }, () => {});\n",
+        ),
+    ] {
+        let test = format!("{head}{body}}});\n");
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+    }
+    // Discriminating negatives that reach the same arm: the `assert` text sits
+    // in a callback not tied to the owner, in a comment, or in a string.
+    for (label, extra) in [
+        (
+            "unrelated-then",
+            "  Promise.resolve(1).then((n) => { assert.equal(n, 1); }, () => {});\n",
+        ),
+        (
+            "assert-in-comment",
+            "  // x.then((r) => assert.equal(r, 1))\n",
+        ),
+        (
+            "assert-in-string",
+            "  const note = \".then(() => assert.ok(1))\";\n",
+        ),
+        (
+            "lookalike-name",
+            "  Promise.resolve(1).then((n) => myassert.ok(n));\n",
+        ),
+    ] {
+        let test = format!("{head}{extra}  check(ready(cfg));\n}});\n");
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}

@@ -195,7 +195,8 @@ rule 1, on the same value seams.
 **Rule 4. A refused nested callback holding an `expect(` is unknown, not a gap.**
 (Added 2026-10-21.) When every oracle-eligible related test collects no
 assertion, has assertion admission `assertion_like_present_but_unresolved`,
-and its body holds an `expect(` inside the argument span of a `.then(` or
+and its body holds an `expect(` or a node:assert call (`assert(`,
+`assert.equal(`) inside the argument span of a `.then(` or
 an `forEach(async` call that is tied to the owner (the owner is called in
 that span or in the statement's receiver before it) (the forms rule 2
 refuses; comments and string contents are ignored), the finding reads
@@ -425,7 +426,13 @@ and the rejected alternative.
   rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows; cases
   `jest-spec0246-ex07-then-rejection-handler` and
-  `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
+  `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`); case
+  `ts-trap-floating-promise` pins the node:assert form (#9686: node:test fails
+  the run on a late rejection, other runners do not, so the grade is unknown
+  and no credit is given). The unit test
+  `floating_then_node_assert_reads_static_unknown` pins both assert forms and
+  discriminating negatives (an unrelated `.then`, comment, string, lookalike
+  name). The unit test
   `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
   and a shadowed-`expect` negative.
 - `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and

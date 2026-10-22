@@ -16268,6 +16268,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_operator_on_the_call_result_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::owner_tie_reads_multi_line_chains_and_member_or_generic_calls",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::multi_line_then_chain_reads_static_unknown_through_the_classifier",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::floating_then_node_assert_reads_static_unknown",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",

@@ -4847,12 +4847,17 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
-                    span.match_indices("expect(").any(|(at, _)| {
-                        !span[..at]
-                            .chars()
-                            .next_back()
-                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
-                    })
+                    // `expect(` and the node:assert forms `assert(` / `assert.x(`
+                    // (#9686): a floating `.then` assertion fails the run only
+                    // under some runners, so the grade is unknown, not a gap.
+                    ["expect(", "assert(", "assert."]
+                        .iter()
+                        .flat_map(|form| span.match_indices(form))
+                        .any(|(at, _)| {
+                            !span[..at].chars().next_back().is_some_and(|c| {
+                                c.is_alphanumeric() || matches!(c, '_' | '$' | '.')
+                            })
+                        })
                 })
         })
     })
