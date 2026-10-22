@@ -1,6 +1,8 @@
 # Fixture: owner_return_pin_pointer_raw_shadow
 
-Spec: RIPR-SPEC-0197, RIPR-SPEC-0108
+Spec: RIPR-SPEC-0197
+
+Honesty contract: RIPR-SPEC-0108.
 
 ## Given
 
