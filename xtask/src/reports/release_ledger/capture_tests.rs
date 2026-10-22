@@ -355,3 +355,64 @@ fn inline_test_edits_are_detected_per_hunk_from_real_git() -> Result<(), String>
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn editor_rust_is_scanned_and_same_line_product_edits_stay_product() -> Result<(), String> {
+    let root = new_repo("inline-edge")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("editors/zed/src")).map_err(|error| error.to_string())?;
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let zed = "editors/zed/src/lib.rs";
+        let shared = "crates/ripr/src/shared.rs";
+        let base = commit(
+            &root,
+            &[
+                (
+                    zed,
+                    Some(
+                        "pub fn run() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert!(true);\n    }\n}\n",
+                    ),
+                ),
+                (
+                    shared,
+                    Some("#[cfg(test)] mod tests {} pub fn value() -> u8 { 1 }\n"),
+                ),
+            ],
+            "base",
+        )?;
+        let edit = commit(
+            &root,
+            &[
+                (
+                    zed,
+                    Some(
+                        "pub fn run() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert!(1 == 1);\n    }\n}\n",
+                    ),
+                ),
+                (
+                    shared,
+                    Some("#[cfg(test)] mod tests {} pub fn value() -> u8 { 2 }\n"),
+                ),
+            ],
+            "fix: edit (#51)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &edit,
+            main: &edit,
+        })?;
+        let found = facts
+            .commits
+            .iter()
+            .find(|commit| commit.commit_sha == edit)
+            .ok_or("edit missing")?;
+        require(
+            found.inline_test_paths == [zed.to_string()],
+            "the editor test edit is inline; the same-line product edit is not",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}

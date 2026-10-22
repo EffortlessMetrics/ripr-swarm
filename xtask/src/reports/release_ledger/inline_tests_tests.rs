@@ -216,3 +216,19 @@ fn only_product_rust_files_are_candidates() -> Result<(), String> {
     require(!is_candidate("xtask/src/main.rs"), "automation")?;
     require(!is_candidate("crates/ripr/src/README.md"), "not rust")
 }
+
+#[test]
+fn a_span_sharing_a_line_with_other_code_is_not_a_span() -> Result<(), String> {
+    let shared_end = "#[cfg(test)] mod tests {} pub fn value() -> u8 { 1 }\n";
+    let shared_start = "pub fn value() -> u8 { 1 } #[cfg(test)] mod tests {}\n";
+    let trailing_comment = "#[cfg(test)]\nmod tests {} // end of tests\n";
+    require(test_spans(shared_end).is_empty(), "code after the item")?;
+    require(
+        test_spans(shared_start).is_empty(),
+        "code before the attribute",
+    )?;
+    require(
+        test_spans(trailing_comment) == vec![(1, 2)],
+        "a trailing comment does not share the line with code",
+    )
+}

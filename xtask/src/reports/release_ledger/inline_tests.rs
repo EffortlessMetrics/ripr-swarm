@@ -184,7 +184,11 @@ pub(super) fn test_spans(source: &str) -> Vec<Span> {
                     }
                 }
                 if let Some(end) = item_end(&code, cursor) {
-                    spans.push((line_of[index], line_of[end]));
+                    // Hunks are whole lines, so a span that shares a boundary
+                    // line with other code cannot prove an edit there is a test edit.
+                    if alone_on_line(&code, index, end) {
+                        spans.push((line_of[index], line_of[end]));
+                    }
                     index = end + 1;
                     continue;
                 }
@@ -195,6 +199,21 @@ pub(super) fn test_spans(source: &str) -> Vec<Span> {
         }
     }
     spans
+}
+
+/// Whether only whitespace (or blanked comments) precedes `start` on its line and
+/// follows `end` on its line.
+fn alone_on_line(code: &[char], start: usize, end: usize) -> bool {
+    let before = code[..start]
+        .iter()
+        .rev()
+        .take_while(|c| **c != '\n')
+        .all(|c| c.is_whitespace());
+    let after = code[end + 1..]
+        .iter()
+        .take_while(|c| **c != '\n')
+        .all(|c| c.is_whitespace());
+    before && after
 }
 
 /// Index of the `]` closing the `[` at `open`.
@@ -341,6 +360,8 @@ fn commit_inline_paths(repo: &Path, parent: &str, sha: &str) -> Result<Vec<Strin
             sha,
             "--",
             "crates/ripr/src",
+            "editors",
+            "schemas",
         ],
         GIT_TIMEOUT,
     )?;

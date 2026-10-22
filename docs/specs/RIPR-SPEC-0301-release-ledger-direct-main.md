@@ -143,7 +143,9 @@ has lines. It is read from `git diff -U0` hunks against the first parent and the
 item spans of the file at the parent and at the commit. Spans come from a lexer
 that ignores braces in comments, strings, raw strings and char literals; an item
 it cannot close, a whole-file add or delete, a hunk-less change and a quoted path
-give no span and stay product.
+give no span and stay product. A span whose first or last line also holds other code
+gives no span either, because hunks are whole lines. Product-class Rust under
+`editors/` and `schemas/` is scanned as well as `crates/ripr/src/`.
 
 ## Disposition rule v1 and overrides
 
@@ -229,9 +231,11 @@ valid-ledger control that yields no reasons.
   `an_unclosed_item_is_not_a_span`, `zero_context_diffs_parse_hunks_and_whole_files`,
   `quoted_paths_are_never_inline_edits`,
   `hunks_must_sit_inside_a_span_on_every_side_that_has_lines`,
-  `only_product_rust_files_are_candidates`.
+  `only_product_rust_files_are_candidates`,
+  `a_span_sharing_a_line_with_other_code_is_not_a_span`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
+  `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
   `split_refs_takes_only_the_trailing_pull_request`,
