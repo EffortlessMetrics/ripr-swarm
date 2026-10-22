@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/observation_unverified_side_effect/input
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (1 exposed, 1 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
@@ -13,25 +13,24 @@ Start here:
   File: ./src/lib.rs:11
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id
+  Canonical gap: gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id
   Changed behavior: notifier.send(order_id)
   Missing discriminator: No strong discriminator was detected
   Related test: tests/process_tests.rs:4 process_order_succeeds (assertion too weak to tell the old behavior from the new)
-  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
+  Next step: Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach process_order: process_order_succeeds
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast probe:src_lib.rs:return_value:880ed6e6
-  ripr context --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:return_value:880ed6e6
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:880ed6e6 --root <cwd>/fixtures/observation_unverified_side_effect/input` for the full gate's answer
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/observation_unverified_side_effect/input --at src/lib.rs:11 --kind return_value
+  ripr explain --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast probe:src_lib.rs:side_effect:95da2a37
+  ripr context --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:side_effect:95da2a37
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:side_effect:95da2a37 --root <cwd>/fixtures/observation_unverified_side_effect/input` for the full gate's answer
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:11 (weak)
+    - ./src/lib.rs:11 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

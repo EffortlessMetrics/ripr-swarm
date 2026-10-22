@@ -1,0 +1,11 @@
+diff --git a/shapes/comps.py b/shapes/comps.py
+--- a/shapes/comps.py
++++ b/shapes/comps.py
+@@ -18,6 +18,6 @@
+ 
+ 
+ def countdown(start):
+-    while start > 0:
++    while start >= 0:
+         yield start
+         start -= 1

@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Thirteen small authored TypeScript packages under `subjects/`, our own code
+Fifteen small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -24,6 +24,13 @@ under this repository's license, grouped by test runner:
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
   (its older cases labeled under vitest 3.2.7; its `package.json` now pins
   4.1.11).
+- vitest language shapes: `authored-ts-vitest-shapes`
+  (class methods, getters and statics, inheritance, generics, async
+  `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,
+  `as const` tables, nullish chains, default parameters, private helpers,
+  generators, arrow-function exports and `reduce`).
+- jest with `experimentalDecorators`: `authored-ts-jest-decorators` (method,
+  class and property decorators, wrapped values and unread side effects).
 - mocha with chai: `authored-ts-mocha-ledger` (`expect` and `assert` styles,
   async tests, `.not`, chai `throw` with a message, `deep` equality, and a
   jest-style `toBe` swallowed by `try`/`catch`).
@@ -104,6 +111,16 @@ where each run, started from the committed package without a `.snap`
 file, writes the entry from what the code returns; and
 `authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
 its `jest -u` script and rewrites the committed entry.
+
+The 28 `shape-*` and 8 `deco-*` cases are all
+`behavior_change` edits: each edit is its own single mutant, applied by hand
+to the whole stored package, and the case's test command (`npx vitest run`
+or `npx jest --ci --runInBand`) was run on the stored
+package (green) and the edited package (Node 22.22.0, vitest 4.1.11, jest
+30.5.2, ts-jest 29.4.14, typescript 5.9). A mutant
+counts as detected when that command fails. These cases record ripr's verdict on
+the day they were added, including the false verdicts; those rows are the
+point of the cases.
 
 ## Layout
 

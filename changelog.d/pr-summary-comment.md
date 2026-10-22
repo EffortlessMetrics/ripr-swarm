@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- The generated GitHub workflow (`ripr init --ci github`) now posts one summary comment on same-repository pull requests and updates it on every push, so reviewers see the changed-behavior findings in the conversation instead of only on the Actions run page. The new `ripr pr-comments summary` renders it and only ever updates the comment `github-actions[bot]` posted. Set the repository variable `RIPR_SUMMARY_COMMENT` to `false` to turn it off; fork and Dependabot pull requests are skipped (#8402).

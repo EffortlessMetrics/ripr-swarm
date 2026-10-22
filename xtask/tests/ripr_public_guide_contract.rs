@@ -708,6 +708,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
+    "agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
     "agent_repair_phase_refusals_render_scoped_recovery_without_writes",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",

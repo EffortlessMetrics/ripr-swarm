@@ -4863,7 +4863,11 @@ mod tests {
         // takes the preceding early exit (RIPR-SPEC-0260); the card names the
         // missing `not (total > 1000)` discriminator and stays direct-aligned
         // and packet-eligible.
-        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 16, 1) {
+        // #8759: a test importing the name from another defining module is no
+        // longer related, so `python_adversarial_free_function_module_collision`
+        // and the `legacy.py` finding of `python_src_layout_package_import`
+        // read `no_static_path` and drop their two orthogonal cards.
+        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

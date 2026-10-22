@@ -1,0 +1,12 @@
+diff --git a/shapes/money.py b/shapes/money.py
+--- a/shapes/money.py
++++ b/shapes/money.py
+@@ -12,7 +12,7 @@
+         return isinstance(other, Money) and self.cents == other.cents
+ 
+     def __lt__(self, other):
+-        return self.cents < other.cents
++        return self.cents <= other.cents
+ 
+     def __repr__(self):
+         return f"Money({self.cents})"

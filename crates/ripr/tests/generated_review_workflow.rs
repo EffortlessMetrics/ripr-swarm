@@ -803,7 +803,8 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     let base = replay::unique_temp_dir("doctor-refresh-missing-root")?;
     let missing = base.join("missing repository");
     let doctor = replay::ripr(&base, &["doctor", "--root", &missing.to_string_lossy()])?;
-    assert_eq!(doctor.status.code(), Some(2));
+    // #5102: the diagnosis completed with findings, so it exits 3, not 2.
+    assert_eq!(doctor.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&doctor.stderr).contains("doctor found issues"));
     let stdout = String::from_utf8(doctor.stdout)?;
     assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
@@ -855,7 +856,8 @@ fn doctor_packet_refresh_missing_alias_never_selects_decoy() -> Result<(), Box<d
     let before = [fs::read(&json)?, fs::read(&markdown)?];
     for spelling in [relative, absolute.as_path()] {
         let doctor = replay::ripr(&parent, &["doctor", "--root", &spelling.to_string_lossy()])?;
-        assert_eq!(doctor.status.code(), Some(2));
+        // #5102: the diagnosis completed with findings, so it exits 3, not 2.
+        assert_eq!(doctor.status.code(), Some(3));
         let stdout = String::from_utf8(doctor.stdout)?;
         // Compact failing doctor names the recovery on the fail/Fix/recommended
         // lines and omits the missing-packet dump (#8168).
