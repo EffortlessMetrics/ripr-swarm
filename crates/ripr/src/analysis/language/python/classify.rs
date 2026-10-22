@@ -1,3 +1,4 @@
+use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
     strength_only_assertion,
@@ -453,6 +454,19 @@ pub(super) fn classify_change_for_owner(
                     &related_candidates,
                     &focus,
                 )
+                .or_else(|| {
+                    // #9429: a `match` arm or a `.get` default that no
+                    // observed input reaches reads the same way.
+                    arm_activation::python_unreached_arm_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();

@@ -413,7 +413,7 @@ fn early_exit_conditions(
     found
 }
 
-fn leading_whitespace(text: &str) -> usize {
+pub(super) fn leading_whitespace(text: &str) -> usize {
     text.chars().take_while(|ch| ch.is_whitespace()).count()
 }
 
@@ -611,7 +611,7 @@ fn indent_width(raw: &str) -> usize {
 /// changes what the guard reads on the next iteration, and linear scanning
 /// cannot prove execution order there (#7874 follow-up). Deliberately
 /// conservative; anything subtler keeps the existing limitation.
-fn parameter_rebound_before(
+pub(super) fn parameter_rebound_before(
     owner_source: &str,
     owner_start: usize,
     guard_line: usize,
@@ -776,7 +776,7 @@ fn is_integer_literal(text: &str) -> bool {
 /// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
-fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
+pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
     let (left_text, right_text) = (left, right);
     match op {
         "==" => Some(guard_literals_equal(left, right)),

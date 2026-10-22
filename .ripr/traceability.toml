@@ -17215,8 +17215,14 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_input_missing_the_early_exit_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_disjoint_early_exits_words_at_least_one",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_ignores_early_exit_text_inside_a_docstring",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_wildcard_arm_no_observed_input_reaches_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_literal_arm_is_unreached_by_a_different_literal_only",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::an_unreadable_match_subject_or_pattern_fails_open",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_every_observed_key_misses_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_stays_credited_when_the_table_can_change",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/arm_activation.rs",
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
   "crates/ripr/src/analysis/language/python/boundary.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
