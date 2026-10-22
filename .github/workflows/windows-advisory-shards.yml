@@ -8,6 +8,8 @@ name: Windows Advisory Shards
 # replace the required Linux gates and is not wired to pull_request events.
 on:
   workflow_dispatch:
+  push:
+    branches: [claude/windows-shards-9272]
 
 permissions:
   contents: read
