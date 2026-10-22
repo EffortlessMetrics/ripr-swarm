@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0243 rules 10, 16 and 17 end to end: assertion forms of chai
+//! RIPR-SPEC-0243 rules 10, 19 and 20 end to end: assertion forms of chai
 //! `throw`, `node:assert` `match` / `rejects` and `node:test` mock call
 //! counts, each with a discriminating negative that must stay weak.
 
@@ -210,7 +210,7 @@ fn unanchored_wildcard_or_flagged_regex_match_stays_weak() -> Result<(), String>
     Ok(())
 }
 
-// ---- `assert.rejects` with a plain substring regex (rule 17) ----
+// ---- `assert.rejects` with a plain substring regex (rule 20) ----
 
 const RETRY_AFTER: &str = "export async function withRetry(fn: () => Promise<string>, attempts: number): Promise<string> {\n  let lastError: unknown;\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn();\n    } catch (error) {\n      lastError = error;\n    }\n  }\n  THROW\n}\n";
 
@@ -326,7 +326,7 @@ fn rejects_substring_regex_in_both_messages_stays_weak() -> Result<(), String> {
     Ok(())
 }
 
-// ---- a method call replaced by `void <local>;` (rule 16) ----
+// ---- a method call replaced by `void <local>;` (rule 19) ----
 
 const AUDIT_AFTER: &str = "export const sink = {\n  write(line: string): void {\n    void line;\n  },\n};\n\nexport function record(event: string): string {\n  const line = `event:${event}`;\n  void line;\n  return line;\n}\n";
 

@@ -5372,7 +5372,7 @@ pub(crate) fn classify_change_with_alias_state(
     } else {
         probe_shape
     };
-    // RIPR-SPEC-0243 rule 16: `receiver.method(...)` replaced by `void local;`
+    // RIPR-SPEC-0243 rule 19: `receiver.method(...)` replaced by `void local;`
     // is a call deletion when a related test counts that method's calls with a
     // `node:test` mock; without such a test the line stays unrecognised.
     let call_removal = (!probe_shape.specific)

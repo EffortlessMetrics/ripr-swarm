@@ -1855,6 +1855,9 @@ fn assert_call_assertion(
     // regex that matches only one string (anchored, no flags but `u`, no
     // metacharacters) is a string equality check, so it pins the value as
     // `strictEqual` does. A wider regex stays a weak relational check.
+    // Without `m`, `$` matches only at end of input in JavaScript (ECMAScript
+    // Assertion `$`, multiline false), never before a final newline, so
+    // `/^literal$/` rejects "literal\n" (checked in node 22).
     let anchored_match_literal = (method == "match" && !matches!(flavor, AssertFlavor::Chai))
         .then(|| call.arguments.get(1))
         .flatten()

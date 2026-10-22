@@ -571,7 +571,7 @@ class may set any `name`, so it does not credit. Otherwise each reads
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
-**Rule 16. A method call replaced by `void local;` is a call deletion
+**Rule 19. A method call replaced by `void local;` is a call deletion
 when a `node:test` mock counts it (2026-10-22, #9496).** The pair
 `receiver.method(...);` (optionally awaited, one two-segment call) to
 `void local;` has no probe shape of its own and reads as an unrecognised
@@ -586,7 +586,7 @@ zero leave the line unrecognised. The receiver and method match by
 identifier name only (an alias of `sink` is not followed), and a lower
 bound such as `callCount() >= 1` is not a pin.
 
-**Rule 17. A plain substring regex in `assert.throws` / `assert.rejects`
+**Rule 20. A plain substring regex in `assert.throws` / `assert.rejects`
 pins the error only when the change separates it (2026-10-22, #9496).** A
 regex literal with no flags but `u` and no metacharacter or escape
 (`/down/`) reads `exact_error_variant` / strong at extraction and passes
@@ -1040,11 +1040,11 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7, 10, 11, 16 and 17 move a finding to a stronger class only for an
+- Rules 1, 7, 10, 11, 19 and 20 move a finding to a stronger class only for an
   awaited root (rule 1), an alias-rename local (rule 7; via
   RIPR-SPEC-0251, also a renamed default import), a literal
   chai or `node:assert` message check (rule 10), a counted removed call
-  (rule 16), a substring rejection regex the change separates (rule 17)
+  (rule 19), a substring rejection regex the change separates (rule 20)
   or an inline literal table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
@@ -1308,12 +1308,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
 40. `record` changed from `sink.write(line);` to `void line;` (corpus case
     `node-mock-method-call-removed`); the test binds `const write =
     mock.method(sink, "write", ...)` and asserts `write.mock.callCount()`
-    equals `1`: `exposed` (rule 16; today `weakly_exposed` with an
+    equals `1`: `exposed` (rule 19; today `weakly_exposed` with an
     unrecognised-shape discriminator). With a spy on `"flush"` instead, or a
     count of `0`: unchanged.
 41. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
     (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
-    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 17; today
+    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
@@ -1378,7 +1378,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
   evidence pointer of an expanded call. The corpus case
   `jest-mined-suite-factory` reads `credited`.
 - #9496: `crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs`
-  pins rules 10, 16 and 17 end to end (chai class and message, anchored
+  pins rules 10, 19 and 20 end to end (chai class and message, anchored
   `assert.match`, substring `rejects` regex, `void local;` call removal)
   with a discriminating negative each; `call_removal_guard.rs` and
   `error_payload_guard.rs` unit tests pin the readers. The corpus cases

@@ -224,6 +224,16 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
             if matches!(chars.get(end.wrapping_sub(1)), Some(')' | ']')) {
                 return true;
             }
+            // A generic call `fn<T>(...)`: `>` flush against the paren, not
+            // an arrow (`=>`, `->`), with a `<` before it.
+            if end == at
+                && end >= 2
+                && chars[end - 1] == '>'
+                && !matches!(chars[end - 2], '=' | '-')
+                && chars[..end - 1].contains(&'<')
+            {
+                return true;
+            }
             continue;
         }
         if word.contains('.') {
@@ -446,8 +456,12 @@ impl ErrorChangeFacts {
             new_primitive: new_split.is_some_and(|(_, throw)| rejects_primitive(throw)),
             old_forwarded: old_split.is_some_and(|(_, throw)| throws_forwarded_local(throw)),
             sole_throw_site: false,
-            old_builtin_class: old_split.and_then(|(_, throw)| builtin_class(throw)),
-            new_builtin_class: new_split.and_then(|(_, throw)| builtin_class(throw)),
+            old_builtin_class: old_split
+                .filter(|_| !old_ambiguous)
+                .and_then(|(_, throw)| builtin_class(throw)),
+            new_builtin_class: new_split
+                .filter(|_| !new_ambiguous)
+                .and_then(|(_, throw)| builtin_class(throw)),
         }
     }
 
@@ -1039,6 +1053,27 @@ mod tests {
         assert!(!sole_site(&with("await other();")));
         assert!(!sole_site(&with("fn().then(g);")));
         assert!(!sole_site(&with("fn().catch(g);")));
+        // A generic call is an outside call; an arrow `=>(` is not.
+        assert!(!sole_site(&with("other<T>(1);")));
+        assert!(sole_site(&with("const h = (a) =>(a);")));
+    }
+
+    #[test]
+    fn builtin_class_is_unread_when_a_line_has_two_throw_sites() {
+        let single = ErrorChangeFacts::read(
+            Some(r#"if (a) throw new RangeError("x");"#),
+            r#"if (a) throw new TypeError("x");"#,
+        );
+        assert_eq!(single.old_builtin_class.as_deref(), Some("RangeError"));
+        assert_eq!(single.new_builtin_class.as_deref(), Some("TypeError"));
+        // The first throw becomes TypeError, but a second site on the line
+        // can still throw the old class: neither side's class is read.
+        let double = ErrorChangeFacts::read(
+            Some(r#"if (a) throw new RangeError("x"); else throw new TypeError("y");"#),
+            r#"if (a) throw new TypeError("x"); else throw new TypeError("y");"#,
+        );
+        assert_eq!(double.old_builtin_class, None);
+        assert_eq!(double.new_builtin_class, None);
     }
 
     fn payload(kind: TypeScriptErrorPayloadKind, expected: &str) -> TypeScriptErrorPayload {

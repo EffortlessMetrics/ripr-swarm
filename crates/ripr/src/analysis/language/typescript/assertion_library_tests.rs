@@ -756,7 +756,7 @@ test("parse", async () => {
         OracleStrength::Strong,
         "assert.rejects(..., { message: \"charge must be positive\" })",
     );
-    // RIPR-SPEC-0243 rule 17: an unanchored regex of plain text is a
+    // RIPR-SPEC-0243 rule 20: an unanchored regex of plain text is a
     // substring test of `String(err)`; the change guard decides credit.
     assert_oracle(
         &assertions[2],
