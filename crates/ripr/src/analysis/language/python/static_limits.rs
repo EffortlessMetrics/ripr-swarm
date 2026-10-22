@@ -143,6 +143,26 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
         });
     }
+    if trimmed.chars().any(|ch| ch.is_ascii_digit())
+        && related_candidates_have_tolerance_band_limit(related_candidates, focus)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test compares through an `approx` tolerance band"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
+        });
+    }
+    if changed_logging_call_literal(trimmed).is_some_and(|literal| {
+        related_candidates_have_log_membership_limit(related_candidates, focus, literal)
+    }) {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test reads the changed log message through `caplog` membership"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads.".to_string(),
+        });
+    }
     if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
@@ -691,6 +711,117 @@ pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -
     let after = body_text[idx + len..].chars().next();
     before.is_none_or(|ch| !is_python_identifier_char(ch))
         && after.is_none_or(|ch| !is_python_identifier_char(ch))
+}
+
+/// Whether the strong assertion a row selects compares through
+/// `approx(expected, rel=, abs=)` (RIPR-SPEC-0238 rule 12): an explicit band
+/// may admit the old value, and the band is not evaluated. Bare
+/// `approx(expected)` keeps its default tolerance and keeps crediting.
+fn related_candidates_have_tolerance_band_limit(
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                .assertion()
+                .is_some_and(|assertion| {
+                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                        && approx_call_has_band(&assertion.gate_text)
+                })
+        })
+}
+
+fn approx_call_has_band(assertion: &str) -> bool {
+    [false, true]
+        .into_iter()
+        .flat_map(|attribute| {
+            super::no_behavior::call_arglists_with_offsets(assertion, "approx", attribute)
+        })
+        .any(|(_, arglist)| {
+            super::no_behavior::split_top_level_args(arglist)
+                .into_iter()
+                .map(str::trim)
+                .enumerate()
+                .any(|(index, argument)| {
+                    // A spread may supply the expected value and the band, so
+                    // it counts in any position, the first included.
+                    if argument.starts_with('*') {
+                        return true;
+                    }
+                    if index == 0 {
+                        return false;
+                    }
+                    if let Some((name, value)) = argument.split_once('=') {
+                        matches!(name.trim(), "rel" | "abs") && value.trim() != "None"
+                    } else {
+                        argument != "None"
+                    }
+                })
+        })
+}
+
+/// The first string literal of a changed logging call (`log.warning("..")`).
+fn changed_logging_call_literal(line: &str) -> Option<&str> {
+    const LEVELS: [&str; 7] = [
+        "debug",
+        "info",
+        "warning",
+        "warn",
+        "error",
+        "critical",
+        "exception",
+    ];
+    let call_start = line.find('(')?;
+    let callee = &line[..call_start];
+    let (_, level) = callee.rsplit_once('.')?;
+    if !LEVELS.contains(&level) {
+        return None;
+    }
+    let rest = &line[call_start + 1..];
+    let quote_at = rest.find(['"', '\''])?;
+    let quote = rest[quote_at..].chars().next()?;
+    let body = &rest[quote_at + 1..];
+    Some(&body[..body.find(quote)?])
+}
+
+/// Whether a related test's weak `<literal> in caplog.text` assertion names a word of the changed log message. A membership check
+/// against a `%`-formatted message is a runtime comparison this adapter does
+/// not evaluate, so the verdict abstains instead of reading a weak gap; an
+/// assertion about unrelated text keeps its gap.
+fn related_candidates_have_log_membership_limit(
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    changed_message: &str,
+) -> bool {
+    let words = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !ch.is_alphanumeric())
+            .filter(|word| word.chars().count() >= 3)
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let changed = words(changed_message);
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                .assertion()
+                .is_some_and(|assertion| {
+                    // Only the checked literal (left of the membership operator)
+                    // may overlap; `assert` and `caplog.text` are scaffolding.
+                    assertion
+                        .gate_text
+                        .split_once(" in caplog.text")
+                        .is_some_and(|(checked, _)| {
+                            let checked = checked.trim_start();
+                            let checked = checked.strip_prefix("assert").unwrap_or(checked);
+                            words(checked).iter().any(|word| changed.contains(word))
+                        })
+                })
+        })
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(

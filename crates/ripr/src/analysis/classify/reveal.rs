@@ -1994,9 +1994,17 @@ fn analyze_related_assertions(
         // #3731 review (F11): computed once per test — whether the test's
         // own file imports the owner callee's bare name from a FOREIGN
         // path, which makes every bare-scrutinee binding in it ambiguous.
+        // A `Display`/`Debug` `fmt` is never called by that bare name, so
+        // `use std::fmt;` rebinds nothing the dispatch pin reads.
+        let fmt_trait_owner = probe.owner.as_ref().is_some_and(|owner| {
+            matches!(
+                super::related_tests::impl_trait_name(&owner.0).as_deref(),
+                Some("Display" | "Debug")
+            ) && owner.0.ends_with("::fmt")
+        });
         let import_defeats_owner = match_context
             .owner_callee
-            .is_some_and(|callee| same_name_import_defeats(test, callee));
+            .is_some_and(|callee| !fmt_trait_owner && same_name_import_defeats(test, callee));
         // #3731 review (G1): computed once per test — whether the test's
         // own package defines a function with the owner callee's bare name
         // while the changed owner lives in ANOTHER package, which makes the

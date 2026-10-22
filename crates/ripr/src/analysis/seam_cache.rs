@@ -483,7 +483,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// and checked by a collect-and-compare test is withheld as
 /// `rust_caller_loop_selector_unresolved` (RIPR-SPEC-0240, #5503). Old entries
 /// keep the weak gap.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.92";
+/// `1.93`: a write-only `Display::fmt` pinned by an exact `to_string()`
+/// assertion is credited (RIPR-SPEC-0297, #9608). Old entries keep the weak gap.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.93";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -622,7 +624,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.92";
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
 /// `0.98`: same skip-guarded table rows as full `1.91`.
 /// `0.99`: same caller-loop selector limit as full `1.92`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
+/// `0.100`: same Display string pin as full `1.93`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.100";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -763,7 +766,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
 /// `0.98`: same skip-guarded table rows as full `1.91`.
 /// `0.99`: same caller-loop selector limit as full `1.92`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
+/// `0.100`: same Display string pin as full `1.93`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.100";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4722,7 +4726,8 @@ mod tests {
         // 1.89 -> 1.90: joined `tokio::spawn` assertions pin the owner (RIPR-SPEC-0197).
         // 1.90 -> 1.91: a literal skip list lends the rows its guard lets through (RIPR-SPEC-0229).
         // 1.91 -> 1.92: caller-loop selector limit (RIPR-SPEC-0240, #5503).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.92");
+        // 1.92 -> 1.93: write-only `Display::fmt` pinned by `to_string()` (RIPR-SPEC-0297, #9608).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.93");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4803,8 +4808,9 @@ mod tests {
         // 0.96 -> 0.97: same spawned-task assertion pins as full 1.90.
         // 0.97 -> 0.98: same skip-guarded table rows as full 1.91.
         // 0.98 -> 0.99: same caller-loop selector limit as full 1.92.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
+        // 0.99 -> 0.100: same Display string pin as full 1.93.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.100");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.100");
     }
 
     #[test]

@@ -121,6 +121,7 @@ mod ternary_arm_guard;
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
+mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
@@ -143,6 +144,7 @@ pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;

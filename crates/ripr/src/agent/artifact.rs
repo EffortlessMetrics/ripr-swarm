@@ -395,14 +395,27 @@ fn is_windows_console_form(command: &str) -> bool {
 fn running_executable() -> Option<String> {
     std::env::current_exe()
         .ok()
-        .and_then(|path| path.to_str().map(ToString::to_string))
+        .and_then(|path| existing_executable_path(&path))
+}
+
+/// The path as text only while it still names a file. Linux reports a binary
+/// replaced under a long-lived process (LSP, MCP) as `/path/ripr (deleted)`,
+/// which a recovery command must not name (#9665 item 1).
+fn existing_executable_path(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    path.to_str().map(ToString::to_string)
 }
 
 /// Rendered regeneration guidance shared by every refusal that tells the
 /// caller to regenerate a repo-exposure artifact (#9500): the legacy
 /// no-envelope diagnosis and the foreign-producer-version diagnosis.
 fn repo_exposure_regeneration_guidance(root: &Path) -> String {
-    let program = running_executable();
+    regeneration_guidance_for(root, running_executable())
+}
+
+fn regeneration_guidance_for(root: &Path, program: Option<String>) -> String {
     let bash_recovery = super::loop_commands::check_repo_exposure_command_with_program_and_base(
         program.as_deref().unwrap_or("ripr"),
         &super::loop_commands::bound_root(&root.to_string_lossy()),
@@ -1874,6 +1887,75 @@ mod tests {
         }
         if !error.contains(&crate::build_identity::version_line()) {
             return Err(format!("recovery omitted the executable identity: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_or_missing_executable_path_is_never_named_in_recovery() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        if existing_executable_path(&exe).is_none() {
+            return Err("the running test binary was not reported as an existing file".to_string());
+        }
+        let mut deleted = exe.clone().into_os_string();
+        deleted.push(" (deleted)");
+        let deleted = PathBuf::from(deleted);
+        if existing_executable_path(&deleted).is_some() {
+            return Err("a `(deleted)` executable path was accepted".to_string());
+        }
+        let guidance = regeneration_guidance_for(Path::new("."), None);
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "fallback is not bare `ripr` with the version check: {guidance}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The production path (`running_executable` into the regeneration
+    /// guidance) under the real Linux stimulus: a process whose executable was
+    /// unlinked reports `current_exe()` as `/path (deleted)` (#9665 item 1).
+    /// The test re-runs itself as a copied, self-unlinking child so the parent
+    /// binary stays intact; the child writes the guidance it rendered.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_running_executable_renders_bare_ripr_through_production_path() -> Result<(), String>
+    {
+        const CHILD_OUT: &str = "RIPR_TEST_UNLINKED_EXE_OUT";
+        if let Ok(out) = std::env::var(CHILD_OUT) {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
+            let guidance = repo_exposure_regeneration_guidance(Path::new("."));
+            return std::fs::write(out, guidance).map_err(|e| e.to_string());
+        }
+        let dir = std::env::temp_dir().join(format!("ripr-unlinked-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let copy = dir.join("ripr-lib-test-copy");
+        let out = dir.join("guidance.txt");
+        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &copy)
+            .map_err(|e| e.to_string())?;
+        let status = std::process::Command::new(&copy)
+            .args([
+                "--exact",
+                "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
+                "--test-threads=1",
+            ])
+            .env(CHILD_OUT, &out)
+            .status()
+            .map_err(|e| e.to_string())?;
+        let guidance = std::fs::read_to_string(&out).map_err(|e| format!("no child output: {e}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        if !status.success() {
+            return Err(format!("child test run failed: {status}"));
+        }
+        let guidance = guidance?;
+        if guidance.contains("(deleted)") {
+            return Err(format!("recovery names a deleted executable: {guidance}"));
+        }
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "no bare-ripr fallback with version check: {guidance}"
+            ));
         }
         Ok(())
     }
