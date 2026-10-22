@@ -4435,7 +4435,20 @@ mod tests {
             if !status.success() {
                 return Err(format!("icacls deny failed with {status}"));
             }
-            Ok(true)
+            // A successful icacls exit does not prove this process is denied
+            // (hosted runners were observed creating through the ACE), so
+            // establish the denial the same way as the Unix root check. A
+            // skipped oracle here is a known coverage hole: #9688.
+            if creation_is_denied(dir, windows_deny == "(WD)") {
+                return Ok(true);
+            }
+            restore_subdirectory_creation(dir)?;
+            // Visible with --nocapture only; a captured run still reports a
+            // plain pass, so this is not Windows evidence (#9688).
+            eprintln!(
+                "skipped: icacls {windows_deny} deny is not enforced for this process (#9688)"
+            );
+            Ok(false)
         }
         #[cfg(unix)]
         {
@@ -4444,19 +4457,37 @@ mod tests {
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("chmod deny dir: {error}"))?;
             // Root bypasses mode bits; detect that instead of faking a pass.
-            let scratch = dir.join(".ripr-doctor-deny-check");
-            match std::fs::create_dir(&scratch) {
-                Ok(()) => {
-                    let _ = std::fs::remove_dir(&scratch);
-                    Ok(false)
-                }
-                Err(_) => Ok(true),
-            }
+            Ok(creation_is_denied(dir, false))
         }
         #[cfg(not(any(windows, unix)))]
         {
             let _ = (dir, windows_deny);
             Ok(false)
+        }
+    }
+
+    /// Whether creating a scratch entry in `dir` actually fails for this
+    /// process: a file when `file` is set, otherwise a subdirectory. A
+    /// scratch entry that could be created is removed again.
+    #[cfg(any(windows, unix))]
+    fn creation_is_denied(dir: &Path, file: bool) -> bool {
+        let scratch = dir.join(".ripr-doctor-deny-check");
+        if file {
+            match std::fs::File::create(&scratch) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&scratch);
+                    false
+                }
+                Err(_) => true,
+            }
+        } else {
+            match std::fs::create_dir(&scratch) {
+                Ok(()) => {
+                    let _ = std::fs::remove_dir(&scratch);
+                    false
+                }
+                Err(_) => true,
+            }
         }
     }
 

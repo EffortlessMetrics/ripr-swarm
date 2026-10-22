@@ -1,3 +1,0 @@
-case = "shape-cast-truncation-mask"
-issue = 9444
-reason = "Cast truncation mask case (#9444)."

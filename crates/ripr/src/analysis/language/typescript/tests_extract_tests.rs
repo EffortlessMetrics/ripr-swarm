@@ -914,7 +914,7 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
 
-/// RIPR-SPEC-0243 rule 16 (#9497): a `node:test` callback that calls
+/// RIPR-SPEC-0243 rule 17 (#9497): a `node:test` callback that calls
 /// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
 /// have gone, so it registers no discriminator. Negative: the same body
 /// without the call, a `skip` on another receiver, and a callback with no
@@ -986,7 +986,7 @@ test("real skip", (t) => {
     assert_eq!(names, ["comment", "string", "parent"], "{tests:?}");
 }
 
-/// Rule 16 is textual by contract: only the `t.skip(` / `t.todo(` spelling
+/// Rule 17 is textual by contract: only the `t.skip(` / `t.todo(` spelling
 /// withdraws a test. Computed (`t["skip"]`) and optional-chained (`t?.skip()`)
 /// calls are not matched; changing that must be a deliberate, AST-precise edit.
 #[test]

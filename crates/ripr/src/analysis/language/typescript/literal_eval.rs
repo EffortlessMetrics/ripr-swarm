@@ -1,5 +1,5 @@
 //! Literal-input evaluation of a changed `return` expression (RIPR-SPEC-0243
-//! rule 17).
+//! rule 18).
 //!
 //! A strong exact assertion on an owner call only discriminates a changed
 //! `return` expression when the call's inputs make the old and new
