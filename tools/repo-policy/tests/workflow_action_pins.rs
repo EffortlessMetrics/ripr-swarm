@@ -278,7 +278,14 @@ fn verify(text: &str, pin: &Pin) -> Result<usize, String> {
         }
         count += 1;
         if let Some(input) = input
-            && !step.lines().any(|line| line.trim() == *input)
+            && !step
+                .split_once("\n        with:\n")
+                .is_some_and(|(_, inputs)| {
+                    inputs
+                        .lines()
+                        .take_while(|line| line.trim().is_empty() || line.starts_with("          "))
+                        .any(|line| line.strip_prefix("          ") == Some(*input))
+                })
         {
             return Err(format!("{header} lost its step-local {input}"));
         }
@@ -320,6 +327,32 @@ fn pin_contract_rejects_missing_wrong_or_neighboring_inputs() -> Result<(), Stri
     }
     let wrong_revision = text.replace(pin.3, "0000000000000000000000000000000000000000");
     assert_eq!(verify(&wrong_revision, pin)?, 0);
+    Ok(())
+}
+
+#[test]
+fn pin_contract_rejects_inputs_in_other_step_mappings() -> Result<(), String> {
+    for action in ["dtolnay/rust-toolchain", "taiki-e/install-action"] {
+        let pin = PINS
+            .iter()
+            .find(|pin| pin.1 == action && pin.4.is_some())
+            .ok_or("missing input decoy control")?;
+        let input = pin.4.ok_or("expected explicit input")?;
+        let (key, _) = input.split_once(':').ok_or("expected input key")?;
+        for decoy in [
+            format!("        env:\n          {input}\n"),
+            format!("        env:\n          DECOY: |\n            {input}\n"),
+        ] {
+            let text = format!(
+                "steps:\n      - uses: {}@{} # {}\n        with:\n          {key}: wrong\n{decoy}",
+                pin.1, pin.3, pin.2
+            );
+            assert!(
+                verify(&text, pin).is_err(),
+                "{action} credited an input outside with: {decoy}"
+            );
+        }
+    }
     Ok(())
 }
 
