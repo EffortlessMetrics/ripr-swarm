@@ -20,8 +20,9 @@ import {
   terminateProbeProcessTree
 } from './lspCompatibility';
 
-// The first run of a never-executed ripr.exe on a Windows runner exceeded 10s
-// (Defender scan of a fresh binary) and failed activation in #9526.
+// The Windows probe timed out at 10s on a cold runner and failed activation in
+// #9526. Where that time goes (PowerShell start, the Add-Type compile, or the
+// server itself) is not measured yet; #9631 tracks it.
 const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 
 /**
