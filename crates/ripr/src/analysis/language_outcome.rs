@@ -52,9 +52,9 @@ impl LanguageOutcomeStatus {
     }
 }
 
-/// Facts the producer actually measured. `None` is "not measured". No named
-/// bound is recorded until a producer reports one as typed metadata; a
-/// disclosure string is not evidence that a bound fired.
+/// Facts the producer actually measured. `None` is "not measured". Named
+/// bounds come only from the producer's typed `files.first_cap_fired`; a
+/// disclosure string is never parsed and is not evidence that a bound fired.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LanguageResourceObservations {
     pub(crate) files_skipped: Option<usize>,

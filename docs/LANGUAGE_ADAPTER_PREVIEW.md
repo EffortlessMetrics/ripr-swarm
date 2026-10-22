@@ -270,6 +270,13 @@ analysis. Repo-mode analysis differs per adapter:
   `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
   `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
   partial reason. Declared `handwritten_files` are admitted as in diff mode.
+  Alongside the disclosure string, each repo-mode run reports typed per-language
+  file accounting (#6466: discovered, selected, skipped, omitted, and the first
+  fired cap) into the internal language outcome. Two caps are named with their
+  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript walk entries) and
+  `RIPR_MAX_REPO_INDEX_FILES` (selection, TypeScript and Python). Counts that
+  would only be lower bounds after truncated or unreadable discovery are
+  unknown, never zero; this does not change the public `LanguageRun` wire.
   No support-tier, gate or baseline promotion.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,

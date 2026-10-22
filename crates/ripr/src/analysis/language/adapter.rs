@@ -71,9 +71,27 @@ pub(crate) struct RepoCapFired {
 }
 
 /// Typed repo-mode file accounting reported by the producer (#6466). Every
-/// field is `None` when the producer did not measure it; unknown is never
-/// zero. When discovered, selected, skipped and omitted are all known:
+/// field is `None` when the producer did not measure it or only has a lower
+/// bound (incomplete discovery); unknown is never zero. When discovered,
+/// selected, skipped and omitted are all known:
 /// `discovered == selected + skipped + omitted`.
+///
+/// Meaning is producer-specific:
+/// - TypeScript: `selected` is production files up to the working-set limit
+///   PLUS every test file (evidence is not capped by that limit); `skipped`
+///   is type declaration files only; `omitted` is production files beyond the
+///   limit. The walk cap (`RIPR_TS_MAX_WORKSPACE_FILES`) counts directory
+///   entry visits, not files, so it can fire before many files are seen.
+/// - Python: `selected` is production plus evidence files under one combined
+///   cap, production taking priority; `skipped` is files excluded by role
+///   (vendor, generated, environment); `omitted` is eligible files beyond the
+///   cap. There is no walk cap.
+///
+/// `files.skipped` is distinct from the older `files_skipped` observation
+/// (`LanguageRepoResult::skipped_files`): that is a compatibility count whose
+/// meaning is producer-specific (TypeScript: capped production files plus
+/// diff skips; Python: evidence-stage skips) and feeds the public
+/// `LanguageRun` reasons. It is not a role/kind exclusion count.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RepoFileAccounting {
     /// Adapter-routed files seen. `None` when discovery was incomplete, so no

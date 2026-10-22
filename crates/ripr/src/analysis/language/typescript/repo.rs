@@ -133,7 +133,8 @@ pub(super) struct RepoSelection {
 
 /// Typed accounting for one selection (#6466). An unreadable root measured
 /// nothing, so every count stays unknown. A truncated walk saw an unknown
-/// total, so `discovered` is unknown while the partition counts stay exact.
+/// total, so `discovered`, `skipped` and `omitted` (lower bounds only) are
+/// unknown while `selected` stays exact.
 /// Declaration files are the only non-cap exclusion; tests are evidence and
 /// are selected. The walk cap precedes the working-set cap, so it is the
 /// first limiting stage when both fired.
@@ -161,8 +162,10 @@ fn file_accounting(input: &RepoInput, limit: usize, walk_limit: usize) -> RepoFi
     RepoFileAccounting {
         discovered: (!input.discovery_truncated).then_some(discovered),
         selected: Some(selected),
-        skipped: Some(input.declarations),
-        omitted: Some(input.capped),
+        // A truncated walk never saw the rest of the workspace, so the
+        // declaration and cap counts are only lower bounds there.
+        skipped: (!input.discovery_truncated).then_some(input.declarations),
+        omitted: (!input.discovery_truncated).then_some(input.capped),
         first_cap_fired,
     }
 }

@@ -8124,3 +8124,102 @@ fn analyze_repo_reports_typed_file_accounting_for_a_capped_run() -> Result<(), S
     assert_eq!(accounting.first_cap_fired, None);
     Ok(())
 }
+
+/// #6466: at exactly the limit nothing is omitted; one past it omits one.
+#[test]
+fn analyze_repo_accounting_boundary_at_the_working_set_limit() -> Result<(), String> {
+    let limit = 3;
+    for (count, omitted) in [(limit - 1, 0), (limit, 0), (limit + 1, 1)] {
+        let root = unique_repo_test_root("accounting-boundary");
+        for index in 0..count {
+            write_repo_file(
+                &root.join(format!("m{index}.py")),
+                "def run():\n    return 1\n",
+            )?;
+        }
+        let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(limit));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        let accounting = result?.file_accounting;
+        assert_eq!(accounting.discovered, Some(count), "count {count}");
+        assert_eq!(accounting.selected, Some(count.min(limit)), "count {count}");
+        assert_eq!(accounting.omitted, Some(omitted), "count {count}");
+        assert_eq!(
+            accounting.first_cap_fired.is_some(),
+            omitted > 0,
+            "count {count}"
+        );
+    }
+    Ok(())
+}
+
+/// #6466: evidence (test) files share the combined cap; production wins.
+#[test]
+fn analyze_repo_accounting_counts_evidence_files_in_the_combined_cap() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-evidence");
+    for name in ["a.py", "b.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    for name in ["test_a.py", "test_b.py"] {
+        write_repo_file(
+            &root.join("tests").join(name),
+            "def test_run():\n    assert True\n",
+        )?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(3));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let accounting = result.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3), "two production plus one test");
+    assert_eq!(accounting.omitted, Some(1), "one test file beyond the cap");
+    assert_eq!(accounting.skipped, Some(0));
+    assert_eq!(result.production_files, 2);
+    Ok(())
+}
+
+/// #6466: unreadable subtrees make skipped and omitted lower bounds, so they
+/// are unknown, while the exact selected count survives.
+#[test]
+fn accounting_with_unreadable_subtrees_leaves_lower_bounds_unknown() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-unreadable");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+    let mut input = repo::select_repo_input_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let complete = repo::file_accounting(&input);
+    assert_eq!(complete.skipped, Some(1));
+    assert_eq!(complete.omitted, Some(1));
+
+    input.counts.unreadable_subtrees = 1;
+    let accounting = repo::file_accounting(&input);
+    assert_eq!(accounting.discovered, None);
+    assert_eq!(accounting.skipped, None);
+    assert_eq!(accounting.omitted, None);
+    assert_eq!(accounting.selected, Some(2));
+    assert!(accounting.first_cap_fired.is_some(), "cap still fired");
+    Ok(())
+}
+
+/// #6466: a real Python `analyze_repo` result flows into the outcome verbatim.
+#[test]
+fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), String> {
+    use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+    let root = unique_repo_test_root("accounting-outcome");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let outcome = LanguageAnalysisOutcomeV1::from_repo_result(
+        crate::domain::LanguageId::Python,
+        &result,
+        None,
+    );
+    assert_eq!(outcome.resources.files, result.file_accounting);
+    assert_eq!(outcome.resources.files.omitted, Some(1));
+    Ok(())
+}
