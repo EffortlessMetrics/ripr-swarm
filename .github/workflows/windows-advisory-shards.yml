@@ -62,11 +62,14 @@ jobs:
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.
+      # `timeout` ends a run nextest cannot: shard 4 of run 39843731107 hit the
+      # 60-minute job cap with no log. Exit 124 is recorded like any other status,
+      # and the SLOW rows already in the log name the stuck tests.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 50
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
+          mkdir -p target; set +e; timeout -k 30 2640 cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
 
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
