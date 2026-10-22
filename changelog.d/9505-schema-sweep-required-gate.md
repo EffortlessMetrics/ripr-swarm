@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The required Rust gate (`rust-gates.yml`, reached through the merge-ready `Ripr Rust Small Result`) now runs `cargo xtask schema-producer-sweep` on the candidate, feeding the runtime-only `doctor`, `pr-evidence` and `review-comments` rows with the producer bytes that run just wrote, so producer drift from a published schema fails the gate instead of waiting for the release checklist. `repair-attempt` and `execution_result` remain unrun on the candidate (they need an agent repair transaction) and are documented as such (#9505).
