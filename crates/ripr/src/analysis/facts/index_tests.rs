@@ -602,51 +602,208 @@ fn unresolved_property_macros_survive_file_view_wire_and_owned_round_trip() -> R
     Ok(())
 }
 
+#[test]
+fn finalization_observes_deadline_while_releasing_build_slack() -> Result<(), String> {
+    use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    let path = PathBuf::from("tests/surviving.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, "#[test]\nfn surviving() {}\n")?;
+    let mut candidate = RustIndex::default();
+    candidate.insert_file(path.clone(), facts, true);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let started = Instant::now();
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_millis(1),
+        Arc::new(move || {
+            // Stay inside the budget through the checkpoint that follows the
+            // membership refresh, then expire at the first checkpoint of the
+            // slack pass.
+            if clock_calls.fetch_add(1, Ordering::SeqCst) < 12 {
+                started
+            } else {
+                started + Duration::from_millis(1)
+            }
+        }),
+    );
+    let result = with_token(&token, || candidate.finalize());
+    assert_eq!(
+        result.err().as_deref(),
+        Some("analysis cancelled: DeadlineExceeded")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 13);
+    Ok(())
+}
+
+/// Total unused capacity in every buffer `release_build_slack` shrinks.
 fn spare_capacity(index: &RustIndex) -> usize {
-    let mut spare = index.function_facts.records.capacity() - index.function_facts.len();
-    spare += index.test_facts.records.capacity() - index.test_facts.len();
+    fn spare<T>(items: &Vec<T>) -> usize {
+        items.capacity() - items.len()
+    }
+    fn spare_str(text: &String) -> usize {
+        text.capacity() - text.len()
+    }
+    let mut total = spare(&index.function_order)
+        + spare(&index.test_order)
+        + spare(&index.function_positions)
+        + spare(&index.test_positions)
+        + spare(&index.function_facts.records)
+        + spare(&index.test_facts.records);
     for fact in index.function_facts.iter() {
-        spare += fact.calls.capacity() - fact.calls.len();
-        spare += fact.returns.capacity() - fact.returns.len();
-        spare += fact.literals.capacity() - fact.literals.len();
-        spare += fact.let_bindings.capacity() - fact.let_bindings.len();
-        spare += fact.name.capacity() - fact.name.len();
-        for call in &fact.calls {
-            spare += call.name.capacity() - call.name.len();
-        }
+        total += spare_str(&fact.name)
+            + spare(&fact.calls)
+            + spare(&fact.returns)
+            + spare(&fact.literals)
+            + spare(&fact.attrs)
+            + spare(&fact.impl_attrs)
+            + spare(&fact.nested_fn_names)
+            + spare(&fact.let_bindings);
+        total += fact
+            .calls
+            .iter()
+            .map(|call| spare_str(&call.name))
+            .sum::<usize>();
+        total += fact
+            .returns
+            .iter()
+            .map(|ret| spare_str(&ret.text))
+            .sum::<usize>();
+        total += fact
+            .literals
+            .iter()
+            .map(|lit| spare_str(&lit.value))
+            .sum::<usize>();
+        total += fact
+            .attrs
+            .iter()
+            .chain(&fact.impl_attrs)
+            .map(spare_str)
+            .sum::<usize>();
+        total += fact.nested_fn_names.iter().map(spare_str).sum::<usize>();
+        total += fact
+            .let_bindings
+            .iter()
+            .map(|b| spare_str(&b.name))
+            .sum::<usize>();
     }
     for fact in index.test_facts.iter() {
-        spare += fact.calls.capacity() - fact.calls.len();
-        spare += fact.assertions.capacity() - fact.assertions.len();
-        spare += fact.literals.capacity() - fact.literals.len();
-        spare += fact.let_bindings.capacity() - fact.let_bindings.len();
-        for assertion in &fact.assertions {
-            spare += assertion.text.capacity() - assertion.text.len();
-        }
+        total += spare_str(&fact.name)
+            + spare(&fact.calls)
+            + spare(&fact.assertions)
+            + spare(&fact.literals)
+            + spare(&fact.attrs)
+            + spare(&fact.nested_fn_names)
+            + spare(&fact.let_bindings);
+        total += fact
+            .calls
+            .iter()
+            .map(|call| spare_str(&call.name))
+            .sum::<usize>();
+        total += fact
+            .assertions
+            .iter()
+            .map(|a| {
+                spare_str(&a.text)
+                    + spare(&a.observed_tokens)
+                    + a.observed_tokens.iter().map(spare_str).sum::<usize>()
+            })
+            .sum::<usize>();
+        total += fact
+            .literals
+            .iter()
+            .map(|lit| spare_str(&lit.value))
+            .sum::<usize>();
+        total += fact.attrs.iter().map(spare_str).sum::<usize>();
+        total += fact.nested_fn_names.iter().map(spare_str).sum::<usize>();
+        total += fact
+            .let_bindings
+            .iter()
+            .map(|b| spare_str(&b.name))
+            .sum::<usize>();
     }
     for file in index.files.values() {
-        spare += file.data.probe_shapes.capacity() - file.data.probe_shapes.len();
-        spare += file.data.returns.capacity() - file.data.returns.len();
-        spare += file.data.literals.capacity() - file.data.literals.len();
-        spare += file.functions.capacity() - file.functions.len();
-        spare += file.tests.capacity() - file.tests.len();
+        total += spare(&file.functions)
+            + spare(&file.tests)
+            + spare(&file.data.returns)
+            + spare(&file.data.literals)
+            + spare(&file.data.probe_shapes)
+            + spare(&file.data.module_declarations)
+            + spare(&file.data.unresolved_property_macros)
+            + spare(&file.data.role_provenance.edges);
+        total += file
+            .data
+            .returns
+            .iter()
+            .map(|ret| spare_str(&ret.text))
+            .sum::<usize>();
+        total += file
+            .data
+            .literals
+            .iter()
+            .map(|lit| spare_str(&lit.value))
+            .sum::<usize>();
+        total += file
+            .data
+            .role_provenance
+            .edges
+            .iter()
+            .map(|edge| spare_str(&edge.declaration))
+            .sum::<usize>();
     }
-    spare
+    total
 }
 
 #[test]
 fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<(), String> {
     let mut facts = large_file()?;
-    // Producers push facts one at a time; model that growth pattern.
-    let mut grown = Vec::new();
-    for call in facts.tests[0].calls.clone() {
-        grown.push(call);
+    // Producers push facts one at a time and leave spare room on every
+    // buffer; reserve extra on each shrunk field so deleting any one of the
+    // shrink calls leaves a counted slot behind.
+    let function = facts.functions.first_mut().ok_or("missing function")?;
+    function.name.reserve_exact(8);
+    function.calls.reserve_exact(8);
+    function.returns.reserve_exact(8);
+    function.literals.reserve_exact(8);
+    function.attrs.reserve_exact(8);
+    function.impl_attrs.reserve_exact(8);
+    function.nested_fn_names.reserve_exact(8);
+    function.let_bindings.reserve_exact(8);
+    for call in &mut function.calls {
+        call.name.reserve_exact(8);
     }
-    facts.tests[0].calls = grown;
-    facts.tests[0].assertions.reserve_exact(64);
-    facts.tests[0].calls.reserve_exact(64);
-    facts.probe_shapes.reserve_exact(64);
-    facts.tests[0].name.reserve_exact(64);
+    let test = facts.tests.first_mut().ok_or("missing test")?;
+    test.name.reserve_exact(8);
+    test.calls.reserve_exact(8);
+    test.assertions.reserve_exact(8);
+    test.literals.reserve_exact(8);
+    test.attrs.reserve_exact(8);
+    test.nested_fn_names.reserve_exact(8);
+    test.let_bindings.reserve_exact(8);
+    for call in &mut test.calls {
+        call.name.reserve_exact(8);
+    }
+    for assertion in &mut test.assertions {
+        assertion.text.reserve_exact(8);
+        assertion.observed_tokens.reserve_exact(8);
+    }
+    for literal in &mut test.literals {
+        literal.value.reserve_exact(8);
+    }
+    for binding in &mut test.let_bindings {
+        binding.name.reserve_exact(8);
+    }
+    facts.returns.reserve_exact(8);
+    facts.literals.reserve_exact(8);
+    facts.probe_shapes.reserve_exact(8);
+    facts.module_declarations.reserve_exact(8);
+    facts.unresolved_property_macros.reserve_exact(8);
     let mut index = RustIndex::default();
     let path = PathBuf::from("tests/large.rs");
     index.insert_file(path.clone(), facts, true);

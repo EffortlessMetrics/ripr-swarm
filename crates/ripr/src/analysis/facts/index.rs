@@ -451,6 +451,8 @@ impl serde::Serialize for IndexFiles<'_> {
     }
 }
 
+const SLACK_CHECKPOINT_STRIDE: usize = 4096;
+
 impl RustIndex {
     /// Crate names whose glob imports the trusted-macro scan treats as
     /// workspace-owned: `macro_owned_crates` when the build computed it,
@@ -660,15 +662,25 @@ impl RustIndex {
         crate::analysis::cancellation::checkpoint()?;
         self.refresh_memberships()?;
         crate::analysis::cancellation::checkpoint()?;
-        self.release_build_slack();
-        Ok(())
+        self.release_build_slack()?;
+        crate::analysis::cancellation::checkpoint()
     }
     /// The parse producers push facts one at a time, so every growable
     /// buffer ends up with spare capacity: about a quarter of a cold
     /// workspace index. A finished index never grows, so give the spare back.
-    fn release_build_slack(&mut self) {
+    ///
+    /// Cancellation is checked every [`SLACK_CHECKPOINT_STRIDE`] facts, so a
+    /// superseded analysis stops within a bounded slice of the pass.
+    fn release_build_slack(&mut self) -> Result<(), String> {
+        self.function_order.shrink_to_fit();
+        self.test_order.shrink_to_fit();
+        self.function_positions.shrink_to_fit();
+        self.test_positions.shrink_to_fit();
         self.function_facts.records.shrink_to_fit();
-        for fact in self.function_facts.iter_mut() {
+        for (visited, fact) in self.function_facts.iter_mut().enumerate() {
+            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
             fact.name.shrink_to_fit();
             fact.calls.shrink_to_fit();
             fact.returns.shrink_to_fit();
@@ -697,7 +709,10 @@ impl RustIndex {
             }
         }
         self.test_facts.records.shrink_to_fit();
-        for fact in self.test_facts.iter_mut() {
+        for (visited, fact) in self.test_facts.iter_mut().enumerate() {
+            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
             fact.name.shrink_to_fit();
             fact.calls.shrink_to_fit();
             fact.assertions.shrink_to_fit();
@@ -728,7 +743,10 @@ impl RustIndex {
                 binding.name.shrink_to_fit();
             }
         }
-        for file in self.files.values_mut() {
+        for (visited, file) in self.files.values_mut().enumerate() {
+            if visited % SLACK_CHECKPOINT_STRIDE == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
             file.functions.shrink_to_fit();
             file.tests.shrink_to_fit();
             file.data.returns.shrink_to_fit();
@@ -742,7 +760,12 @@ impl RustIndex {
             }
             file.data.module_declarations.shrink_to_fit();
             file.data.unresolved_property_macros.shrink_to_fit();
+            file.data.role_provenance.edges.shrink_to_fit();
+            for edge in &mut file.data.role_provenance.edges {
+                edge.declaration.shrink_to_fit();
+            }
         }
+        Ok(())
     }
     pub(super) fn validate_memberships(&self) -> Result<(), String> {
         validate(
