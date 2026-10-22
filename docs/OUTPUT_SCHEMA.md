@@ -942,7 +942,7 @@ The same envelope covers the other `--json` commands (#7331): `ripr diff
 agent brief --json`, and `ripr agent packet --json` write this document for
 every post-argv-parse failure, keyed with the refusing command's own
 `schema_version` (`"0.1"` for diff and agent brief, `"ripr-targeted-rerun-v1"`
-for rerun, `"1.0"` for context, `"0.5"` for agent packet). `mode` appears only
+for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
 brief echoes the caller-supplied `--base` when its working set selected one.
