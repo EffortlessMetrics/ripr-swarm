@@ -801,6 +801,29 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
+      # #9498: native-Windows proof for the VS Code managed-server install lock
+      # (#9304/#9448). The suite imports no `vscode` module, so it runs under
+      # plain mocha on Node, not the VS Code test host. Same advisory contract
+      # as the other members: the mocha outcome becomes a verdict, a missing
+      # log/status or a run that executed zero tests fails the job.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Compile VS Code extension tests (#9498)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          npm ci && npx tsc -p ./
+
+      - name: Run VS Code managed-server install lock suite (advisory, #9498)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
+
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1275,7 +1298,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
+            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-vscode-install-lock subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1297,7 +1320,7 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-vscode-install-lock; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
@@ -1310,6 +1333,10 @@ jobs:
               fi
             fi
           done
+          # mocha prints `N passing`; a run that executed zero tests is not proof (#9498).
+          if [ "$(cat target/subset-vscode-install-lock.status)" = "0" ]; then
+            grep -Eq '^ +[1-9][0-9]* passing' target/subset-vscode-install-lock.log || { echo "subset-vscode-install-lock: mocha exited 0 but reported no passing test" >&2; exit 1; }
+          fi
 
       - name: Require selector consumer receipt, log and native status
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1369,6 +1396,8 @@ jobs:
             target/subset-cache-warning.status
             target/subset-clippy.log
             target/subset-clippy.status
+            target/subset-vscode-install-lock.log
+            target/subset-vscode-install-lock.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status
