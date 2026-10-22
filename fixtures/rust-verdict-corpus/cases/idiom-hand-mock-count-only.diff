@@ -1,0 +1,12 @@
+diff --git a/src/mocks.rs b/src/mocks.rs
+--- a/src/mocks.rs
++++ b/src/mocks.rs
+@@ -15,7 +15,7 @@
+ pub fn report_total(sink: &mut dyn Sink, items: &[u32]) {
+     let total: u32 = items.iter().sum();
+     sink.send(format!("total={}", total));
+-    if total > 100 {
++    if 100 < total {
+         sink.send("over budget".to_string());
+     }
+ }

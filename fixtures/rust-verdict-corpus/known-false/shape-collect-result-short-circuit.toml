@@ -1,0 +1,3 @@
+case = "shape-collect-result-short-circuit"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."

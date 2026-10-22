@@ -1,0 +1,3 @@
+case = "pw-tothrow-anchored-regex"
+issue = 9434
+reason = "Anchored regex in toThrow read as no oracle (#9434)."
