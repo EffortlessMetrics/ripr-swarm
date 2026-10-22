@@ -209,8 +209,11 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 - A `.git` directory nested in a larger repository (a vendored clone) cannot
   be told from the repository top, so it ends the walk and a config above it
   is not read. A worktree `gitdir:` pointer and a `.git` file with no
-  readable pointer end the walk the same way; only a submodule pointer is
-  skipped.
+  readable pointer end the walk the same way; only a submodule pointer (a
+  `gitdir:` target with a `modules` path component) is skipped. A submodule
+  may itself be named `worktrees`, and a worktree of a submodule cannot be told
+  from a nested submodule path, so any `modules` target reads as a submodule:
+  the walk then reads more configs, which can only withhold credit.
 - The analysis root itself may be a symlink (it is the user's own checkout
   path and is canonicalized), but every directory below it, and the
   `__snapshots__` directory, must not be; the asymmetry is deliberate.

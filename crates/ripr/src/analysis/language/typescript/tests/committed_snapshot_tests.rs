@@ -1240,6 +1240,55 @@ fn submodule_git_file_does_not_end_the_walk() -> Result<(), String> {
     Ok(())
 }
 
+/// A submodule whose path is `packages/worktrees` has a `.git/modules/worktrees`
+/// gitdir; it is not a worktree, so the superproject's `snapshotResolver`
+/// still applies.
+#[test]
+fn submodule_named_worktrees_still_reads_the_superproject() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-submodule-worktrees", Some(".git/HEAD"))?;
+    let written = ts_write_file(
+        &package_root.join(".git"),
+        "gitdir: ../../.git/modules/worktrees\n",
+    )
+    .and_then(|()| ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG));
+    let got = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    assert_eq!(got, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+/// Whitespace inside computed keys and bracket member assignments does not
+/// hide a delegating or rewriting config key.
+#[test]
+fn spaced_bracket_keys_are_still_seen() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (label, config, text) in [
+        (
+            "snap-spaced-projects",
+            "jest.config.js",
+            "module.exports = { [ \"projects\" ]: [\"./nested.config.js\"] };",
+        ),
+        (
+            "snap-spaced-update",
+            "vitest.config.js",
+            "const config = {}; config[ \"update\" ] = true; module.exports = config;",
+        ),
+        (
+            "snap-spaced-dot",
+            "vitest.config.js",
+            "const config = {}; config .update = true; module.exports = config;",
+        ),
+    ] {
+        assert_eq!(
+            strengths(label, PRICE_TEST, &[(SNAP_PATH, &jest), (config, text)])?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
 /// Only a regular `.git` file whose `gitdir:` target is a submodule's module
 /// directory is skipped; every other pointer, and an unreadable one, ends the
 /// walk at the analysis root.
@@ -1254,10 +1303,17 @@ fn only_a_submodule_pointer_is_not_a_boundary() -> Result<(), String> {
             "gitdir: ../modules-dir/app\n",
             true,
         ),
+        // Indistinguishable from a submodule at the path `app/worktrees/w`;
+        // reading as a submodule only withholds credit, never adds it.
         (
-            "snap-ptr-worktree-of-submodule",
+            "snap-ptr-modules-app-worktrees-w",
             "gitdir: ../.git/modules/app/worktrees/w\n",
-            true,
+            false,
+        ),
+        (
+            "snap-ptr-submodule-named-worktrees",
+            "gitdir: ../../.git/modules/worktrees\n",
+            false,
         ),
         (
             "snap-ptr-submodule",

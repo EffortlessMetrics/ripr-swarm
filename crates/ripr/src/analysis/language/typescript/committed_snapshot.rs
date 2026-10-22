@@ -318,11 +318,12 @@ fn mentions_named_key(text: &str, key: &str) -> bool {
             Some(after) if quoted => (true, after.trim_start()),
             _ => (false, trimmed),
         };
-        let member = before.ends_with('.')
-            || (closed
-                && ["[\"", "['", "[`"]
-                    .iter()
-                    .any(|open| before.ends_with(open)));
+        // Whitespace may separate the opening bracket from the quote
+        // (`config[ "key" ]`) and a member dot from its receiver.
+        let bracket_open = before
+            .strip_suffix(['"', '\'', '`'])
+            .is_some_and(|opener| opener.trim_end().ends_with('['));
+        let member = before.trim_end().ends_with('.') || (closed && bracket_open);
         after.starts_with(':')
             || (!closed && after.starts_with([',', '}']))
             || (member && after.starts_with('=') && !after.starts_with("=="))
@@ -516,7 +517,13 @@ fn is_submodule_pointer(marker: &Path) -> bool {
     };
     let target = target.trim();
     let mut components = target.split(['/', '\\']).filter(|part| !part.is_empty());
-    components.any(|part| part == "modules") && !target.contains("worktrees")
+    // A `worktrees` component is not evidence of a worktree here: Git names a
+    // submodule's directory after its path, so `.git/modules/worktrees` is a
+    // legitimate submodule. A target with a `modules` component always reads as
+    // a submodule, which keeps the walk going to the superproject; the
+    // ambiguous worktree-of-a-submodule spelling errs the same way, since
+    // reading more configs can only withhold credit.
+    components.any(|part| part == "modules")
 }
 
 /// The runner configs and `package.json` files in the test's directory and
