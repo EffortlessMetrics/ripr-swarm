@@ -57,10 +57,6 @@ fn partial_reason_is_never_complete_zero_and_projects_to_the_exact_compat_run() 
             reason: Some("typescript_repo_capped: 800".to_string()),
         })
     );
-    assert_eq!(
-        outcome.resources.bound_fired.as_deref(),
-        Some("partial_reason")
-    );
 }
 
 #[test]
@@ -105,7 +101,6 @@ fn resources_record_only_measured_producer_facts() {
     );
     assert_eq!(outcome.resources.files_skipped, Some(1));
     assert_eq!(outcome.resources.production_files, Some(3));
-    assert_eq!(outcome.resources.bound_fired, None);
 }
 
 #[test]
@@ -152,7 +147,6 @@ fn digest_tracks_semantics_but_not_resource_telemetry_or_limitation_order() {
         LanguageResourceObservations {
             files_skipped: Some(9),
             production_files: Some(9),
-            bound_fired: Some("x".to_string()),
         },
         &["b", "a"],
     );

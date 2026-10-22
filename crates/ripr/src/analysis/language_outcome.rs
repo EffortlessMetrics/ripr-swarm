@@ -52,13 +52,13 @@ impl LanguageOutcomeStatus {
     }
 }
 
-/// Facts the producer actually measured. `None` is "not measured".
+/// Facts the producer actually measured. `None` is "not measured". No named
+/// bound is recorded until a producer reports one as typed metadata; a
+/// disclosure string is not evidence that a bound fired.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LanguageResourceObservations {
     pub(crate) files_skipped: Option<usize>,
     pub(crate) production_files: Option<usize>,
-    /// Human-readable name of the bound that fired, when one did.
-    pub(crate) bound_fired: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,7 +97,6 @@ impl LanguageAnalysisOutcomeV1 {
         let resources = LanguageResourceObservations {
             files_skipped: Some(result.skipped_files),
             production_files: Some(result.production_files),
-            bound_fired: (!limitations.is_empty()).then(|| "partial_reason".to_string()),
         };
         Self::new(
             language,
@@ -150,7 +149,8 @@ impl LanguageAnalysisOutcomeV1 {
         })
     }
 
-    /// Order-independent digest of the semantic fields. Resource observations
+    /// Digest of the aggregate per-language state (status, per-language finding
+    /// counts, limitations); it is not a snapshot or finding identity. Order-independent over limitations. Resource observations
     /// are included only through the counts that define identity, so telemetry
     /// alone cannot change finding identity.
     fn compute_digest(&self) -> String {
