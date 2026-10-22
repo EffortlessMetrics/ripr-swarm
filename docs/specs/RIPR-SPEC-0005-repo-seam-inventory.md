@@ -119,20 +119,19 @@ an additional conservative invalidator; parser file facts remain oracle-policy-i
 A helper-name graph proposes a route; it does not establish an inherent
 method's receiver identity. High helper credit requires a bounded executable
 same-file chain whose last hop passes the direct owner's receiver, module/type
-shadow and assertion-binding refusals. An inherent wrapper entry also requires
-its own receiver identity. Declaration spellings, including split-line function
-headers, do not supply self edges; genuine same-name local-receiver delegation
-remains supported. Verified unit-struct bindings retain their existing helper
-reach through the shared unit-struct authority.
+shadow and assertion-binding refusals, and an inherent wrapper entry needs its
+own receiver identity. Split-line function headers do not supply self edges;
+genuine same-name local-receiver delegation and verified unit-struct bindings
+keep their helper reach.
 
 Only evaluated operands of unambiguously bound supported assertions supply
 receiver evidence. Module or imported macro shadows refuse that interpretation
-in both diff and repository consumers; a sibling module's private macro does
-not shadow a real assertion outside it. Foreign or unresolved helper last hops
+in diff and repository consumers; a sibling module's private macro does not
+shadow a real assertion outside it. Foreign or unresolved helper last hops
 cannot make the private owner strongly gripped. General type resolution,
-parameter/field flow and cross-file helper receiver inference remain outside
-this bounded admission. The retained corpus accuracy losses keep their
-runtime truth and false-actionable accounting.
+parameter/field flow and cross-file helper receiver inference stay outside this
+bounded admission, and corpus accuracy losses keep their false-actionable
+accounting.
 
 ### Bounded Rust module motion
 
@@ -298,78 +297,61 @@ workspace-indexed method name alone is not direct owner-call evidence: a
 dependency type can have the same method. Diff and repository/compact consumers
 require a syntax-backed bounded nominal receiver plus a real call expression and
 the nearest still-visible simple local declaration. Comments on captured call
-lines and declarations in expired inner blocks cannot supply that evidence.
-An expired foreign shadow cannot hide a later call on a still-visible owner
-binding. The scope-unaware text matcher must not veto that AST evidence or a
+lines and declarations in expired inner blocks cannot supply that evidence; an
+expired foreign shadow cannot hide a later call on a still-visible owner
+binding, and the scope-unaware text matcher must not veto AST evidence or a
 qualified unit variant such as `RenameRule::UpperCase`.
 Standard assertion macro operands are parsed as expressions using the original
-invocation's scope; diagnostic arguments do not supply receiver evidence.
+invocation's scope; diagnostic arguments supply no receiver evidence.
 Operand-local items, including value constructors and type-name binders, withhold
-that outer-scope evidence. Only the parser's actual synthetic wrapper is exempt;
-a same-named nested function is still an item refusal.
+that outer-scope evidence (only the parser's synthetic wrapper is exempt).
 Unsupported binding/pattern scopes and unresolved receiver value flow withhold
-direct credit. Actual enum-variant receivers and public-library integration
-calls remain admissible. This is an admission narrowing, not exact Rust type or
-Cargo-target resolution: qualified types sharing a terminal name, constructor
-return-type conventions, aliases and general factory/value flow remain bounded
-limitations tracked by #7415. Trait dispatch and associated functions without
-`self` retain their existing rules.
+direct credit, while actual enum-variant receivers and public-library
+integration calls remain admissible. This is an admission narrowing, not exact
+Rust type or Cargo-target resolution: qualified types sharing a terminal name,
+constructor return-type conventions, aliases and general factory/value flow
+remain bounded limitations tracked by #7415. Trait dispatch and associated
+functions without `self` retain their existing rules.
 
 Repository direct inherent calls use the same complete owner refusal as diff
-calls and helper last hops, including module-local type shadows. A nominal
-receiver alone cannot override that refusal. Calls inside a nested item,
-closure or async body are not calls executed by the enclosing test merely
-because its syntax contains them. This execution boundary also applies inside
-supported standard assertion operands: constructing and discarding an unpolled
-future grants no direct or free-helper owner-call evidence. An executable outer
-call beside that future retains its existing bounded identity. Invoked nested functions remain conservatively
-unresolved by this bounded walk; their native mutation controls can discriminate
-without receiving direct static credit.
+calls and helper last hops, including module-local type shadows. Calls inside a
+nested item, closure or async body are not calls executed by the enclosing test,
+including inside supported assertion operands: an unpolled future grants no
+direct or free-helper owner-call evidence, while an executable outer call
+beside it keeps its bounded identity. Invoked nested functions stay
+conservatively unresolved; native mutation controls can discriminate without
+receiving direct static credit.
 
 A parsed `async fn` helper declaration supplies no execution credit at entry,
-intermediate or last-hop traversal, including calls in standard assertion
-operands. Resolving its declaration establishes identity, not polling. The
-bounded traversal also withholds credit from explicitly polled futures rather
-than inferring activation. Synchronous helper chains and real calls beside
-discarded futures retain their existing admission; a synchronous helper with a
-dormant async block is still eligible. Paired native controls keep unsupported
-activation separate from runtime mutation discrimination.
+intermediate or last-hop traversal; resolving it establishes identity, not
+polling, and explicitly polled futures are not inferred as activated.
+Synchronous helper chains and real calls beside discarded futures keep their
+admission.
 
-For the existing bounded same-file helper chain, every admitted entry and
-intermediate free-function hop must contain an executable call bound to the
-candidate's actual module/function declaration. The existing helper-name graph
-only supplies candidates. Caller-scope memos distinguish function names even
-when declarations share a line; an ambiguous same-name/same-line lookup refuses.
-Function type-parameter names also refuse borrowing a same-spelled module or
-nominal receiver type, without resolving any type argument or value flow.
-Explicit foreign paths, wrong imports, dormant local
-helpers and unplaced bindings cannot borrow a same-named root helper's owner
-credit. Genuine root/imported helpers and same-name inherent wrapper delegation
-retain repository reach. Diff helper evidence remains conservative; repository
-helper reach is not a new diff-helper claim. The executable-identity
-fixtures and their paired native/full/compact/diff matrix pin this boundary.
+For the bounded same-file helper chain, every admitted entry and intermediate
+free-function hop must contain an executable call bound to the candidate's actual
+module/function declaration; the helper-name graph only supplies candidates.
+Caller-scope memos distinguish function names that share a line (an ambiguous
+lookup refuses), and function type-parameter names cannot borrow a same-spelled
+module or nominal receiver type. Explicit foreign paths, wrong imports, dormant
+local helpers and unplaced bindings cannot borrow a same-named root helper's
+owner credit. Diff helper evidence remains conservative.
 Complete-source shadow queries reuse snapshot parse, inclusive lines and byte
-ancestry. Answer keys retain the test name and both coordinates, requested name
-and type-versus-trait kind, and owner file/name/start coordinate. Source replacement
-invalidates the snapshot and clones start empty. Caller and assertion-operand
-parses share only immutable syntax by exact bytes; executable scope, owner
-resolution and the original macro invocation anchor remain per-query authority.
-Malformed source, ambiguous owners and same-line test candidates retain their
-conservative behavior. Performance measurements remain separate from correctness
-controls; residual per-call work and unsupported semantic boundaries remain visible.
+ancestry. Answer keys retain the test name and both coordinates, the requested
+name and type-versus-trait kind, and the owner file/name/start coordinate.
+Source replacement invalidates the snapshot and clones start empty; caller and
+assertion-operand parses share only immutable syntax by exact bytes. Malformed
+source, ambiguous owners and same-line test candidates keep their conservative
+behavior, and performance measurements stay separate from correctness controls.
 
 A declared nominal parameter type (an `#[rstest]` fixture injection such as
 `fn t(account: Account)`) and a bare enum variant brought in by one non-aliased
 `use Enum::*` or `use Enum::Variant` of the workspace's single `Enum`
 declaration are visible receiver bindings; a prelude spelling, a second import
 or same-named item, a `macro_rules!` in the file, or a loop pattern that binds
-the name still withholds. A standard-crate glob that is a direct item of an
-inline module is resolved against that module's own items only, so
-`mod core { pub use core::*; }` does not shadow the real root. The verdict
-corpus keeps the accuracy cost of the remaining boundary visible: arbitrary
-`ByteSize::gb`/`ByteSize::kib` factories do not acquire identity from a unique
-method name; a resulting `gap` is recorded as `false_actionable`, never
-relabeled as correct test advice.
+the name still withholds. Arbitrary `ByteSize::gb`/`ByteSize::kib` factories do
+not acquire identity from a unique method name; a resulting `gap` is recorded as
+`false_actionable`, never relabeled as correct test advice.
 
 Related-test oracle semantics must explain what the oracle observes, what
 discriminator remains missing, and which assertion upgrade would improve the

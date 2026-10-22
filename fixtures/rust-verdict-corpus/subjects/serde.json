@@ -31,10 +31,6 @@
       "sha256": "a7bb93dd49fe140d797159f3d50ba84e8e0d15b85258becb1bd437064e9760aa"
     },
     {
-      "path": "serde_core/src/macros.rs",
-      "sha256": "a61c9d19b210697304328e6bb9380a1de713e21042256df90a2b4553f178b0be"
-    },
-    {
       "path": "serde_core/src/ser/impls.rs",
       "sha256": "5ee7efc439345e8665da0bd79bc06c02a0506e5fd0f3a4cf11af0c7197eaa643"
     },
@@ -45,14 +41,6 @@
     {
       "path": "serde_derive/Cargo.toml",
       "sha256": "94b48c328f3f469d9ab58a295609ceece94f883d993d6b43109e1185965702f4"
-    },
-    {
-      "path": "serde_derive/src/bound.rs",
-      "sha256": "eda458b2adf8d4b75eccba18621301f846e2a84a04ef2b54e7421f69574e24bc"
-    },
-    {
-      "path": "serde_derive/src/fragment.rs",
-      "sha256": "6757cb4c3131d4300f093572efc273c4ab5a20e3e1efb54a311dcfa52d0bd6eb"
     },
     {
       "path": "serde_derive/src/internals/case.rs",

@@ -4,36 +4,22 @@
   refuse comment-only, expired-binding and assertion-operand item-shadow
   evidence while preserving actual enum receivers, public-library calls and
   outer receivers after an inner foreign shadow expires. Corpus snapshots
-  retain the false actionable cost of unsupported factory flow
-  (#7415, #8004).
+  retain the false actionable cost of unsupported factory flow (#7415, #8004).
 - Same-name local wrapper delegation retains repository helper reach; diff
   evidence remains conservative. Module-shadowed assertion operands and foreign
   inherent helper receivers withhold high attribution (#7415, #8004).
 - Repository direct calls share the complete owner/module refusal with diff
-  calls. Dormant nested functions, closures and async bodies do not supply
-  executed receiver calls; free-helper entries and intermediate hops bind to
-  their actual module/function identity instead of a shared name. Function type
-  parameters cannot borrow same-spelled module or owner-type credit (#7415, #8004).
-- Standard assertion operands also exclude unpolled async bodies from direct
-  and free-helper owner credit, while preserving genuine outer calls (#8004).
-- Unpolled async-function helpers no longer lend inherent-owner execution
-  credit at entry, assertion operand, intermediate or last-hop traversal.
-  Genuine synchronous and mixed helper routes retain their bounded credit;
-  polling inference remains unsupported (#7415, #8004).
-- Complete-source declaration and lexical facts are reused within each source
-  snapshot across helper candidates and owners, retaining ambiguous/unknown
-  declaration refusal and conservative scope boundaries (#7415, #8004).
-- Test-module shadows share exact-source parse, line and ancestry facts and
-  complete test/owner/type-or-trait answers. Executable callers and assertion
-  operands reuse immutable syntax while retaining original lexical anchors and
-  conservative execution and binding refusals (#7415, #8004).
-- The inherent-receiver check now reads a declared nominal parameter type
+  calls. Dormant nested functions, closures, async bodies and unpolled
+  async-function helpers do not supply executed owner credit (entry, assertion
+  operand, intermediate or last hop); free-helper entries and intermediate hops
+  bind to their actual module/function identity, and function type parameters
+  cannot borrow same-spelled module or owner-type credit (#7415, #8004).
+- Complete-source declaration, lexical, parse and shadow facts are reused within
+  each source snapshot across helper candidates, owners, executable callers and
+  assertion operands, retaining ambiguous/unknown declaration refusal and
+  conservative scope boundaries (#7415, #8004).
+- The inherent-receiver check reads a declared nominal parameter type
   (`fn t(account: Account)`, including an `#[rstest]` fixture injection) and a
   bare enum variant brought in by a single `use Enum::*` as visible receiver
-  bindings, so those tests keep their credit; aliases, prelude spellings,
-  shadowing items and ambiguous imports still withhold (#9676).
-- A standard-crate glob that is a direct item of an inline module
-  (`mod core { pub use core::*; }`) no longer makes every assertion macro
-  ambiguous workspace-wide: its root resolves against that module's own items,
-  not the enclosing file's. The serde corpus subject now retains its three
-  `#[macro_use]` module sources so macro bindings are indexed (#9676).
+  bindings; aliases, prelude spellings, shadowing items and ambiguous imports
+  still withhold (#9676).
