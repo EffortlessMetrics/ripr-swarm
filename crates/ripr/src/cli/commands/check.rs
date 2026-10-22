@@ -2101,6 +2101,59 @@ fn render_check_gap_ledger_badge(
     }
 }
 
+/// The diff-scoped check run behind a gap-bound repair start (#9103,
+/// RIPR-SPEC-0311): the analyzed output, whose findings the gap id resolves
+/// against, and its `check-findings-json` rendering.
+pub(super) struct GapCheckSnapshot {
+    pub(super) output: app::CheckOutput,
+    pub(super) rendered: String,
+}
+
+/// Run the same diff-scoped analysis `ripr check --base <base>` runs for the
+/// default human report (the live diff source selection included) and render
+/// it through the same `check-findings-json` producer `ripr check --format
+/// check-findings-json` uses, so the before snapshot of a gap-bound attempt
+/// is byte-comparable with the artifact `ripr agent verify --gap-id` reads.
+pub(super) fn gap_check_findings_snapshot(
+    root: &Path,
+    base: &str,
+) -> Result<GapCheckSnapshot, String> {
+    let mut input = CheckInput {
+        root: root.to_path_buf(),
+        base: Some(base.to_string()),
+        git_timeout: Some(app::default_cli_git_timeout()),
+        ..CheckInput::default()
+    };
+    let config =
+        load_for_root(&input.root).map_err(|error| config_load_refusal(&input.root, error))?;
+    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    let worktree_run = app::diff_source::select_live_diff_source(
+        &input.root,
+        app::diff_source::DiffSourceRequest::Default,
+        input.git_timeout,
+    )
+    .is_working_tree();
+    let scope = if worktree_run {
+        app::AnalysisProgressScope::Worktree
+    } else {
+        app::AnalysisProgressScope::Diff
+    };
+    let mut output = app::check_with_progress_core(input, &config, scope, None)
+        .map_err(|error| error.to_string())?;
+    // The same disclosure normalization `ripr check` applies: a working-tree
+    // read analyzed the live files, so the committed-history flag is off.
+    if worktree_run {
+        output.unanalyzed_working_tree = false;
+    }
+    let rendered = output::render::render_check_with_config_and_progress(
+        &output,
+        &OutputFormat::CheckFindingsJson,
+        &config,
+        None,
+    )?;
+    Ok(GapCheckSnapshot { output, rendered })
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

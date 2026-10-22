@@ -798,6 +798,40 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     Ok(rendered)
 }
 
+/// Render the repair packet a gap-bound TypeScript repair start consumes
+/// (#9103, RIPR-SPEC-0311). This is the shared GapRecord packet builder
+/// ([`render_agent_gap_record_packet_json`]) with the canonical gap id named
+/// as the packet's `seam_id`, so the attempt authority's edit-cage reader
+/// binds the packet to the same identity the attempt records. No second
+/// packet shape and no second validator: the shared
+/// [`validate_agent_gap_record_packet`] runs inside the builder and stays the
+/// only actionability authority, so a record that does not validate yields
+/// no packet. Static evidence only; the packet claims no runtime outcome.
+pub(crate) fn render_typescript_gap_repair_packet(
+    gap_ledger_path: &str,
+    record: &GapRecord,
+) -> Result<String, String> {
+    if record.language != "typescript" {
+        return Err("gap-bound repair packets are rendered for TypeScript gaps only".to_string());
+    }
+    let canonical = non_empty(&record.canonical_gap_id)
+        .ok_or_else(|| "requires a canonical gap id".to_string())?;
+    let rendered = render_agent_gap_record_packet_json(gap_ledger_path, record)?;
+    let mut envelope: Value = serde_json::from_str(&rendered)
+        .map_err(|error| format!("decode TypeScript gap packet failed: {error}"))?;
+    let packet = envelope
+        .get_mut("packets")
+        .and_then(Value::as_array_mut)
+        .and_then(|packets| packets.first_mut())
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "TypeScript gap packet envelope carries no packet".to_string())?;
+    packet.insert("seam_id".to_string(), Value::String(canonical));
+    let mut out = serde_json::to_string_pretty(&envelope)
+        .map_err(|error| format!("render TypeScript gap packet JSON failed: {error}"))?;
+    out.push('\n');
+    Ok(out)
+}
+
 fn gap_record_command_specs_json(record: &GapRecord) -> Option<serde_json::Value> {
     let command_specs = record.command_specs.as_ref()?;
     Some(serde_json::json!({

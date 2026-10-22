@@ -225,7 +225,14 @@ fn drive_before_phase_inner(
     // packet, and every later seam reference agree. Translation happens
     // before the lock and the identity preparation: a refused mapping
     // writes no workflow artifact and starts no attempt.
-    if let Some(seam_id) = options.seam_id.clone() {
+    // #9103 (RIPR-SPEC-0311): a gap-bound start names its subject by the
+    // canonical TypeScript gap id, which the TypeScript preview adapter owns
+    // and the Rust seam inventory cannot translate. The gap id is the attempt
+    // identity (the manifest's seam slot); the seam translator is skipped,
+    // and `--seam-id gap:...` keeps its translating behaviour untouched.
+    if let Some(gap_id) = options.gap_id.clone() {
+        options.seam_id = Some(gap_id);
+    } else if let Some(seam_id) = options.seam_id.clone() {
         options.seam_id = Some(commands::translate_agent_repair_seam_id(
             &options.root,
             &seam_id,
@@ -372,58 +379,98 @@ fn persist_before_repair_attempt(
         None => None,
     };
 
-    let mut sources = vec![
-        BeforeArtifactSource {
-            role: "workflow_manifest",
-            path: &workflow_manifest,
-        },
-        BeforeArtifactSource {
-            role: "commands_markdown",
-            path: &commands_markdown,
-        },
-        BeforeArtifactSource {
-            role: "agent_brief",
-            path: &agent_brief,
-        },
-        BeforeArtifactSource {
-            role: "before_snapshot",
-            path: &before_snapshot,
-        },
-        BeforeArtifactSource {
-            role: "agent_packet",
-            path: &agent_packet,
-        },
-        BeforeArtifactSource {
-            role: "edit_cage_baseline",
-            path: &edit_cage_baseline,
-        },
-    ];
+    // #9103 (RIPR-SPEC-0311): a gap-bound attempt retains the
+    // check-findings before snapshot, the packet and the edit-cage baseline
+    // only. It has no seam workflow manifest, command sheet or brief, and its
+    // snapshot carries its own role so no consumer reads it as a repo-exposure
+    // document.
+    let gap_binding = match (&options.gap_id, &options.base) {
+        (Some(_), Some(base)) => {
+            Some(crate::app::repair_attempt::RepairAttemptGapBinding { base: base.clone() })
+        }
+        _ => None,
+    };
+    let gap_before_snapshot = root
+        .join("target/ripr/workflow")
+        .join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE);
+    let mut sources = if gap_binding.is_some() {
+        vec![
+            BeforeArtifactSource {
+                role: crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE,
+                path: &gap_before_snapshot,
+            },
+            BeforeArtifactSource {
+                role: "agent_packet",
+                path: &agent_packet,
+            },
+            BeforeArtifactSource {
+                role: "edit_cage_baseline",
+                path: &edit_cage_baseline,
+            },
+        ]
+    } else {
+        vec![
+            BeforeArtifactSource {
+                role: "workflow_manifest",
+                path: &workflow_manifest,
+            },
+            BeforeArtifactSource {
+                role: "commands_markdown",
+                path: &commands_markdown,
+            },
+            BeforeArtifactSource {
+                role: "agent_brief",
+                path: &agent_brief,
+            },
+            BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &before_snapshot,
+            },
+            BeforeArtifactSource {
+                role: "agent_packet",
+                path: &agent_packet,
+            },
+            BeforeArtifactSource {
+                role: "edit_cage_baseline",
+                path: &edit_cage_baseline,
+            },
+        ]
+    };
     if let Some(binding) = &binding {
         sources.push(crate::app::repair_attempt::BeforeArtifactSource {
             role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
             path: &binding.record_path,
         });
     }
-    let result = crate::app::repair_attempt::begin_repair_attempt_with_identity(
-        crate::app::repair_attempt::BeginRepairAttemptOptions {
-            root,
-            root_argument: root,
-            seam_id,
-            sources: &sources,
-            expected_repository_head: binding
-                .as_ref()
-                .map(|binding| binding.verified.head.as_str()),
-            // The after phase of a trust-bound attempt always re-verifies the
-            // explicit authorization, so the published follow-up must name
-            // the required flags with an explicit placeholder identity — the
-            // driver never persists a granted authorization.
-            next_command_suffix: binding
-                .as_ref()
-                .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
-            store: options.store.as_deref(),
-        },
-        identity,
-    )?;
+    let begin_options = crate::app::repair_attempt::BeginRepairAttemptOptions {
+        root,
+        root_argument: root,
+        seam_id,
+        sources: &sources,
+        expected_repository_head: binding
+            .as_ref()
+            .map(|binding| binding.verified.head.as_str()),
+        // The after phase of a trust-bound attempt always re-verifies the
+        // explicit authorization, so the published follow-up must name
+        // the required flags with an explicit placeholder identity — the
+        // driver never persists a granted authorization.
+        next_command_suffix: binding
+            .as_ref()
+            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+        store: options.store.as_deref(),
+    };
+    let result = match gap_binding {
+        Some(gap_binding) => {
+            crate::app::repair_attempt::begin_gap_bound_repair_attempt_with_identity(
+                begin_options,
+                identity,
+                gap_binding,
+            )?
+        }
+        None => {
+            crate::app::repair_attempt::begin_repair_attempt_with_identity(begin_options, identity)?
+        }
+    };
     // #7204: the staged baseline artifact — read back through the
     // publication result, the same authority that decided the manifest's
     // limitations entry — is the one disclosure source. Narration, the
@@ -503,20 +550,55 @@ fn persist_before_repair_attempt(
     // Human next-step lines teach `ripr continue` for ordinary attempts
     // (#7879). The persisted manifest and JSON continuation keep the
     // advanced `--phase after` spelling.
+    //
+    // #9103: a gap-bound attempt has no `--phase after` yet, so the follow-up
+    // is the manual by-gap verification route over the retained before
+    // snapshot instead of a command that would refuse.
+    let gap_follow_up =
+        options
+            .gap_id
+            .as_deref()
+            .zip(options.base.as_deref())
+            .map(|(gap_id, base)| {
+                let before = result
+                    .manifest
+                    .artifacts
+                    .iter()
+                    .find(|artifact| {
+                        artifact.role
+                            == crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+                    })
+                    .map(|artifact| artifact.path.as_str())
+                    .unwrap_or_default();
+                format!(
+                    "the gap-bound `--phase after` is not available yet; after the test edit, {}",
+                    crate::app::gap_bound_repair::gap_bound_manual_verify_route(
+                        &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                        before,
+                        gap_id,
+                        base,
+                    )
+                )
+            });
     let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
-    eprintln!("ripr: attempt next command: {follow_up}");
-    let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
-    if let Some(form) = &next_powershell {
-        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    if let Some(manual) = &gap_follow_up {
+        eprintln!("ripr: attempt next step: {manual}");
+    } else {
+        eprintln!("ripr: attempt next command: {follow_up}");
+        let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
+        if let Some(form) = &next_powershell {
+            eprintln!("ripr: attempt next command (PowerShell): {form}");
+        }
     }
     // The stdout document owns its trailer: the after-edit directive, or the
     // #7204 ambiguity warning and clean-state restart for an unscorable
     // attempt.
-    commands::before_phase_stdout(
+    commands::before_phase_stdout_with_gap_follow_up(
         &packet_text,
         &agent_packet.display().to_string(),
         options.json,
         &continuation,
+        gap_follow_up.as_deref(),
     )
 }
 

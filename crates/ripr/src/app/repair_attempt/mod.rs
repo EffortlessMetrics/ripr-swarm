@@ -124,6 +124,18 @@ pub(crate) fn repair_attempt_state_for_finish(after: &RepairAttemptAfter) -> Rep
     }
 }
 
+/// The additive marker of a gap-bound attempt (#9103, RIPR-SPEC-0311): the
+/// manifest's `seam_id` slot holds the canonical TypeScript gap id and this
+/// marker records the diff base the gap's findings were produced against,
+/// which the later after phase must re-analyze. Absent on seam-bound
+/// attempts, so their manifest bytes are unchanged and the schema version is
+/// not bumped.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptGapBinding {
+    pub(crate) base: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptArtifact {
@@ -144,6 +156,10 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) repository_head: String,
     pub(crate) producer_version: String,
     pub(crate) seam_id: String,
+    /// Present only on a gap-bound attempt, where `seam_id` holds the
+    /// canonical gap id (#9103). Part of the before commitment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) gap_binding: Option<RepairAttemptGapBinding>,
     pub(crate) created_unix_ms: u64,
     pub(crate) artifacts: Vec<RepairAttemptArtifact>,
     pub(crate) next_command: String,
@@ -1028,6 +1044,25 @@ pub(crate) fn begin_repair_attempt_with_identity(
     options: BeginRepairAttemptOptions<'_>,
     identity: &BeforeRepairAttemptIdentity,
 ) -> Result<BeginRepairAttemptResult, String> {
+    begin_repair_attempt_inner(options, identity, None)
+}
+
+/// Publish a gap-bound attempt (#9103, RIPR-SPEC-0311): the same transaction
+/// as [`begin_repair_attempt_with_identity`], with `options.seam_id` holding
+/// the canonical gap id and the additive gap marker recorded in the manifest.
+pub(crate) fn begin_gap_bound_repair_attempt_with_identity(
+    options: BeginRepairAttemptOptions<'_>,
+    identity: &BeforeRepairAttemptIdentity,
+    gap_binding: RepairAttemptGapBinding,
+) -> Result<BeginRepairAttemptResult, String> {
+    begin_repair_attempt_inner(options, identity, Some(gap_binding))
+}
+
+fn begin_repair_attempt_inner(
+    options: BeginRepairAttemptOptions<'_>,
+    identity: &BeforeRepairAttemptIdentity,
+    gap_binding: Option<RepairAttemptGapBinding>,
+) -> Result<BeginRepairAttemptResult, String> {
     let BeginRepairAttemptOptions {
         root,
         root_argument,
@@ -1088,6 +1123,7 @@ pub(crate) fn begin_repair_attempt_with_identity(
             repair_attempt_id,
             sources,
             next_command_suffix,
+            gap_binding,
         },
     )
 }
@@ -1106,6 +1142,8 @@ struct AttemptPublication<'a> {
     repair_attempt_id: RepairAttemptId,
     sources: &'a [BeforeArtifactSource<'a>],
     next_command_suffix: Option<&'a str>,
+    /// The additive gap marker of a gap-bound attempt (#9103).
+    gap_binding: Option<RepairAttemptGapBinding>,
 }
 
 /// Stage artifacts and publish the manifest inside a reserved attempt
@@ -1211,6 +1249,7 @@ fn complete_repair_attempt(
                 repository_head: publication.repository_identity.head.clone(),
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
                 seam_id: publication.seam_id.to_string(),
+                gap_binding: publication.gap_binding.clone(),
                 created_unix_ms: publication.created_unix_ms,
                 artifacts,
                 next_command,
@@ -2244,6 +2283,31 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             &manifest,
         ));
     }
+    // #9103 (RIPR-SPEC-0311): a gap-bound attempt carries a check-findings
+    // before snapshot, not the repo-exposure snapshot this seam-bound after
+    // phase compares. Its gap-bound after phase and receipt are a later
+    // slice; until then the attempt names the manual by-gap route instead of
+    // failing on a missing seam artifact or scoring against the wrong kind.
+    if let Some(binding) = &manifest.gap_binding {
+        let before = find_manifest_artifact(
+            &manifest,
+            crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE,
+        )
+        .map(|artifact| artifact.path.clone())
+        .unwrap_or_default();
+        return Err(format!(
+            "repair attempt {} is gap-bound (gap `{}`, base `{}`); its gap-bound after phase is not available yet, so this attempt cannot be finished here. To verify the repair by gap id: {}",
+            manifest.repair_attempt_id.as_str(),
+            manifest.seam_id,
+            binding.base,
+            crate::app::gap_bound_repair::gap_bound_manual_verify_route(
+                &bound_root(&root_argument.to_string_lossy()),
+                &before,
+                &manifest.seam_id,
+                &binding.base,
+            ),
+        ));
+    }
     let before_snapshot_path =
         canonical_root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
     let packet_path = canonical_root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
@@ -2853,9 +2917,37 @@ pub(crate) fn diverged_head_recovery(
     current_head: &str,
     store_flag: &str,
 ) -> DivergedHeadRecovery {
+    diverged_head_recovery_for_subject(
+        root_display,
+        attempt_id,
+        seam_id,
+        prepared_head,
+        current_head,
+        store_flag,
+        None,
+    )
+}
+
+/// [`diverged_head_recovery`] for an attempt that may be gap-bound (#9103):
+/// `gap_base` is the recorded diff base of a gap-bound attempt, whose restart
+/// names `--gap-id`/`--base` instead of `--seam-id`.
+pub(crate) fn diverged_head_recovery_for_subject(
+    root_display: &str,
+    attempt_id: &str,
+    seam_id: &str,
+    prepared_head: &str,
+    current_head: &str,
+    store_flag: &str,
+    gap_base: Option<&str>,
+) -> DivergedHeadRecovery {
     let root_arg = shell_arg(root_display);
     let attempt_arg = shell_arg(attempt_id);
-    let seam_arg = shell_arg(seam_id);
+    let start = crate::app::gap_bound_repair::repair_start_command(
+        root_display,
+        store_flag,
+        seam_id,
+        gap_base,
+    );
     DivergedHeadRecovery {
         cause: format!(
             "HEAD {} does not descend from {}, the head attempt `{attempt_id}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
@@ -2866,7 +2958,7 @@ pub(crate) fn diverged_head_recovery(
             "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
         ),
         restart: format!(
-            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `{start}` while the gap still exists, restore the edit, then run the new --attempt command it prints."
         ),
     }
 }
@@ -2885,9 +2977,14 @@ fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptMa
     let seam_id = &manifest.seam_id;
     let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
     let status = format!("ripr agent status --root {root_arg}{store_flag}");
-    let restart = format!(
-        "ripr agent repair --root {root_arg}{store_flag} --seam-id {} --phase before",
-        shell_arg(seam_id)
+    let restart = crate::app::gap_bound_repair::repair_start_command(
+        root_display,
+        &store_flag,
+        seam_id,
+        manifest
+            .gap_binding
+            .as_ref()
+            .map(|binding| binding.base.as_str()),
     );
     let after_head = manifest
         .after
@@ -3831,6 +3928,7 @@ mod tests {
             repository_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             producer_version: env!("CARGO_PKG_VERSION").to_string(),
             seam_id: "seam:sample".to_string(),
+            gap_binding: None,
             created_unix_ms: 1,
             artifacts: vec![RepairAttemptArtifact {
                 role: "before_snapshot".to_string(),
@@ -4585,6 +4683,7 @@ mod tests {
                     path: &source,
                 }],
                 next_command_suffix: None,
+                gap_binding: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();
@@ -4652,6 +4751,7 @@ mod tests {
                     path: &source,
                 }],
                 next_command_suffix: None,
+                gap_binding: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();

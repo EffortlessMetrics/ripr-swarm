@@ -584,6 +584,14 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
+        // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
+        // gate has no verdict to give. Its admission is decided where the
+        // start is: the shared agent-packet validator at the gap-bound before
+        // phase, which re-checks it on every restart.
+        if seam_id.starts_with(super::gap_bound_repair::GAP_BOUND_REPAIR_GAP_PREFIX) {
+            return None;
+        }
         #[cfg(test)]
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
@@ -860,6 +868,23 @@ pub(crate) fn check_repair_route(
     // seam to bind, whatever its gap, test node and verify command say; name
     // that terminal state instead of the misleading "no seam binds" refusal.
     if let Some(language) = non_rust_language(Path::new(&gap.file)) {
+        // #9103 (RIPR-SPEC-0311): a TypeScript finding whose GapRecord
+        // validates through the shared agent-packet validator starts a
+        // gap-bound attempt instead. The gap id and the base this run
+        // analyzed are the whole start; a finding that does not validate,
+        // a static-limited one, and a run without a base keep the terminal
+        // reason below. Python and the other routed languages are unchanged.
+        if language == "TypeScript"
+            && !static_limited
+            && let Some(base) = output.base.as_deref()
+            && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
+        {
+            return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                finding_id: finding.id.clone(),
+                gap_id: record.canonical_gap_id,
+                base: base.to_string(),
+            });
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoSeamInventory {
             language: language.to_string(),
             file: gap.file.clone(),
@@ -1620,6 +1645,7 @@ pub(crate) mod tests {
             repository_head: head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam.to_string(),
+            gap_binding: None,
             created_unix_ms: created,
             artifacts: Vec::new(),
             next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),

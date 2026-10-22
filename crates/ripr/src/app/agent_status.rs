@@ -14,10 +14,11 @@ use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair, diverged_head_recovery,
-    inventory_repair_attempts_from, load_attempt_terminal_receipt,
-    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
-    repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
+    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair,
+    diverged_head_recovery_for_subject, inventory_repair_attempts_from,
+    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
+    repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
+    validate_issued_receipt_evidence,
 };
 use crate::app::task_first::{RepairStartGate, RepairStartRefusal, repair_start_withheld_note};
 use crate::domain::{
@@ -164,6 +165,9 @@ pub(crate) struct AgentStatusReport {
 pub(crate) struct AgentStatusRepairAttempt {
     pub(crate) attempt_id: String,
     pub(crate) seam_id: String,
+    /// The recorded diff base of a gap-bound attempt (#9103); `seam_id` then
+    /// holds its canonical gap id. `None` for a seam-bound attempt.
+    pub(crate) gap_base: Option<String>,
     pub(crate) state: &'static str,
     pub(crate) head_current: Option<bool>,
     pub(crate) disposition: &'static str,
@@ -612,7 +616,9 @@ fn status_repair_attempt(
     gate: &RepairStartGate,
 ) -> AgentStatusRepairAttempt {
     let root = gate.root();
-    let restart_command = new_repair_attempt_command(root_display, &manifest.seam_id, store_flag);
+    let gap_base = gap_base_of(manifest);
+    let restart_command =
+        new_repair_attempt_command(root_display, &manifest.seam_id, gap_base, store_flag);
     let restart = Some(restart_command.clone());
     let receipt = attempt_receipt(root, manifest, receipt);
     let head_reading = repair_attempt_head_reading(root, manifest, current_head);
@@ -655,13 +661,14 @@ fn status_repair_attempt(
                     ("awaiting_edit", "prepared_at_other_head", restart),
                 ),
                 Some(AfterPhaseHeadAdmission::RefusedDiverged { current_head }) => {
-                    diverged_recovery = Some(diverged_head_recovery(
+                    diverged_recovery = Some(diverged_head_recovery_for_subject(
                         root_display,
                         manifest.repair_attempt_id.as_str(),
                         &manifest.seam_id,
                         &manifest.repository_head,
                         &current_head,
                         store_flag,
+                        gap_base,
                     ));
                     (
                         Some(false),
@@ -717,6 +724,7 @@ fn status_repair_attempt(
     AgentStatusRepairAttempt {
         attempt_id: manifest.repair_attempt_id.as_str().to_string(),
         seam_id: manifest.seam_id.clone(),
+        gap_base: gap_base.map(str::to_string),
         state,
         head_current,
         disposition,
@@ -977,6 +985,7 @@ fn finished_attempt_warnings(
                                     new_repair_attempt_command(
                                         root_display,
                                         &attempt.seam_id,
+                                        attempt.gap_base.as_deref(),
                                         store_flag
                                     )
                                 ),
@@ -1056,12 +1065,24 @@ fn repair_start_withheld_warning(
 
 /// The documented start of the repair transaction. It creates every artifact
 /// it needs, so it never depends on a workflow directory already existing.
-fn new_repair_attempt_command(root_display: &str, seam_id: &str, store_flag: &str) -> String {
-    format!(
-        "ripr agent repair --root {}{store_flag} --seam-id {} --phase before",
-        shell_arg(root_display),
-        shell_arg(seam_id)
-    )
+///
+/// `gap_base` is the recorded diff base of a gap-bound attempt (#9103): its
+/// start names `--gap-id`/`--base` instead of `--seam-id`.
+fn new_repair_attempt_command(
+    root_display: &str,
+    seam_id: &str,
+    gap_base: Option<&str>,
+    store_flag: &str,
+) -> String {
+    crate::app::gap_bound_repair::repair_start_command(root_display, store_flag, seam_id, gap_base)
+}
+
+/// The recorded diff base of a gap-bound attempt, `None` for a seam-bound one.
+fn gap_base_of(manifest: &RepairAttemptManifest) -> Option<&str> {
+    manifest
+        .gap_binding
+        .as_ref()
+        .map(|binding| binding.base.as_str())
 }
 
 struct StoreFollowUp<'a> {
@@ -1343,7 +1364,7 @@ fn select_next_command(
                     seams.len(),
                     seams
                         .iter()
-                        .map(|(seam_id, _)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
+                        .map(|(seam_id, ended)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, ended.first().and_then(|attempt| attempt.gap_base.as_deref()), store.flag)))
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
@@ -1999,7 +2020,7 @@ fn legacy_next_command(
                 "{}; start a repair attempt for seam `{}`, which writes the workflow artifacts itself",
                 first.reason, seam.seam_id
             ),
-            command: new_repair_attempt_command(root_display, &seam.seam_id, store.flag),
+            command: new_repair_attempt_command(root_display, &seam.seam_id, None, store.flag),
         });
     }
     Some(first.clone())
@@ -2065,7 +2086,14 @@ fn open_seam_restart_command(
                 format!(". {refusal_note}")
             }
         ),
-        command: new_repair_attempt_command(root_display, seam_id, store.flag),
+        command: new_repair_attempt_command(
+            root_display,
+            seam_id,
+            ended
+                .first()
+                .and_then(|attempt| attempt.gap_base.as_deref()),
+            store.flag,
+        ),
     }
 }
 
@@ -2890,7 +2918,7 @@ fn canonical_next_action_for_attempt(
     // The before-phase start is handed to the selector only when it is
     // recommended, so a withheld start cannot reach the canonical decision.
     let restart_route = if restart_recommended {
-        new_repair_attempt_command(root_display, seam, store_flag)
+        new_repair_attempt_command(root_display, seam, gap_base_of(manifest), store_flag)
     } else {
         String::new()
     };
@@ -3077,7 +3105,12 @@ fn restart_attempt_command(
             step: "repair_attempt_before".to_string(),
             artifact: manifest_label.to_string(),
             reason: with_recorded_refusal(reason),
-            command: new_repair_attempt_command(root_display, seam, store_flag),
+            command: new_repair_attempt_command(
+                root_display,
+                seam,
+                gap_base_of(manifest),
+                store_flag,
+            ),
         })
     };
     match status_class {
@@ -3587,6 +3620,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::app::repair_attempt::diverged_head_recovery;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -4403,6 +4437,7 @@ mod tests {
             repository_head: head.clone(),
             producer_version: "test".to_string(),
             seam_id: "seam-a".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),
@@ -4877,6 +4912,7 @@ mod tests {
         AgentStatusRepairAttempt {
             attempt_id: id.to_string(),
             seam_id: seam.to_string(),
+            gap_base: None,
             state: "failed",
             head_current: Some(true),
             disposition,
@@ -6210,6 +6246,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             producer_version: "test".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --phase after".to_string(),
@@ -6228,6 +6265,7 @@ mod tests {
         AgentStatusRepairAttempt {
             attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_base: None,
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",
