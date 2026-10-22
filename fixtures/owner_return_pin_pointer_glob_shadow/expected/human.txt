@@ -28,7 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/input --diff <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:1e9a0547
   ripr context --root <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/input --diff <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:1e9a0547
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:1e9a0547 --root <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:return_value:1e9a0547 --root <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_pointer_glob_shadow/input --at src/lib.rs:2 --kind return_value
 
