@@ -2612,6 +2612,12 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
     violations.extend(oracle::oracle_ledger_violations(&corpus, &ledger, &specs));
+    let case_ids: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    violations.extend(known_false::known_false_ledger_violations(
+        &case_ids,
+        &ledger,
+        &coverage::ledger_label(dir),
+    ));
     if violations.is_empty() {
         let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
         coverage.ledger = coverage::ledger_label(dir);

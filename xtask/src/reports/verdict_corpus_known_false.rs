@@ -29,6 +29,39 @@ fn is_false(outcome: Outcome) -> bool {
     )
 }
 
+/// The outcome-independent checks on `[[known_false]]`: each case exists once
+/// and carries an owning issue and a reason. `validate` and `bless` run these
+/// without scoring; the gate runs them again so a direct caller cannot skip them.
+pub(crate) fn known_false_ledger_violations(
+    case_ids: &BTreeSet<&str>,
+    ledger: &Ledger,
+    ledger_label: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in &ledger.known_false {
+        if !seen.insert(entry.case.as_str()) {
+            violations.push(format!(
+                "{ledger_label} lists known_false case `{}` twice",
+                entry.case
+            ));
+        }
+        if entry.reason.trim().is_empty() || entry.issue == 0 {
+            violations.push(format!(
+                "known_false case `{}` in {ledger_label} needs an owning `issue` and a `reason`",
+                entry.case
+            ));
+        }
+        if !case_ids.contains(entry.case.as_str()) {
+            violations.push(format!(
+                "known_false case `{}` in {ledger_label} is not a corpus case; remove the entry",
+                entry.case
+            ));
+        }
+    }
+    violations
+}
+
 /// Compare the scored rows (case id, outcome) with the ledger. `Err` names every unlisted false row and every stale entry.
 pub(crate) fn known_false_gate(
     rows: &[(&str, Outcome)],
@@ -41,27 +74,13 @@ pub(crate) fn known_false_gate(
         .map(|(id, _)| *id)
         .collect();
     let all_ids: BTreeSet<&str> = rows.iter().map(|(id, _)| *id).collect();
-    let mut failures = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut failures: Vec<String> = known_false_ledger_violations(&all_ids, ledger, ledger_label)
+        .into_iter()
+        .map(|violation| format!("verdict-corpus: {violation}"))
+        .collect();
+    let listed: BTreeSet<&str> = ledger.known_false.iter().map(|e| e.case.as_str()).collect();
     for entry in &ledger.known_false {
-        if !seen.insert(entry.case.as_str()) {
-            failures.push(format!(
-                "verdict-corpus: {ledger_label} lists known_false case `{}` twice",
-                entry.case
-            ));
-        }
-        if entry.reason.trim().is_empty() || entry.issue == 0 {
-            failures.push(format!(
-                "verdict-corpus: known_false case `{}` in {ledger_label} needs an owning `issue` and a `reason`",
-                entry.case
-            ));
-        }
-        if !all_ids.contains(entry.case.as_str()) {
-            failures.push(format!(
-                "verdict-corpus: known_false case `{}` in {ledger_label} is not a corpus case; remove the entry",
-                entry.case
-            ));
-        } else if !false_ids.contains(entry.case.as_str()) {
+        if all_ids.contains(entry.case.as_str()) && !false_ids.contains(entry.case.as_str()) {
             failures.push(format!(
                 "verdict-corpus: known_false case `{}` is no longer a false verdict; remove it from {ledger_label} so a return fails this check",
                 entry.case
@@ -69,7 +88,7 @@ pub(crate) fn known_false_gate(
         }
     }
     for id in &false_ids {
-        if !seen.contains(id) {
+        if !listed.contains(id) {
             failures.push(format!(
                 "verdict-corpus: `{id}` is a false verdict that {ledger_label} does not list; fix the case, spec or analyzer. Listing it as known_false needs an owning issue and is a reviewed edit, never a bless side effect"
             ));
@@ -212,6 +231,21 @@ mod tests {
         );
         // A case subset cannot see the whole corpus, so it is never gated.
         assert_eq!(apply_known_false_gate(&empty, true, &rows, None)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn structural_violations_need_no_scored_rows() -> Result<(), String> {
+        let twice =
+            format!("{ENTRY}{ENTRY}[[known_false]]\ncase = \"zz\"\nissue = 0\nreason = \"\"\n");
+        let ids: BTreeSet<&str> = ["a"].into_iter().collect();
+        let found = known_false_ledger_violations(&ids, &ledger(&twice)?, "ledger.toml");
+        for needle in ["twice", "owning `issue`", "not a corpus case"] {
+            assert!(
+                found.iter().any(|v| v.contains(needle)),
+                "{needle}: {found:?}"
+            );
+        }
         Ok(())
     }
 
