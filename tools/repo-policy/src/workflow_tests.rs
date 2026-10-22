@@ -1616,6 +1616,10 @@ fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Re
             "{path} holds a secret or write token and must not be allowlisted"
         );
         let text = repo_workflow(name)?;
+        // publish-extension.yml is the one explicit exemption from the
+        // non-empty-subject check: it uses only first-party `actions/*`, which
+        // the rule does not scan, so it has no third-party refs to find. It
+        // still must not be allowlisted (asserted above) and must pass the rule.
         assert!(
             !third_party_action_refs(&text).is_empty() || name == "publish-extension.yml",
             "{name} must have third-party steps for the pin check to grip"
@@ -1670,6 +1674,14 @@ fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
         ),
         ("write-all", "permissions: write-all\n"),
         ("write-all with comment", "permissions: write-all # note\n"),
+        (
+            "uniformly indented document",
+            "  permissions:\n    contents: write\n  jobs:\n    build:\n      runs-on: x\n",
+        ),
+        (
+            "uniformly indented flow",
+            "    permissions: { contents: write }\n",
+        ),
     ] {
         assert_eq!(
             workflow_level_write_permission_violations("w.yml", text).len(),
@@ -1685,6 +1697,10 @@ fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
             "permissions:\n  contents: read\njobs:\n  build:\n    permissions:\n      contents: write\n",
         ),
         ("other scope", "permissions:\n  pull-requests: write\n"),
+        (
+            "indented document, job-level write only",
+            "  permissions:\n    contents: read\n  jobs:\n    build:\n      permissions:\n        contents: write\n",
+        ),
     ] {
         assert!(
             workflow_level_write_permission_violations("w.yml", text).is_empty(),
@@ -1729,7 +1745,13 @@ fn job_block(text: &str, job: &str) -> String {
 }
 
 /// Contract violations for one PAT-holding publish job; comment lines ignored.
-fn publish_job_violations(text: &str, job: &str, environment: &str, pat: &str) -> Vec<String> {
+fn publish_job_violations(
+    text: &str,
+    job: &str,
+    environment: &str,
+    pat: &str,
+    tool_invocation: &str,
+) -> Vec<String> {
     let block = job_block(text, job);
     if block.is_empty() {
         return vec![format!("missing job {job}")];
@@ -1767,8 +1789,10 @@ fn publish_job_violations(text: &str, job: &str, environment: &str, pat: &str) -
     if !code_text.contains("npm ci --ignore-scripts") {
         violations.push(format!("{job} must install the locked graph"));
     }
-    if !(code_text.contains("node_modules/.bin/") || code_text.contains("npx --no-install")) {
-        violations.push(format!("{job} must run the lockfile-installed tool"));
+    if !code_text.contains(tool_invocation) {
+        violations.push(format!(
+            "{job} must run the lockfile-installed {tool_invocation}"
+        ));
     }
     if code_text.contains("npx -y") || code_text.contains("npx @") {
         violations.push(format!("{job} runs a registry-latest tool"));
@@ -1795,7 +1819,7 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
     for (job, environment, pat) in jobs {
         // Positive control: the checked-in workflow satisfies the contract.
         assert_eq!(
-            publish_job_violations(&text, job, environment, pat),
+            publish_job_violations(&text, job, environment, pat, tool),
             Vec::<String>::new()
         );
         // Negative experiments: each mutation must be caught for this job.
@@ -1833,10 +1857,15 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
                 block.replace("npm ci --ignore-scripts", "npx -y ovsx --version"),
                 "locked graph",
             ),
+            (
+                "tool no longer the locked binary",
+                block.replace(tool, "ovsx"),
+                "lockfile-installed",
+            ),
         ] {
             assert_ne!(mutated_block, block, "{label} mutation must change {job}");
             let mutated = text.replace(&block, &mutated_block);
-            let violations = publish_job_violations(&mutated, job, environment, pat);
+            let violations = publish_job_violations(&mutated, job, environment, pat, tool);
             assert!(
                 violations.iter().any(|v| v.contains(expect)),
                 "{label} on {job} must be rejected ({expect}); got {violations:?}"
@@ -1847,7 +1876,7 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
             &format!("    environment: {environment}\n"),
             &format!("    # environment: {environment}\n"),
         );
-        assert!(!publish_job_violations(&commented, job, environment, pat).is_empty());
+        assert!(!publish_job_violations(&commented, job, environment, pat, tool).is_empty());
     }
     Ok(())
 }

@@ -857,11 +857,24 @@ fn yaml_scalar(value: &str) -> &str {
 /// ones (#9303). Grant write at job level, on the job that needs it.
 pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec<String> {
     let mut violations = Vec::new();
+    // The document's top level is the indent of its first real key, so a
+    // uniformly indented file cannot hide a workflow-level `permissions:`.
+    let base = text
+        .lines()
+        .map(strip_yaml_comment)
+        .find(|line| !line.trim().is_empty())
+        .map_or(0, |line| line.len() - line.trim_start().len());
     let mut in_block = false;
     for (index, raw) in text.lines().enumerate() {
         let line_number = index + 1;
         let line = strip_yaml_comment(raw).trim_end();
-        if let Some(value) = line.strip_prefix("permissions:") {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent == base
+            && let Some(value) = line.trim_start().strip_prefix("permissions:")
+        {
             in_block = true;
             let value = yaml_scalar(value);
             if value == "write-all" {
@@ -887,15 +900,11 @@ pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec
         if !in_block {
             continue;
         }
-        let body = line.trim();
-        if body.is_empty() {
-            continue;
-        }
-        if !line.starts_with(' ') {
+        if indent <= base {
             in_block = false;
             continue;
         }
-        if let Some((key, value)) = body.split_once(':')
+        if let Some((key, value)) = line.trim().split_once(':')
             && yaml_scalar(key) == "contents"
             && yaml_scalar(value) == "write"
         {
