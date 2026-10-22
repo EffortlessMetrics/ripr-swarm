@@ -1,0 +1,12 @@
+diff --git a/shapes/models.py b/shapes/models.py
+--- a/shapes/models.py
++++ b/shapes/models.py
+@@ -10,7 +10,7 @@
+     tags: list = field(default_factory=list)
+ 
+     def total(self):
+-        return round(self.amount * (1 + self.tax_rate))
++        return round(self.amount + self.amount * self.tax_rate)
+ 
+     @property
+     def is_large(self):

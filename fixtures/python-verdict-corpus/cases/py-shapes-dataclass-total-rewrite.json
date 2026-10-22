@@ -1,0 +1,52 @@
+{
+  "case_id": "py-shapes-dataclass-total-rewrite",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-dataclass-total-rewrite.diff",
+  "anchor": {
+    "file": "shapes/models.py",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_dataclass_total_rewrite_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return round(self.amount - self.amount * self.tax_rate)",
+        "mutated_line": "return round(self.amount - self.amount * self.tax_rate)",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_models.py::test_total_applies_default_tax",
+        "equivalence_review": "not equivalent: pricing changes for every nonzero amount"
+      },
+      {
+        "replacement": "return round(self.amount + self.tax_rate)",
+        "mutated_line": "return round(self.amount + self.tax_rate)",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_models.py::test_total_applies_default_tax",
+        "equivalence_review": "not equivalent: pricing changes for every nonzero amount"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "A green algebraic rewrite of the price; the two exact totals kill a flipped sign or a dropped term.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
