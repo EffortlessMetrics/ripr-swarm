@@ -31,6 +31,8 @@
 mod macro_argument;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+#[cfg(test)]
+mod asserting_entry_tests;
 mod field_projection;
 #[cfg(test)]
 mod method_hop_tests;
@@ -1810,7 +1812,9 @@ pub(crate) fn chain_forwards_to_observed_hops(
         crate::domain::RelationReason,
     )],
 ) -> bool {
-    hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result(owner_name, hops)
+        || asserting_method_entry(owner_name, hops).is_some()
 }
 
 /// The returned-ledger proof covers only the first caller. It may replace that
@@ -1935,6 +1939,87 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         tracked = next;
     }
     true
+}
+
+/// #9329: the asserting entry of a method-hop chain. The top hop is a
+/// `#[cfg(test)]` check helper that makes the method hop's receiver call
+/// (`fn check(expected, b: ByteSize, si) { assert_eq!(expected, b.to_string_as(si)) }`)
+/// and does nothing else, so the helper's assertion observes the result of
+/// that call directly. It answers the top hop when:
+///
+/// - every hop below it hands the owner's result straight to its caller's
+///   return ([`hops_forward_owner_result`]), so the method's result is the
+///   owner's result with no transformation;
+/// - the helper's body is exactly one `assert_eq!`/`assert_ne!` statement,
+///   so nothing rebinds, drops or reshapes the call's result first;
+/// - one compared operand is exactly the hop's call, `<receiver>.<method>(<args>)`
+///   with the hop's own arguments, and the other operand names neither the
+///   receiver, the method, nor a direct call of the owner (an expected
+///   value derived from the same call would make the comparison trivial).
+///
+/// Anything else, including a chain of one hop, answers `None` (fail closed).
+pub(crate) fn asserting_method_entry<'a>(
+    owner_name: &str,
+    hops: &'a [HelperHop],
+) -> Option<&'a HelperHop> {
+    use crate::analysis::facts::FunctionSourceRole;
+    let (top, below) = hops.split_last()?;
+    let method = below.last()?.caller.name.as_str();
+    let receiver = top.receiver.as_deref()?;
+    if top.through_macro
+        || top.caller.source_role != FunctionSourceRole::CfgTestModule
+        || !hops_forward_owner_result(owner_name, below)
+        || !top
+            .arguments
+            .iter()
+            .all(|argument| is_identifier(argument.trim()))
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&top.caller.body);
+    if masked.len() != top.caller.body.len() {
+        return None;
+    }
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    let inner = top.caller.body.get(open + 1..close)?.trim();
+    let masked_inner = masked.get(open + 1..close)?.trim();
+    // Exactly one statement: the assertion macro, with at most a closing `;`.
+    let statement = masked_inner.strip_suffix(';').unwrap_or(masked_inner);
+    if !(statement.starts_with("assert_eq!(") || statement.starts_with("assert_ne!("))
+        || statement.contains(';')
+        || super::reveal::matching_parenthesis(statement, "assert_eq!".len())
+            .is_none_or(|end| end + 1 != statement.len())
+    {
+        return None;
+    }
+    let raw_statement = inner.strip_suffix(';').unwrap_or(inner);
+    let operands = super::reveal::assertion_comparison_operands(raw_statement)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    let call = squash(&format!(
+        "{receiver}.{method}({})",
+        top.arguments
+            .iter()
+            .map(|argument| argument.trim())
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    let other = if squash(operands[0]).trim_start_matches('&') == call {
+        operands[1]
+    } else if squash(operands[1]).trim_start_matches('&') == call {
+        operands[0]
+    } else {
+        return None;
+    };
+    let other_masked = crate::analysis::language::mask_rust_comments_and_strings(other);
+    let names_word = |text: &str, word: &str| contains_word(text, word);
+    if names_word(&other_masked, receiver)
+        || names_word(&other_masked, method)
+        || is_direct_call_site(&other_masked, owner_name)
+    {
+        return None;
+    }
+    Some(top)
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {

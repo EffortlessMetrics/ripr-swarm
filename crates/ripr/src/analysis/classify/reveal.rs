@@ -2190,15 +2190,25 @@ fn analyze_related_assertions(
             // RIPR-SPEC-0035 / #5830: an equality whose expected side is
             // computed through the changed owner moves with it, so it
             // neither pins the value nor confirms observation.
+            // The owner symbol is `file::impl Type::name` for a method and
+            // `file::name` for a free function.
+            let free_owner = probe
+                .owner
+                .as_ref()
+                .is_some_and(|symbol| !symbol.0.contains("::impl "));
             let self_computed = matched
                 && match_context.owner_callee.is_some_and(|owner| {
                     expected_computed_through_owner(
                         &assertion.text,
                         owner,
+                        free_owner,
                         return_admission.expected_reaches_owner,
-                    ) || expected_operand_bound_to_owner(&assertion.text, owner, &|operand| {
-                        (return_admission.expected_operand_value)(test, operand)
-                    })
+                    ) || expected_operand_bound_to_owner(
+                        &assertion.text,
+                        owner,
+                        free_owner,
+                        &|operand| (return_admission.expected_operand_value)(test, operand),
+                    )
                 });
             // #8051: when the owner may leave before its push, a test that
             // passes expecting the written collection empty took that exit,
@@ -2708,6 +2718,15 @@ fn text_calls(text: &str, name: &str) -> bool {
     called_names(text).iter().any(|called| called == name)
 }
 
+/// Whether `text` calls the owner `owner`. A free-function owner is never
+/// called as `recv.owner(..)`, so a text whose only mentions of its name are
+/// receiver calls (`expected.to_string()` beside a free `to_string(..)`) calls
+/// some other function of that name (#9329).
+fn calls_owner(text: &str, owner: &str, free_owner: bool) -> bool {
+    text_calls(text, owner)
+        && !(free_owner && super::helper_transfer::mentions_only_as_receiver_call(text, owner))
+}
+
 /// Every identifier `text` calls (comments and strings masked), excluding
 /// macro invocations: the word immediately before `(` or `::<`.
 fn called_names(text: &str) -> Vec<String> {
@@ -2808,18 +2827,20 @@ fn equality_operands(text: &str) -> Option<[String; 2]> {
 fn expected_operand_bound_to_owner(
     text: &str,
     owner: &str,
+    free_owner: bool,
     operand_value: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
     let Some([left, right]) = equality_operands(text) else {
         return false;
     };
-    let (actual, expected) = match (text_calls(&left, owner), text_calls(&right, owner)) {
+    let calls = |operand: &str| calls_owner(operand, owner, free_owner);
+    let (actual, expected) = match (calls(&left), calls(&right)) {
         (true, false) => (left, right),
         (false, true) => (right, left),
         _ => return false,
     };
     operand_value(&expected).is_some_and(|value| {
-        text_calls(&value, owner)
+        calls(&value)
             && terms_outside_owner_calls(&actual, owner) == terms_outside_owner_calls(&value, owner)
     })
 }
@@ -2835,6 +2856,7 @@ fn expected_operand_bound_to_owner(
 fn expected_computed_through_owner(
     text: &str,
     owner: &str,
+    free_owner: bool,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
     let Some([left, right]) = equality_operands(text) else {
@@ -2846,7 +2868,10 @@ fn expected_computed_through_owner(
             .iter()
             .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
-    match (text_calls(left, owner), text_calls(right, owner)) {
+    match (
+        calls_owner(left, owner, free_owner),
+        calls_owner(right, owner, free_owner),
+    ) {
         // Both sides run the owner. Unless the code around the owner calls
         // differs (`tax(250) * 2` against `tax(250) + 8` pins the owner's
         // value), the sides move together; reordering, parentheses or a
@@ -11324,21 +11349,25 @@ return Err(\"typed pin\".into());
         assert!(expected_operand_bound_to_owner(
             "assert!(EXPECTED == tax(RATE));",
             "tax",
+            false,
             &held("tax(RATE)")
         ));
         assert!(expected_operand_bound_to_owner(
             "assert_eq!(tax(4), EXPECTED);",
             "tax",
+            false,
             &held("crate::tax(2)")
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(tax(RATE), tax(RATE));",
             "tax",
+            false,
             &|_| Some("tax(RATE)".to_string())
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(EXPECTED, OTHER);",
             "tax",
+            false,
             &|_| Some("tax(RATE)".to_string())
         ));
         // A value that differs outside its owner calls, or never calls the
@@ -11357,6 +11386,7 @@ return Err(\"typed pin\".into());
                 !expected_operand_bound_to_owner(
                     "assert_eq!(cart.tax(), EXPECTED);",
                     "tax",
+                    false,
                     &held(value)
                 ),
                 "{value}"
@@ -11365,7 +11395,42 @@ return Err(\"typed pin\".into());
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(tax(RATE), EXPECTED);",
             "tax",
+            false,
             &|_| None
+        ));
+    }
+
+    // #9329: a receiver call of the owner's name is not a call of a free
+    // owner (`expected.to_string()` beside a free `to_string(..)`), but it
+    // still is for a method owner.
+    #[test]
+    fn a_receiver_call_of_a_free_owners_name_is_not_a_call_of_the_owner() {
+        let reaches = |_: Option<&str>, name: &str| name == "to_string_as";
+        let text = "assert_eq!(expected.to_string(), b.to_string_as(si));";
+        assert!(expected_computed_through_owner(
+            text,
+            "to_string",
+            false,
+            &reaches
+        ));
+        assert!(!expected_computed_through_owner(
+            text,
+            "to_string",
+            true,
+            &reaches
+        ));
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(expected.to_string(), got);",
+            "to_string",
+            true,
+            &|_| Some("x.to_string()".to_string())
+        ));
+        // A direct call of the free owner still counts.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(to_string(1, true), b.to_string_as(si));",
+            "to_string",
+            true,
+            &reaches
         ));
     }
 
@@ -11375,29 +11440,34 @@ return Err(\"typed pin\".into());
         assert!(expected_computed_through_owner(
             "assert_eq!(sub + tax(sub), invoice(3, 100));",
             "tax",
+            false,
             &reaches
         ));
         assert!(expected_computed_through_owner(
             "assert_eq!(cart.invoice(3), tax(300) + 300);",
             "tax",
+            false,
             &reaches
         ));
         // A literal expected value is independent of the owner.
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(300), 24);",
             "tax",
+            false,
             &reaches
         ));
         // `tax(` inside a message string is not a call.
         assert!(!expected_computed_through_owner(
             "assert_eq!(invoice(3, 100), 324, \"tax(sub)\");",
             "tax",
+            false,
             &reaches
         ));
         // The same owner call on both sides holds whatever it returns.
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(250), tax(250));",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Different owner-dependent expressions can pin the owner's value:
@@ -11405,6 +11475,7 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(250) * 2, tax(250) + 8);",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Reordering, grouping and a path prefix leave the sides equal.
@@ -11415,7 +11486,9 @@ return Err(\"typed pin\".into());
             "assert_eq!(tax(250) /* same */, tax(250));",
         ] {
             assert!(
-                expected_computed_through_owner(text, "tax", &|_: Option<&str>, _: &str| false),
+                expected_computed_through_owner(text, "tax", false, &|_: Option<&str>, _: &str| {
+                    false
+                }),
                 "{text}"
             );
         }
@@ -11423,12 +11496,14 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(250) + base, tax(250) + other);",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Inequality is never strong in the first place.
         assert!(!expected_computed_through_owner(
             "assert_ne!(invoice(3, 100), tax(300));",
             "tax",
+            false,
             &reaches
         ));
         // RIPR-SPEC-0197: `assert!(a == b)` and an Err-return guard twin
@@ -11442,7 +11517,7 @@ return Err(\"typed pin\".into());
             "if tax(300) != invoice(3, 100) - 300 {\n    // was assert_eq!(tax(300), 24)\n    return Err(..)\n}",
         ] {
             assert!(
-                expected_computed_through_owner(text, "tax", &reaches),
+                expected_computed_through_owner(text, "tax", false, &reaches),
                 "{text}"
             );
         }
@@ -11452,7 +11527,7 @@ return Err(\"typed pin\".into());
             "assert!(tax(300) >= invoice(3, 100));",
         ] {
             assert!(
-                !expected_computed_through_owner(text, "tax", &reaches),
+                !expected_computed_through_owner(text, "tax", false, &reaches),
                 "{text}"
             );
         }
@@ -11478,17 +11553,20 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(100), Money::new(8));",
             "tax",
+            false,
             &reaches
         ));
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(100), Invoice::new(100).tax);",
             "tax",
+            false,
             &reaches
         ));
         // A method or `Self::` call names no type, so it matches by name.
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(100), cart.new(100));",
             "tax",
+            false,
             &reaches
         ));
         assert_eq!(
