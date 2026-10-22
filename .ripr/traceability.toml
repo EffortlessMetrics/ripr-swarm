@@ -16181,11 +16181,21 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_unreached_catch_arm_withdraws_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_rejecting_test_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_edit_outside_the_catch_arm_is_unchanged",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_guarded_call_that_can_fail_by_itself_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_dot_catch_handler_is_a_catch_arm",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_signal_in_a_comment_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::a_module_mock_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::every_related_test_must_lack_a_signal",
+  "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_operator_on_the_call_result_keeps_exposed",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",

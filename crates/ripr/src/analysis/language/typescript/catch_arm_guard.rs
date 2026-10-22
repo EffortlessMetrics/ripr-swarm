@@ -161,55 +161,48 @@ fn dot_catch_receiver(header: &str) -> Option<String> {
     (after.contains("=>") || after.contains("function")).then(|| header[..at].to_string())
 }
 
-const KEYWORDS: [&str; 9] = [
-    "await", "return", "if", "else", "typeof", "void", "in", "of", "const",
-];
-
-/// `true` when masked code calls nothing but owner parameters and holds no
-/// operation that can fail on its own.
+/// `true` when every statement of masked guarded code is exactly
+/// `[return] [await] param(<identifier or literal args>)`. Any operator, member
+/// access, nested call or other form (`0 in read()`, `read() + 1`, `new X`,
+/// `JSON.parse(s)`) can fail on its own and keeps the ladder verdict.
 fn is_plain_guarded_code(text: &str, params: &[String]) -> bool {
-    if text.trim().is_empty() {
+    let mut statements = 0usize;
+    for statement in text.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        if !is_plain_statement(statement, params) {
+            return false;
+        }
+        statements += 1;
+    }
+    statements > 0
+}
+
+fn strip_word<'a>(text: &'a str, word: &str) -> &'a str {
+    match text.strip_prefix(word) {
+        Some(rest) if rest.starts_with(char::is_whitespace) => rest.trim_start(),
+        _ => text,
+    }
+}
+
+fn is_plain_statement(statement: &str, params: &[String]) -> bool {
+    let rest = strip_word(statement, "return");
+    let rest = strip_word(rest, "await");
+    let name_len = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_len);
+    if name.is_empty() || !params.iter().any(|p| p == name) {
         return false;
     }
-    let chars: Vec<char> = text.chars().collect();
-    let mut at = 0usize;
-    while at < chars.len() {
-        let c = chars[at];
-        if c == '.' {
-            let digit = |i: Option<usize>| {
-                i.and_then(|i| chars.get(i))
-                    .is_some_and(|d| d.is_ascii_digit())
-            };
-            if !(digit(at.checked_sub(1)) && digit(Some(at + 1))) {
-                return false;
-            }
-        } else if c == '[' {
-            return false;
-        } else if c == '(' {
-            let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
-            if matches!(before, Some(')') | Some(']')) {
-                return false;
-            }
-        } else if c.is_alphabetic() || c == '_' || c == '$' {
-            let start = at;
-            while at < chars.len()
-                && (chars[at].is_alphanumeric() || matches!(chars[at], '_' | '$'))
-            {
-                at += 1;
-            }
-            let word: String = chars[start..at].iter().collect();
-            if word == "new" || word == "throw" {
-                return false;
-            }
-            let called = chars[at..].iter().find(|c| !c.is_whitespace()) == Some(&'(');
-            if called && !KEYWORDS.contains(&word.as_str()) && !params.contains(&word) {
-                return false;
-            }
-            continue;
-        }
-        at += 1;
-    }
-    true
+    let Some(args) = after
+        .trim_start()
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+    else {
+        return false;
+    };
+    args.chars().all(|c| {
+        c.is_alphanumeric() || c.is_whitespace() || matches!(c, '_' | '$' | ',' | '"' | '\'' | '`')
+    })
 }
 
 #[cfg(test)]
@@ -273,6 +266,10 @@ mod tests {
             "return new URL(s);",
             "return s.length;",
             "return other(read());",
+            "return 0 in read();",
+            "return read() + 1;",
+            "return await read() instanceof A;",
+            "return -read();",
             "return list[0];",
             "return (() => 1)();",
             "throw 1;",

@@ -250,3 +250,18 @@ fn every_related_test_must_lack_a_signal() -> Result<(), String> {
     assert_eq!(kept.class, ExposureClass::Exposed, "{:?}", kept.missing);
     Ok(())
 }
+
+#[test]
+fn an_operator_on_the_call_result_keeps_exposed() -> Result<(), String> {
+    // `0 in 42` throws, so the catch runs with no throw-capable word in the test.
+    let owner = "export function load(read: () => number, fallback: number): boolean {\n  try {\n    return 0 in read();\n  } catch {\n    return fallback + 1;\n  }\n}\n";
+    let test = format!("{HEAD}\nit(\"x\", () => {{\n  expect(load(() => 42, 0)).toBe(1);\n}});\n");
+    let finding = edit_with_test("catch-in-operator", owner, 5, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

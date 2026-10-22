@@ -215,9 +215,11 @@ owner and test frameworks, and holds no throw-capable text (`reject`,
 compared case-insensitively over the whole file including strings and
 comments), an `exposed` ladder result reads `weakly_exposed`. The missing note
 says the catch arm is never exercised by the related tests. The code the catch guards (the `try` body, or the receiver text before
-`.catch(`) must also be plain: it calls only owner parameters and holds no
-`new`, `throw`, member access (`JSON.parse`, `fs.x`, `obj.m()`), indexing or
-immediately invoked expression, because any other call can fail on bad input
+`.catch(`) must also be plain: every statement is exactly
+`[return] [await] param(<identifier or literal arguments>)` for an owner
+parameter. Any operator on the call result (`0 in read()`, `read() + 1`,
+`instanceof`, unary), `new`, `throw`, member access (`JSON.parse`, `fs.x`,
+`obj.m()`), indexing or nested call is refused, because it can fail on its own
 without a test saying so. The `catch` keyword must follow a closing `}`
 (a method named `catch(x) {` is not a clause), and a `catch (e) {` header
 line or any changed line starting with `}` is excluded. The throw-capable
