@@ -478,6 +478,19 @@ Decisions:
   Other specs' examples do not state a related-test kind and strength, so
   their cases stay unlabeled.
 
+### Operator grid and false-credit traps
+
+The `[grid]` table of `spec-coverage.toml` scores seven operator classes
+(boundary, equality, logical, arithmetic, constant, return value, deletion)
+against three truth states (credited, gap, partial). An operator comes from
+a case's `behavior_family`; `[grid.operators]` names the cases whose family
+describes a different edit than the one made. A case is a trap when its
+subject or case id carries `trap` and runtime truth is not `discriminated`;
+the same name with `discriminated` truth is its control. `check` fails when
+covered cells fall below `cell_floor`, trap cases below `trap_floor`, or
+ripr credits more traps than `false_credit_ceiling`. A `--cases` subset is
+reported but never gated. `validate` does not run the grid.
+
 ## Required Evidence
 
 - The committed corpus validates and contains both a `discriminated` and a
@@ -713,7 +726,9 @@ Oracle-accuracy tests live in
   label law, the observed-oracle read, outcome classification, the
   `oracle_accuracy` section and the oracle gate.
 - `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger,
-  including the `[oracle]` gate table.
+  including the `[oracle]` gate table and the `[grid]` gate table.
+- `xtask/src/reports/verdict_corpus_grid.rs` owns the operator grid, the
+  trap table and the grid gate.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
   authored subjects, case diffs, and the expected report.
 

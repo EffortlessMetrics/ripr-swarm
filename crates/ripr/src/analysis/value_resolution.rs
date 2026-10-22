@@ -54,9 +54,6 @@ use std::sync::Arc;
 /// once per indexed test and reused while classifying every seam.
 #[derive(Default)]
 pub(crate) struct ValueEnvFacts {
-    /// Test body with comments stripped so binding scans don't pick
-    /// up `// let threshold = 999;` shadows.
-    body_clean: String,
     /// `IDENT -> LITERAL` from `let IDENT = LITERAL;` lines in the
     /// test body (single-test scope).
     let_bindings: BTreeMap<String, String>,
@@ -163,7 +160,6 @@ impl ValueEnvFacts {
             &local_binding_positions,
         );
         Self {
-            body_clean,
             let_bindings,
             rstest_cases,
             case_param_names,
@@ -407,13 +403,18 @@ impl<'a> ValueEnv<'a> {
     /// fixture override like `with_amount`) before the value counts.
     /// Without that guard, every `.with_seed(42)` would inflate
     /// observed values for unrelated seams.
-    pub(crate) fn builder_facts(&self) -> Vec<ValueFact> {
+    ///
+    /// `test_body` is the raw body the facts were built from. The comment-free
+    /// copy is rebuilt on each call rather than kept alive for every indexed
+    /// test; every expected sink yields at least one allowed token, so the
+    /// strip is not limited to seams that actually contain builder calls.
+    pub(crate) fn builder_facts(&self, test_body: &str) -> Vec<ValueFact> {
         let allowed = self.allowed_builder_method_names();
         if allowed.is_empty() {
             return Vec::new();
         }
         let mut out = Vec::new();
-        for cap in scan_builder_calls(&self.facts.body_clean) {
+        for cap in scan_builder_calls(&strip_comments_and_strings(test_body)) {
             if !builder_method_matches_allowed(&cap.method, &allowed) {
                 continue;
             }

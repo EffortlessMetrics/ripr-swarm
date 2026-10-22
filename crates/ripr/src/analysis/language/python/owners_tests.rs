@@ -196,6 +196,7 @@ fn owner_from_function(
         unplain_decorators,
         parameters,
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
@@ -261,6 +262,7 @@ fn owner_from_class(
         unplain_decorators: called_decorator_names(decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
@@ -292,6 +294,7 @@ pub(super) fn module_owner(
         unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
@@ -307,6 +310,21 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
     extract_source_facts(file, source).tests
 }
 
+/// Whether a sibling class lists `class_name` among its bases.
+fn class_is_listed_as_base(statements: &[Stmt], class_name: &str) -> bool {
+    statements.iter().any(|stmt| {
+        let Stmt::ClassDef(other) = stmt else {
+            return false;
+        };
+        other.name.as_str() != class_name
+            && other.bases.iter().any(|base| match base {
+                Expr::Name(name) => name.id.as_str() == class_name,
+                Expr::Attribute(attribute) => attribute.attr.as_str() == class_name,
+                _ => false,
+            })
+    })
+}
+
 /// Python decorators and method bodies use different binding scopes.
 #[derive(Clone, Copy)]
 pub(super) struct TestImportContext<'a> {
@@ -314,6 +332,9 @@ pub(super) struct TestImportContext<'a> {
     pub(super) definition: &'a [PythonImport],
     pub(super) admission: &'a PythonAdmissionContext,
     pub(super) standard_unittest_list: bool,
+    /// Another local class lists this one as a base, so a subclass may replace
+    /// its setup hooks.
+    pub(super) subclassed: bool,
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -332,6 +353,16 @@ pub(super) fn collect_tests_from_statements(
     let admission = import_context.admission;
     let mut definition_imports = import_context.definition.to_vec();
     let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
+    let setup_receivers = if class_context.is_some() {
+        super::setup_receivers::setup_receivers(
+            source,
+            statements,
+            import_context.subclassed,
+            in_unittest_class,
+        )
+    } else {
+        Vec::new()
+    };
     for stmt in statements {
         apply_definition_import(file, stmt, &mut definition_imports);
         match stmt {
@@ -403,6 +434,7 @@ pub(super) fn collect_tests_from_statements(
                         super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures,
+                    setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
@@ -479,6 +511,7 @@ pub(super) fn collect_tests_from_statements(
                         super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures,
+                    setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
@@ -519,6 +552,7 @@ pub(super) fn collect_tests_from_statements(
                                     class,
                                     &definition_imports,
                                 ),
+                            subclassed: class_is_listed_as_base(statements, class_name),
                         },
                         out,
                     );
@@ -547,6 +581,8 @@ pub(super) fn collect_tests_from_statements(
                                     .unwrap_or(&definition_imports),
                                 admission,
                                 standard_unittest_list: false,
+                                // A consumer class runs the mixin's tests under its own hooks.
+                                subclassed: true,
                             },
                             &mut from_mixin,
                         );
