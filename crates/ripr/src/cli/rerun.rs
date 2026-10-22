@@ -464,7 +464,7 @@ fn run_refusing(mut options: RerunOptions) -> Result<(), String> {
     if let Some(out) = options.out {
         let out = resolve_output_path(&input.root, &out);
         write_text_file(&out, &rendered).map_err(|err| refuse(CoreError::from(err)))?;
-        println!("Wrote {}", out.display());
+        println!("Wrote {}", crate::output::path::human_path(&out));
     } else {
         println!("{rendered}");
     }

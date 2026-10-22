@@ -67,7 +67,7 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         ));
     }
     write_text_file(&options.out, &rendered)?;
-    println!("Wrote {}", options.out.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
     println!(
         "Entries: {}",
         output::baseline::baseline_entry_count(&report)
@@ -118,8 +118,8 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
     let rendered_md = output::baseline_delta::render_baseline_delta_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     println!(
         "Items: {}",
         output::baseline_delta::baseline_delta_item_count(&report)
@@ -162,7 +162,7 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
     let rendered = output::baseline_update::render_baseline_update_json(&report)?;
     let out = options.out.unwrap_or_else(|| options.baseline.clone());
     write_text_file(&out, &rendered)?;
-    println!("Wrote {}", out.display());
+    println!("Wrote {}", output::path::human_path(&out));
     println!(
         "Entries: {} -> {}",
         output::baseline_update::baseline_update_before_entry_count(&report),
