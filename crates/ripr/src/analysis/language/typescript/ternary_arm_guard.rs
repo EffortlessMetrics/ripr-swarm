@@ -180,10 +180,8 @@ pub(crate) fn ts_ternary_threshold_move(
         parameter_comparison(&old.condition_text, owner)?;
     if parameter != old_parameter
         || comparison != old_comparison
-        || !matches!(
-            (&new_operand, &old_operand),
-            (ArmConstant::Number(new), ArmConstant::Number(old)) if new != old
-        )
+        || !matches!(new_operand, ArmConstant::Number(_))
+        || evaluate(ArmComparison::Equal, &new_operand, &old_operand) != Some(false)
     {
         return None;
     }
