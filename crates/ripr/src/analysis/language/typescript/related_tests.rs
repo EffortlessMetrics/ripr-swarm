@@ -3854,7 +3854,7 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
 }
 
 pub(crate) fn is_javascript_identifier_char(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    ch == '_' || ch == '$' || ch.is_alphanumeric()
 }
 
 fn same_file_proximity_related(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {

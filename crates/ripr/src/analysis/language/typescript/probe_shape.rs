@@ -75,6 +75,9 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     {
         return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
     }
+    if is_module_scalar_constant(line_text) {
+        return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
+    }
     if leading.starts_with("if (")
         || leading.starts_with("if(")
         || leading.starts_with("else if (")
@@ -495,6 +498,69 @@ pub(crate) fn declared_arrow_value_body(leading: &str) -> bool {
         let masked = ts_mask_literals_and_comments(body);
         !masked.replace("=>", "").contains(['<', '>'])
     })
+}
+
+/// `true` for a module-level scalar constant declaration at column zero,
+/// `[export ]const NAME[: Type] = <literal>;`, whose initializer is one
+/// string, number, boolean or `null` literal. A test that reads the constant
+/// observes its value the way a call observes a returned value, so the edit
+/// is a value change rather than an unrecognised line. A nested declaration
+/// (indented), a computed initializer, a template with a substitution or a
+/// destructuring head keeps the unrecognised-shape fallback.
+pub(crate) fn is_module_scalar_constant(line_text: &str) -> bool {
+    let line = line_text.trim_end();
+    if line.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let declaration = line.strip_prefix("export ").unwrap_or(line);
+    let Some(declaration) = declaration.strip_prefix("const ") else {
+        return false;
+    };
+    let Some((head, initializer)) = declaration.split_once(" = ") else {
+        return false;
+    };
+    if head.contains(['(', '{', '[', ',']) {
+        return false;
+    }
+    let initializer = initializer.trim();
+    let initializer = initializer
+        .strip_suffix(';')
+        .unwrap_or(initializer)
+        .trim_end();
+    is_scalar_literal(initializer)
+}
+
+fn is_scalar_literal(text: &str) -> bool {
+    if matches!(text, "true" | "false" | "null") {
+        return true;
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if digits.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return digits
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_'));
+    }
+    let mut chars = text.chars();
+    let (Some(open), Some(close)) = (chars.next(), text.chars().next_back()) else {
+        return false;
+    };
+    if text.len() < 2 || open != close || !matches!(open, '"' | '\'' | '`') {
+        return false;
+    }
+    let inner = &text[open.len_utf8()..text.len() - close.len_utf8()];
+    // One literal: the quote does not recur unescaped, and a template has no
+    // substitution.
+    let mut escaped = false;
+    for c in inner.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == open {
+            return false;
+        }
+    }
+    !(escaped || open == '`' && inner.contains("${"))
 }
 
 /// The name a declared concise arrow line binds (`double` for

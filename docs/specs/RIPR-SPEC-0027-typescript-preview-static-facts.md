@@ -343,6 +343,11 @@ Probes the adapter must generate (syntax-first):
 
 - predicate probes for changed `if`/`else if`/ternary boundary conditions
 - return-value probes for changed `return` and tail expressions
+- return-value probes for a changed column-zero module scalar constant
+  (`[export ]const NAME[: Type] = <literal>;`, where the literal is a number,
+  boolean, `null` or a quoted string without `${}`). A computed, structured,
+  indented or multi-declarator initializer keeps the unrecognised shape.
+  Identifiers match tests by Unicode alphanumerics, not ASCII only
 - error-path probes for changed `throw` statements and `try`/`catch`/
   `Promise.reject` shapes
 - field probes for changed object-literal or class-field assignments

@@ -17432,6 +17432,7 @@ mod mock_form_tests;
 mod mock_object_argument_tests;
 mod mock_spread_source_tests;
 mod mocked_callee_tests;
+mod module_const_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
 mod out_dir_specifier_tests;
