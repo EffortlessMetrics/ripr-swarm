@@ -3,6 +3,7 @@
 use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::load_for_root;
+use crate::output::path::display_path;
 use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
@@ -43,7 +44,7 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     }
 }
 
-fn validate_config(root: &Path) -> Result<&'static str, String> {
+fn validate_config(root: &Path) -> Result<String, String> {
     if !root.is_dir() {
         return Err(format!(
             "config validate root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
@@ -51,11 +52,23 @@ fn validate_config(root: &Path) -> Result<&'static str, String> {
         ));
     }
     // A missing file is a valid first run, but saying "ripr.toml valid" there
-    // told users a file they never wrote had been checked.
-    if load_for_root(root)?.source_path.is_none() {
-        return Ok("✓ no ripr.toml found; built-in defaults apply");
+    // told users a file they never wrote had been checked. Ancestor
+    // discovery can also validate a parent's file the user did not point at,
+    // so the success line names the file that actually governed (#9604).
+    match load_for_root(root) {
+        Ok(config) => Ok(match &config.source_path {
+            Some(path) => format!("✓ ripr.toml valid ({})", display_path(path)),
+            None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
+        }),
+        // Marker detection can refuse a root that has no config file at all
+        // (Python markers in a binary without `lang-python`). That is a
+        // setup advisory about a file the user never wrote, not a validation
+        // failure — the command stays green and carries the note.
+        Err(error) if error.starts_with("Python project markers were detected") => Ok(format!(
+            "✓ no ripr.toml found; built-in defaults apply (note: {error})"
+        )),
+        Err(error) => Err(error),
     }
-    Ok("✓ ripr.toml valid")
 }
 
 #[cfg(test)]
@@ -89,8 +102,13 @@ mod tests {
 
         let result = validate_config(&root);
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-        if result? != "✓ ripr.toml valid" {
-            return Err("valid configuration returned the wrong success message".to_string());
+        let message = result?;
+        // #9604 batch B: the success line names the file that governed, so
+        // ancestor discovery cannot silently validate a parent's config.
+        if !message.starts_with("✓ ripr.toml valid (") || !message.contains(CONFIG_FILE_NAME) {
+            return Err(format!(
+                "valid configuration returned the wrong success message: {message}"
+            ));
         }
         Ok(())
     }
