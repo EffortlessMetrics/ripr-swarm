@@ -46,6 +46,7 @@ fn gate(cell_floor: usize, trap_floor: usize, ceiling: usize) -> GridGate {
         cell_floor,
         trap_floor,
         false_credit_ceiling: ceiling,
+        operators: BTreeMap::new(),
         waived: Vec::new(),
     }
 }
@@ -228,4 +229,63 @@ fn waivers_remove_a_cell_and_stale_waivers_fail() {
             .unwrap_or_default()
             .contains("stale grid waivers")
     );
+}
+
+#[test]
+fn operator_override_trap_by_case_id_and_silent_controls() {
+    let mut g = gate(0, 0, 0);
+    g.operators
+        .insert("eq-case".to_string(), "equality".to_string());
+    g.operators.insert("bits".to_string(), "none".to_string());
+    g.operators
+        .insert("ghost".to_string(), "equality".to_string());
+    let rows = vec![
+        row(
+            "eq-case",
+            "s",
+            "predicate",
+            TruthState::Discriminated,
+            Verdict::Credited,
+            Outcome::Ideal,
+        ),
+        row(
+            "bits",
+            "s",
+            "return_value_arithmetic",
+            TruthState::Discriminated,
+            Verdict::Credited,
+            Outcome::Ideal,
+        ),
+        row(
+            "trap-in-spec-subject",
+            "authored-spec",
+            "match_arm",
+            TruthState::NotDiscriminated,
+            Verdict::Credited,
+            Outcome::FalseExposed,
+        ),
+        row(
+            "trap-control",
+            "authored-spec",
+            "match_arm",
+            TruthState::Discriminated,
+            Verdict::Silent,
+            Outcome::FalseSilent,
+        ),
+    ];
+    let report = grid_report(&rows, &g, "l".to_string(), false);
+    let cell = |op: &str, st: &str| {
+        report
+            .cells
+            .iter()
+            .find(|c| c.operator == op && c.state == st)
+            .map(|c| c.cases)
+    };
+    assert_eq!(cell("equality", "credited"), Some(1));
+    assert_eq!(cell("boundary", "credited"), Some(0));
+    assert_eq!(cell("arithmetic", "credited"), Some(0));
+    assert_eq!(report.traps.traps, 1);
+    assert_eq!(report.traps.credited, 1);
+    assert_eq!(report.traps.controls_silent, 1);
+    assert_eq!(report.stale_waivers.len(), 1);
 }

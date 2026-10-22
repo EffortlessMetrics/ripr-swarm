@@ -90,6 +90,13 @@ fn is_trap_subject(subject_id: &str) -> bool {
     subject_id.contains("trap")
 }
 
+/// A trap is named for its job in its subject or in its case id, because a
+/// trap added to a spec-owned subject (`trap-iter-empty-slice`) lives in a
+/// subject that carries no such name.
+fn is_trap_row(row: &CaseRow) -> bool {
+    is_trap_subject(&row.subject_id) || row.case_id.contains("trap")
+}
+
 /// The `[grid]` table of `spec-coverage.toml`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +108,12 @@ pub(crate) struct GridGate {
     pub(crate) trap_floor: usize,
     /// Trap cases ripr may credit before the gate fails.
     pub(crate) false_credit_ceiling: usize,
+    /// Cases whose `behavior_family` names a different operator than the one
+    /// they edit (`config-duplicate-key-case` edits an equality inside a
+    /// `predicate` family), each mapped to its true operator, or `none` for
+    /// an edit the grid does not score (bitwise).
+    #[serde(default)]
+    pub(crate) operators: BTreeMap<String, String>,
     /// Cells no case can fill, each with the reason.
     #[serde(default)]
     pub(crate) waived: Vec<GridWaiver>,
@@ -142,6 +155,7 @@ pub(crate) struct TrapSummary {
     /// Controls ripr calls a gap: a false actionable.
     pub(crate) controls_gapped: usize,
     pub(crate) controls_abstained: usize,
+    pub(crate) controls_silent: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,7 +193,12 @@ pub(crate) fn grid_report(
     let mut counts: BTreeMap<(&str, &str), [usize; 4]> = BTreeMap::new();
     let mut traps = TrapSummary::default();
     for row in rows {
-        if let Some(operator) = operator_of(&row.behavior_family) {
+        let operator = match gate.operators.get(&row.case_id).map(String::as_str) {
+            Some("none") => None,
+            Some(named) => OPERATORS.iter().copied().find(|o| *o == named),
+            None => operator_of(&row.behavior_family),
+        };
+        if let Some(operator) = operator {
             let slot = counts
                 .entry((operator, state_of(row.truth)))
                 .or_insert([0; 4]);
@@ -190,14 +209,14 @@ pub(crate) fn grid_report(
                 _ => slot[3] += 1,
             }
         }
-        if is_trap_subject(&row.subject_id) {
+        if is_trap_row(row) {
             if row.truth == TruthState::Discriminated {
                 traps.controls += 1;
                 match row.observed_verdict {
                     Verdict::Credited => traps.controls_credited += 1,
                     Verdict::Gap => traps.controls_gapped += 1,
                     Verdict::Limited => traps.controls_abstained += 1,
-                    Verdict::Silent => {}
+                    Verdict::Silent => traps.controls_silent += 1,
                 }
             } else {
                 traps.traps += 1;
@@ -262,6 +281,14 @@ pub(crate) fn grid_report(
             stale_waivers.push(format!(
                 "waiver `{}/{}` names a cell the grid does not have",
                 waiver.operator, waiver.state
+            ));
+        }
+    }
+    for (case, operator) in &gate.operators {
+        let known = operator == "none" || OPERATORS.contains(&operator.as_str());
+        if !known || !rows.iter().any(|row| &row.case_id == case) {
+            stale_waivers.push(format!(
+                "operator override `{case} = {operator}` names an unknown operator or a case the corpus lacks"
             ));
         }
     }
@@ -400,8 +427,8 @@ pub(crate) fn render_grid_markdown(grid: &GridReport) -> String {
         t.traps, t.credited, t.gapped, t.abstained, t.silent
     ));
     out.push_str(&format!(
-        "| control | {} | {} | {} | {} | 0 |\n",
-        t.controls, t.controls_credited, t.controls_gapped, t.controls_abstained
+        "| control | {} | {} | {} | {} | {} |\n",
+        t.controls, t.controls_credited, t.controls_gapped, t.controls_abstained, t.controls_silent
     ));
     out
 }
