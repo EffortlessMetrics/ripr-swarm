@@ -514,7 +514,7 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     )
@@ -596,7 +596,7 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     )
@@ -998,7 +998,7 @@ impl<'a> LocalTestClasses<'a> {
                 })
                 .flat_map(|((_, class), imports)| {
                     super::test_activation::activation_controls(
-                        &decorator_names(&class.decorator_list),
+                        &class.decorator_list,
                         imports,
                         super::test_activation::DeclarationSite::Class,
                     )

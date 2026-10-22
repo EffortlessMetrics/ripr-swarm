@@ -780,13 +780,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         return None;
     }
     let reason = git_reason_line(&output.stderr)?;
-    // These two mean "no repository here", not "a damaged one": the work-tree
-    // message already tells the user to run from, or point `--root` at, one.
-    // Matched as the diagnostic's own prefix: a bad-config line can name a
-    // file whose path happens to contain those words.
-    if reason.starts_with("fatal: not a git repository")
-        || reason.starts_with("fatal: invalid gitfile")
-    {
+    if git_reason_means_no_repository(&reason) {
         return None;
     }
     // The whole stderr, not the displayed line: an `error:` line about a ref
@@ -808,6 +802,24 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
          {repair}",
         crate::terminal_text::terminal_safe(root.display().to_string())
     ))
+}
+
+/// Whether Git's reason line says "no repository here" rather than "a damaged
+/// one": the work-tree message already tells the user to run from, or point
+/// `--root` at, one. Matched as the diagnostic's own prefix: a bad-config line
+/// can name a file whose path happens to contain those words. Newer Git names
+/// a gitfile whose existing target is not a repository with "gitfile does not
+/// point to a valid repository" where older Git said "not a git repository"
+/// (seen on hosted Windows, #9661).
+fn git_reason_means_no_repository(reason: &str) -> bool {
+    [
+        "fatal: not a git repository",
+        "fatal: invalid gitfile",
+        "fatal: no path in gitfile",
+        "fatal: gitfile does not point to a valid repository",
+    ]
+    .iter()
+    .any(|prefix| reason.starts_with(prefix))
 }
 
 fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
@@ -4375,6 +4387,30 @@ mod tests {
         assert!(!git_stderr_rejects_environment_config(
             "fatal: bad config line 1 in file /tmp/GIT_CONFIG_dir/.git/config\n"
         ));
+    }
+
+    #[test]
+    fn no_repository_reasons_cover_both_git_spellings_of_a_non_repository_gitdir() {
+        // Older Git (2.43) and newer Git (hosted Windows runners, #9661) name a
+        // gitfile whose existing target is not a repository differently; both
+        // are "no repository here", not repository damage.
+        // `check-local-context` forbids drive-letter path literals.
+        let drive = "F:";
+        for reason in [
+            "fatal: not a git repository: /work/admin".to_string(),
+            "fatal: invalid gitfile format: /work/.git".to_string(),
+            "fatal: no path in gitfile: /work/.git".to_string(),
+            format!("fatal: gitfile does not point to a valid repository: {drive}/work/admin/.git"),
+        ] {
+            assert!(git_reason_means_no_repository(&reason), "{reason}");
+        }
+        // A damaged repository whose path contains the words stays damage.
+        for reason in [
+            "fatal: bad config line 1 in file /work/not a git repository/.git/config",
+            "error: refs/heads/feat does not point to a valid object!",
+        ] {
+            assert!(!git_reason_means_no_repository(reason), "{reason}");
+        }
     }
 
     #[test]
