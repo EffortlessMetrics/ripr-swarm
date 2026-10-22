@@ -20,7 +20,9 @@ import {
   terminateProbeProcessTree
 } from './lspCompatibility';
 
-const START_TIMEOUT_MS = 10_000;
+// The first run of a never-executed ripr.exe on a Windows runner exceeded 10s
+// (Defender scan of a fresh binary) and failed activation in #9526.
+const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 
 /**
  * Guidance for a failed configured-path candidate. The generic remedy tells
