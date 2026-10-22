@@ -275,42 +275,120 @@ pub(super) fn validate_publish_tag(
     }
 }
 
-fn unquote(token: &str) -> &str {
-    token.trim_matches(|c| c == '"' || c == '\'')
+const COMMAND_SEPARATORS: &[&str] = &["&&", "||", ";", "|", "&"];
+
+/// Joins shell `\`-continued lines so a command split across physical lines is
+/// evaluated as one logical command. Returns each logical line with the
+/// one-based number of its first physical line.
+fn logical_lines(text: &str) -> Vec<(usize, String)> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut start = 0;
+    for (index, raw) in text.lines().enumerate() {
+        if current.is_empty() {
+            start = index + 1;
+        }
+        let code = raw.trim_end_matches('\r');
+        if let Some(stripped) = code.strip_suffix('\\') {
+            current.push_str(stripped);
+            current.push(' ');
+            continue;
+        }
+        current.push_str(code);
+        lines.push((start, std::mem::take(&mut current)));
+    }
+    if !current.is_empty() {
+        lines.push((start, current));
+    }
+    lines
 }
 
-/// Fails when a workflow publishes or tags npm without an explicit non-`latest`
-/// tag. In-tree workflows have no npm publish step; this keeps it that way
-/// unless the step names its tag, and rejects `latest` outright.
+/// A dist-tag is acceptable only when it is a literal, valid, non-`latest`
+/// word. Variables, expressions, command substitution and quoting tricks are
+/// rejected because they can expand to `latest` at run time.
+fn literal_non_latest_tag(token: &str) -> Result<(), String> {
+    let value = token.trim_matches(|c| c == '"' || c == '\'');
+    let valid = value
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !valid {
+        return Err(format!(
+            "tag `{token}` is not a literal dist-tag (variables and expressions can expand to `latest`)"
+        ));
+    }
+    if value.eq_ignore_ascii_case("latest") {
+        return Err("tag `latest` is forbidden".to_string());
+    }
+    Ok(())
+}
+
+/// Fails when a workflow publishes or tags npm without exactly one literal
+/// non-`latest` tag. Backslash-continued lines are joined first. In-tree
+/// workflows have no npm publish step; this keeps it that way unless the step
+/// names its tag, and rejects `latest` outright.
 pub(super) fn validate_workflow_npm_tags(path: &str, text: &str, violations: &mut Vec<String>) {
-    for (index, line) in text.lines().enumerate() {
-        let code = line.split('#').next().unwrap_or_default();
-        let number = index + 1;
+    for (number, line) in logical_lines(text) {
+        let code = line.split(" #").next().unwrap_or_default();
         let tokens = code.split_whitespace().collect::<Vec<_>>();
-        let has_pair = |a: &str, b: &str| tokens.windows(2).any(|w| w[0] == a && w[1] == b);
-        if has_pair("npm", "publish") {
-            let tag = tokens
+        for (index, token) in tokens.iter().enumerate() {
+            if *token != "npm" {
+                continue;
+            }
+            let rest = &tokens[index + 1..];
+            let end = rest
                 .iter()
-                .position(|t| *t == "--tag")
-                .and_then(|i| tokens.get(i + 1).copied())
-                .or_else(|| tokens.iter().find_map(|t| t.strip_prefix("--tag=")));
-            match tag.map(unquote) {
-                None => violations.push(format!(
-                    "{path}:{number}: `npm publish` must pass an explicit non-`latest` --tag"
-                )),
-                Some("latest") => violations.push(format!(
-                    "{path}:{number}: `npm publish --tag latest` is forbidden in workflows; moving `latest` is a reviewed operator action"
-                )),
-                Some(_) => {}
+                .position(|t| COMMAND_SEPARATORS.contains(t))
+                .unwrap_or(rest.len());
+            let command = &rest[..end];
+            let Some(subcommand) = command.iter().position(|t| !t.starts_with('-')) else {
+                continue;
+            };
+            let args = &command[subcommand + 1..];
+            match command[subcommand] {
+                "publish" => check_publish_args(path, number, args, violations),
+                "dist-tag" => check_dist_tag_args(path, number, args, violations),
+                _ => {}
             }
         }
-        if has_pair("dist-tag", "add") || has_pair("dist-tag", "set") {
-            let last = tokens.last().copied().unwrap_or_default();
-            if unquote(last) == "latest" {
-                violations.push(format!(
-                    "{path}:{number}: `npm dist-tag` onto `latest` is forbidden in workflows; moving `latest` is a reviewed operator action"
-                ));
+    }
+}
+
+fn check_publish_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
+    let mut tags = Vec::new();
+    let mut position = 0;
+    while position < args.len() {
+        let arg = args[position];
+        if arg == "--tag" {
+            tags.push(args.get(position + 1).copied().unwrap_or_default());
+            position += 1;
+        } else if let Some(value) = arg.strip_prefix("--tag=") {
+            tags.push(value);
+        }
+        position += 1;
+    }
+    match tags.as_slice() {
+        [] => violations.push(format!(
+            "{path}:{number}: `npm publish` must pass an explicit non-`latest` --tag"
+        )),
+        [tag] => {
+            if let Err(reason) = literal_non_latest_tag(tag) {
+                violations.push(format!("{path}:{number}: `npm publish` {reason}"));
             }
+        }
+        _ => violations.push(format!(
+            "{path}:{number}: `npm publish` must pass exactly one --tag; repeated or mixed --tag options are ambiguous"
+        )),
+    }
+}
+
+fn check_dist_tag_args(path: &str, number: usize, args: &[&str], violations: &mut Vec<String>) {
+    if let ["add" | "set", _package, tag, ..] = args {
+        if let Err(reason) = literal_non_latest_tag(tag) {
+            violations.push(format!("{path}:{number}: `npm dist-tag` {reason}"));
         }
     }
 }

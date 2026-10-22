@@ -655,15 +655,18 @@ fn npm_manifest_prerelease_to_latest_fails_through_launcher_validator() -> Resul
     Ok(())
 }
 
+fn workflow_violations(text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    npm_launcher::validate_workflow_npm_tags("wf.yml", text, &mut violations);
+    violations
+}
+
 #[test]
 fn workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag() {
-    let check = |text: &str| {
-        let mut violations = Vec::new();
-        npm_launcher::validate_workflow_npm_tags("wf.yml", text, &mut violations);
-        violations
-    };
+    let check = workflow_violations;
     assert!(check("      - run: npm publish --tag next\n").is_empty());
     assert!(check("      - run: npm publish --tag=next --access public\n").is_empty());
+    assert!(check("      - run: npm publish --tag \"next\"\n").is_empty());
     assert!(check("      # npm publish\n      - run: npm pack --dry-run\n").is_empty());
     assert!(has_violation(
         &check("      - run: npm publish\n"),
@@ -678,4 +681,94 @@ fn workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag() {
         "forbidden"
     ));
     assert!(check("      - run: npm dist-tag add pkg@1.0.0-rc.1 next\n").is_empty());
+}
+
+#[test]
+fn workflow_multiline_and_chained_npm_publish_is_not_skipped() {
+    let multiline = "      - run: |\n          npm \\\n            publish --access public\n";
+    assert!(has_violation(
+        &workflow_violations(multiline),
+        "explicit non-`latest`"
+    ));
+    let flag_split = "      - run: |\n          npm publish \\\n            --tag latest\n";
+    assert!(has_violation(&workflow_violations(flag_split), "forbidden"));
+    let tagged = "      - run: |\n          npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(tagged).is_empty());
+    let chained = "      - run: npm pack && npm publish\n";
+    assert!(has_violation(
+        &workflow_violations(chained),
+        "explicit non-`latest`"
+    ));
+    let leading_flag = "      - run: npm --silent publish\n";
+    assert!(has_violation(
+        &workflow_violations(leading_flag),
+        "explicit non-`latest`"
+    ));
+}
+
+#[test]
+fn workflow_interpolated_or_repeated_tag_options_are_rejected() {
+    for text in [
+        "      - run: npm publish --tag \"$DIST_TAG\"\n",
+        "      - run: npm publish --tag ${{ inputs.tag }}\n",
+        "      - run: npm publish --tag $(echo latest)\n",
+        "      - run: npm publish --tag=`echo latest`\n",
+        "      - run: npm dist-tag add pkg@1.0.0 $TAG\n",
+    ] {
+        assert!(
+            has_violation(&workflow_violations(text), "not a literal dist-tag"),
+            "{text}"
+        );
+    }
+    for text in [
+        "      - run: npm publish --tag next --tag latest\n",
+        "      - run: npm publish --tag next --tag=latest\n",
+        "      - run: npm publish --tag=next --tag=next\n",
+    ] {
+        assert!(
+            has_violation(&workflow_violations(text), "exactly one --tag"),
+            "{text}"
+        );
+    }
+}
+
+fn scratch_dir(name: &str) -> Result<std::path::PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!("ripr-9302-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(dir)
+}
+
+#[test]
+fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Result<(), String> {
+    let dir = scratch_dir("scan")?;
+    fs::write(
+        dir.join("publish.yml"),
+        "jobs:\n  p:\n    steps:\n      - run: |\n          npm \\\n            publish\n",
+    )
+    .map_err(|err| err.to_string())?;
+    // A workflow whose bytes are not UTF-8 cannot be read as text and must fail closed.
+    fs::write(dir.join("binary.yml"), [0xff_u8, 0xfe, 0x00]).map_err(|err| err.to_string())?;
+    let mut violations = Vec::new();
+    scan_workflow_npm_tags(&dir, &mut violations);
+    assert!(
+        has_violation(&violations, "publish.yml:5"),
+        "{violations:#?}"
+    );
+    assert!(
+        has_violation(&violations, "failed to read workflow"),
+        "{violations:#?}"
+    );
+
+    let mut missing = Vec::new();
+    scan_workflow_npm_tags(&dir.join("absent"), &mut missing);
+    assert!(missing.is_empty());
+    let mut not_a_dir = Vec::new();
+    scan_workflow_npm_tags(&dir.join("publish.yml"), &mut not_a_dir);
+    assert!(has_violation(
+        &not_a_dir,
+        "failed to read workflow directory"
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
 }

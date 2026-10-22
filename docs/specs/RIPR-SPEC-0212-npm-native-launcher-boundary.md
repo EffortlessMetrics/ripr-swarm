@@ -68,6 +68,12 @@ The package `@effortlessmetrics/ripr`:
 - retains the first observed termination signal until the native child exits,
   then exits with signal semantics rather than converting interruption into
   success;
+- sets `publishConfig.tag` to an explicit literal non-`latest` dist-tag for a
+  prerelease (version containing `-`) and omits it (or uses `latest`) for a
+  stable version, and `bump-version` maintains that tag in both directions;
+- rejects any in-tree workflow `npm publish` that lacks exactly one literal
+  non-`latest` `--tag` (including `\`-continued, chained, interpolated or
+  repeated forms) and any `npm dist-tag add/set` of a non-literal or `latest` tag;
 - runs tests through a guarded runner that fails unless the required named
   package, negative, and signal controls actually execute and pass.
 
@@ -151,6 +157,15 @@ The package `@effortlessmetrics/ripr`:
    or exact-version reinstall. Other resolver errors and a resolvable library
    that fails an internal import or parsing do not receive false library-resolution
    advice.
+9. A prerelease launcher version with no `publishConfig.tag`, tag `latest`, or an
+   empty tag fails `check-release-targets`; the same version with tag `next`
+   passes, and a stable version with tag `next` fails.
+10. A workflow `npm publish` split across `\` continuation lines, without a
+    `--tag`, with `--tag latest`, with `--tag "$VAR"`, or with more than one
+    `--tag` option fails; `npm publish --tag next` passes. An unreadable workflow
+    file or directory fails the check rather than being skipped.
+11. `cargo xtask bump-version` to a prerelease adds `"tag": "next"` and to a
+    stable version removes it, and the resulting manifest validates.
 
 ## Test Mapping
 
@@ -196,3 +211,12 @@ The package `@effortlessmetrics/ripr`:
 - `npm_launcher_required_control_pass_rate`
 - `npm_launcher_package_inventory_drift_count`
 - `npm_launcher_signal_delivery_regression_count`
+- `xtask/src/policy/distribution/tests.rs::npm_prerelease_publish_tag_positive_controls_pass`
+- `xtask/src/policy/distribution/tests.rs::npm_prerelease_without_explicit_tag_or_with_latest_is_rejected`
+- `xtask/src/policy/distribution/tests.rs::npm_manifest_prerelease_to_latest_fails_through_launcher_validator`
+- `xtask/src/policy/distribution/tests.rs::workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag`
+- `xtask/src/policy/distribution/tests.rs::workflow_multiline_and_chained_npm_publish_is_not_skipped`
+- `xtask/src/policy/distribution/tests.rs::workflow_interpolated_or_repeated_tag_options_are_rejected`
+- `xtask/src/policy/distribution/tests.rs::workflow_directory_scan_reports_multiline_publish_and_read_failures`
+- `xtask/src/version.rs::npm_launcher_version_tests::stable_to_prerelease_adds_next_tag_and_back_removes_it`
+- `xtask/src/version.rs::npm_launcher_version_tests::compact_manifest_prerelease_bump_round_trips`
