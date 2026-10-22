@@ -1432,7 +1432,7 @@ fn ts_conditional_call_witnessed(
         }
         // A test importing the enum root from a module other than the
         // owner's names a different enum that may share the root's text.
-        if change.member_root().is_some_and(|root| {
+        if witness.member_root.is_some_and(|root| {
             test.imports_in_file.iter().any(|import| {
                 import.local == root
                     && !import_source_matches_owner(
