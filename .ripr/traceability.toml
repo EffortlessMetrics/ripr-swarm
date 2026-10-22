@@ -18052,6 +18052,10 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_duplicate_and_malformed_findings",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_refuse_a_partial_scope_or_any_run_limitation",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_identity_tracks_diff_only_settings_but_repo_exposure_does_not",
+  "crates/ripr/src/agent/artifact.rs::tests::gap_closure_requires_the_gap_open_before_and_exposed_after",
+  "crates/ripr/src/agent/artifact.rs::tests::gap_closure_refuses_absence_other_gaps_and_unmoved_classes",
+  "crates/ripr/src/cli/agent.rs::tests::agent_verify_parses_a_gap_binding",
+  "crates/ripr/src/app/task_first.rs::tests::terminal_reason_names_gap_bound_verify_only_for_typescript",
   "crates/ripr/src/agent/artifact.rs::tests::verify_snapshot_dispatch_routes_only_the_declared_findings_kind",
 ]
 fixtures = []

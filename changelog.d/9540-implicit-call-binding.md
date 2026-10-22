@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A weak gap on an implicitly called trait-impl method stays a gap when the test's use of the operator or call is provably unrelated to the impl: the `Self` operand is an integer literal or a binding of another type, the result is thrown away, or a dispatched call's receiver is a binding of another type. An operand ripr cannot type (a helper's value, a constant, a tuple) still withholds the gap as `rust_implicit_call_unresolved`, and `PartialOrd` keeps its method forms (RIPR-SPEC-0240, #9540).
