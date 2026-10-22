@@ -5470,6 +5470,40 @@ mod diagnostic_policy_tests {
     }
 
     #[test]
+    fn witness_with_producer_oracle_names_the_oracle_kind_in_lsp_message() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "Price::Boundary".to_string(),
+            reason: "exact boundary is not observed".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests.push(RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            oracle: Some("assert!(result.is_ok())".to_string()),
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        });
+
+        let message = lsp_message(&finding);
+        assert!(
+            message.contains("`checks_boundary` only has oracle kind `broad_error`"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("only has broad_error oracle"),
+            "stale wording regressed: {message}"
+        );
+    }
+
+    #[test]
     fn actionable_profile_keeps_a_producer_backed_fix_route() -> Result<(), String> {
         let mut finding = policy_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
