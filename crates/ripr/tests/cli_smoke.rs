@@ -22293,9 +22293,13 @@ index 0000000..1111111 100644
         stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#),
         "diff-scope `ripr+` must filter out unrelated repo-wide TE debt: {stdout}"
     );
-    // The headline must reflect the filter: no behavioral candidates
-    // (docs-only diff) and no unrelated TE debt = 0.
-    assert!(stdout.contains(r#""message": "0""#));
+    // A docs-only diff has no analysis subject (#8827): the headline names
+    // that outcome with a warning instead of a clean `0`, while the unrelated
+    // TE debt stays filtered out above.
+    assert!(
+        stdout.contains(r#""message": "no analysis subject: no_behavioral_candidates""#),
+        "docs-only diff must not read as a clean zero: {stdout}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())

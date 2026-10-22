@@ -1349,6 +1349,9 @@ fn apply_probe_and_oracle_limits(
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
     classify::withhold_framework_oracle_gap(finding, index);
+    // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
+    // may run the owner without naming it.
+    classify::withhold_implicit_call_gap(finding, index);
     // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
     // iterator's `next`, checked by a test that collects the iterator, is a
     // selector domain ripr reads but does not run.

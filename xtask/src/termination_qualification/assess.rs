@@ -43,7 +43,6 @@ impl Assessment {
 pub(crate) struct Observed<'a> {
     pub(crate) exit_code: Option<i32>,
     pub(crate) stdout: &'a str,
-    pub(crate) stderr: &'a str,
     pub(crate) artifact: Option<&'a str>,
 }
 
@@ -175,7 +174,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
         |result: Assessment| result.with_counts(changed_findings, suppressed, declined.len());
 
     match &case.expect {
-        Expect::Supported | Expect::TerminatesWithEvidence => {
+        Expect::Supported => {
             let names_changed = all_limitations
                 .iter()
                 .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
@@ -186,11 +185,10 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                         .to_string(),
                 ));
             }
-            if matches!(case.expect, Expect::Supported)
-                && root
-                    .pointer("/analysis_outcome/analysis_complete")
-                    .and_then(Value::as_bool)
-                    != Some(true)
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(true)
             {
                 return counts(Assessment::fail(
                     RowResult::SemanticFailure,
@@ -508,28 +506,76 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         assessment
     };
     let run_status = exposure.get("run_status").and_then(Value::as_str);
-    if !matches!(run_status, Some("complete" | "limited_declined_files")) {
-        return attach(Assessment::fail(
-            RowResult::SemanticFailure,
-            format!("pilot inventory is not whole: run_status {run_status:?}"),
-        ));
-    }
     let hostile = case.hostile.as_deref().unwrap_or_default();
-    let disclosure = observed
-        .stderr
-        .lines()
-        .find(|line| line.contains(hostile) && line.contains("static limit rust_nesting_budget"));
+    // The decline is carried by the summary's `declined_rust_files` field and
+    // by the artifact's `run_status` and `rust_files_declined` limitation
+    // (#9308); stderr is no longer the evidence.
+    let declined_entry = summary
+        .pointer("/declined_rust_files/files")
+        .and_then(Value::as_array)
+        .and_then(|files| {
+            files
+                .iter()
+                .find(|file| file.get("path").and_then(Value::as_str) == Some(hostile))
+        });
+    let declined_limitations: Vec<&Value> = exposure
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map(|limitations| {
+            limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.get("category").and_then(Value::as_str)
+                        == Some("rust_files_declined")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // The artifact must name the same file the summary does; the category
+    // alone would let a decline of some other file satisfy the row.
+    let declined_in_artifact = declined_limitations.iter().any(|limitation| {
+        limitation
+            .get("declined_files")
+            .and_then(Value::as_array)
+            .is_some_and(|files| {
+                files
+                    .iter()
+                    .any(|file| file.get("path").and_then(Value::as_str) == Some(hostile))
+            })
+    });
+    // A supported row is a whole run: any declined file, whichever path it
+    // names, in either surface, fails it.
+    let any_decline_reported = summary
+        .get("declined_rust_files")
+        .is_some_and(|field| !field.is_null())
+        || !declined_limitations.is_empty();
     match &case.expect {
         Expect::TypedLimitation { token, .. } => {
-            let Some(line) = disclosure.filter(|line| line.contains(token)) else {
-                return attach(Assessment::fail(
-                    RowResult::MissingOrFalseCleanLimitation,
-                    format!(
-                        "pilot completed (status complete) with no `{token}` disclosure naming {hostile}"
-                    ),
-                )
-                .with_counts(unaffected, 0, 0));
+            let reason = declined_entry
+                .and_then(|file| file.get("reason").and_then(Value::as_str))
+                .filter(|reason| reason.contains(token));
+            let Some(reason) = reason else {
+                return attach(
+                    Assessment::fail(
+                        RowResult::MissingOrFalseCleanLimitation,
+                        format!(
+                            "pilot completed (status complete) with no `{token}` entry in declined_rust_files naming {hostile}"
+                        ),
+                    )
+                    .with_counts(unaffected, 0, 0),
+                );
             };
+            if run_status != Some("limited_declined_files") || !declined_in_artifact {
+                return attach(
+                    Assessment::fail(
+                        RowResult::MissingOrFalseCleanLimitation,
+                        format!(
+                            "declined file named in the summary but the artifact run_status is {run_status:?} (rust_files_declined limitation naming {hostile}: {declined_in_artifact})"
+                        ),
+                    )
+                    .with_counts(unaffected, 0, 1),
+                );
+            }
             if unaffected == 0 {
                 return attach(
                     Assessment::fail(
@@ -542,8 +588,10 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
             attach(
                 Assessment {
                     result: RowResult::PassedTypedLimitation,
-                    detail: "declined with a stderr static-limit disclosure".to_string(),
-                    limitation: Some(line.trim_start_matches("ripr: ").to_string()),
+                    detail:
+                        "declined with a typed limited run_status and declined_rust_files entry"
+                            .to_string(),
+                    limitation: Some(reason.to_string()),
                     findings_reported: 0,
                     findings_suppressed: 0,
                     declined_files: 0,
@@ -553,11 +601,13 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
             )
         }
         _ => {
-            if disclosure.is_some() {
+            if any_decline_reported || run_status != Some("complete") {
                 return attach(
                     Assessment::fail(
                         RowResult::SemanticFailure,
-                        "a supported input received a rust_nesting_budget disclosure".to_string(),
+                        format!(
+                            "a supported input was not a whole run: run_status {run_status:?}, decline reported: {any_decline_reported}"
+                        ),
                     )
                     .with_counts(unaffected, 0, 1),
                 );
