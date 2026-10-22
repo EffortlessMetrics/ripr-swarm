@@ -1,0 +1,45 @@
+{
+  "case_id": "node-mock-fn-payload",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "diff": "cases/node-mock-fn-payload.diff",
+  "anchor": {
+    "file": "src/notify.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "nodetest_mock_fn_calls_arguments_deepequal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "Node.js v22.22.0, node:test, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "mailer.send(`${name}@example.test`, `Hello, ${name}`);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "welcome sends one mail with the exact payload",
+        "equivalence_review": "the edit itself: mock.fn records the arguments and the test compares them to the exact pair."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "mock.fn records the arguments and the test compares them to the exact pair. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
