@@ -12,3 +12,16 @@ async def first_or_default(items, default):
     for item in items:
         return item
     return default
+
+
+async def fetch_count(prices):
+    await asyncio.sleep(0)
+    return len(prices)
+
+
+class FixedRunner:
+    """Has an event loop's method name but never awaits what it is given."""
+
+    def run_until_complete(self, coro):
+        coro.close()
+        return 3

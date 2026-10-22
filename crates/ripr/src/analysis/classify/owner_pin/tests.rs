@@ -4619,6 +4619,33 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
 }
 
 #[test]
+fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_source()
+-> Result<(), String> {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("fixture has no test")?;
+    let assertion = test.assertions.first().ok_or("fixture has no assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert_eq!(syntax.refusal(test, assertion, &index), None);
+    // The same length, one byte different: the stored fingerprint must see it.
+    let mut stale = test.clone();
+    stale.body = stale.body.replacen("12", "13", 1).into();
+    assert_ne!(stale.body, test.body);
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
+    );
+    Ok(())
+}
+
+#[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
         "mod nested { #![cfg(any())] BODY }",

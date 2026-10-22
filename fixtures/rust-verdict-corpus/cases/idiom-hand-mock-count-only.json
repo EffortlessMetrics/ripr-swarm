@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-hand-mock-count-only",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-hand-mock-count-only.diff",
+  "anchor": {
+    "file": "src/mocks.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "hand_rolled_recorder_count_only",
+  "hard_case": "The over-budget test checks only how many lines were sent, for totals of 30 and 130.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if total >= 100 {",
+        "mutated_line": "if total >= 100 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if 100 < total {` becomes `if total >= 100 {`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if total > 200 {",
+        "mutated_line": "if total > 200 {",
+        "outcome": "tests_failed",
+        "failing_test": "mocks::tests::over_budget_is_flagged",
+        "equivalence_review": "not equivalent: `if 100 < total {` becomes `if total > 200 {`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`>= 100` gives the same count for 30 and 130, so it survives; `> 200` sends one line for 130 and fails the count. Shape: hand-rolled mock asserting only a call count.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
