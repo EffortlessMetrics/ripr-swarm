@@ -828,20 +828,21 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
                 == neutral_spelling(&squeeze_bracket_spaces(&before)))
 }
 
-/// `text` with spaces beside a delimiter, comma or semicolon removed, where
-/// spacing never separates Rust tokens (`{ a }` and `{a}` read alike, also
-/// inside macro token trees, whose delimiters and lone `,`/`;` puncts are
-/// spacing-insensitive). Angle brackets are excluded: squeezing beside
-/// `<`/`>` could merge two puncts into one joint punct (`-` `>` into `->`),
-/// which macro matching distinguishes. Interior spacing elsewhere is kept,
-/// so `a & &b` and `a && b` stay different, as do separated range dots.
+/// `text` with spaces beside a delimiter removed, where spacing never
+/// separates Rust tokens (`{ a }` and `{a}` read alike, also inside macro
+/// token trees: a delimiter bounds its group, so spacing beside it is
+/// invisible there too). Punctuation is excluded — squeezing beside `<`,
+/// `,`, or `;` could merge two puncts into one joint punct (`-` `>` into
+/// `->`, `-` `,` into `-,`), which macro matching distinguishes. Interior
+/// spacing elsewhere is kept, so `a & &b` and `a && b` stay different, as
+/// do separated range dots.
 fn squeeze_bracket_spaces(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == ' '
-            && (matches!(out.chars().last(), Some('(' | '[' | '{' | ',' | ';'))
-                || matches!(chars.peek(), Some(')' | ']' | '}' | ',' | ';')))
+            && (matches!(out.chars().last(), Some('(' | '[' | '{'))
+                || matches!(chars.peek(), Some(')' | ']' | '}')))
         {
             continue;
         }
@@ -869,13 +870,17 @@ fn join_tokens(lines: &[&str]) -> String {
         let dots = (last == Some('.') && before_last == Some('.'))
             || (first == '.' && last == Some('.'))
             || (first == '.' && line.chars().nth(1) == Some('.'));
+        // A wrap before `,` or `;` after another punct would join the two
+        // into one joint punct (`-` `,` into `-,`) when the space drops,
+        // which macro matching distinguishes, so that space is kept.
+        let joint = matches!(first, ',' | ';')
+            && matches!(last, Some(c) if c.is_ascii_punctuation() && !matches!(c, '(' | '[' | '{'));
         if let Some(last) = last
-            && !dots
-            && !(matches!(last, '(' | '[' | '{' | '.')
-                || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
+            && (dots
+                || joint
+                || !(matches!(last, '(' | '[' | '{' | '.')
+                    || matches!(first, ')' | ']' | '}' | '.' | ',' | ';')))
         {
-            out.push(' ');
-        } else if last.is_some() && dots {
             out.push(' ');
         }
         out.push_str(&line);
@@ -1029,9 +1034,11 @@ fn observes_position(line: &str) -> bool {
 /// the comparison and a changed literal could read as a pure reformat.
 fn has_whitespace_char_literal(line: &str) -> bool {
     let chars = line.chars().collect::<Vec<_>>();
+    // `char::is_whitespace`, not the lexer's narrower Pattern_White_Space:
+    // joining collapses every Unicode whitespace (a no-break space too).
     chars
         .windows(3)
-        .any(|window| window[0] == '\'' && is_rust_whitespace(window[1]) && window[2] == '\'')
+        .any(|window| window[0] == '\'' && window[1].is_whitespace() && window[2] == '\'')
 }
 
 /// 1-based lines of `source` inside a token-observing macro invocation, from
@@ -2855,6 +2862,20 @@ mod tests {
             &["let v = selector!(<=);"],
             &["let v = selector!(< =);"]
         ));
+        // A no-break space is whitespace to joining too, so a literal
+        // holding one vetoes neutrality like a space or tab literal.
+        assert!(has_whitespace_char_literal("let c = '\u{a0}';"));
+        // A wrap before a comma after another punct must not join them
+        // (`-` `,` into `-,`), and squeezing never touches commas.
+        assert_eq!(
+            join_tokens(&["let v = m!(a -", "    , b);"]),
+            "let v = m!(a - , b);"
+        );
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = m!(a -, b);"],
+            &["let v = m!(a -", "    , b);"]
+        ));
+        assert_eq!(squeeze_bracket_spaces("f(a, b)"), "f(a, b)");
         assert!(!is_behavior_neutral_rewrap(
             &["let v = m!(a -> b);"],
             &["let v = m!(a -", "    > b);"]
