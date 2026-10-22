@@ -101,24 +101,29 @@ fn refresh_installed_journey(
         new_corpus = new_corpus.replace(&format!("\"{}\"", edit.old), &format!("\"{}\"", edit.new));
     }
     let mut runner_note = None;
+    let mut stale_mentions = Vec::new();
     if contract.label == "typescript"
         && let Some((rewritten, old, new)) = rebind_vitest_runner(root, &new_manifest, &manifest)?
     {
         new_manifest = rewritten;
+        stale_mentions = stale_version_mentions(root, &old)?;
         runner_note = Some((old, new));
     }
 
     if new_manifest == manifest_text && new_corpus == corpus_text {
         report.push(format!(
-            "fixtures refresh-identity {}: digests, ids and corpus bindings already current",
+            "fixtures refresh-identity {}: digests and ids already current",
             contract.label
         ));
         return Ok(report);
     }
-    std::fs::write(&manifest_path, &new_manifest)
-        .map_err(|error| format!("write {}: {error}", normalize_path(&manifest_path)))?;
+    // Corpus first: an interruption between the writes leaves the manifest
+    // stale, so a rerun re-derives the same ids and finishes the job. The other
+    // order would leave a refreshed manifest and report "already current".
     std::fs::write(corpus_path, &new_corpus)
         .map_err(|error| format!("write {}: {error}", normalize_path(corpus_path)))?;
+    std::fs::write(&manifest_path, &new_manifest)
+        .map_err(|error| format!("write {}: {error}", normalize_path(&manifest_path)))?;
     edits.extend(id_edits);
     report.push(format!(
         "fixtures refresh-identity {}: rebound {} manifest value(s)",
@@ -133,7 +138,7 @@ fn refresh_installed_journey(
     }
     if let Some((old, new)) = &runner_note {
         report.push(format!("  runner_identity: vitest {old} -> vitest {new}"));
-        for line in stale_version_mentions(root, old)? {
+        for line in &stale_mentions {
             report.push(format!(
                 "  still names vitest {old} (review by hand): {line}"
             ));
@@ -355,7 +360,7 @@ fn stale_version_mentions(root: &Path, old: &str) -> Result<Vec<String>, String>
     for name in ["manifest.json", "SPEC.md"] {
         let path = root.join(name);
         for (index, line) in read_text_lossy(&path)?.lines().enumerate() {
-            if line.contains(&format!("vitest {old}")) || line.contains(&format!("{old} ")) {
+            if line.contains(&format!("vitest {old}")) {
                 found.push(format!("{}:{}", normalize_path(&path), index + 1));
             }
         }
@@ -565,6 +570,29 @@ mod installed_journey_refresh_tests {
         let rewritten =
             std::fs::read_to_string(root.join("manifest.json")).map_err(|e| e.to_string())?;
         assert!(rewritten.contains("\"runner_identity\": \"vitest 9.9.9 via"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_bumped_python_snapshot_is_refreshed_to_a_passing_state() -> Result<(), String> {
+        let contract = &INSTALLED_PYTHON_CONTRACT;
+        let (root, corpus) = scratch(contract, "python")?;
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("manifest.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let file = manifest["repository"]["snapshots"]["head"]["files"]
+            .as_object()
+            .and_then(|files| files.keys().find(|name| name.ends_with(".py")))
+            .ok_or("python head snapshot binds no .py file")?
+            .clone();
+        let path = root.join("repository/head").join(&file);
+        let mut body = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        body.push_str("# bumped\n");
+        std::fs::write(&path, body).map_err(|error| error.to_string())?;
+        assert!(!violations(contract, &root).is_empty());
+        refresh_installed_journey(contract, &root, &corpus)?;
+        assert_eq!(violations(contract, &root), Vec::<String>::new());
         Ok(())
     }
 }
