@@ -102,6 +102,7 @@ pub(crate) use package::detect_framework_for_root;
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_rows;
 mod parse;
 mod paths;
 mod probe_shape;
