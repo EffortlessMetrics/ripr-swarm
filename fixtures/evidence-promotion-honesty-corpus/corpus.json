@@ -11003,6 +11003,144 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "python_assertion_helper_field",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_field",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_field",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_wrong_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_wrong_receiver",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_wrong_receiver",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_wrong_field",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_wrong_field",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_wrong_field",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_weak_comparison",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_weak_comparison",
+      "vector": "same_file_comparison_helper_preserves_receiver_field_and_strength_weak_comparison",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_async_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_async_owner",
+      "vector": "same_file_helper_refuses_deferred_owner_body",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_assertion_helper_generator_owner",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_assertion_helper_generator_owner",
+      "vector": "same_file_helper_refuses_deferred_owner_body",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
     }
   ]
 }
