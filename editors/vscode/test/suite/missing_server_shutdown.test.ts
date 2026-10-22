@@ -40,6 +40,9 @@ function pendingMissingServer() {
     getConfig: () => config,
     workspaceRootState: () => ({ kind: 'singleRoot', root: '/workspace', roots: ['/workspace'] }),
     workspaceFolders: () => [],
+    restartWorkspaceRoot: async () => {
+      await restartServerOnce(controller);
+    },
     showQuickPick: async () => undefined,
     resolveServer: async () => {
       resolutions += 1;
