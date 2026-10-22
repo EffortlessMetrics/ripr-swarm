@@ -17,6 +17,6 @@
     a `cfg_attr` test, minified layout, and an owner passed as a function value.
 
   Every label comes from mutants replayed with `verdict-corpus relabel` (45
-  cases, 0 drifted). On this base ripr reads 22 ideally, abstains on 7 and gives
-  14 false actionable and 2 false exposed verdicts. Each is recorded in its
+  cases, 0 drifted). On this base ripr reads 22 ideally, abstains on 6 and gives
+  15 false actionable and 2 false exposed verdicts. Each is recorded in its
   blessed row and filed under #9410 for a fix.
