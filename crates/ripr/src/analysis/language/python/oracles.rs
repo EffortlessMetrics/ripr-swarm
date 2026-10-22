@@ -656,6 +656,18 @@ fn oracle_for_call(
                 ))
             }
         }
+        // `self.assertIsNone(x)` pins the value to `None`; `assertIsNotNone`
+        // admits any other value. Only `self.` is the unittest method.
+        "assertIsNone" if name == "self.assertIsNone" => Some((
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            oracle_shape_for_call_arguments(call, PythonOracleShape::ExactAssertion),
+        )),
+        "assertIsNotNone" if name == "self.assertIsNotNone" => Some((
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
+        )),
         "assertTrue" | "assertFalse" => Some((
             OracleKind::SmokeOnly,
             OracleStrength::Smoke,

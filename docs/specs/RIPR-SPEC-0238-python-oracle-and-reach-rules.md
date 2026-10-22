@@ -180,6 +180,8 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertEqual`, `assertDictEqual` | `exact_value` / strong |
 | `assertListEqual` | `unknown`, shape `unknown_custom_helper`; the bounded standard unittest context in RIPR-SPEC-0028 promotes to `exact_value` / strong |
 | `assertIn`, `assertRegex`, `assertNotEqual` | `relational_check` / weak |
+| `self.assertIsNone` | `exact_value` / strong; only the `self.` receiver is the unittest method |
+| `self.assertIsNotNone` | `relational_check` / weak |
 | `assertTrue`, `assertFalse` | `smoke_only` / smoke |
 | `assertRaisesRegex` | `exact_error_variant` / strong |
 | `assertRaises` | `broad_error` / weak |

@@ -591,6 +591,37 @@ def test_expired_coupon_response_smoke(client):
 }
 
 #[test]
+fn classify_change_reads_assert_is_none_forms_as_recognized_assertions_without_overcrediting()
+-> Result<(), String> {
+    let source = "def first(items):\n    if not items:\n        return None\n    return items[0]\n";
+    let owners = extract_owners(Path::new("app/first.py"), source);
+    let class_for = |assertion: &str| -> Result<ExposureClass, String> {
+        let tests = extract_tests(
+            Path::new("tests/test_first.py"),
+            &format!(
+                "import unittest\nclass T(unittest.TestCase):\n    def test_empty(self):\n        self.{assertion}(first([]))\n"
+            ),
+        );
+        classify_change(
+            Path::new("app/first.py"),
+            3,
+            "        return None",
+            &owners,
+            &tests,
+        )
+        .map(|finding| finding.class)
+        .ok_or_else(|| "changed return inside owner should classify".to_string())
+    };
+
+    // Recognized, not an unresolved helper; no expected literal is compared,
+    // so neither form is promoted to `exposed`.
+    assert_eq!(class_for("assertIsNone")?, ExposureClass::WeaklyExposed);
+    assert_ne!(class_for("assertIsNotNone")?, ExposureClass::Exposed);
+    assert_ne!(class_for("assertIsNotNone")?, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
 fn classify_change_uses_status_discriminator_for_route_response_constructor_assignment()
 -> Result<(), String> {
     let source = r#"
@@ -2974,8 +3005,23 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "unrecognized unittest assertion",
+            "assertIsNone",
             "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertIsNone(apply_discount(20))\n",
+            recognized,
+        ),
+        (
+            "assertIsNotNone",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertIsNotNone(apply_discount(20))\n",
+            recognized,
+        ),
+        (
+            "assertIsNone on a non-self receiver",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        helper.assertIsNone(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "unrecognized unittest assertion",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertIs(apply_discount(20), None)\n",
             unresolved,
         ),
         (
