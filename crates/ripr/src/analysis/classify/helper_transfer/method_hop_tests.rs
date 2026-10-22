@@ -309,3 +309,34 @@ fn free_callee_ignores_callers_that_only_make_receiver_calls() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn a_method_hop_never_forwards_a_result_or_an_effect_target() -> Result<(), String> {
+    // The production wrapper's whole tail is the receiver call, yet no
+    // tail-forwarding rule reads a receiver call: the oracle on the wrapper's
+    // result is never paired with the owner's.
+    let source = "pub struct Size(pub u64);\n\
+        impl Size {\n    pub fn render_as(&self, si: bool) -> String { fmt_size(self.0, si) }\n}\n\
+        pub fn describe(b: &Size, si: bool) -> String {\n    b.render_as(si)\n}\n\
+        pub fn fmt_size(bytes: u64, si: bool) -> String { String::new() }\n";
+    let index = index_of(&[("src/lib.rs", source)])?;
+    let chain = resolve_chain("fmt_size", &index, true, &[]);
+    assert_eq!(chain.hops.len(), 2, "{chain:?}");
+    assert_eq!(chain.hops[1].receiver.as_deref(), Some("b"));
+    assert!(!chain_forwards_owner_result("fmt_size", &chain));
+    // The direct hop alone still forwards; only the method hop does not.
+    assert!(hops_forward_owner_result("fmt_size", &chain.hops[..1]));
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "fmt_size")
+        .ok_or("missing owner")?;
+    assert!(!chain_passes_effect_target_to_observed_hops(
+        owner,
+        "bytes.push(1)",
+        &chain,
+        &[]
+    ));
+    assert!(chain_has_method_hop(&chain));
+    Ok(())
+}
