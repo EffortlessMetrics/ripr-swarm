@@ -247,12 +247,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // the fold could miss (a helper that calls it makes the owner have other
     // callers, which the caller checks), so it neither blocks nor supports
     // the reading; at least one test must name the owner.
-    let mut naming_tests = tests.iter().filter(|test| {
-        test.body
-            .as_str()
-            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-            .any(|token| token == owner.name)
-    });
+    let mut naming_tests = tests
+        .iter()
+        .filter(|test| count_name_tokens(test.body.as_str(), &owner.name) > 0);
     if naming_tests.clone().next().is_none() {
         return false;
     }
@@ -263,7 +260,16 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         {
             return false;
         }
+        // Every mention of the owner must be the one call an assertion folds:
+        // a second call in the expected operand, or one outside an
+        // assertion, may separate the versions at an input the fold never saw.
+        if count_name_tokens(test.body.as_str(), &owner.name) != test.assertions.len() {
+            return false;
+        }
         test.assertions.iter().all(|oracle| {
+            if count_name_tokens(&oracle.text, &owner.name) != 1 {
+                return false;
+            }
             let Some((_, arguments)) = equality_assertion_shape(&oracle.text) else {
                 return false;
             };
@@ -290,6 +296,13 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             }
         })
     })
+}
+
+/// How many whole-identifier occurrences of `name` the `text` holds.
+fn count_name_tokens(text: &str, name: &str) -> usize {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| *token == name)
+        .count()
 }
 
 /// Whether `current` and `baseline` fold to different values at some call
@@ -1686,6 +1699,13 @@ mod tests {
         // A call outside an equality assertion is not folded either.
         let outside = "#[test]\nfn a() {\n    let v = owner(3);\n    assert!(v > 0);\n}";
         assert!(!invisible(CAP, "n.min(5)", "n.min(6)", outside)?);
+        // A second owner call in the expected operand, or beside the
+        // assertion, can separate the versions at an input the fold never saw.
+        let expected_side = "#[test]\nfn a() {\n    assert_eq!(owner(3), owner(9) - 3);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", expected_side)?);
+        let beside =
+            "#[test]\nfn a() {\n    let wide = owner(9);\n    assert_eq!(owner(3), wide);\n}";
+        assert!(!invisible(CAP, "n.min(5)", "n.min(6)", beside)?);
         // The changed text must occur exactly once in the owner.
         let low = "#[test]\nfn a() {\n    assert_eq!(owner(3), 3);\n}";
         assert!(!invisible(CAP, "n.min(5)", "n.max(6)", low)?);

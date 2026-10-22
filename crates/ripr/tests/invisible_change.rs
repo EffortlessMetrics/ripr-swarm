@@ -157,6 +157,24 @@ fn an_input_that_hits_the_cap_keeps_the_credit() -> Result<(), String> {
 }
 
 #[test]
+fn an_owner_call_in_the_expected_operand_keeps_the_credit() -> Result<(), String> {
+    // Control: `capped(3)` agrees, but `capped(9) - 3` is 3 changed and 2 before.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "use invisible::capped;\n\n#[test]\nfn wide() {\n    assert_eq!(capped(3), capped(9) - 3);\n}\n",
+    )?;
+    assert!(
+        !return_value(&findings)?
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value")
+    );
+    Ok(())
+}
+
+#[test]
 fn a_computed_argument_keeps_the_credit() -> Result<(), String> {
     // Control: `next()` is not a literal, so nothing is folded or claimed.
     let findings = findings(

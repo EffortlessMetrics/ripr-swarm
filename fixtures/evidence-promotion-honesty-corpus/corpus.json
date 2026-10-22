@@ -25,6 +25,26 @@
       ]
     },
     {
+      "id": "rust_equal_value_at_the_asserted_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/invisible_change_pow_agreement",
+      "vector": "changed_return_expression_equals_its_baseline_at_every_asserted_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_json_unrelated_equality",
       "language": "rust",
       "tier": "pure",
