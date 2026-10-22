@@ -27,8 +27,8 @@ enum Disposition {
     FrameworkCell,
 }
 
-/// Number of `TsFramework` variants. `ordinal` must stay below it, so a new
-/// variant forces this bump, which in turn forces `ALL_FRAMEWORKS` to grow.
+/// Hand-kept variant count. It must equal the length of `ALL_FRAMEWORKS` and
+/// the ordinal range of its entries; nothing ties it to the enum itself.
 const FRAMEWORK_COUNT: usize = 6;
 
 const ALL_FRAMEWORKS: [TsFramework; FRAMEWORK_COUNT] = [
@@ -114,7 +114,7 @@ fn current_entries() -> Vec<(&'static str, Disposition)> {
 }
 
 #[test]
-fn the_framework_list_covers_every_variant() {
+fn the_framework_list_is_a_gap_free_ordinal_sequence() {
     let ordinals: Vec<usize> = ALL_FRAMEWORKS.iter().copied().map(ordinal).collect();
     assert_eq!(ordinals, (0..FRAMEWORK_COUNT).collect::<Vec<_>>());
 }

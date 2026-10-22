@@ -668,9 +668,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_lists_every_language_variant() {
-        // Exhaustive: a new variant fails to compile here until it is placed
-        // in `ALL`, which the capability table's every-language check walks.
+    fn all_is_a_gap_free_ordinal_sequence() {
+        // The exhaustive match below forces an ordinal arm for a new variant.
         // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
         // enum: a variant added to the match but to neither `COUNT` nor `ALL`
         // is not detected, only forced to be classified here.
