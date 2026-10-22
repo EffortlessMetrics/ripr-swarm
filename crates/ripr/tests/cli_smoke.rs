@@ -1912,13 +1912,14 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
     Ok(())
 }
 
-/// #9346: the issue's diff shape end to end — a boundary flip in `src/`
-/// plus the discriminating test added in `tests/` in the same working
-/// tree. The production edit reaches a decisive (exposed) verdict, so the
-/// Start-here block must name that production finding and its state, not
-/// lead with a static-analysis limitation. The selection-level ranking
-/// that keeps an accompanying test-file unknown from outranking it is
-/// pinned in `output::human::triage` tests.
+/// #9346: the issue's diff shape end to end — the actual two-probe
+/// shape from the live witness. The signature line of the production
+/// function changes (seeding a whole-function `static_unknown` probe at
+/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// reaches a decisive `exposed` verdict for the same function, and the
+/// discriminating test is added in `tests/` in the same working tree.
+/// Both production probes cover `discounted_total`, so Start here must
+/// lead with the decisive line-2 finding, not the limitation state.
 #[test]
 fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Result<(), String> {
     let root = unique_temp_workspace("start-here-production");
@@ -1927,8 +1928,14 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         init_producer_fixture_repo(&root).map_err(|err| format!("init producer fixture: {err}"))?;
         let lib = root.join("src/lib.rs");
         let source = std::fs::read_to_string(&lib).map_err(|err| format!("read lib: {err}"))?;
-        let changed = source.replacen(">= discount_threshold", "> discount_threshold", 1);
-        if changed == source {
+        let changed = source
+            .replacen(
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                1,
+            )
+            .replacen(">= discount_threshold", "> discount_threshold", 1);
+        if changed == source || !changed.contains("> discount_threshold") {
             return Err("fixture boundary must be present".to_string());
         }
         std::fs::write(&lib, changed).map_err(|err| format!("write lib: {err}"))?;
@@ -1958,6 +1965,10 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         .next()
         .unwrap_or(start_here);
     assert!(
+        stdout.contains("1 unknown"),
+        "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
+    );
+    assert!(
         !block.contains("limited by static analysis"),
         "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
     );
@@ -1966,8 +1977,8 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         "Start here must name the production finding's state:\n{block}"
     );
     assert!(
-        block.contains("src/lib.rs"),
-        "Start here must name the production finding:\n{block}"
+        block.contains("src/lib.rs:2"),
+        "Start here must name the decisive line-2 production finding, not the fn-level unknown at line 1:\n{block}"
     );
     Ok(())
 }

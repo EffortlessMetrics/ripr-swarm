@@ -232,20 +232,30 @@ selector is deterministic:
    The demoted pair is (evidence-role file, unknown verdict): an unknown
    probe seeded by a test-file edit cannot lead over the decisive or weak
    production finding it accompanies.
-2. Non-preview findings outrank preview-language findings.
-3. Non-exposed findings with repair routes outrank findings without repair
+2. Within production findings, an unknown probe (`static_unknown`,
+   `infection_unknown`, `propagation_unknown`) shadowed by a decisive
+   (`exposed` or `weakly_exposed`) production verdict on the same changed
+   owner/function ranks behind that verdict (#9346). Owner identity is
+   the producer-owned `probe.owner` (`<file>::<owner>`), with the
+   canonical gap's `file`/`owner` pair as the same identity for findings
+   that carry only the gap. A lone production unknown, or one whose
+   decisive sibling covers a different owner, is not shadowed.
+3. Non-preview findings outrank preview-language findings.
+4. Non-exposed findings with repair routes outrank findings without repair
    routes.
-4. `exposed` findings do not outrank non-exposed findings merely because they
+5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-5. Class, gap metadata, related tests, missing evidence, confidence, path, and
+6. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
 
-Verdict order within one file role is unchanged: a production unknown
-still leads a production `exposed` finding, so `no_actionable_gap` keeps
-meaning only-exposed-selected, a production unknown keeps its lead over a
-decisive test-file finding, and when every probe is unknown the selected
-unknown still yields the `static_limited` state. Classification is
-unchanged; only the selection order moves (#9346).
+Apart from the same-owner shadowing in step 2, verdict order within one
+file role is unchanged: an unshadowed production unknown still leads a
+production `exposed` finding, so `no_actionable_gap` keeps meaning
+only-exposed-selected (or only shadowed unknowns remain), a production
+unknown keeps its lead over a decisive test-file finding, and when every
+probe is unknown the selected unknown still yields the `static_limited`
+state. Classification is unchanged; only the selection order moves
+(#9346).
 
 The selected finding's `Next step` is never truncated, because the guidance
 ends with its remedy (#4323). Text within the digest line budget stays on one

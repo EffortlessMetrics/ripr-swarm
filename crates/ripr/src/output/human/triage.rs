@@ -74,6 +74,24 @@ pub(crate) fn select_human_triage<'a>(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    // #9346 (same-owner): owners that already carry a decisive production
+    // verdict. An unknown production probe on one of these owners is
+    // shadowed by that verdict (see `triage_rank`); a lone production
+    // unknown, or one on a different owner, is not.
+    let decisive_owners: BTreeSet<String> = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| finding.is_candidate_actionable())
+        .filter(|finding| {
+            matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            )
+        })
+        .filter(|finding| file_role_rank(finding, &output.root) == 0)
+        .filter_map(triage_owner_key)
+        .collect();
     let mut selected = None;
     let mut considered: Vec<&'a Finding> = Vec::new();
     let mut visible_findings: usize = 0;
@@ -91,7 +109,8 @@ pub(crate) fn select_human_triage<'a>(
         }
         visible_findings += 1;
         if selected.is_none_or(|current| {
-            triage_rank(finding, &output.root) < triage_rank(current, &output.root)
+            triage_rank(finding, &output.root, &decisive_owners)
+                < triage_rank(current, &output.root, &decisive_owners)
         }) {
             selected = Some(finding);
         }
@@ -1028,10 +1047,25 @@ fn file_role_rank(finding: &Finding, root: &std::path::Path) -> u8 {
     u8::from(!role.seeds_production_findings())
 }
 
+/// #9346 (same-owner): the changed owner/function a probe covers. The
+/// producer-owned `probe.owner` (`<file>::<owner>`) is authoritative; the
+/// canonical gap's `file`/`owner` pair is the same identity in the same
+/// `<file>::<owner>` shape for findings that carry only the gap.
+fn triage_owner_key(finding: &Finding) -> Option<String> {
+    if let Some(owner) = &finding.probe.owner {
+        return Some(owner.0.clone());
+    }
+    finding
+        .canonical_gap
+        .as_ref()
+        .map(|gap| format!("{}::{}", gap.file, gap.owner))
+}
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
-) -> (u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
+    decisive_owners: &BTreeSet<String>,
+) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -1048,6 +1082,21 @@ fn triage_rank<'a>(
     } else {
         class_rank
     };
+    let role_rank = file_role_rank(finding, root);
+    // #9346 (same-owner): an unknown production probe shadowed by a
+    // decisive production verdict on the same owner/function ranks behind
+    // that verdict. Verdicts themselves are unchanged; a lone production
+    // unknown (no decisive sibling for its owner) keeps its lead below.
+    let shadowed_rank = u8::from(
+        role_rank == 0
+            && matches!(
+                finding.class,
+                ExposureClass::StaticUnknown
+                    | ExposureClass::InfectionUnknown
+                    | ExposureClass::PropagationUnknown
+            )
+            && triage_owner_key(finding).is_some_and(|key| decisive_owners.contains(&key)),
+    );
     (
         // #9346: changed-file role leads the ranking. The pair (file
         // role, verdict decisiveness) defines the demotion this fixes —
@@ -1055,7 +1104,8 @@ fn triage_rank<'a>(
         // order within one role keeps its existing keys below, so a
         // production unknown still leads a production exposed finding
         // and `no_actionable_gap` keeps meaning only-exposed-selected.
-        file_role_rank(finding, root),
+        role_rank,
+        shadowed_rank,
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
@@ -1112,9 +1162,9 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
-        Summary,
+        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, NextActionClass, Probe,
+        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
+        StageEvidence, StageState, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -1877,6 +1927,21 @@ mod tests {
         finding
     }
 
+    /// #9346 (same-owner): a production finding on a named owner/function,
+    /// in the producer's `<file>::<owner>` identity shape.
+    fn finding_for_owner(
+        id: &str,
+        file: &str,
+        line: usize,
+        class: ExposureClass,
+        owner: &str,
+    ) -> Finding {
+        let mut finding = finding_at(id, file, class);
+        finding.probe.location = SourceLocation::new(file, line, 1);
+        finding.probe.owner = Some(SymbolId(format!("{file}::{owner}")));
+        finding
+    }
+
     /// #9346: a decisive production verdict must lead Start here ahead of
     /// an unknown probe seeded by a test-file edit. The unknown is listed
     /// first so insertion order cannot masquerade as ranking.
@@ -1983,6 +2048,166 @@ mod tests {
             Some("finding:production-unknown")
         );
         assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): the live witness shape — a whole-function
+    /// `static_unknown` at the signature line and a decisive predicate
+    /// probe on the next line, both for the same production function.
+    /// The decisive probe leads; the unknown is listed first so insertion
+    /// order cannot masquerade as ranking.
+    #[test]
+    fn start_here_prefers_same_owner_exposed_over_production_static_unknown() {
+        let unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        let decisive = finding_for_owner(
+            "finding:line-decisive",
+            "src/lib.rs",
+            2,
+            ExposureClass::Exposed,
+            "discount_cents",
+        );
+        let output = test_output(vec![unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:line-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    /// #9346 (same-owner): every unknown class is shadowed by a weak
+    /// decisive sibling on the same owner.
+    #[test]
+    fn start_here_prefers_same_owner_weak_over_production_unknowns() {
+        for unknown_class in [
+            ExposureClass::StaticUnknown,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+        ] {
+            let unknown = finding_for_owner(
+                "finding:fn-unknown",
+                "src/lib.rs",
+                1,
+                unknown_class.clone(),
+                "discount_cents",
+            );
+            let decisive = finding_for_owner(
+                "finding:line-decisive",
+                "src/lib.rs",
+                2,
+                ExposureClass::WeaklyExposed,
+                "discount_cents",
+            );
+            let output = test_output(vec![unknown, decisive]);
+            let triage = select_human_triage(&output, &RiprConfig::default());
+            assert_eq!(
+                triage.selected.map(|finding| finding.id.as_str()),
+                Some("finding:line-decisive"),
+                "{unknown_class:?} must be shadowed by its same-owner weak sibling"
+            );
+            assert_eq!(triage.state, HumanTriageState::TopGap);
+        }
+    }
+
+    /// #9346 (same-owner): shadowing is scoped to the owner — a decisive
+    /// verdict on a different function does not demote this function's
+    /// production unknown.
+    #[test]
+    fn start_here_keeps_production_unknown_when_decisive_is_different_owner() {
+        let unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        let other = finding_for_owner(
+            "finding:other-decisive",
+            "src/lib.rs",
+            9,
+            ExposureClass::Exposed,
+            "tax_cents",
+        );
+        let output = test_output(vec![other, unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:fn-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): a lone production unknown keeps leading with
+    /// the limitation state.
+    #[test]
+    fn start_here_keeps_static_limited_for_lone_production_unknown() {
+        let output = test_output(vec![finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        )]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:fn-unknown")
+        );
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
+    }
+
+    /// #9346 (same-owner): an unknown that names its owner only through
+    /// the canonical gap is still shadowed by a decisive sibling whose
+    /// identity comes from `probe.owner`.
+    #[test]
+    fn start_here_shadows_unknown_named_only_by_canonical_gap() {
+        let mut unknown = finding_for_owner(
+            "finding:fn-unknown",
+            "src/lib.rs",
+            1,
+            ExposureClass::StaticUnknown,
+            "discount_cents",
+        );
+        unknown.probe.owner = None;
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/lib.rs:discount_cents:static_unknown".to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "discount_cents".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "static_unknown".to_string(),
+            normalized_discriminator: "pub_fn_discount_cents".to_string(),
+        });
+        let decisive = finding_for_owner(
+            "finding:line-decisive",
+            "src/lib.rs",
+            2,
+            ExposureClass::Exposed,
+            "discount_cents",
+        );
+        let output = test_output(vec![unknown, decisive]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:line-decisive")
+        );
+        assert_eq!(triage.state, HumanTriageState::NoActionableGap);
     }
 
     #[test]
