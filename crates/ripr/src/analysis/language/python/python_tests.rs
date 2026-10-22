@@ -631,6 +631,42 @@ def test_item_response(client):
 }
 
 #[test]
+fn classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects() -> Result<(), String>
+{
+    let source = r#"
+api = object()
+
+@api.get("/items/{id:int}")
+def item(id):
+    return {"id": id, "ok": True}
+"#;
+    let owners = extract_owners(Path::new("app/items.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        r#"
+def test_item_rejects_text_id(client):
+    response = client.get("/items/nope")
+    assert response.status_code == 404
+"#,
+    );
+
+    let finding = classify_change(
+        Path::new("app/items.py"),
+        6,
+        "    return {\"id\": id, \"ok\": True}",
+        &owners,
+        &tests,
+    );
+
+    assert!(finding.is_none_or(|finding| {
+        !finding.evidence.iter().any(|entry| {
+            entry == "related_test_relation: api_client_route_call (test_item_rejects_text_id)"
+        })
+    }));
+    Ok(())
+}
+
+#[test]
 fn classify_change_uses_status_discriminator_for_route_response_constructor_assignment()
 -> Result<(), String> {
     let source = r#"

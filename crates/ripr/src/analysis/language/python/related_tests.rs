@@ -1977,9 +1977,12 @@ fn contains_python_call_with_first_string_argument(
 }
 
 /// Whether a request path written in a test call reaches a decorator route.
-/// Equal literals match; a path-parameter segment (`{id}`, `{id:int}`, `<id>`,
-/// `<int:id>`) matches any single non-empty segment. A `path` converter spans
-/// slashes, so it is left unmatched rather than guessed.
+/// Equal literals match. A path-parameter segment (`{id}`, `{id:int}`, `<id>`,
+/// `<int:id>`) matches one concrete segment the router would accept for its
+/// converter: untyped and `str` take any non-empty segment, `int`, `float` and
+/// `uuid` validate the value, and any other converter (`path` spans slashes;
+/// custom converters are unknown) stays unmatched. A query string is not part
+/// of the route, so it is dropped before matching.
 fn python_route_matches_call_path(route: &str, call_path: &str) -> bool {
     if route == call_path {
         return true;
@@ -1993,27 +1996,63 @@ fn python_route_matches_call_path(route: &str, call_path: &str) -> bool {
             .zip(&call_segments)
             .all(|(route_segment, call_segment)| {
                 route_segment == call_segment
-                    || (!call_segment.is_empty()
-                        && is_single_segment_route_parameter(route_segment))
+                    || route_parameter_converter(route_segment)
+                        .is_some_and(|converter| converter_accepts(converter, call_segment))
             })
 }
 
-fn is_single_segment_route_parameter(segment: &str) -> bool {
-    let inner = segment
+/// The converter name of a whole-segment route parameter; `""` when untyped.
+fn route_parameter_converter(segment: &str) -> Option<&str> {
+    let (inner, converter_first) = if let Some(rest) = segment
         .strip_prefix('{')
         .and_then(|rest| rest.strip_suffix('}'))
-        .or_else(|| {
+    {
+        (rest, false)
+    } else {
+        (
             segment
                 .strip_prefix('<')
-                .and_then(|rest| rest.strip_suffix('>'))
-        });
-    inner.is_some_and(|inner| {
-        !inner.is_empty()
-            && !inner
-                .split(':')
-                .any(|part| part.is_empty() || part == "path")
-            && !inner.contains(['{', '}', '<', '>', '/'])
+                .and_then(|rest| rest.strip_suffix('>'))?,
+            true,
+        )
+    };
+    if inner.contains(['{', '}', '<', '>', '/']) {
+        return None;
+    }
+    let mut parts = inner.split(':');
+    let (first, second) = (parts.next()?, parts.next());
+    if parts.next().is_some() || first.is_empty() || second.is_some_and(str::is_empty) {
+        return None;
+    }
+    Some(match (second, converter_first) {
+        (None, _) => "",
+        (Some(converter), false) => converter,
+        (Some(_), true) => first,
     })
+}
+
+fn converter_accepts(converter: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    match converter {
+        "" | "str" => true,
+        "int" => value.bytes().all(|byte| byte.is_ascii_digit()),
+        "float" => {
+            let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+            !whole.is_empty()
+                && whole.bytes().all(|byte| byte.is_ascii_digit())
+                && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        "uuid" => {
+            let groups: Vec<&str> = value.split('-').collect();
+            groups.len() == 5
+                && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, len)| {
+                    group.len() == len && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> {
@@ -2809,6 +2848,20 @@ mod route_template_tests {
             ("/items/{id:int}", "/items/1", true),
             ("/items/<id>", "/items/1", true),
             ("/items/<int:id>", "/items/1?verbose=1", true),
+            ("/items/<int:id>", "/items/nope", false),
+            ("/items/{id:int}", "/items/-1", false),
+            ("/items/{id:int}", "/items/1.5", false),
+            ("/items/<float:x>", "/items/1.5", true),
+            ("/items/<float:x>", "/items/abc", false),
+            (
+                "/items/{id:uuid}",
+                "/items/123e4567-e89b-12d3-a456-426614174000",
+                true,
+            ),
+            ("/items/{id:uuid}", "/items/1", false),
+            ("/items/<slug:s>", "/items/a", false),
+            ("/items/{id:int:x}", "/items/1", false),
+            ("/checkout", "/checkout?verbose=1", true),
             ("/users/{uid}/posts/{pid}", "/users/3/posts/9", true),
             ("/items/{id}", "/items/", false),
             ("/items/{id}", "/items", false),
