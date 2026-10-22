@@ -6440,7 +6440,10 @@ mod lsp_next_step_parity_tests {
             return Err("expected rendered finding hover".to_string());
         };
         assert!(content.value.contains(&finding.id));
-        assert!(content.value.contains("no_static_path"));
+        // The hover header leads with the plain class word (#9367); the raw
+        // schema token stays on `Diagnostic.code` for the Problems panel.
+        assert!(content.value.contains("no path"));
+        assert!(!content.value.contains("no_static_path"));
         assert_eq!(hover.range, Some(diagnostic.range));
         let params = tower_lsp_server::ls_types::CodeActionParams {
             text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
