@@ -3705,16 +3705,18 @@ impl OwnerReturnPin {
                     return false;
                 }
                 // #9444: a walk over an empty literal visits nothing.
+                // A rendered or indexed comparison (`format!("{}", call)`,
+                // `vec![call][0]`) carries no call text, so the assertion's
+                // own text is read for the first call of the owner.
+                let walk_site = call_text.unwrap_or(assertion.text.as_str());
                 if self.walked_positions.iter().any(|position| {
-                    call_text.is_some_and(|text| {
-                        closure_adaptor::pinned_call_passes_only_empty(
-                            test,
-                            loan.as_ref(),
-                            text,
-                            &self.name,
-                            *position,
-                        )
-                    })
+                    closure_adaptor::pinned_call_passes_only_empty(
+                        test,
+                        loan.as_ref(),
+                        walk_site,
+                        &self.name,
+                        *position,
+                    )
                 }) {
                     return false;
                 }

@@ -608,7 +608,12 @@ pub(in crate::analysis::classify) fn iterated_slice_positions(
     owner_body: &str,
     expression: &str,
 ) -> Vec<usize> {
-    let expression = collapse(expression);
+    // Whitespace around `.` and `(` is not significant to the parser.
+    let compact: String = expression
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let owner_text = collapse(owner_body);
     let Some(parse) = parse_clean_source_file(owner_body) else {
         return Vec::new();
     };
@@ -630,12 +635,20 @@ pub(in crate::analysis::classify) fn iterated_slice_positions(
         if !slice_like_type(&ty.syntax().text().to_string()) {
             continue;
         }
-        let walked = [".iter()", ".into_iter()", ".iter_mut()"]
-            .iter()
-            .any(|walk| {
-                whole_word_offsets(&expression, &name)
-                    .into_iter()
-                    .any(|offset| expression[offset + name.len()..].starts_with(walk))
+        // A local `let` of the same name may rebind the parameter.
+        if owner_text.contains(&format!("let {name}"))
+            || owner_text.contains(&format!("let mut {name}"))
+        {
+            continue;
+        }
+        let walked = whole_word_offsets(&compact, &name)
+            .into_iter()
+            .any(|offset| {
+                // `row.values.iter()` walks a field, not the parameter.
+                !compact[..offset].ends_with('.')
+                    && [".iter()", ".into_iter()", ".iter_mut()"]
+                        .iter()
+                        .any(|walk| compact[offset + name.len()..].starts_with(walk))
             });
         if walked {
             positions.push(position);
