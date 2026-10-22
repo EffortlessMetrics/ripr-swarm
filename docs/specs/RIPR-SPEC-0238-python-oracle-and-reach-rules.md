@@ -707,8 +707,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
     the arm that can run is still read) and the body of a `try` whose
     handler catches `AssertionError` (a bare `except`, `Exception`,
-    `BaseException`, `AssertionError`, or a tuple naming one) and does not
-    raise, assert or call a `fail` helper. The `else` and `finally` blocks
+    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
+    naming one) and does not raise, assert, call a `fail` helper or call a
+    unittest `assert*` method. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
     `py-trap-swallowed-assert`, #9691).
@@ -717,7 +718,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     unconditional module-level `pytest.importorskip(...)`,
     `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
     a recognized skip, skipif or xfail mark control every affected test the
-    same way a `@pytest.mark.skip` decorator does: the finding is
+    same way a `@pytest.mark.skip` decorator does (a condition is never
+    evaluated, so a `skipif` that is false on the host still abstains): the finding is
     `static_unknown` with `decorator_indirection`. The adapter does not
     evaluate whether the module is installed, so `importorskip` of a present
     module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,

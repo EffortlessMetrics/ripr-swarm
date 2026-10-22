@@ -96,6 +96,55 @@ fn given_a_handler_that_fails_again_then_the_try_body_is_read() {
 }
 
 #[test]
+fn given_a_handler_that_asserts_or_nests_a_failure_then_the_try_body_is_read() {
+    // (handler body, assertions read): a handler that asserts adds its own.
+    for (handler, expected) in [
+        ("assert False", 2),
+        (
+            "if f(1):\n            raise\n        else:\n            pass",
+            1,
+        ),
+        ("self.assertTrue(False)", 2),
+        ("self.assertIn('x', str(e))", 2),
+    ] {
+        let body = format!(
+            "    try:\n        assert f(3) == 21\n    except AssertionError as e:\n        {handler}\n"
+        );
+        assert_eq!(assertion_count(&body), expected, "handler {handler}");
+    }
+}
+
+#[test]
+fn given_a_qualified_or_starred_catch_then_swallowing_still_hides_the_try_body() {
+    assert_eq!(
+        assertion_count(
+            "    try:\n        assert f(3) == 21\n    except builtins.AssertionError:\n        pass\n"
+        ),
+        0
+    );
+    assert_eq!(
+        assertion_count(
+            "    try:\n        assert f(3) == 21\n    except* AssertionError:\n        pass\n"
+        ),
+        0
+    );
+    assert_eq!(
+        assertion_count(
+            "    try:\n        assert f(3) == 21\n    except AssertionError:\n        pass\n    finally:\n        assert f(4) == 28\n"
+        ),
+        1
+    );
+}
+
+#[test]
+fn given_a_truthy_constant_loop_then_its_assert_is_read() {
+    assert_eq!(
+        assertion_count("    while 1:\n        assert f(3) == 21\n        break\n"),
+        1
+    );
+}
+
+#[test]
 fn given_a_handler_for_an_unrelated_error_then_the_try_body_is_read() {
     assert_eq!(
         assertion_count(

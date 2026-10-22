@@ -132,13 +132,18 @@ fn handlers_swallow_assertion_errors(handlers: &[ast::ExceptHandler]) -> bool {
 
 fn catches_assertion_error(kind: &Expr) -> bool {
     match kind {
-        Expr::Name(name) => matches!(
-            name.id.as_str(),
-            "Exception" | "BaseException" | "AssertionError"
-        ),
+        Expr::Name(name) => is_catching_name(name.id.as_str()),
+        Expr::Attribute(attribute) => {
+            matches!(attribute.value.as_ref(), Expr::Name(root) if root.id.as_str() == "builtins")
+                && is_catching_name(attribute.attr.as_str())
+        }
         Expr::Tuple(tuple) => tuple.elts.iter().any(catches_assertion_error),
         _ => false,
     }
+}
+
+fn is_catching_name(name: &str) -> bool {
+    matches!(name, "Exception" | "BaseException" | "AssertionError")
 }
 
 fn statements_fail_again(statements: &[Stmt]) -> bool {
@@ -147,7 +152,12 @@ fn statements_fail_again(statements: &[Stmt]) -> bool {
         Stmt::Expr(expr) => matches!(
             expr.value.as_ref(),
             Expr::Call(call) if expr_full_name(call.func.as_ref())
-                .is_some_and(|name| name.rsplit('.').next() == Some("fail"))
+                .is_some_and(|name| {
+                    // `pytest.fail`, `self.fail` and the unittest `assert*`
+                    // methods all fail the test again.
+                    let last = name.rsplit('.').next().unwrap_or_default();
+                    last == "fail" || (last.starts_with("assert") && name.contains('.'))
+                })
         ),
         Stmt::If(inner) => {
             statements_fail_again(&inner.body) || statements_fail_again(&inner.orelse)
