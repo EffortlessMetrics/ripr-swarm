@@ -1,0 +1,13 @@
+diff --git a/lib/Counter.pm b/lib/Counter.pm
+index c14d1c2..db91997 100644
+--- a/lib/Counter.pm
++++ b/lib/Counter.pm
+@@ -5,7 +5,7 @@ use warnings;
+ 
+ sub new {
+     my ($class, %args) = @_;
+-    my $self = bless { n => $args{start} // 0 }, $class;
++    my $self = bless { n => exists $args{start} ? $args{start} : 0 }, $class;
+     return $self;
+ }
+ 
