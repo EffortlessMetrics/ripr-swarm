@@ -33,6 +33,17 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     pub(in crate::analysis::language::python) methods: Vec<String>,
     /// Whether the class's `__enter__` is a bare `return self`.
     pub(in crate::analysis::language::python) enter_returns_self: bool,
+    /// The class has no decorators, metaclass or other class keywords, a body
+    /// of only methods and plain attributes (no dunder assigned or defined
+    /// conditionally), and is the only definition of its path in the file.
+    /// Anything else may run a regenerated or replaced method. Set at
+    /// extraction; `false` when unknown.
+    pub(in crate::analysis::language::python) plain: bool,
+    /// The class lists no base class. A base may define `__ne__`.
+    pub(in crate::analysis::language::python) no_bases: bool,
+    /// Trimmed text of the single-line expression statements written directly
+    /// in this method's body (not nested under a guard). Set at extraction.
+    pub(in crate::analysis::language::python) direct_statements: Vec<String>,
 }
 
 /// Fills [`PythonClassFacts`] on each method owner from the owners that share
@@ -81,7 +92,8 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
             .iter()
             .find(|(file, class, _)| *file == owner.file && *class == owner.class_path)
         {
-            owner.class_facts = class_facts.clone();
+            owner.class_facts.methods = class_facts.methods.clone();
+            owner.class_facts.enter_returns_self = class_facts.enter_returns_self;
         }
     }
 }
@@ -130,6 +142,7 @@ fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<S
                 && !keyword_or_operator_binds_text(body, &var, true)
                 && !binds_in_target_list(&scrubbed, &var)
                 && !test.fixtures.contains(&var)
+                && !is_callable_parameter(body, &var)
                 && !locals.contains(&var)
             {
                 locals.push(var);
@@ -137,6 +150,38 @@ fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<S
         }
     }
     locals
+}
+
+/// Whether `name` is a parameter of a nested `def` or a `lambda` in `body`
+/// (`def check(a):`, `lambda a: ...`), which rebinds it inside that scope. A
+/// header whose parameter list cannot be read on its line fails closed.
+fn is_callable_parameter(body: &str, name: &str) -> bool {
+    let has_word = |text: &str| {
+        text.match_indices(name).any(|(idx, _)| {
+            !text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_python_identifier_char)
+                && !text[idx + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_python_identifier_char)
+        })
+    };
+    body.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let header = trimmed.strip_prefix("async ").unwrap_or(trimmed);
+        if header.starts_with("def ") {
+            return match (header.find('('), header.rfind(')')) {
+                (Some(open), Some(close)) if close > open => has_word(&header[open..close]),
+                _ => true,
+            };
+        }
+        line.match_indices("lambda").any(|(idx, _)| {
+            let rest = &line[idx + "lambda".len()..];
+            has_word(rest.split(':').next().unwrap_or(rest))
+        })
+    })
 }
 
 /// The body with each bare `with <name>:` header rewritten to `with _:`,
@@ -190,7 +235,7 @@ fn operator_runs_owner(operator: &str, owner: &PythonOwner) -> bool {
         .find(|(token, _)| *token == operator)
         .is_some_and(|(_, dunders)| {
             dunders.iter().any(|dunder| {
-                if *dunder != owner.name {
+                if *dunder != owner.name || !owner.class_facts.plain {
                     return false;
                 }
                 // `!=` reaches `__eq__` only through the inherited
@@ -198,11 +243,12 @@ fn operator_runs_owner(operator: &str, owner: &PythonOwner) -> bool {
                 // that instead. The owner's own class facts must be filled.
                 operator != "!="
                     || owner.name == "__ne__"
-                    || (owner
-                        .class_facts
-                        .methods
-                        .iter()
-                        .any(|name| name == "__eq__")
+                    || (owner.class_facts.no_bases
+                        && owner
+                            .class_facts
+                            .methods
+                            .iter()
+                            .any(|name| name == "__eq__")
                         && !owner
                             .class_facts
                             .methods
@@ -539,7 +585,7 @@ pub(in crate::analysis::language::python) fn with_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> Option<WithEntry> {
-    if !matches!(owner.name.as_str(), "__enter__" | "__exit__") {
+    if !matches!(owner.name.as_str(), "__enter__" | "__exit__") || !owner.class_facts.plain {
         return None;
     }
     let class = dunder_method_class(owner)?;
@@ -611,9 +657,15 @@ pub(in crate::analysis::language::python) fn with_entry(
         }
         let indent = line.len() - line.trim_start().len();
         let mut end = offset;
+        // Triple-quoted text can hold lines at any indent; the block end
+        // cannot be read through it.
+        if body[offset..].contains("\"\"\"") || body[offset..].contains("'''") {
+            return None;
+        }
         for next in body[offset..].split_inclusive('\n') {
             let next_indent = next.len() - next.trim_start().len();
-            if !next.trim().is_empty() && next_indent <= indent {
+            let skipped = next.trim().is_empty() || next.trim_start().starts_with('#');
+            if !skipped && next_indent <= indent {
                 break;
             }
             end += next.len();

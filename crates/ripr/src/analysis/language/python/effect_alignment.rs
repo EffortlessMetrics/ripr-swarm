@@ -49,8 +49,16 @@ impl ChangedEffect {
         owner: &PythonOwner,
     ) -> Option<Self> {
         let line = line_text.trim();
+        let context_dunder = matches!(owner.name.as_str(), "__enter__" | "__exit__");
+        let direct = owner
+            .class_facts
+            .direct_statements
+            .iter()
+            .any(|statement| statement == line);
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
+            // A context manager's write under a guard may never run (#9421).
+            && (!context_dunder || direct)
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -61,8 +69,12 @@ impl ChangedEffect {
         // its `with` block (#9421). Other methods keep their call-based
         // reading.
         if matches!(owner.owner_kind, Some(OwnerKind::Method))
-            && matches!(owner.name.as_str(), "__enter__" | "__exit__")
+            && context_dunder
             && let Some(attr) = self_attribute_mutation(line)
+            // Only a statement written directly in the method body always
+            // runs; one under an `if`, `try` or loop may never run in the
+            // test, so it reads no effect (unknown facts fail closed).
+            && direct
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),

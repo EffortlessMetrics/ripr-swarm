@@ -246,7 +246,7 @@ fn ordering_dunder_with_a_relational_assertion_is_a_gap_not_an_abstention() -> C
 
 fn classify_exit(test_src: &str) -> Result<Finding, String> {
     classify(
-        RECORDER,
+        &RECORDER.replace("\"exit\"", "\"leave\""),
         "shapes/ctx.py",
         "__exit__",
         "        self.events.append(\"leave\")",
@@ -299,6 +299,103 @@ fn with_block_unrelated_assertion_is_a_gap_for_the_suppress_edit() -> Check {
         ),
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn class_shapes_that_may_run_another_method_are_not_bound() -> Check {
+    let test_ne = money_test("    assert Money(1) != Money(2)");
+    let test_add = money_test("    assert Money(5) + Money(7) == Money(12)");
+    // A base class may define `__ne__`: `!=` abstains, `+` still binds.
+    let based = MONEY.replace("class Money:", "class Money(tuple):");
+    let owners = owners_of(&based, "shapes/money.py");
+    assert_eq!(
+        relation(&owners, "__eq__", &test_ne)?,
+        Some("dunder_protocol")
+    );
+    assert_eq!(
+        relation(&owners, "__add__", &test_add)?,
+        Some("protocol_entry_call")
+    );
+    // A decorator, metaclass, class-level dunder assignment, conditional body
+    // statement or second definition may regenerate or replace the method.
+    let regenerating = [
+        MONEY.replace("class Money:", "@attr.s\nclass Money:"),
+        MONEY.replace("class Money:", "class Money(metaclass=Meta):"),
+        format!("{MONEY}\n    __ne__ = other_ne\n"),
+        format!("{MONEY}\n    if FLAG:\n        __ne__ = other_ne\n"),
+        format!("{MONEY}\n\n{MONEY}"),
+    ];
+    for src in regenerating {
+        let owners = owners_of(&src, "shapes/money.py");
+        assert_eq!(
+            relation(&owners, "__eq__", &test_ne)?,
+            Some("dunder_protocol"),
+            "{src}"
+        );
+        assert_eq!(
+            relation(&owners, "__add__", &test_add)?,
+            Some("dunder_protocol"),
+            "{src}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_def_or_lambda_parameter_named_like_an_instance_is_not_bound() -> Check {
+    let owners = owners_of(MONEY, "shapes/money.py");
+    for body in [
+        "    a = Money(5)\n    def check(a):\n        assert a + Money(1) == Money(7)\n    check(Other())",
+        "    a = Money(5)\n    def check(x, *a):\n        assert a + Money(1) == Money(7)",
+        "    a = Money(5)\n    check = lambda a: a + Money(1) == Money(7)\n    assert check(Other())",
+    ] {
+        assert_eq!(
+            relation(&owners, "__add__", &money_test(body))?,
+            Some("dunder_protocol"),
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_context_manager_write_is_not_credited() -> Check {
+    let guarded = "class Recorder:\n    def __init__(self):\n        self.events = []\n\n    def __enter__(self):\n        self.events.append(\"enter\")\n        return self\n\n    def __exit__(self, t, v, tb):\n        if t is not None:\n            self.events.append(\"fault\")\n        return False\n";
+    let finding = classify(
+        guarded,
+        "shapes/ctx.py",
+        "__exit__",
+        "            self.events.append(\"fault\")",
+        "            self.events.append(\"error\")",
+        &recorder_test(
+            "    with Recorder() as rec:\n        pass\n    assert rec.events == [\"enter\"]",
+        ),
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn comment_or_docstring_text_does_not_end_a_with_block_early() -> Check {
+    let owners = owners_of(RECORDER, "shapes/ctx.py");
+    // A comment at a lower indent keeps the block open: the read inside it is
+    // not an after-block read.
+    let commented = classify_exit(&recorder_test(
+        "    with Recorder() as rec:\n# note\n        assert rec.events == [\"enter\"]",
+    ))?;
+    assert_ne!(commented.class, ExposureClass::Exposed);
+    // Triple-quoted text after the statement cannot be read through.
+    assert_eq!(
+        relation(
+            &owners,
+            "__exit__",
+            &recorder_test(
+                "    with Recorder() as rec:\n        pass\n    \"\"\"\nnote\n\"\"\"\n    assert rec.events == [\"enter\", \"exit\"]"
+            )
+        )?,
+        Some("dunder_protocol")
+    );
     Ok(())
 }
 
