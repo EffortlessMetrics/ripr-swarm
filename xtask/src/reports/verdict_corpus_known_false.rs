@@ -260,19 +260,24 @@ mod tests {
         Ok(())
     }
 
+    /// A ceiling set above the real count would pass the gate with only a
+    /// note, so pin each committed ceiling to its blessed rows.
     #[test]
-    fn missed_credit_counts_only_abstained_discriminated_rows() -> Result<(), String> {
-        let (_, rows) = committed_rust_rows()?;
-        let expected = rows
-            .iter()
-            .filter(|r| r.outcome == Outcome::Abstained && r.truth == TruthState::Discriminated)
-            .count();
-        assert_eq!(missed_credit(&rows), expected);
-        assert!(
-            rows.iter()
-                .any(|r| r.outcome == Outcome::Abstained && r.truth != TruthState::Discriminated)
-                || expected > 0
-        );
+    fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
+        for language in ["rust", "typescript", "python", "perl"] {
+            let dir = crate::dogfood::repo_rooted_fixture_path(&format!(
+                "fixtures/{language}-verdict-corpus"
+            ));
+            let rows = super::super::expected_report(&dir)?.rows;
+            let ledger = coverage::load_ledger(&dir)?;
+            let missed = missed_credit(&rows);
+            assert!(missed > 0, "{language} has no missed credit to count");
+            assert_eq!(
+                ledger.missed_credit_ceiling,
+                Some(missed),
+                "{language} missed_credit_ceiling must equal the blessed count"
+            );
+        }
         Ok(())
     }
 
