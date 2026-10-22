@@ -1,0 +1,178 @@
+name: Windows Editor Hang Hunt
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Commit SHA to check out (40 hexadecimal characters)"
+        required: true
+        type: string
+      iterations:
+        description: "Trusted editor journeys per shard (each is capped at 15 minutes)"
+        required: false
+        type: string
+        default: "5"
+
+# Diagnostic for #9526: the trusted packaged editor journey intermittently runs to its
+# step cap with no Mocha output. This repeats only that journey, in parallel shards and
+# against a locally built server, and keeps the VS Code host logs of every iteration.
+# It never creates a release, uploads a release asset, publishes a VSIX, uses a secret,
+# or changes a ref, and it is not qualification evidence.
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: trusted editor journey shard ${{ matrix.shard }}
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      CARGO_TERM_COLOR: always
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      ITERATIONS: ${{ inputs.iterations }}
+
+    steps:
+      - name: Initialize roots before checkout
+        shell: pwsh
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP 'ripr-editor-hang-hunt'
+          $logs = Join-Path $base 'hunt-logs'
+          $work = Join-Path $base 'work'
+          "HUNT_ROOT=$logs" >> $env:GITHUB_ENV
+          "QUAL_TEMP_ROOT=$work" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path $logs, $work | Out-Null
+
+      - name: Checkout candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize roots after checkout
+        if: always()
+        shell: pwsh
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP 'ripr-editor-hang-hunt'
+          New-Item -ItemType Directory -Force -Path (Join-Path $base 'hunt-logs'), (Join-Path $base 'work') | Out-Null
+
+      - name: Verify candidate identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw 'candidate_sha must be a full 40-character commit SHA' }
+          if ($env:ITERATIONS -notmatch '^[1-9][0-9]?$') { throw 'iterations must be 1 to 99' }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "checkout identity mismatch: HEAD=$head candidate_sha=$env:CANDIDATE_SHA" }
+
+      - name: Set up Rust and Node
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Build the server and package the VSIX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:QUAL_TEMP_ROOT 'cargo-target'
+          cargo build --locked -p ripr --target-dir $target
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit $LASTEXITCODE" }
+          $server = Join-Path $target 'debug\ripr.exe'
+          if (-not (Test-Path $server)) { throw "server binary missing: $server" }
+          "RIPR_SERVER=$server" >> $env:GITHUB_ENV
+          Push-Location editors/vscode
+          try {
+            npm ci; if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+            cargo xtask vscode-compile; if ($LASTEXITCODE -ne 0) { throw 'VSIX compile failed' }
+            npm run package; if ($LASTEXITCODE -ne 0) { throw 'VSIX package failed' }
+            $vsix = Get-ChildItem dist\*.vsix | Select-Object -First 1; if ($null -eq $vsix) { throw 'VSIX package was not produced' }
+            $extract = Join-Path $env:QUAL_TEMP_ROOT 'vsix-extracted'
+            New-Item -ItemType Directory -Force -Path $extract | Out-Null
+            Expand-Archive -LiteralPath $vsix.FullName -DestinationPath $extract -Force
+            "RIPR_EXTENSION=$(Join-Path $extract 'extension')" >> $env:GITHUB_ENV
+          } finally { Pop-Location }
+
+      - name: Repeat the trusted editor journey
+        shell: pwsh
+        working-directory: editors/vscode
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $cap = 256KB
+          $patterns = @(
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----',
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*$',
+            '-----END [A-Z0-9 ]+-----',
+            '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b',
+            '\bgithub_pat_[A-Za-z0-9_]{20,}\b',
+            'x-access-token:[^@\s]+'
+          )
+          function Save-HostLogs([string]$logs, [string]$dest) {
+            if (-not (Test-Path $logs)) { return }
+            foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
+              try {
+                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite,Delete')
+                try {
+                  $take = [int][Math]::Min($stream.Length, $cap)
+                  $null = $stream.Seek(-$take, 'End')
+                  $bytes = New-Object byte[] $take
+                  $read = 0
+                  while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
+                  if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
+                } finally { $stream.Dispose() }
+                $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+                foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
+                $to = Join-Path $dest $file.FullName.Substring($logs.Length + 1)
+                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+                [System.IO.File]::WriteAllText($to, $text)
+              } catch { Write-Host "skipped $($file.Name): $_" }
+            }
+          }
+          $summary = @()
+          for ($i = 1; $i -le [int]$env:ITERATIONS; $i++) {
+            $artifactRoot = Join-Path $env:QUAL_TEMP_ROOT "trusted-editor-$i"
+            $env:RIPR_TEST_EXTENSION_PATH = $env:RIPR_EXTENSION
+            $env:RIPR_TEST_SERVER_PATH = $env:RIPR_SERVER
+            $env:RIPR_TEST_WORKSPACE_TRUST = 'trusted'
+            $env:RIPR_TEST_ARTIFACT_ROOT = $artifactRoot
+            $out = Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.log"
+            $err = Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i.err.log"
+            $started = Get-Date
+            $p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'test:e2e' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+            $finished = $p.WaitForExit(900000)
+            if ($finished) { $p.WaitForExit() }
+            $hung = -not $finished
+            if ($hung) {
+              Write-Host "iteration $i HUNG after 15 minutes; capturing process state"
+              Get-Process | Where-Object { $_.ProcessName -match 'Code|ripr|node|electron' } | Select-Object Id, ProcessName, CPU, WorkingSet64, Responding | Format-Table | Out-String | Write-Host
+              Get-Process | Where-Object { $_.ProcessName -match 'Code|ripr|node|electron' } | Select-Object Id, ProcessName, CPU, WorkingSet64, Responding | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i-processes.json")
+            }
+            Save-HostLogs (Join-Path $artifactRoot 'vscode-test-user-data\logs') (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-iter$i-host-logs")
+            if ($hung) {
+              taskkill /T /F /PID $p.Id 2>&1 | Out-Null
+              Get-Process | Where-Object { $_.ProcessName -match '^(Code|ripr)$' } | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+            $exit = if ($hung) { 'hung' } else { $p.ExitCode }
+            $summary += [ordered]@{ shard = $env:SHARD; iteration = $i; result = $exit; seconds = [int]((Get-Date) - $started).TotalSeconds }
+            Write-Host ("shard {0} iteration {1}: {2} in {3}s" -f $env:SHARD, $i, $exit, [int]((Get-Date) - $started).TotalSeconds)
+          }
+          $summary | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-summary.json")
+        env:
+          SHARD: ${{ matrix.shard }}
+
+      - name: Upload hunt logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-editor-hang-hunt-${{ matrix.shard }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}\ripr-editor-hang-hunt\hunt-logs
+          if-no-files-found: error
