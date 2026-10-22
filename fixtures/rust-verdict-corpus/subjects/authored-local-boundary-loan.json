@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-local-boundary-loan",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22; flag-selected local boundary reached through a test helper (#9509)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "cc5a6fea858d3837112dc8fcda4eec20b07127aa97b05378b821e079b7584a44"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "40fa25d8b0b35ff6a74b0b7d9e9baf12bb765333a50839a38912d5eb27f9c730"
+    }
+  ]
+}
