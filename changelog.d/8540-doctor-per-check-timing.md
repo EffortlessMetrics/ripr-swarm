@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr doctor` now attributes its first-run cost: each typed check and runtime probe carries an `elapsed_ms` measured where it runs, the report carries the whole run's total, and the final screen line reads `doctor checks passed in 3.5s (slowest: git_repository 541ms)`. The JSON fields are additive and optional in the published doctor schema; skipped checks carry no measurement, and no check, status, or exit behavior changed (#8540).

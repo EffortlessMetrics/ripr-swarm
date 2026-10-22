@@ -410,6 +410,18 @@ Updated:
 ## Pending — python_local_callable_binding (20)
 
 Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_local_callable_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_local_callable_binding (21)
+
+Reason:
 RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
 
 Command:

@@ -470,6 +470,18 @@ Updated:
 ## Pending — python_model_field_repair_gap (19)
 
 Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_model_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_model_field_repair_gap (20)
+
+Reason:
 RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
 
 Command:

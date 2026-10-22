@@ -479,6 +479,19 @@ Updated:
 ## Pending — python_adversarial_same_method_other_class (23)
 
 Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_adversarial_same_method_other_class --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_same_method_other_class (24)
+
+Reason:
 RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
 
 Command:

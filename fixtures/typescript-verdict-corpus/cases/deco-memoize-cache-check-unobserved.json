@@ -1,0 +1,44 @@
+{
+  "case_id": "deco-memoize-cache-check-unobserved",
+  "subject_id": "authored-ts-jest-decorators",
+  "diff": "cases/deco-memoize-cache-check-unobserved.diff",
+  "anchor": {
+    "file": "src/memoize.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate",
+  "test_shape": "jest_decorator_cache_never_counted",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "Node.js v22.22.0, jest 30.5.2, ts-jest 29.4.14, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: Always recomputing returns the same numbers; no test counts calls to the wrapped method."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Always recomputing returns the same numbers; no test counts calls to the wrapped method. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

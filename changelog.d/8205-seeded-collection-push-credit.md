@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A Rust test that expects a seeded collection after the owner call (`assert_eq!(p.log, vec![9])`) no longer credits a changed or deleted push into that collection as `exposed` when the owner can return before it (`if self.locked { return; }`, `?`, a panicking call). That test took the early exit, so the assertion only restates the seeded state and cannot tell the push apart from its mutants. An expectation containing the pushed value, or an owner that cannot exit early, keeps its strength (#8205).
