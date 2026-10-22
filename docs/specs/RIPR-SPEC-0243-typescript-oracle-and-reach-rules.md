@@ -1015,6 +1015,15 @@ rejected alternative. Any can be reversed later without touching the rest.
     exact assertion on it does not observe the update. Rejected: modelling the
     accessor body (it can compute anything), and `accessor <field>` auto-
     accessors, which the owner index does not record yet.
+21. **Floating promises under node:test (2026-10-22, #9686).** Adopted: in a
+    test registered through `node:test`, a bare `p.then((v) => body)`
+    statement reads like the returned or awaited form (the callback body runs
+    with `v` replaced by `(p)`), because `node:test` reports an unhandled
+    rejection as a failure, so an assertion that fails late still fails the
+    run. Rejected: the same credit under Jest, Vitest or any other runner,
+    which drop a rejection that settles after the test finished; a chain
+    with an earlier `then`, `catch` or `finally` step, and a `then` with a
+    second argument, which keep the existing refusals.
 
 ## Required Evidence
 
@@ -1288,8 +1297,19 @@ to `amount - 20`, and `tests/lib.test.ts` has
     expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
     (today `weakly_exposed`: only the unchanged `area` term reached the
     changed-value check). With only the `d.area` assertion: unchanged.
+40. Under `node:test`, `floatingPromise(3, 7).then((total) => {
+    assert.equal(total, 21); });` as a bare statement against a changed
+    `return a * b` rewrite: `exact_value` / strong, `exposed` (today
+    `weakly_exposed`: the promise is neither returned nor awaited). The same
+    statement with `expect(total).toBe(21)` in a Jest or Vitest test, or after
+    an earlier `.catch(...)` step: unchanged (decision 21).
 
 ## Test Mapping
+
+- #9686 (decision 21): `tests/floating_then_tests.rs` pins the `node:test`
+  credit, the runner boundary and the refused chains. Corpus row
+  `ts-trap-floating-promise` moves from gap to credited (its test fails on
+  every mutant under `node --test`), and its known-false file is deleted.
 
 - #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
   pins the per-row assertions and the fail-closed fallbacks (a non-literal

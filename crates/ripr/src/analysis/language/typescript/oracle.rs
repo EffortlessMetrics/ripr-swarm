@@ -692,6 +692,10 @@ fn attach_match_object_const(
 /// - `await t.test(name, [options,] (t2) => body)` on the test's own
 ///   receiver: node:test runs the awaited subtest inside the test.
 ///
+/// - A bare `p.then((v) => body)` statement under `node:test`: it reports an
+///   unhandled rejection as a failure, so the body still fails the run
+///   (#9686). Jest and Vitest do not, so there it collects nothing.
+///
 /// Anything else, a callback that is not awaited or returned, or one the row
 /// reader refuses, collects nothing (fail closed).
 fn collect_nested_callback_assertions(
@@ -769,7 +773,10 @@ fn collect_nested_callback_assertions(
                 out.extend(assertions);
             }
         }
-        "then" if returned || awaited => {
+        // A `then` whose promise nobody waits for still fails the run under
+        // `node:test`, which reports an unhandled rejection as a failure; Jest
+        // and Vitest drop it once the test has finished (#9686).
+        "then" if returned || awaited || context.bindings.node_test_runner => {
             // A rejection handler can swallow the changed behavior.
             let [callback] = call.arguments.as_slice() else {
                 return;

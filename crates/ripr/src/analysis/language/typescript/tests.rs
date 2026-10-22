@@ -17423,6 +17423,7 @@ mod default_object_member_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod error_payload_tests;
+mod floating_then_tests;
 mod function_reference_callback_tests;
 mod guard_entry_tests;
 mod instance_class_tests;
