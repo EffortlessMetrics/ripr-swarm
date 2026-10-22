@@ -61,8 +61,12 @@ suite('First-PR command safety', () => {
     const spaced = `ripr agent receipt --root "${root}" --json`;
     const redirected = `ripr agent packet --root . --gap-id "gap:a  >b" --json > "${root}/target/ripr/out.json"`;
     // Off Windows a double quote is refused, as before.
-    assert.strictEqual(firstPrCommandIsSafe(spaced, [root]), false);
-    withWindowsHost(() => {
+    withHost('linux', () => {
+      for (const command of [spaced, redirected]) {
+        assert.strictEqual(firstPrCommandIsSafe(command, [root]), false, command);
+      }
+    });
+    withHost('win32', () => {
       for (const command of [spaced, redirected]) {
         assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
         const packet = packetStatus(command, root, 'selected');
@@ -70,11 +74,12 @@ suite('First-PR command safety', () => {
         assert.strictEqual(packet.receiptCommand, command);
       }
       for (const command of [
-        // An odd backslash run escapes the quote for argv and Git Bash.
-        'ripr agent receipt --root "\\" x " ; calc ; \\" --json',
+        // An odd backslash run escapes the closing quote for argv and Git Bash.
+        'ripr agent receipt --root "a\\" --json',
         // cmd.exe expands %NAME% inside the quoted redirect target.
         'ripr agent packet --root . --gap-id gap:pricing --json > "%TEMP%/out.json"',
-        'ripr agent receipt --root . --json ^& calc'
+        // A bare `^` is cmd.exe's escape character.
+        'ripr agent receipt --root HEAD^ --json'
       ]) {
         assert.strictEqual(firstPrCommandIsSafe(command, [root]), false, command);
         assert.strictEqual(packetStatus(command, root, 'selected').state, 'unsafeCommand', command);
@@ -130,10 +135,10 @@ function packetStatus(command: string, workspaceRoot: string, placement: 'comman
     path.join(workspaceRoot, 'target/ripr/first-pr/start-here.md'));
 }
 
-/** Run `body` as if the extension host ran on Windows (`isWindowsHost` reads `process.platform`). */
-function withWindowsHost(body: () => void): void {
+/** Run `body` as if the extension host ran on `platform` (`isWindowsHost` reads `process.platform`). */
+function withHost(platform: NodeJS.Platform, body: () => void): void {
   const original = Object.getOwnPropertyDescriptor(process, 'platform');
-  Object.defineProperty(process, 'platform', { value: 'win32' });
+  Object.defineProperty(process, 'platform', { value: platform });
   try {
     body();
   } finally {
