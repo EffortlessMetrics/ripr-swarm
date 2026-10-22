@@ -68,7 +68,7 @@ struct FunctionAssertions {
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
 }
 
-/// Length plus two independently keyed 64-bit hashes of a function's text.
+/// Length plus two 64-bit SipHash values (distinct prefix byte) of a function's text.
 /// Equal text always matches; differing text matching would need a collision
 /// in both hashes, and the compared texts are two reads of the same source
 /// span, not attacker-chosen pairs.

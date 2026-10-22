@@ -4635,11 +4635,12 @@ fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_sour
     let mut stale = test.clone();
     stale.body = stale.body.replacen("12", "13", 1).into();
     assert_ne!(stale.body, test.body);
-    assert!(
-        OwnerPinSyntax::default()
-            .refusal(&stale, assertion, &index)
-            .is_some(),
-        "a body differing from the parsed source must be refused"
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
     );
     Ok(())
 }
