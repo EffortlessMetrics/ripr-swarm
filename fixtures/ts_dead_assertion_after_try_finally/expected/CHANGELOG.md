@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_dead_assertion_after_try_finally (4)
+
+Reason:
+RIPR-SPEC-0320: fixture input drops the owner's boolean return annotation so the truthiness check stays smoke-only; only input and source digests change
+
+Command:
+`cargo xtask goldens bless ts_dead_assertion_after_try_finally --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

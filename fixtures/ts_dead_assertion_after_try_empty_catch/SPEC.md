@@ -4,6 +4,10 @@ Spec: RIPR-SPEC-0243
 
 ## Given
 
+The owner `isEligible` leaves its return type unannotated on purpose: a truthiness
+check on a result declared `: boolean` reads as an exact pin (RIPR-SPEC-0320),
+and this fixture needs the check to stay a smoke-only oracle.
+
 A TypeScript owner `isEligible(age)` changes its boundary predicate from
 `age >= 18` to `age > 18`. The only related test makes a weak live
 assertion, `expect(isEligible(30)).toBeTruthy()`, then executes

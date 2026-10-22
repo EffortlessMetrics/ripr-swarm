@@ -4,6 +4,10 @@ Spec: RIPR-SPEC-0027
 
 ## Given
 
+The owner `isReady` leaves its return type unannotated on purpose: a truthiness
+check on a result declared `: boolean` reads as an exact pin (RIPR-SPEC-0320),
+and this fixture needs the check to stay a smoke-only oracle.
+
 A TypeScript preview workspace changes several function-level behaviors and
 opts in to the TypeScript-family adapter:
 

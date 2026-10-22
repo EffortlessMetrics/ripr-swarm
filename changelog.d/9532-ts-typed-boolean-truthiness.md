@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: `assert.ok(isAdult(18))`, `assert.ok(!isAdult(17))`, chai `isTrue` / `isFalse` and `toBeTruthy()` / `toBeFalsy()` on the whole result of a function declared `: boolean`, called with literal arguments, now pin that result instead of reading as a smoke-only oracle. Loop variables, expression arguments, wrapped calls and owners without the exact annotation keep the smoke reading. Three operator-grid rows (`ts-grid-boundary-exact`, `ts-grid-equality-exact`, `ts-grid-logical-exact`) move from a false gap to credited (RIPR-SPEC-0320, #9532).

@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 121
+floor = 123
 
 # LSP Repair Packet Command
 [[spec]]
@@ -511,6 +511,11 @@ scope = "in"
 # TypeScript committed snapshot entry
 [[spec]]
 id = "RIPR-SPEC-0258"
+scope = "in"
+
+# TypeScript typed boolean truthiness
+[[spec]]
+id = "RIPR-SPEC-0320"
 scope = "in"
 
 # Python guarded-arm activation gate

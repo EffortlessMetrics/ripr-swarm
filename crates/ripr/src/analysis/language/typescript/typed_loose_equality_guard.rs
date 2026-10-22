@@ -20,6 +20,11 @@ use super::*;
 /// generator owner, and any other annotation (`number | string`,
 /// `Promise<number>`, none at all) read `false`.
 pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
+    ts_owner_declares_return_type(owner_source, "number")
+}
+
+/// [`ts_owner_declares_number_return`] for any single primitive keyword.
+pub(crate) fn ts_owner_declares_return_type(owner_source: &str, return_type: &str) -> bool {
     let masked = ts_mask_literals_and_comments(owner_source);
     let Some(open) = masked.find('(') else {
         return false;
@@ -59,7 +64,7 @@ pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
         .into_iter()
         .flatten()
         .min();
-    end.is_some_and(|end| annotation[..end].trim() == "number")
+    end.is_some_and(|end| annotation[..end].trim() == return_type)
 }
 
 /// Loose-equality assertions against a number literal on the whole result
@@ -70,16 +75,49 @@ pub(crate) fn ts_typed_loose_number_facts(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> PinFacts {
+    ts_typed_owner_pin_facts(
+        owner,
+        candidates,
+        alias_map,
+        workspace_root,
+        &TypedOwnerPin {
+            pins: &|assertion| {
+                assertion.loose_number_expected
+                    && matches!(assertion.oracle_kind, OracleKind::RelationalCheck)
+                    && assertion.error_payload.is_none()
+                    && assertion.expected_value_or_variant.is_some()
+            },
+            declares_return: &ts_owner_declares_number_return,
+            negated: false,
+            observed_ok: &|_| true,
+        },
+    )
+}
+
+/// What a typed owner pin credits: the assertions `pins` accepts, on an
+/// owner `declares_return` accepts. `negated` also reads `!f(...)` as the
+/// owner's result, for a truthiness check that pins `false`; `observed_ok`
+/// further restricts the observed text (after any `!` is dropped).
+pub(crate) struct TypedOwnerPin<'a> {
+    pub(crate) pins: &'a dyn Fn(&TypeScriptAssertion) -> bool,
+    pub(crate) declares_return: &'a dyn Fn(&str) -> bool,
+    pub(crate) negated: bool,
+    pub(crate) observed_ok: &'a dyn Fn(&str) -> bool,
+}
+
+/// Credit the assertions `rule` accepts when the owner is observed whole
+/// through a binding the test imports from the owner's module.
+pub(crate) fn ts_typed_owner_pin_facts(
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    rule: &TypedOwnerPin<'_>,
+) -> PinFacts {
     let mut facts = PinFacts::default();
-    let pins = |assertion: &TypeScriptAssertion| {
-        assertion.loose_number_expected
-            && matches!(assertion.oracle_kind, OracleKind::RelationalCheck)
-            && assertion.error_payload.is_none()
-            && assertion.expected_value_or_variant.is_some()
-    };
     if !candidates
         .iter()
-        .any(|candidate| candidate.test.assertions.iter().any(pins))
+        .any(|candidate| candidate.test.assertions.iter().any(rule.pins))
     {
         return facts;
     }
@@ -89,7 +127,7 @@ pub(crate) fn ts_typed_loose_number_facts(
     ) || !owner
         .source_text
         .as_deref()
-        .is_some_and(ts_owner_declares_number_return)
+        .is_some_and(rule.declares_return)
     {
         return facts;
     }
@@ -118,15 +156,30 @@ pub(crate) fn ts_typed_loose_number_facts(
                 )
         });
         let aliases = import_alias_owner_locals(candidate.test, owner, alias_map, workspace_root);
-        for assertion in candidate.test.assertions.iter().filter(|a| pins(a)) {
-            if observes_imported_owner_result(
-                candidate.test,
-                assertion,
-                owner,
-                &receivers,
-                bare_is_owner,
-                &aliases,
-            ) {
+        for assertion in candidate.test.assertions.iter().filter(|a| (rule.pins)(a)) {
+            let mut observed_assertion = assertion.clone();
+            if rule.negated
+                && let Some(inner) = assertion
+                    .observed_expression
+                    .as_deref()
+                    .and_then(|observed| observed.trim().strip_prefix('!'))
+                    .map(str::trim_start)
+            {
+                observed_assertion.observed_expression = Some(inner.to_string());
+            }
+            if observed_assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(rule.observed_ok)
+                && observes_imported_owner_result(
+                    candidate.test,
+                    &observed_assertion,
+                    owner,
+                    &receivers,
+                    bare_is_owner,
+                    &aliases,
+                )
+            {
                 facts.credit(&candidate.test.file, assertion);
             }
         }

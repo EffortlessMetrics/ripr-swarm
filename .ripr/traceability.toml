@@ -17877,3 +17877,25 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0320"
+name = "TypeScript typed boolean truthiness"
+spec = "docs/specs/RIPR-SPEC-0320-typescript-typed-boolean-truthiness.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::boolean_return_annotation_reads_only_an_exact_boolean",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::truthiness_on_a_boolean_owner_with_literal_arguments_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_boolean_assert_tests.rs::truthiness_stays_smoke_unless_the_owner_declares_boolean",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/typed_boolean_assert_guard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0320-typescript-typed-boolean-truthiness.md",
+]
+metrics = [
+  "typescript_typed_boolean_truthiness_mismatch",
+]

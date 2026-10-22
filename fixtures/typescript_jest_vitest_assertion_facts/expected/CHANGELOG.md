@@ -647,3 +647,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (24)
+
+Reason:
+RIPR-SPEC-0320: fixture input drops the owner's boolean return annotation so the truthiness check stays smoke-only; only input and source digests change
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
