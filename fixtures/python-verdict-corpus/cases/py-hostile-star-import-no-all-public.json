@@ -35,10 +35,10 @@
   },
   "reasoning": "Without __all__, `from hostile.stars_no_all import *` imports public_star_total, and the exact sum assertion detects this edit.",
   "labeling_observation": {
-    "ripr_commit": "ad83c6b9f519b002023cb3775980095422987e60",
-    "full_checkout_verdict": "gap",
+    "ripr_commit": "ecc99e459921aa3172d9ff5b28c7d7503cb4f7e6",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "weakly_exposed"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   }
