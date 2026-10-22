@@ -32,12 +32,12 @@
       "limited"
     ]
   },
-  "reasoning": "No row has bytes equal to the selected unit (1_024 with si, 1_000 without), so `<=` agrees with `<` on every test. The row set is read through the method hop and does not reach the boundary; ripr must not credit it. 0 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "reasoning": "No row has bytes equal to the selected unit (1_024 with si, 1_000 without), so `<=` agrees with `<` on every test. The row set is read through the method hop and does not reach the boundary; ripr must not credit it and reads the weak gap. 0 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "da433a6",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
-      "propagation_unknown"
+      "weakly_exposed"
     ],
     "excerpt_parity": "matched"
   }

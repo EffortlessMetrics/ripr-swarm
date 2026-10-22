@@ -33,12 +33,12 @@
       "silent"
     ]
   },
-  "reasoning": "Mirrors the real bytesize shape: `check_collide` compares `expected.to_string()` with `size.collide_as(si)`, which calls the free `to_string(self.0, si)`. The receiver-only `.to_string()` is not a call of the free owner, so the test is related through the chain entry and reads propagation_unknown instead of a weak gap on a discriminated edit. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "reasoning": "Mirrors the real bytesize shape: `check_collide` compares `expected.to_string()` with `size.collide_as(si)`, which calls the free `to_string(self.0, si)`. The receiver-only `.to_string()` is not a call of the free owner, so the expected side is not computed through the owner, the test is related through the chain entry, and the exact pin pairs with the boundary row: exposed, not a weak gap on a discriminated edit. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "da433a6",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "propagation_unknown"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   }

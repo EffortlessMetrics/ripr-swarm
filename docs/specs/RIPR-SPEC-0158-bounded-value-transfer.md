@@ -80,6 +80,33 @@ exercised boundary from a missing one.
   only mentions of the name are receiver calls (`expected.to_string()`)
   is not counted as a caller: a method call never resolves to a free
   function.
+- Multi-caller owner (#9329): an owner with several direct callers binds per
+  caller. Each caller is resolved on its own, and the chain is the one
+  caller a related test reaches (a test calls the caller or a hop above it
+  by name). A caller no test reaches contributes nothing. The chain
+  declines, naming the multi-caller edge, when no caller is reached, when
+  two are reached (the tests' own call path to the owner is ambiguous, even
+  through different tests), when a test calls the owner itself, or when the
+  owner has more than eight callers; a reached caller whose hop does not
+  bind carries its own stop. The binding is per chain, not per test, so a
+  second reached caller is a deliberate limit.
+- Asserting entry (#9329): a method hop does not forward the owner's result
+  by the tail rule, but its top hop may be a `#[cfg(test)]` helper whose
+  whole body is one `assert_eq!`/`assert_ne!` with one operand exactly the
+  receiver call (`b.to_string_as(si)`, the hop's own arguments) and an
+  other operand that names neither the receiver, the method nor a direct
+  call of the owner, over hops below it that each tail-forward the call
+  (`helper_transfer::asserting_method_entry`). Propagation then counts the
+  chain as forwarding, and the same-test pairing
+  (`boundary_pairing::entry_loan_pairs_boundary_call`) pairs the helper's
+  discriminating assertion with the transferred `==` row on the line of an
+  eager call to the helper, recomputed from that test alone, when that
+  call is the helper's only call on the line apart from calls inside its
+  own arguments. A dropped, let-bound, transformed or shadowed result, a
+  second statement, or a transforming method declines and keeps the
+  abstention. A free-function owner's name on a receiver call
+  (`expected.to_string()`) is not a call of the owner when judging whether
+  the expected side is computed through it.
 - Receiver values (#9329): the entry hop's receiver parameter gets one
   extra row cell, the canonical string `Type(<v0>,<v1>..)`, built only from
   `Type(<integer literals>)` for a tuple struct declared exactly once in
@@ -182,11 +209,17 @@ exercised boundary from a missing one.
   test calling `check("1 big", Size::kib(1), true)` with `pub const fn
   kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
   = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
-  The helper's assertion observes the method's result and a method hop never
-  forwards, so the verdict abstains at `propagation_unknown`
-  (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
-  where the owner is named `to_string` and the helper also calls
-  `expected.to_string()`).
+  The helper's one assertion compares the method's result, which returns
+  the owner's result unchanged, so the exact pin pairs with the boundary row
+  and the verdict is `exposed` (`method-hop-field-read-hit`, and
+  `method-hop-field-read-name-collision` where the owner is named
+  `to_string` and the helper also calls `expected.to_string()`).
+- Accept: the same shape with a second caller of the owner that no test
+  reaches (`method-hop-multi-caller-hit`, a `Display::fmt`).
+- Reject: one helper call reaching two callers of the owner
+  (`method-hop-multi-caller-both-reached`, `infection_unknown`); a method
+  that transforms the result (`method-hop-transformed-result`) and a helper
+  that drops it (`method-hop-unobserved-result`), both `propagation_unknown`.
 - Reject: the same chain with rows that never equal the selected unit
   (`method-hop-field-read-trap`): no boundary input is credited.
 - Reject: a receiver rebound before the call, a receiver that is not a
