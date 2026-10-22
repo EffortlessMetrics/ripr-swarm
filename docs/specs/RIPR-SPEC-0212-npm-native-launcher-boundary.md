@@ -226,5 +226,6 @@ The package `@effortlessmetrics/ripr`:
 - `xtask/src/policy/distribution/tests.rs::workflow_global_flags_dry_run_comments_and_glued_separators`
 - `xtask/src/policy/distribution/tests.rs::prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive`
 - `xtask/src/policy/distribution/tests.rs::workflow_scan_only_reads_script_text_not_yaml_metadata`
+- `xtask/src/policy/distribution/tests.rs::workflow_block_scalar_ends_at_key_column_for_list_items`
 - `xtask/src/version.rs::npm_launcher_version_tests::stable_to_prerelease_adds_next_tag_and_back_removes_it`
 - `xtask/src/version.rs::npm_launcher_version_tests::compact_manifest_prerelease_bump_round_trips`

@@ -839,3 +839,37 @@ fn workflow_scan_only_reads_script_text_not_yaml_metadata() {
     let after_block = "steps:\n  - run: |\n      echo hi\n  - name: npm publish docs\n    description: npm publish\n";
     assert!(workflow_violations(after_block).is_empty());
 }
+
+#[test]
+fn workflow_block_scalar_ends_at_key_column_for_list_items() {
+    let sibling_run =
+        "steps:\n  - if: >-\n      github.ref == 'refs/heads/main'\n    run: npm publish\n";
+    assert!(has_violation(&workflow_violations(sibling_run), "wf.yml:4"));
+    for key in ["name: |", "env: |", "with: |"] {
+        let text = format!("steps:\n  - {key}\n      body text\n    run: npm publish\n");
+        assert!(
+            has_violation(&workflow_violations(&text), "wf.yml:4"),
+            "{key}"
+        );
+    }
+    for chomp in ["|-", "|+", ">+", "|2"] {
+        let text = format!("steps:\n  - run: {chomp}\n      npm publish\n");
+        assert!(
+            has_violation(&workflow_violations(&text), "wf.yml:3"),
+            "{chomp}"
+        );
+    }
+    let nested =
+        "jobs:\n  p:\n    steps:\n      - name: x\n        with:\n          run: npm publish\n";
+    assert!(has_violation(&workflow_violations(nested), "wf.yml:6"));
+    assert!(!workflow_violations("      FOO=1 npm publish\n").is_empty());
+    // Positive controls: sibling metadata after a `- run: |` body is not script.
+    let siblings = "steps:\n  - run: |\n      echo hi\n    name: npm publish docs\n    env:\n      NOTE: npm publish\n";
+    assert!(
+        workflow_violations(siblings).is_empty(),
+        "{:?}",
+        workflow_violations(siblings)
+    );
+    let tagged = "steps:\n  - if: >-\n      x\n    run: npm publish --tag next\n";
+    assert!(workflow_violations(tagged).is_empty());
+}

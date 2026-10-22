@@ -353,11 +353,14 @@ fn workflow_script_lines(text: &str) -> Vec<(usize, String)> {
         while let Some(rest) = content.strip_prefix("- ") {
             content = rest.trim_start();
         }
+        // YAML ends a block scalar at the key's column, which for a `- key:`
+        // list item is past the dash.
+        let key_column = raw.len() - content.len();
         match yaml_key_value(content) {
             Some((key, value)) => {
                 let is_run = key == "run";
                 if is_block_scalar_header(value) {
-                    block = Some((indent, is_run));
+                    block = Some((key_column, is_run));
                 } else if is_run {
                     scripts.push((number, value.to_string()));
                 }
