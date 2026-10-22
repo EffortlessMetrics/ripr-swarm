@@ -1569,6 +1569,69 @@ fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
     (complete && no_seams && no_repair_start).then_some(withheld)
 }
 
+/// Rust files a complete `ripr pilot` run declined with a parse limit when it
+/// ranked no seam, withheld none and recorded no repair start (#9371). A
+/// rerun declines the same files again, so status must name them instead.
+struct PilotDeclinedOnly {
+    file_count: u64,
+    files: Vec<String>,
+}
+
+fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let file_count = summary
+        .pointer("/declined_rust_files/file_count")
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)?;
+    let files = summary
+        .pointer("/declined_rust_files/files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|file| file.pointer("/path").and_then(Value::as_str))
+                .map(|path| crate::terminal_text::terminal_safe(path.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PilotDeclinedOnly { file_count, files })
+}
+
+fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
+    let named = declined
+        .files
+        .iter()
+        .map(|path| format!("`{path}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = declined
+        .file_count
+        .saturating_sub(declined.files.len() as u64);
+    let files = match (declined.file_count, named.is_empty()) {
+        (1, false) => format!("1 Rust file ({named})"),
+        (count, false) if more > 0 => format!("{count} Rust files ({named} and {more} more)"),
+        (count, false) => format!("{count} Rust files ({named})"),
+        (1, true) => "1 Rust file".to_string(),
+        (count, true) => format!("{count} Rust files"),
+    };
+    // No trailing pilot command: rerunning unchanged declines them again.
+    format!(
+        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams were never analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`"
+    )
+}
+
 /// Whether the pilot run's repo exposure report says a seam limit cut the
 /// classified seams, so seams past the cut were never classified. `None`
 /// when the report is missing or unreadable: status cannot tell.
@@ -1866,6 +1929,16 @@ fn legacy_next_command(
                     pilot_seam_limit_applied(root),
                     pilot_declined_files(root),
                 ),
+            });
+            return None;
+        }
+        // #9371: a complete run that ranked and withheld nothing because a
+        // parse limit declined Rust files; a rerun declines them again.
+        if let Some(declined) = pilot_declined_only(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_declined_rust_files_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_declined_only_message(&declined),
             });
             return None;
         }
@@ -5731,6 +5804,95 @@ mod tests {
                 "control must not raise the withheld warning: {control}"
             );
         }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #9371: a complete pilot run that ranked and withheld nothing because a
+    /// parse limit declined Rust files must name them, not rerun pilot.
+    #[test]
+    fn agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing()
+    -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-declined-only");
+        let summary = |status: &str, seams: &str, repair: &str, declined: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": 0, "next": {{"repair_command": {repair}}}{declined}}}"#
+            )
+        };
+        let declined = r#", "declined_rust_files": {"file_count": 3, "files": [{"path": "src/deep.rs", "reason": "rust_nesting_budget"}, {"path": "src/b.rs", "reason": "x"}], "files_omitted": 1, "guidance": "g"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "declined-only pilot must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or_else(|| format!("expected a declined warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "3 Rust files (`src/deep.rs`, `src/b.rs` and 1 more)",
+            "Split the file(s) below the Rust parse budget",
+            "declines them again",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // Controls: each keeps its previous routing.
+        for control in [
+            // Nothing declined, and a zero count.
+            summary("complete", "[]", "null", ""),
+            summary(
+                "complete",
+                "[]",
+                "null",
+                r#", "declined_rust_files": {"file_count": 0, "files": []}"#,
+            ),
+            // Non-complete, ranked, or repairing packets divert elsewhere.
+            summary("timed_out", "[]", "null", declined),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", declined),
+            summary("complete", "[]", r#""ripr check --root .""#, declined),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target"),
+                "control must not raise the declined warning: {control}"
+            );
+        }
+
+        // Withheld seams keep the withheld warning, which already names the
+        // declined files.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined).replace(
+                "\"withheld_static_limitations_total\": 0",
+                "\"withheld_static_limitations_total\": 4",
+            ),
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+                && !report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target"),
+            "{:?}",
+            report.warnings
+        );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
