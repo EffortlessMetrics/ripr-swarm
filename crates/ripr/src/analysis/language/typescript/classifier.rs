@@ -6881,11 +6881,25 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
             .is_some();
             let expected_is_owner_call =
                 ts_whole_owner_call_arguments(expected, &names, owner, &receivers).is_some();
-            if !(ts_is_value_assertion(assertion) && observes_call && expected_is_owner_call) {
+            let one_hop_binding = ts_one_hop_owner_binding(
+                &candidate.test.body_text,
+                observed,
+                expected,
+                &names,
+                owner,
+                &receivers,
+            );
+            if !(ts_is_value_assertion(assertion)
+                && observes_call
+                && (expected_is_owner_call || one_hop_binding.is_some()))
+            {
                 return false;
             }
+            // The expected side is either an owner call or a local bound to
+            // one; the binding's call is the one the declaration adds.
+            let expected_calls = one_hop_binding.unwrap_or(expected);
             accounted += ts_owner_calls_in(observed, &names, &receivers)
-                + ts_owner_calls_in(expected, &names, &receivers);
+                + ts_owner_calls_in(expected_calls, &names, &receivers);
             relational = true;
         }
         if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted
@@ -6898,6 +6912,49 @@ fn ts_assertions_only_relate_owner_calls(context: &TsPostLadderContext<'_>) -> b
         }
     }
     relational
+}
+
+/// RIPR-SPEC-0248 rule 3, one-hop spelling: the matcher argument `expected`
+/// is a plain local bound by exactly one single-line
+/// `const local = <whole owner call>;` and named nowhere else in the body
+/// except inside `observed`
+/// (`const once = normalize(t); expect(normalize(once)).toEqual(once)`).
+/// Returns the initializer so the caller accounts for the call it adds. A
+/// `let`, a reassignment, a second declaration, a type annotation, a
+/// multi-line initializer or any other mention of the local returns `None`,
+/// which keeps the credit.
+fn ts_one_hop_owner_binding<'a>(
+    body_text: &'a str,
+    observed: &str,
+    expected: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> Option<&'a str> {
+    let local = expected.trim();
+    if !is_plain_identifier(local) {
+        return None;
+    }
+    let mentions =
+        |text: &str| ts_owner_mentions_in(&ts_mask_literals_and_comments(text), &[local]);
+    // The declaration and the matcher argument each name the local once.
+    if mentions(body_text) != mentions(observed) + 2 {
+        return None;
+    }
+    let mut initializers = body_text.lines().filter_map(|line| {
+        let rest = line.trim().strip_prefix("const ")?.trim_start();
+        let rest = rest.strip_prefix(local)?;
+        let rest = rest.trim_start().strip_prefix('=')?;
+        (!rest.starts_with('=')).then(|| {
+            let init = rest.trim();
+            init.strip_suffix(';').unwrap_or(init).trim()
+        })
+    });
+    let init = initializers.next()?;
+    if initializers.next().is_some() {
+        return None;
+    }
+    ts_whole_owner_call_arguments(init, names, owner, receivers).map(|_| init)
 }
 
 /// The names a related test calls the owner by: its own name, plus the
