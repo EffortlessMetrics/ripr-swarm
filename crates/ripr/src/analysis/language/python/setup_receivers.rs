@@ -9,7 +9,11 @@
 use super::source_utils::text_for_range;
 use rustpython_parser::ast::{Expr, Ranged, Stmt};
 
-const SETUP_HOOKS: [&str; 4] = ["setUp", "setUpClass", "setup_method", "setup_class"];
+/// The hooks unittest runs for a `TestCase`.
+const UNITTEST_HOOKS: [&str; 2] = ["setUp", "setUpClass"];
+/// The xunit hooks pytest runs for a plain `Test*` class; it never runs
+/// `setUp` there.
+const PYTEST_HOOKS: [&str; 2] = ["setup_method", "setup_class"];
 
 /// An attribute path (`self.stock`) bound once to a construction of `callee`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,12 +25,20 @@ pub(super) struct SetupReceiver {
 /// The unambiguous setup-hook constructions of one class body.
 ///
 /// A `subclassed` class (another class in the module lists it as a base) reads
-/// none: a subclass can replace the hook the test runs under.
+/// none: a subclass can replace the hook the test runs under. Only the hooks
+/// the collecting framework runs are read (`unittest` for a `TestCase`, xunit
+/// for a plain pytest class).
 pub(super) fn setup_receivers(
     source: &str,
     class_body: &[Stmt],
     subclassed: bool,
+    unittest: bool,
 ) -> Vec<SetupReceiver> {
+    let hooks = if unittest {
+        UNITTEST_HOOKS
+    } else {
+        PYTEST_HOOKS
+    };
     if subclassed {
         return Vec::new();
     }
@@ -46,7 +58,7 @@ pub(super) fn setup_receivers(
         let Stmt::FunctionDef(function) = stmt else {
             continue;
         };
-        if !SETUP_HOOKS.contains(&function.name.as_str()) {
+        if !hooks.contains(&function.name.as_str()) {
             continue;
         }
         let hook_receiver = if matches!(function.name.as_str(), "setUpClass" | "setup_class") {
@@ -54,6 +66,7 @@ pub(super) fn setup_receivers(
         } else {
             "self"
         };
+        let hook_text = text_for_range(source, function.range);
         for inner in &function.body {
             let Stmt::Assign(assign) = inner else {
                 continue;
@@ -72,6 +85,12 @@ pub(super) fn setup_receivers(
             };
             let callee = text_for_range(source, call.func.range());
             if callee.is_empty() || !callee.chars().all(is_dotted_identifier_char) {
+                continue;
+            }
+            // A hook that rebinds the constructor name (a local import or
+            // assignment) builds a different class than the test module's.
+            let head = callee.split('.').next().unwrap_or(&callee);
+            if hook_binds_name(&hook_text, head) {
                 continue;
             }
             let attr = attribute.attr.as_str();
@@ -107,10 +126,23 @@ pub(super) fn rebinds_path(text: &str, path: &str) -> bool {
     assignment_lines(text, path) > 0
 }
 
+/// Assigning statements, counting each `;`-separated statement on its own.
 fn assignment_lines(text: &str, path: &str) -> usize {
     text.lines()
-        .filter(|line| line_assigns_path(line, path))
+        .flat_map(|line| line.split(';'))
+        .filter(|statement| line_assigns_path(statement, path))
         .count()
+}
+
+/// Whether the hook binds `name` itself: an import, an assignment or another
+/// binding form.
+fn hook_binds_name(hook_text: &str, name: &str) -> bool {
+    super::related_tests::text_binds_name(hook_text, name)
+        || hook_text.lines().any(|line| {
+            let trimmed = line.trim_start();
+            (trimmed.starts_with("import ") || trimmed.starts_with("from "))
+                && occurrences(trimmed, name).next().is_some()
+        })
 }
 
 fn line_assigns_path(line: &str, path: &str) -> bool {
@@ -161,8 +193,9 @@ fn assignment_eq(code: &str) -> Option<usize> {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth -= 1,
             b'=' if depth == 0 => {
+                // `==` and its second `=` never assign.
                 if bytes.get(index + 1) == Some(&b'=') {
-                    return None;
+                    continue;
                 }
                 let prev = index.checked_sub(1).map(|at| bytes[at]);
                 let before_prev = index.checked_sub(2).map(|at| bytes[at]);

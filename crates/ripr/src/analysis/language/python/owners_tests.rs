@@ -351,7 +351,12 @@ pub(super) fn collect_tests_from_statements(
     let mut definition_imports = import_context.definition.to_vec();
     let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
     let setup_receivers = if class_context.is_some() {
-        super::setup_receivers::setup_receivers(source, statements, import_context.subclassed)
+        super::setup_receivers::setup_receivers(
+            source,
+            statements,
+            import_context.subclassed,
+            in_unittest_class,
+        )
     } else {
         Vec::new()
     };
