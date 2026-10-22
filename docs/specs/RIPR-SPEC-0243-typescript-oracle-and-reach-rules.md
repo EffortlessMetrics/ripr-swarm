@@ -969,7 +969,7 @@ rejected alternative. Any can be reversed later without touching the rest.
     factory-made receivers, `do { } while` bodies, and tables or helpers as
     the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
     gaps until the adapter resolves literal tables and same-file helper
-    assertions, #9534). A getter-backed field is not detected.
+    assertions, #9534). A getter-backed field is refused by decision 20.
 
 19. **Literal tables and same-file assertion helpers (2026-10-22, #9534).**
     Adopted, extending decision 18. (a) A table-driven expected side counts when
@@ -989,6 +989,14 @@ rejected alternative. Any can be reversed later without touching the rest.
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
     computed arguments, strings, and calls inside expressions.
+
+20. **Accessor-backed fields (2026-10-22, #9768).** Adopted, extending decision
+    18. A field update is not credited when the owner's class, in the same
+    file, declares `get <field>` or `set <field>`: reading the field runs the
+    accessor, which need not return what the changed statement wrote, so an
+    exact assertion on it does not observe the update. Rejected: modelling the
+    accessor body (it can compute anything), and `accessor <field>` auto-
+    accessors, which the owner index does not record yet.
 
 ## Required Evidence
 
