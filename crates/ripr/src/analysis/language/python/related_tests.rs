@@ -2258,7 +2258,35 @@ pub(super) fn owner_method_bound_locals(
             locals.push(var);
         }
     }
+    for path in setup_bound_receivers(test, owner, class, method) {
+        if !locals.contains(&path) {
+            locals.push(path);
+        }
+    }
     locals
+}
+
+/// Attribute paths (`self.stock`) the test's class binds once, in a setup hook,
+/// to a construction of the owner's class, and that the test calls the owner
+/// `method` on without rebinding them (#9417). A rebinding in the test body, a
+/// second assignment anywhere in the class or a subclassed class reads none.
+pub(super) fn setup_bound_receivers(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+) -> Vec<String> {
+    if test.setup_receivers.is_empty() {
+        return Vec::new();
+    }
+    let class_locals = owner_class_locals(test, owner, class);
+    test.setup_receivers
+        .iter()
+        .filter(|receiver| class_locals.contains(&receiver.callee))
+        .filter(|receiver| !super::setup_receivers::rebinds_path(&test.body_text, &receiver.path))
+        .filter(|receiver| contains_attribute_call(&test.body_text, &receiver.path, method))
+        .map(|receiver| receiver.path.clone())
+        .collect()
 }
 
 /// Whether the assertion text calls `.method(` only on receivers that are not
@@ -2345,9 +2373,9 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     strong_tests.iter().any(|related_test| {
         all_tests.matching(related_test).any(|test| {
             super::test_activation::activation_control(test).is_none()
-                && owner_class_locals(test, owner, class).iter().any(|local| {
+                && (owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
-                })
+                }) || !setup_bound_receivers(test, owner, class, method).is_empty())
         })
     })
 }
