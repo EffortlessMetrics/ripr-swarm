@@ -1490,7 +1490,11 @@ configure the workflow, so changing a mode never means editing the file:
   (top-level or on any indexed item) is a non-string value or an absolute path
   that differs from the gate's absolute root; this root refusal is gate-only.
   Absent, `null`, blank and relative roots are accepted as unknown, because
-  relative and absolute spellings of one checkout are not comparable.
+  relative and absolute spellings of one checkout are not comparable. The
+  comparison is textual (separators and trailing slashes are normalized, but
+  there is no canonicalization), so case, verbatim-prefix or symlink spellings
+  of the same checkout can differ. The remedy for a refused baseline is to
+  re-create it with `--root .`.
 - `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on

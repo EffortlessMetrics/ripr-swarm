@@ -1207,6 +1207,32 @@ fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_er
 }
 
 #[test]
+fn relative_gate_root_accepts_and_honors_absolute_recorded_root() -> Result<(), String> {
+    // The realistic `--root .` CI case: the gate root is relative, so an
+    // absolute recorded root is unknown, not positively foreign (#9301).
+    let contents = r#"{"schema_version":"0.1","root":"/elsewhere/other","decisions":[{"root":"/elsewhere/other","seam_id":"8f7fa8644fd12280"}]}"#;
+    let dir = temp_dir("gate-baseline-relative-root")?;
+    let baseline = write_temp_json(&dir, "abs.json", contents)?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.root = PathBuf::from(".");
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("explicit baseline"),
+        "baseline must be honored"
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn rootless_gate_decision_baseline_create_round_trips_through_gate_evaluate() -> Result<(), String>
 {
     // Real production path: `baseline create` writes `"root": null` for a
