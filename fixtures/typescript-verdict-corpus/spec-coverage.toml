@@ -648,11 +648,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 [[known_false]]
-case = "jest-mined-private-impl-dispatcher"
-issue = 6655
-reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
-
-[[known_false]]
 case = "shape-arrow-const-export"
 issue = 9435
 reason = "Exact oracle ignored on arrow-const export (#9435)."
