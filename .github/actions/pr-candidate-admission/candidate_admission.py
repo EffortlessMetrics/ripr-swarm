@@ -806,6 +806,28 @@ def self_test() -> None:
             return subprocess.CompletedProcess(command, 0, str(len(blobs[path])).encode(), b"")
         return subprocess.CompletedProcess(command, 0, blobs[path], b"")
 
+    head_now = {"sha": "b" * 40}
+
+    def head_gh(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs.get("timeout"), "the head read has a timeout"
+        if head_now["sha"] == "error":
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 502")
+        return subprocess.CompletedProcess(command, 0, head_now["sha"].encode() + b"\n", b"")
+
+    snapshot = {"head": {"sha": "b" * 40}}
+    real_run = subprocess.run
+    subprocess.run = head_gh  # type: ignore[assignment]
+    try:
+        assert head_unmoved("o/r", "7", snapshot)
+        head_now["sha"] = "c" * 40
+        assert not head_unmoved("o/r", "7", snapshot), "a moved head discounts nothing"
+        head_now["sha"] = "error"
+        assert not head_unmoved("o/r", "7", snapshot), "an unreadable head discounts nothing"
+        head_now["sha"] = "b" * 40
+        assert not head_unmoved("o/r", "", snapshot), "no PR number discounts nothing"
+        assert not head_unmoved("o/r", "7", {"head": {"sha": "short"}}), "a malformed snapshot head discounts nothing"
+    finally:
+        subprocess.run = real_run
     real_run = subprocess.run
     subprocess.run = fake_gh  # type: ignore[assignment]
     try:
@@ -988,6 +1010,23 @@ def gh_blob_lines(
     return count
 
 
+def head_unmoved(repository: str, number: str, current: dict[str, Any]) -> bool:
+    """The file listing is read after the PR snapshot and is mutable. Its
+    generated-file discounts apply only if the PR head still is the snapshot's;
+    any read problem counts as moved, so nothing is discounted."""
+    snapshot = str((current.get("head") or {}).get("sha") or "")
+    if not SHA_RE.fullmatch(snapshot) or not number.isdigit():
+        return False
+    try:
+        done = subprocess.run(
+            ["gh", "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
+            capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return done.returncode == 0 and done.stdout.decode("ascii", "replace").strip() == snapshot
+
+
 def generated_from_files(
     current: dict[str, Any],
     pr_files: Path | None,
@@ -1054,6 +1093,10 @@ def main() -> int:
         args.generated_attributes,
         gh_blob_lines(repository, current) if repository else None,
     )
+    if generated_files and not head_unmoved(
+        repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
+    ):
+        generated_files = generated_lines = 0
     result = decide(
         current,
         load_json(args.open_prs),

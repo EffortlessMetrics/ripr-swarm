@@ -2289,7 +2289,7 @@ files with no line counts while the PR totals still include them. Their lines ar
 the PR total minus the listed lines. The generated files among them are exempt
 only after each hand-written file in that group, of any status, is bounded by its
 own line count at the merge base (under its previous name for a rename) plus the
-head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted.
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted. The files listing is read after the PR snapshot, so the head is re-read afterward; if it moved or cannot be read, no generated-file discount applies and the full GitHub totals are counted.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,

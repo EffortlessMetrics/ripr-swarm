@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -48,7 +48,7 @@
+ }
+ 
+ pub fn call_through_pointer(x: u32) -> u32 {
+-    x * 3
++    3 * x
+ }
+ 
+ #[cfg(test)]
