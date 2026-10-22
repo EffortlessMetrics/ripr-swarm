@@ -146,9 +146,9 @@ it cannot close, a whole-file add or delete, a hunk-less change and a quoted pat
 give no span and stay product, as does an attribute on a field, variant or
 parameter (no item of its own ends before an enclosing closer). A span whose first or last line also holds other code
 gives no span either, because hunks are whole lines. A hunk that touches a span's
-attribute or closing line is a product change unless it is exactly the whole span, so a hunk that also adds a blank separator line
-around a new test module stays product (a conservative miss).
- Product-class Rust under
+attribute or closing line is a product change unless it is exactly the whole span. Blank lines at either edge of a hunk are
+set aside first, read from the file at that revision, so a blank separator added or removed with a whole test module does not
+hide it; a hunk of only blank lines counts only when it touches a span, and otherwise stays product. Product-class Rust under
 `editors/` and `schemas/` is scanned as well as `crates/ripr/src/`.
 
 ## Disposition rule v1 and overrides
@@ -184,9 +184,10 @@ Order, first match wins:
    `included_historical_reachable_only`; its tree effect stays a separate field.
 2. `present_but_superseded` is `included_superseded_by_later_fix`.
 3. `history_reachable_no_final_blob_effect` is `included_historical_reachable_only`.
-4. A subject naming the owner issue of a packet claim resolved
-   `accepted_defer_with_non_claim` is `included_with_release_nonclaim`, with
-   `claim_ref`.
+4. A non-product commit whose subject names the owner issue of a packet claim
+   resolved `accepted_defer_with_non_claim` is `included_with_release_nonclaim`,
+   with `claim_ref`. A product-class commit naming that issue landed behavior
+   and takes rule 5, so a fix is never reported as a non-claim.
 5. Otherwise the strongest class present: product is
    `included_accepted_product`, control is
    `included_accepted_release_or_control` (automation, `xtask`, keeps that
@@ -207,6 +208,35 @@ non-blocking disposition, an owner and a note, may appear once, and may name onl
 commit the rule left `blocking_unresolved`. The row keeps
 the rule's disposition in its limitations and carries `override_ref`. A refuted
 rule changes `rule_version` and regenerates; it never edits rows by hand.
+
+## Producing the final ledger
+
+At the frozen cut (`FINAL_SWARM_CUT`, #2768; the cut checklist owns the freeze),
+with the final `policy/release-selection.json` and the completed sample audit
+committed or otherwise retained:
+
+```text
+cargo xtask release-ledger finalize \
+  --cut <full 40-hex FINAL_SWARM_CUT> \
+  --packet policy/release-selection.json \
+  --audit <audit file> \
+  --overrides policy/release-ledger-overrides.json
+```
+
+The command runs four steps and stops at the first failure: `capture` of
+`--base..--cut` with `--main` equal to the cut (the open-PR roster is read at the
+cut, as a final ledger requires), `derive --stage final` with the audit digest
+recorded, a Markdown projection rendered from the same ledger, and `--final`
+validation against the packet, the Markdown and `--manifest` when given.
+`--base` defaults to the pinned 0.11 base. `--cut` must be a full commit id;
+a moving ref such as `origin/main` is rejected. Outputs land in `--outdir`
+(default `target/ripr/release-ledger/final`): `facts.json`, `ledger.json` and
+`ledger.md`; the validation report is written to
+`target/ripr/reports/release-ledger.{json,md}`. Success means a valid final
+ledger: every row has a closed non-blocking disposition and the audit file still
+matches its recorded digest. A `blocking_unresolved` row fails the run; resolve it
+with a reviewed override and rerun, never by editing `ledger.json`. The command
+does not freeze, select, qualify, tag or publish.
 
 ## Required Evidence
 
@@ -246,6 +276,7 @@ valid-ledger control that yields no reasons.
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,
   `changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit`,
+  `blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit`,
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
   `split_refs_takes_only_the_trailing_pull_request`,
@@ -260,7 +291,10 @@ valid-ledger control that yields no reasons.
   `failed_derivation_leaves_an_existing_output_untouched`,
   `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
   `inline_test_only_product_paths_count_as_evidence`.
-- `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
+- `xtask/src/reports/release_ledger/tests.rs`: `finalize_defaults_to_the_pinned_base_and_output_directory`,
+  `finalize_requires_the_frozen_cut_as_a_full_sha`,
+  `finalize_requires_cut_packet_and_audit`,
+  `finalize_rejects_unknown_repeated_and_valueless_flags`; and one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
   `count_consistent_but_wrong_set_is_rejected_by_digest`,
@@ -281,6 +315,9 @@ valid-ledger control that yields no reasons.
   `markdown_with_a_conflicting_second_digest_line_is_rejected`,
   `markdown_projection_shows_every_records_theme`,
   `input_over_the_byte_cap_is_rejected_not_truncated`,
+  `audit_file_digest_must_match_the_recorded_sha`,
+  `editing_the_audit_file_after_derivation_fails_validation`,
+  `product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim`,
   `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
   `valid_ledger_has_no_reasons`).
 

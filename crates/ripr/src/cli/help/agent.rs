@@ -194,7 +194,7 @@ the prose; without `--json` stdout stays empty on a refusal.
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
 
-Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
+Usage: ripr agent verify [--root PATH] --before PATH --after PATH [--gap-id ID] --json
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -202,6 +202,12 @@ Options:
                    top level; `--root .` pins this directory.
   --before PATH    Before `repo-exposure-json` or `check-findings-json` snapshot.
   --after PATH     After snapshot of the same format.
+  --gap-id ID      Bind the result to one canonical gap id (for example
+                   `gap:typescript:typescript_preview:1a2b3c4d`) in two
+                   `check-findings-json` snapshots. The gap must read open in
+                   the before snapshot and `exposed` in the after snapshot;
+                   absence from the after snapshot is never closure. Any other
+                   outcome is a named refusal (exit `3`, empty stdout).
   --json           Required until a human verify surface exists.
 
 The verify command compares two saved static artifacts (`repo-exposure-json`,

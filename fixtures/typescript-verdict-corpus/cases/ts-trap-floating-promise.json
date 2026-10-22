@@ -1,0 +1,52 @@
+{
+  "case_id": "ts-trap-floating-promise",
+  "subject_id": "authored-ts-trap-kit",
+  "diff": "cases/ts-trap-floating-promise.diff",
+  "anchor": {
+    "file": "src/core.ts",
+    "line": 78
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_unawaited_then",
+  "hard_case": "Late rejection of an unawaited promise still fails the node:test run.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return b + a;",
+        "mutated_line": "return b + a;",
+        "outcome": "tests_failed",
+        "failing_test": "test/floatingPromise.test.ts",
+        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
+      },
+      {
+        "replacement": "return b / a;",
+        "mutated_line": "return b / a;",
+        "outcome": "tests_failed",
+        "failing_test": "test/floatingPromise.test.ts",
+        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Hard case: the test returns before the promise settles, but node:test attributes the late AssertionError to the run and fails it, so the mutants are detected; a gap here is a false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

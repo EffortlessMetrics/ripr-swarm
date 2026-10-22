@@ -14,7 +14,7 @@ use crate::analysis::classify::{
     owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field,
+    unconditional_owner_insert_field, unexercised_mask_bits,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -638,12 +638,32 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
+        // RIPR-SPEC-0297: a `write!(f, ..)`-only `Display::fmt` has its whole
+        // output pinned by an exact `value.to_string()` assertion.
+        let fmt_write_tail = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+        ) && crate::analysis::classify::changes_only_string_literals(
+            context.probe.before.as_deref(),
+            context.probe.after.as_deref(),
+        );
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            field_projection.as_ref().is_some_and(|receipt| {
-                receipt.valid_for(context.probe) && receipt.admits(test, assertion)
-            }) || fallible_checks
-                .iter()
-                .any(|receipt| receipt.valid_for(context.probe) && receipt.admits(test, assertion))
+            (fmt_write_tail
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assertion_pins_display_string(
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
+                }))
+                || field_projection.as_ref().is_some_and(|receipt| {
+                    receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+                })
+                || fallible_checks.iter().any(|receipt| {
+                    receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+                })
                 || owner_return_pin.as_ref().is_some_and(|pin| {
                     pin.admits(
                         test,
@@ -958,6 +978,23 @@ impl ClassifiedProbeEvidence {
                 context.index,
             ) {
             StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
+        } else {
+            discriminate
+        };
+        // #9444: an exact pin on a masked integer cast is no discriminator
+        // for mask bits that no pinned input sets: a narrower mask returns
+        // the same value there.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(owner) = context.owner_fn
+            && let Some(mask) = unexercised_mask_bits(
+                &context.probe.expression,
+                &owner.name,
+                owner.body.as_str(),
+                &context.related_tests,
+                context.index,
+            ) {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, mask.summary())
         } else {
             discriminate
         };

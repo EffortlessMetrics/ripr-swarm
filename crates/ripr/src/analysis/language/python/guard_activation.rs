@@ -39,6 +39,9 @@ pub(super) struct GuardedArmGap {
     pub(super) observed_values: Vec<ValueFact>,
     /// Why every observed input leaves the guard untaken.
     pub(super) reason: String,
+    /// The gap is not an untaken arm: every strong assertion reads the owner
+    /// only through a further method call (`arm_activation.rs`, #9429).
+    pub(super) chained_receiver: bool,
 }
 
 /// Evidence that a changed line sits inside guarding arm(s) no strong
@@ -183,6 +186,7 @@ pub(super) fn python_guarded_arm_gap(
             .join(" and "),
         observed_values,
         reason,
+        chained_receiver: false,
     })
 }
 
@@ -643,27 +647,55 @@ pub(super) fn parameter_rebound_before(
         if line_rebinds_parameter(trimmed, name) {
             return true;
         }
-        if let Some(targets) = trimmed
-            .strip_prefix("for ")
-            .and_then(|rest| rest.split(" in ").next())
-        {
-            // `for name in ..` / `for a, name in ..` rebinds the name, and
-            // so do parenthesized or bracketed tuple targets and star
-            // targets: Python binds every target before the body runs, so
-            // decoration around the name must not hide it
-            // (`for (other, total) in ..`).
-            if targets.split(',').any(|target| {
+        if for_target_rebinds(trimmed, name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when a `for` header's targets bind `name`: `for name in ..`,
+/// `for a, name in ..`, and parenthesized, bracketed or star targets. Python
+/// binds every target before the body runs, so decoration around the name
+/// must not hide it (`for (other, total) in ..`).
+fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
+    trimmed
+        .strip_prefix("for ")
+        .and_then(|rest| rest.split(" in ").next())
+        .is_some_and(|targets| {
+            targets.split(',').any(|target| {
                 let normalized = target
                     .trim()
                     .trim_start_matches(['(', '[', '*'])
                     .trim_end_matches([')', ']']);
                 normalized == name
-            }) {
-                return true;
+            })
+        })
+}
+
+/// True when the owner body (after the `def` header, nested scopes
+/// included) binds `name` anywhere. A comparison operand rebound inside the
+/// owner (a loop counter such as `start -= 1`) no longer holds the value the
+/// call bound, so a call-argument boundary read is unknown. Over-refuses by
+/// design; it never awards credit.
+pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
+    owner_source
+        .lines()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .map(str::trim)
+        .any(|line| {
+            // A condition header ends in `:`, which the annotated-assignment
+            // reading of `name:` would take for a rebinding; only a walrus
+            // can bind inside one.
+            let condition = ["if ", "elif ", "while "]
+                .iter()
+                .any(|keyword| line.starts_with(keyword));
+            if condition && !line.contains(":=") {
+                return false;
             }
-        }
-    }
-    false
+            line_rebinds_parameter(line, name) || for_target_rebinds(line, name)
+        })
 }
 
 /// One `left <op> right` comparison under a row's literal bindings, or None
