@@ -2282,6 +2282,13 @@ exempt, and a file must change at least one line; and the exempt lines have thei
 own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
 from the hand-written change. A truncated file listing exempts nothing.
 
+Past its diff budget (roughly 700 KB of patch text) GitHub lists the remaining
+files with no line counts while the PR totals still include them. Their lines are
+the PR total minus the listed lines. The generated files among them are exempt
+only after each hand-written file in that group, of any status, is bounded by its
+own line count at the merge base (under its previous name for a rename) plus the
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted.
+
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
 Dependabot security updates, secret scanning, push protection, and private

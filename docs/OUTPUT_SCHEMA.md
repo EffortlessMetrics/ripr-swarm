@@ -10147,9 +10147,13 @@ Field contract:
   fallback identity. The sole allowed value is `"legacy_path_line_class"`.
   The field is omitted for canonical identity matches and for baseline-new
   candidates, so their rendered decisions stay byte-identical. During the
-  compatibility window a fallback-only match still suppresses blocking but
-  also produces a report-level warning naming the candidate and the matched
-  legacy identity.
+  compatibility window a fallback-only match against a baseline entry with no
+  canonical gap id still suppresses blocking but also produces a report-level
+  warning naming the candidate and the matched legacy identity. A candidate
+  with no canonical gap id of its own also still joins a canonical-bearing
+  fallback, disclosed as `legacy_path_line_class`, because no divergence can be
+  shown (same as `ripr baseline diff`). Only two differing canonical ids refuse
+  the join.
 - `decisions[].evidence` - static evidence and optional calibration confidence
   effects used for the candidate.
 - `decisions[].repair_route` - uniform failure-time route object, present on
@@ -14922,6 +14926,49 @@ candidate-tree commit list is the ordered projection of reviewed
 pending and do not enter that projection; once adjudicated through the
 selected cut, each row carries its reviewed tree state into the projection.
 
+## Release Ledger Report
+
+`release-ledger` validates a captured direct-main ledger (`kind: release_ledger`,
+RIPR-SPEC-0301) and writes `target/ripr/reports/release-ledger.{json,md}` from
+the same normalized DTO. The command exits nonzero unless `status` is `valid`.
+The stable top-level report shape is:
+
+```json
+{
+  "report": "release-ledger",
+  "schema_version": "0.1",
+  "status": "valid | invalid",
+  "stage": "dry_run | final",
+  "final_eligible": false,
+  "adjudication_basis": "rule_derived",
+  "rule_version": "v1",
+  "first_parent_commits": 0,
+  "reachable_commits": 0,
+  "blocking_unresolved_records": 0,
+  "digests": {
+    "first_parent": "sha256:...",
+    "reachable": "sha256:...",
+    "records": "sha256:...",
+    "tree": "sha256:..."
+  },
+  "counts_by_disposition": {},
+  "counts_by_final_tree_effect": {},
+  "reconciliation_reasons": [],
+  "ledger": {},
+  "authority_boundary": "direct_main_ledger_only",
+  "must_not_claim": []
+}
+```
+
+`ledger` holds the input DTO: `source` (base, cut, cut tree, observed main
+tip), `range` (`first_parent` and `reachable`, kept separate), `merged_prs`,
+`selected_claims`, `open_prs`, `digests`, an optional `audit` reference and one
+`records` entry per reachable commit. Dispositions use the closed eleven-value
+vocabulary and `final_tree_effect` is a separate closed field backed by an
+`effect_basis`. Markdown carries the same digests as
+`first-parent digest: \`...\`` lines. A `final` ledger rejects any
+`blocking_unresolved` row and requires an audit digest.
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into
@@ -18246,7 +18293,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.89",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.90",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19012,7 +19059,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.89",
+      "schema_version": "1.90",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
