@@ -39,7 +39,9 @@ fn crate_with(prelude: &str, method: &str, helper: &str) -> String {
 
 /// The caller names and receivers of the chain above `fmt_size`, plus the
 /// stop above it.
-fn chain_of(source: &str) -> Result<(Vec<(String, Option<String>)>, Option<String>), String> {
+type HopSummary = Vec<(String, Option<String>)>;
+
+fn chain_of(source: &str) -> Result<(HopSummary, Option<String>), String> {
     let index = index_of(&[("src/lib.rs", source)])?;
     let chain = resolve_chain("fmt_size", &index, true, &[]);
     Ok((
