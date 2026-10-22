@@ -358,7 +358,11 @@ rule only for an assertion whose context was admitted.
    For a masked integer-cast tail, the selected pointer call must itself pass
    one unsigned literal that sets every nonzero mask bit the cast keeps. The
    mask, parameter and unique owner must be readable by the existing mask
-   rules. Partial inputs are not combined across indirect calls, and an
+   rules. The original parameter must reach the mask unchanged under the
+   existing operand-rebinding refusal: an owner binding, assignment, closure
+   or control-flow construct supplies no masked pointer pin. A call argument
+   that sets every mask bit cannot certify a different operand produced by
+   shadowing that parameter. Partial inputs are not combined across indirect calls, and an
    unread mask, zero kept bits or nonliteral input supplies no pointer pin.
    The ordinary direct-call mask guard retains its existing collective rule.
 
@@ -2258,6 +2262,12 @@ assertions. This repair shares the existing callback without that larger migrati
   and `function_pointer_mask_runtime_controls_match_the_selected_input`
   keep partial-bit inputs uncredited while an all-bit input catches a narrower
   mask, including qualified/reversed calls and additional unread aliases.
+  `function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask` and
+  `function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask`
+  retain owner-side constant and partial-bit shadows: an all-bit argument
+  cannot pin the mask when both neutral and narrower masks pass the same
+  one-test native assertion. The constant-shadow case is also retained in
+  `fixtures/owner_return_pin_pointer_mask_rebound` and the honesty corpus.
 
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,

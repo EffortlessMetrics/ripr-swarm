@@ -45,6 +45,7 @@ impl PointerMaskGate {
             return Self::Refuse;
         };
         if !owner_has_param(owner_body, param)
+            || operand_rebound(owner_body, param)
             || index
                 .functions()
                 .iter()
