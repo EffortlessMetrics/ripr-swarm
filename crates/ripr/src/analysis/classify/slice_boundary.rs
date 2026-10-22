@@ -379,7 +379,12 @@ mod tests {
         assert_eq!(literal_slice_length(&at_limit), Some(256));
         let over_elements = format!("&[{}]", vec!["1"; 257].join(", "));
         assert_eq!(literal_slice_length(&over_elements), None);
-        let over_bytes = format!("&[\"{}\"]", "a".repeat(4096));
+        // `&["` and `"]` are five bytes, so 4091 filler bytes sit exactly on the limit.
+        let at_bytes = format!("&[\"{}\"]", "a".repeat(4091));
+        assert_eq!(at_bytes.len(), 4096);
+        assert_eq!(literal_slice_length(&at_bytes), Some(1));
+        let over_bytes = format!("&[\"{}\"]", "a".repeat(4092));
+        assert_eq!(over_bytes.len(), 4097);
         assert_eq!(literal_slice_length(&over_bytes), None);
     }
 
