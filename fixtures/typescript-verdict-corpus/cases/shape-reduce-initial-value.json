@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-reduce-initial-value",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-reduce-initial-value.diff",
+  "anchor": {
+    "file": "src/mathx.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "vitest_reduce_seed_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "export const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 1);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/mathx.test.ts > sums a list",
+        "equivalence_review": "the edit itself: The reduce seed adds to every non-empty sum."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The reduce seed adds to every non-empty sum. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
