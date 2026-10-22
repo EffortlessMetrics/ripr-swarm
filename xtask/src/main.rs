@@ -21249,6 +21249,18 @@ fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usiz
     let mut index = open;
     while index < bytes.len() {
         match bytes[index] {
+            // A parenthesis inside a `reason = ")"` string is not attribute
+            // syntax; skipping the literal keeps a later suppression in the
+            // same attribute visible to the budget.
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+            }
             b'(' => depth += 1,
             b')' => {
                 depth = depth.saturating_sub(1);

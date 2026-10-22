@@ -9528,6 +9528,29 @@ fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
     );
 }
 
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
 #[test]
 fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
     for text in [
