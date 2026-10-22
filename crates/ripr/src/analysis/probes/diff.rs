@@ -2848,9 +2848,13 @@ mod tests {
             &["let c = ' ';", "f(a, b);"],
             &["let c = '\t'; f(a, b);"]
         ));
-        // Squeezing must not merge `-` and `>` into the joint punct `->`:
-        // macro matching distinguishes them.
+        // Squeezing must not merge `-` and `>` into the joint punct `->`,
+        // or `<` and `=` into `<=`: macro matching distinguishes them.
         assert_eq!(squeeze_bracket_spaces("m!(a -> b)"), "m!(a -> b)");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = selector!(<=);"],
+            &["let v = selector!(< =);"]
+        ));
         assert!(!is_behavior_neutral_rewrap(
             &["let v = m!(a -> b);"],
             &["let v = m!(a -", "    > b);"]
