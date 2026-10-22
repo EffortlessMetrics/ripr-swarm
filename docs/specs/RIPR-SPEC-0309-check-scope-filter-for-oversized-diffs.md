@@ -60,7 +60,9 @@ glob dialect. No `--path` admits every file the excludes do not remove;
    applied as the diff parser registers each file section, so a section the
    scope rejects is not retained and does not count toward the changed-file
    bound (`RIPR_MAX_DIFF_INDEX_FILES`) either. The limitation reports the exact
-   number of files left out and names the first few. When the
+   number of distinct files left out and names the first few. A malformed or
+   conflicted hunk inside a removed file records no limitation, because it says
+   nothing about the files still analyzed. When the
    chosen files alone exceed a guard, the guard fires with its existing text,
    which now also names `--path`/`--exclude`.
 2. Every changed file the filter removes is named in one

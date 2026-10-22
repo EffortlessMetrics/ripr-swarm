@@ -109,3 +109,36 @@ fn a_dropped_section_is_not_read_as_a_truncated_stream() -> Result<(), String> {
     assert_eq!(parsed.truncated_file_sections, 1);
     Ok(())
 }
+
+#[test]
+fn a_repeated_out_of_scope_path_is_counted_once() -> Result<(), String> {
+    // A hand-supplied patch can repeat a path with another between; the
+    // total counts files, as it does for the files the parse keeps.
+    let input = format!(
+        "{}{}{}",
+        section("vendor/a.rs"),
+        section("vendor/b.rs"),
+        section("vendor/a.rs")
+    );
+    let parsed = parse_bounded_lines_scoped(input.lines(), 10, outside_vendor)?;
+    assert_eq!(parsed.out_of_scope_file_count, 2);
+    assert_eq!(
+        parsed.out_of_scope_sample,
+        vec![PathBuf::from("vendor/a.rs"), PathBuf::from("vendor/b.rs")]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_malformed_hunk_in_a_dropped_section_leaves_no_limitation() -> Result<(), String> {
+    let malformed = "diff --git a/vendor/x.rs b/vendor/x.rs\n--- a/vendor/x.rs\n+++ b/vendor/x.rs\n@@ -1,3 +1,3 @@\n-only\n";
+    // Control: the same section kept does record the malformed hunk, so the
+    // empty result below is the scope's doing.
+    let kept = parse_bounded_lines_scoped(malformed.lines(), 10, |_| true)?;
+    assert!(!kept.limitations.is_empty(), "control must be malformed");
+
+    let input = format!("{malformed}{}", section("src/lib.rs"));
+    let parsed = parse_bounded_lines_scoped(input.lines(), 10, outside_vendor)?;
+    assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+    Ok(())
+}

@@ -173,7 +173,7 @@ mod parser_state {
         parse_rename_to_path, source_line_text,
     };
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
@@ -284,6 +284,19 @@ mod parser_state {
         /// owes no hunk body and must not later count as a truncated stream.
         pub(super) fn disown_section(&mut self) {
             self.current_section_awaits_body = false;
+        }
+
+        /// Forget hunk-level limitations recorded against a path the scope
+        /// dropped (#9331). A malformed or conflicted hunk in a file the
+        /// operator excluded says nothing about the files still analyzed.
+        pub(super) fn forget_limitations_outside(&mut self, keep: impl Fn(&Path) -> bool) {
+            let kept = |path: &Option<PathBuf>, _: &mut u64| match path {
+                Some(path) => keep(path),
+                None => true,
+            };
+            self.combined_hunks.retain(kept);
+            self.conflict_regions.retain(kept);
+            self.malformed_hunks.retain(kept);
         }
 
         /// The path the most recent registration selected, if any.

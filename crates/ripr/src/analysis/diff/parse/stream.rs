@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 
@@ -7,33 +7,34 @@ use super::{
     parse_old_path_marker, parser_state, path_marker_exceeds_depth_bound,
 };
 
-/// How many scoped-out paths the parse keeps by name. The pipeline's
-/// disclosure lists only the first few, so the tally stays constant-size even
-/// when a vendored tree puts tens of thousands of sections out of scope.
+/// How many scoped-out paths the parse keeps by name for the disclosure; the
+/// total comes from the distinct-path set.
 const OUT_OF_SCOPE_SAMPLE: usize = 3;
 
-/// Sections the operator's scope removed during the parse (#9331). Counted but
-/// never retained, so they neither trip the file-count bound nor hold memory.
+/// Files the operator's scope removed during the parse (#9331). Counted by
+/// distinct path but never held as sections, so they neither trip the
+/// file-count bound nor keep hunk bodies in memory.
 #[derive(Default)]
 struct OutOfScopeTally {
-    count: usize,
+    seen: BTreeSet<PathBuf>,
     sample: Vec<PathBuf>,
-    last: Option<PathBuf>,
 }
 
 impl OutOfScopeTally {
     fn record(&mut self, path: &Path) {
-        // A rename's metadata and its `+++` header register the same path
-        // back to back; sections are contiguous, so comparing with the last
-        // path dedupes without keeping a set that grows with the diff.
-        if self.last.as_deref() == Some(path) {
+        // A rename's metadata and its `+++` header register the same path, and
+        // a hand-supplied patch may repeat a path non-adjacently; the set makes
+        // the total a count of files, as it is for the files the parse keeps.
+        if !self.seen.insert(path.to_path_buf()) {
             return;
         }
-        self.last = Some(path.to_path_buf());
-        self.count = self.count.saturating_add(1);
         if self.sample.len() < OUT_OF_SCOPE_SAMPLE {
             self.sample.push(path.to_path_buf());
         }
+    }
+
+    fn count(&self) -> usize {
+        self.seen.len()
     }
 }
 
@@ -179,6 +180,7 @@ fn parse_lines<'a, E>(
     // like one closed by a later boundary.
     state.close_hunk();
     state.close_file_section_accounting();
+    state.forget_limitations_outside(&keep);
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
@@ -189,7 +191,7 @@ fn parse_lines<'a, E>(
         truncated_file_sections: state.truncated_file_sections(),
         raw_line1_bom_paths: state.raw_line1_bom_paths(),
         limitations: state.limitations(),
-        out_of_scope_file_count: out_of_scope.count,
+        out_of_scope_file_count: out_of_scope.count(),
         out_of_scope_sample: out_of_scope.sample,
     })
 }
