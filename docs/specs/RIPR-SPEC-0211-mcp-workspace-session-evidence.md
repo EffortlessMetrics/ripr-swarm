@@ -109,6 +109,9 @@ official SDK transport:
   and commits the completed snapshot. Initialize/discover instructions,
   the refresh tool description, and MCP help disclose before invocation
   that staged and unstaged tracked edits and untracked files are excluded.
+  The refresh tool description stays within 2,100 UTF-8 bytes while retaining
+  its input scope, base selection, terminal states, cancellation, configuration,
+  recovery routes, and source/edit/execution authority limits (#9360).
   Shared authority does not mean identical input: `ripr check` defaults
   to the working tree when staged or unstaged tracked edits exist, while
   `ripr check --committed` selects committed input. The response scope
