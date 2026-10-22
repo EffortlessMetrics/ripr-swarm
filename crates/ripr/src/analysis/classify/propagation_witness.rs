@@ -348,10 +348,17 @@ pub(in crate::analysis) fn constant_tail_witness(
                 owner.start_line + tail.tail_line_offset,
                 "iterator_adaptor_owner_tail",
             ),
-            None => (
-                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
-                "short_circuit_owner_tail",
-            ),
+            None => match spawn_join_owner_tail_line(owner, &probe.expression, &identity) {
+                // RIPR-SPEC-0265 rule 4: a `std::thread::spawn(move || e)
+                // .join().unwrap()` whole-body tail returns the closure's
+                // value; whether the pinned input runs all of `e` is the
+                // owner pin's question.
+                Some(line) => (line, "spawn_join_owner_tail"),
+                None => (
+                    short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                    "short_circuit_owner_tail",
+                ),
+            },
         },
     };
     if tail_line != probe.location.line {
@@ -396,6 +403,31 @@ pub(in crate::analysis) fn constant_tail_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// The line of the owner's tail when the owner's whole body is one
+/// `std::thread::spawn(move || e).join().unwrap()` whose normalized text is
+/// `identity`: the join returns the closure's value.
+fn spawn_join_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    changed: &str,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, ast};
+    super::owner_pin::spawn_join_body(changed)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    if normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
 }
 
 /// The line of the owner's tail when the owner's whole body is one
