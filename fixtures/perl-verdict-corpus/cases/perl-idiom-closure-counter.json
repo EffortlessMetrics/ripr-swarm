@@ -17,15 +17,15 @@
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
     "mutants": [
       {
-        "replacement": "my $n = $start + 1;",
-        "mutated_line": "my $n = $start + 1;",
+        "replacement": "my ($n) = $start + 1;",
+        "mutated_line": "my ($n) = $start + 1;",
         "outcome": "tests_failed",
         "failing_test": "t/toolkit.t: counter starts at its start",
         "equivalence_review": "not equivalent: the counter starts one high"
       },
       {
-        "replacement": "my $n = 0;",
-        "mutated_line": "my $n = 0;",
+        "replacement": "my ($n) = 0;",
+        "mutated_line": "my ($n) = 0;",
         "outcome": "tests_failed",
         "failing_test": "t/toolkit.t: counter starts at its start",
         "equivalence_review": "not equivalent: the counter ignores its start"
@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-closure-counter.json",
-    "sha256": "4ed5fd400ed2acea4de40c522b797d2329a7c08d37d044fc35884f9100d97a4b",
+    "sha256": "682b5e712d692e02217c5e06cd39036e31f246050f48807665c613b15e4cf8e3",
     "provenance": "producer"
   }
 }
