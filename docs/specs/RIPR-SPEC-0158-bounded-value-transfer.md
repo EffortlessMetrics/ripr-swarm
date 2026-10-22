@@ -212,6 +212,11 @@ exercised boundary from a missing one.
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
 `local-boundary-flag-alias`;
 `analysis/classify/helper_transfer/method_hop_tests.rs`,
+`analysis/classify/helper_transfer/multi_caller_tests.rs` (the multi-caller
+rule: a chain whose callee has several direct callers binds through the one
+caller a test reaches, and declines when no caller is reached, when two are
+reached, when a test calls the callee directly, or when there are more than
+eight callers),
 `analysis/classify/helper_transfer/receiver_value/tests.rs` and
 `analysis/classify/activation/method_hop_rows.rs` (every admit and decline
 rule of the method hop and the receiver value);
@@ -242,7 +247,9 @@ the #3295 family fixtures.
   `scalar_values`; the method hop's receiver cell and `self.<index>`
   binding in `helper_transferred_rows` / `bind_helper_argument`.
 - `analysis/classify/helper_transfer.rs` — the method-hop resolution
-  (`method_hop`) and the free-callee caller filter (`chain_callers`).
+  (`method_hop`), the free-callee caller filter (`chain_callers`, which drops a
+  caller that only makes `x.name()` receiver calls, since a method call cannot
+  resolve to a free fn) and the multi-caller rule (`resolve_multi_caller`).
 - `analysis/classify/helper_transfer/receiver_value.rs` — the one reader of
   a receiver argument and of a `self.<index>` projection.
 
