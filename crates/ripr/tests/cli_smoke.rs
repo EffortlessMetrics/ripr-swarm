@@ -19623,7 +19623,7 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     );
     assert!(
         stdout.contains(
-            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
+            "Top recommendation:\n  Order: grip class, then missing-discriminator evidence, related tests, and"
         ),
         "{stdout}"
     );
