@@ -1041,3 +1041,13 @@ dependent verify commitments and receipt byte hashes bind those exact updated
 bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
 all tamper controls remain unchanged. This is a portable negative-control
 input update, not a new execution receipt.
+
+### indirect owner call limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.91 to 1.92 for owners reached without a placeable call (RIPR-SPEC-0240).
+Only the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
