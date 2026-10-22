@@ -3967,6 +3967,13 @@ mod tests {
         );
         assert!(
             reason(
+                &scope(json!({"parser_declined_files": [7]})),
+                Some("src/a.rs")
+            )
+            .is_some()
+        );
+        assert!(
+            reason(
                 &scope(json!({"parser_declined_files": "src/a.rs"})),
                 Some("src/a.rs")
             )

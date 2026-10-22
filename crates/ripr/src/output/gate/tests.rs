@@ -5021,11 +5021,7 @@ fn e2e_delta_and_update(
     e2e_delta_and_update_with(pr_guidance, gap_ledger, E2E_TWO_GAP_BASELINE)
 }
 
-fn e2e_delta_and_update_with(
-    pr_guidance: Option<&str>,
-    gap_ledger: Option<&str>,
-    baseline_template: &str,
-) -> Result<(Value, usize, String), String> {
+fn e2e_gate_json(pr_guidance: Option<&str>, gap_ledger: Option<&str>) -> Result<String, String> {
     let dir = temp_dir("gate-e2e-9301")?;
     let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
         let path = write_temp_json(&dir, name, body)?;
@@ -5054,6 +5050,15 @@ fn e2e_delta_and_update_with(
     let report = build_gate_decision_report(&input)?;
     let gate_json = render_gate_decision_json(&report)?;
     ignore_remove_dir_all(dir);
+    Ok(gate_json)
+}
+
+fn e2e_delta_and_update_with(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+) -> Result<(Value, usize, String), String> {
+    let gate_json = e2e_gate_json(pr_guidance, gap_ledger)?;
 
     // Stamp the baseline with the producing build so the same-build rule
     // applies and only scope decides resolved vs not_evaluated.
@@ -5278,7 +5283,7 @@ fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), Stri
 /// Run the real inventory -> selection -> review-comments renderer for a
 /// one-file project, then gate evaluate, baseline delta and update against a
 /// baseline holding one reviewed gap at `src/lib.rs:2`.
-fn e2e_real_pipeline(lib_source: &str) -> Result<(Value, usize, String), String> {
+fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
     use crate::app::agent_brief::{
         AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
     };
@@ -5328,48 +5333,78 @@ fn e2e_real_pipeline(lib_source: &str) -> Result<(Value, usize, String), String>
     let doc =
         render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
     ignore_remove_dir_all(root);
-    let baseline = r#"{
-      "schema_version": "0.1",
-      "kind": "gate_baseline",
-      "entries": [
-        {"identity": {"canonical_gap_id": "gap:early"}, "path": "src/lib.rs", "line": 2, "static_class": "weakly_gripped", "decision": "advisory"}
-      ]
-    }"#;
-    e2e_delta_and_update_with(Some(&doc), None, baseline)
+    Ok(doc)
 }
 
 #[test]
 fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Result<(), String> {
-    // Control: the file parses and no longer contains the baselined seam, so
-    // the real analysis covers it and the gap is genuinely resolved.
-    let fixed = "pub fn early(n: i32) -> i32 { n }\n";
-    let (delta, after, updated) = e2e_real_pipeline(fixed)?;
+    // Capture the baseline from the real pipeline: parse the shallow file
+    // (holding the `>= 10` seam), render, gate-evaluate, then run the real
+    // `baseline create` over that gate decision. No identity is hand-written.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let shallow_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let created = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate-decision.json",
+        "unix_ms:1",
+        &shallow_gate,
+    )?;
+    let captured = crate::output::baseline::baseline_entry_count(&created);
+    assert!(captured >= 1);
+    let baseline = crate::output::baseline::render_baseline_create_json(&created)?;
+    let baseline_value: Value = serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+    assert_eq!(baseline_value["entries"][0]["path"], "src/lib.rs");
+
+    // Control: the file parses and no longer contains the seam, so the real
+    // analysis covers the file and the captured gap is genuinely resolved.
+    let fixed = "pub fn unrelated() {}\n";
+    let (delta, after, updated) =
+        e2e_delta_and_update_with(Some(&e2e_real_review_doc(fixed)?), None, &baseline)?;
     assert!(
         delta["analysis_scope"]["parser_declined_files"].is_null(),
         "{delta}"
     );
-    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(delta["delta"]["resolved"], captured as u64, "{delta}");
     assert_eq!(after, 0);
-    assert!(!updated.contains("gap:early"), "{updated}");
 
-    // Same file, but deeply nested code elsewhere exceeds the parse budget:
-    // the lexical fallback extracts no seams (including the unchanged
-    // earlier one), so absence must not read as resolved.
+    // Same captured identity, but deeply nested code elsewhere exceeds the
+    // parse budget: the lexical fallback extracts no seams (including the
+    // unchanged earlier one), so absence must not read as resolved.
     let declined = format!(
-        "pub fn early(n: i32) -> bool {{ n >= 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{shallow}pub fn deep() {{ {}{} }}\n",
         "{".repeat(400),
         "}".repeat(400)
     );
-    let (delta, after, updated) = e2e_real_pipeline(&declined)?;
+    let (delta, after, updated_declined) =
+        e2e_delta_and_update_with(Some(&e2e_real_review_doc(&declined)?), None, &baseline)?;
     assert_eq!(
         delta["analysis_scope"]["parser_declined_files"],
         json!(["src/lib.rs"]),
         "{delta}"
     );
     assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
-    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
-    assert_eq!(after, 1);
-    assert!(updated.contains("gap:early"), "{updated}");
+    assert_eq!(
+        delta["delta"]["stale_baseline_entry"], captured as u64,
+        "{delta}"
+    );
+    assert_eq!(after, captured);
+    let updated_value: Value =
+        serde_json::from_str(&updated_declined).map_err(|err| err.to_string())?;
+    assert_eq!(
+        updated_value["entries"].as_array().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry["identity"].clone())
+                .collect::<Vec<_>>()
+        }),
+        baseline_value["entries"].as_array().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry["identity"].clone())
+                .collect::<Vec<_>>()
+        }),
+        "{updated_declined}"
+    );
+    assert!(!updated.contains("src/lib.rs"), "{updated}");
     let reason = delta["items"][0]["not_evaluated_reason"]
         .as_str()
         .unwrap_or_default();
