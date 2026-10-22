@@ -1813,10 +1813,16 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
             "publish-vs-marketplace",
             "vs-marketplace-publish",
             "VSCE_PAT",
+            "editors/vscode/node_modules/.bin/vsce",
         ),
-        ("publish-open-vsx", "open-vsx-publish", "OVSX_PAT"),
+        (
+            "publish-open-vsx",
+            "open-vsx-publish",
+            "OVSX_PAT",
+            ".github/ovsx/node_modules/.bin/ovsx",
+        ),
     ];
-    for (job, environment, pat) in jobs {
+    for (job, environment, pat, tool) in jobs {
         // Positive control: the checked-in workflow satisfies the contract.
         assert_eq!(
             publish_job_violations(&text, job, environment, pat, tool),
