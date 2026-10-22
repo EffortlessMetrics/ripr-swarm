@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `reports ci-packet` now pins `--ignore-submodules=none`, so an ambient `diff.ignoreSubmodules=all` no longer produces an empty `pr.diff` for a gitlink-only change. Git-candidate diff derivation pins `core.quotePath=true`, so `core.quotePath=false` can no longer merge distinct non-UTF-8 paths, and the edit-cage inline-target check uses `--literal-pathspecs`, so a target with glob characters cannot match a sibling entry (#8209, #3601, #4005).

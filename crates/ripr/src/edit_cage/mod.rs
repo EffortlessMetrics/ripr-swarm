@@ -430,7 +430,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // `ls-tree` succeeds with empty output for a path HEAD does not carry,
     // so that case stays distinct from a git failure.
-    let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
+    let Ok(listing) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-tree", &head, "--", path],
+    ) else {
         return false;
     };
     if listing.is_empty() {
@@ -460,7 +463,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // Empty output means the path is not in the index (a staged deletion):
     // that differs from HEAD. A git failure is not an answer: defer.
-    let Ok(entry) = git_text(&root, &["ls-files", "--stage", "--", path]) else {
+    let Ok(entry) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-files", "--stage", "--", path],
+    ) else {
         return false;
     };
     let staged = entry.split_ascii_whitespace().nth(1);
@@ -4403,6 +4409,25 @@ mod tests {
         assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
         assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
         assert!(verdict.violations.is_empty());
+        Ok(())
+    }
+
+    /// `--literal-pathspecs`: a target whose name contains glob metacharacters
+    /// must not match a sibling entry (the sibling sorts first here, so the
+    /// first listed entry would otherwise carry the wrong object id).
+    #[test]
+    fn inline_target_check_treats_glob_characters_literally() -> Result<(), String> {
+        let fixture = git_fixture("literal-pathspec")?;
+        fs::write(fixture.root.join("fA.rs"), "pub fn decoy() {}\n")
+            .map_err(|err| format!("write decoy: {err}"))?;
+        fs::write(fixture.root.join("f[AB].rs"), "pub fn target() {}\n")
+            .map_err(|err| format!("write target: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "glob names"])?;
+        assert!(
+            !inline_target_is_uncommitted(&fixture.root, "f[AB].rs"),
+            "a committed, unchanged target was judged uncommitted via a glob sibling"
+        );
         Ok(())
     }
 }
