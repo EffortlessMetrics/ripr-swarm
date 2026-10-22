@@ -242,7 +242,7 @@ esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
-    // `join_paths` uses the host separator; a literal `:` splits `C:\...`.
+    // `join_paths` uses the host separator; a literal `:` splits Windows drive paths.
     let path = std::env::join_paths(std::iter::once(tmp.clone()).chain(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     )))
@@ -719,7 +719,7 @@ esac
     // Python's subprocess cannot launch an extensionless script on Windows; a
     // .cmd shim lets PATHEXT resolution reach the bash stub (#9272).
     std::fs::write(tmp.join("gh.cmd"), "@bash \"%~dp0gh\" %*\r\n").map_err(|e| e.to_string())?;
-    // `join_paths` uses the host separator; a literal `:` splits `C:\...`.
+    // `join_paths` uses the host separator; a literal `:` splits Windows drive paths.
     let path = std::env::join_paths(std::iter::once(tmp.clone()).chain(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     )))
