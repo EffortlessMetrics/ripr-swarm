@@ -5355,9 +5355,8 @@ mod tests {
 
     // #3294: a changed binding that reaches its same-function equality
     // predicate directly retargets the probe to the predicate. The
-    // finding is predicate-shaped, the generic changed-syntax limitation
-    // is gone, and the operand-value limitation names the earliest
-    // initializer operation.
+    // finding is predicate-shaped and the generic changed-syntax limitation
+    // is gone. Exact input evidence supersedes the syntax-only operand limit.
     #[test]
     fn diff_analysis_retargets_changed_binding_to_predicate_use() -> Result<(), String> {
         let (root, result) = binding_value_crate(
@@ -5384,12 +5383,12 @@ mod tests {
             "relation evidence missing: {:?}",
             finding.evidence
         );
+        assert_eq!(finding.ripr.infect.state, crate::domain::StageState::Yes);
         assert!(
-            finding.evidence.iter().any(|line| line.contains(
-                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
-            )),
-            "earliest operation evidence missing: {:?}",
-            finding.evidence
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_predicate_value_unresolved:"))
         );
         assert!(
             !result.findings.iter().any(|finding| finding
@@ -5421,12 +5420,18 @@ mod tests {
                     && finding.probe.expression.contains("end == start")
             })
             .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(finding.ripr.infect.state, crate::domain::StageState::Yes);
         assert!(
-            finding.evidence.iter().any(|line| line.contains(
-                "binding_predicate_value_unresolved: operand value of `start` unresolved at earliest initializer operation `.chars(`"
-            )),
-            "earliest operation evidence missing: {:?}",
-            finding.evidence
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_predicate_relation:"))
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_predicate_value_unresolved:"))
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())

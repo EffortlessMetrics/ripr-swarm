@@ -128,7 +128,7 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
-        let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -236,6 +236,12 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &flow_sinks,
         );
+        crate::analysis::classify::refine_literal_length_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &mut flow_sinks,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -285,6 +291,7 @@ impl ClassifiedProbeEvidence {
             &activation,
             gathered.unresolved_boundary.as_deref(),
             context.owner_fn,
+            gathered.literal_length_boundary.as_ref(),
             // #7970: a function that is not one of the related tests and
             // calls the owner by name (a wrapper, a helper, a production
             // caller) may feed it inputs the literal call lines do not show.
@@ -835,6 +842,21 @@ impl ClassifiedProbeEvidence {
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
+            && !gathered
+                .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,

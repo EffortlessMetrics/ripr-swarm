@@ -156,7 +156,13 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
         relation.binding, relation.predicate_line
     ));
-    if let BindingValueResolution::Unresolved { earliest_operation } = &relation.value_resolution {
+    if finding.ripr.infect.state != crate::domain::StageState::Yes
+        && let BindingValueResolution::Unresolved { earliest_operation } =
+            &relation.value_resolution
+    {
+        // The relation is syntax-only. A later row-owned infection
+        // authority can establish this operand from exact test inputs.
+        // Preserve the causal relation without contradicting that result.
         // Neutral prefixes: this is a value disclosure on a
         // predicate-shaped finding, not a `static_limit_kind` record,
         // so it deliberately stays outside the structured
@@ -784,5 +790,12 @@ mod tests {
         assert!(finding.evidence.iter().any(|line| {
             line == "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
         }));
+        let class = finding.class.clone();
+        finding.evidence.clear();
+        finding.ripr.infect.state = crate::domain::StageState::Yes;
+        attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
+        assert_eq!(finding.class, class);
+        assert_eq!(finding.evidence.len(), 1);
+        assert!(finding.evidence[0].starts_with("binding_predicate_relation:"));
     }
 }
