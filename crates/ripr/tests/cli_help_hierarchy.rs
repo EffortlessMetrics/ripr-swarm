@@ -1241,6 +1241,8 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
         "One exception: when a seam's only tests live in one inline `#[cfg(test)]`",
+        "production code outside the module stays",
+        "the file must be committed before the start",
     ] {
         assert_contains(
             "agent repair help (`ripr agent repair --help`)",
