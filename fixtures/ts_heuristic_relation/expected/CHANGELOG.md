@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (23)
+
+Reason:
+RIPR-SPEC-0224: TypeScript no_call_path withheld (#5495)
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
