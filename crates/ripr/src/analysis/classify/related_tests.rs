@@ -929,13 +929,14 @@ fn find_related_tests_with_candidates<'a>(
         };
         let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| {
-                call.name == owner_name
-                    && !(receiver_calls_cannot_reach_owner
-                        && super::helper_transfer::mentions_only_as_receiver_call(
-                            &call.text, owner_name,
-                        ))
-            }) || body_contains_owner_call(&test.body, owner_name));
+            && if receiver_calls_cannot_reach_owner {
+                // The body fallback must preserve the same free-call identity
+                // as captured calls; a receiver spelling cannot restore it.
+                test_calls_free_function(test, owner_name)
+            } else {
+                test.calls.iter().any(|call| call.name == owner_name)
+                    || body_contains_owner_call(&test.body, owner_name)
+            };
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {

@@ -111,6 +111,10 @@ exercised boundary from a missing one.
 - The classifier wiring test
   (`activation_evidence_resolves_computed_local_boundary_operands`) and
   the end-to-end diff-analysis test.
+- The public `method_hop_relations` integration target (#9603) pins
+  receiver-only rejection, helper reach despite a receiver-name collision,
+  genuine bare and module-qualified free calls through the body fallback,
+  and the existing relation fallback without a method hop.
 - Golden blast radius measured: the equality-boundary fixture flips
   (the intended behavior change) and `observation_unverified_call_deletion`
   gains the additive boolean observed-value fact; `cargo xtask goldens
@@ -124,6 +128,11 @@ exercised boundary from a missing one.
   predicate through the #3294 live-span relation.
 - Observation/discrimination still requires the test's own oracle; an
   exact input value establishes activation/infection evidence only.
+- For a free owner reached through a method hop, related-test name matching
+  uses the existing free-call reader for both captured calls and the full
+  body fallback. A receiver-only spelling cannot supply owner-call identity
+  or hide an actual helper relation; genuine bare and module-qualified free
+  calls remain direct owner calls (#9603).
 - Chain depth and literal size are bounded and the limit is disclosed
   (`Unsupported`), never silently truncated.
 - Exact operand comparison uses the classifier's existing literal
