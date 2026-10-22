@@ -880,6 +880,15 @@ method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
 
+The two versions must also differ on some probe input, so an equivalent
+rewrite is never reported as unexercised. Each numeric argument is probed at
+its asserted value, its neighbours, `0`, `1` and `-1`; when that does not
+separate them, the probe also tries each number literal the edit added or
+removed (at most three per side) and its neighbours, so a bound edited far from the
+asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
+still reads unexercised (#9436). An operator edit changes no number, so it
+keeps the boundary-witness reading.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
