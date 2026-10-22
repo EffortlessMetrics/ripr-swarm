@@ -9917,6 +9917,18 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // #3798: the RC manifest sits under the RC tag but is named for the
+    // X.Y.Z generation, as the editor's rcManifestUrl expects; waiting on a
+    // manifest named after the full RC version never succeeds.
+    if !extension.contains("generation=\"${version%%[-+]*}\"")
+        || !extension.contains("/v${version}/ripr-server-manifest-v${generation}.json")
+        || extension.contains("ripr-server-manifest-v${version}.json")
+    {
+        return Err(
+            "publish-extension.yml must wait for the generation-keyed manifest under the release tag"
+                .to_string(),
+        );
+    }
     // One dispatch authorizes exactly one channel: zero or two must fail
     // before anything packages, publishes or touches the Release.
     if !extension.contains("true/false | false/true) ;;") {
@@ -9997,6 +10009,8 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
             || !candidate.contains("candidate_sha: ${{ github.sha }}")
             || !candidate.contains("version: ${{ inputs.version }}")
+            || !candidate.contains("candidate_ref: ${{ inputs.candidate_ref }}")
+            || candidate.contains("candidate_tag")
             || candidate.contains("contents: write")
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
@@ -10018,6 +10032,10 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
         workflow.replace(
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
+        ),
+        workflow.replace(
+            "candidate_ref: ${{ inputs.candidate_ref }}",
+            "candidate_ref: \"\"",
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -10064,8 +10082,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
-            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
-            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+            || !candidate.contains(
+                "test \"${CANDIDATE_REF}\" = \"refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}\"",
+            )
+            || !candidate.contains("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
             return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
         }
@@ -10240,8 +10260,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "tag syntax",
             workflow.replacen(
-                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
-                "^ripr-release-.*$",
+                "refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}",
+                "refs/tags/ripr-release-${candidate_sha}",
                 1,
             ),
         ),

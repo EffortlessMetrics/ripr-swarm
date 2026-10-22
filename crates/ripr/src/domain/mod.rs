@@ -16,6 +16,8 @@ mod identity;
 mod intervention_study;
 mod language;
 pub(crate) mod language_capability;
+#[cfg(test)]
+mod language_capability_drift;
 mod next_action;
 mod probe;
 mod repair_card;

@@ -37,8 +37,8 @@ per bullet in the issue. Acceptance criteria live in the issue.
 | Related tests not credited on real crates (aliases, trait dispatch, closures, integration paths, cfg) | dogfood umbrella; macro_rules table fix is PR #9208, open at time of writing | #8999, #6925 | #6925 yes, rest after |
 | Weak reach lends a strong oracle from unrelated tests; retention shows file-location rows first | dogfood reports in #8999, #9175, #9169 (unverified here) | #9169, #9175, #8654 | after, unless a false actionable verdict results |
 | First impression: all three first-run crates end `static_unknown` | first-run walk | #9276 | after |
-| Large-workspace speed on `ripr-swarm` itself: warm check 5.1 s vs 2 s target; cold pilot 77.6 s vs 30 s and 1.59 GB vs 1 GB | `metrics/dx-scoreboard/baseline.json` | #5363, #7220 | after |
-| Editor refresh latency (earlier reports of 17 to 22 s on a large workspace) | not re-measured here; a separate lane is re-measuring | #5317, #9156, #9158 | 0.11 if it still reproduces |
+| Large-workspace speed on `ripr-swarm` itself: warm check 5.1 s vs 2 s target; cold pilot 77.6 s vs 30 s and 1.59 GB vs 1 GB (baseline). Measured on main 4d91ae82 in the 4-core container: a warm check of a two-line Rust diff took about 25 s and a cold pilot 125 to 129 s | `metrics/dx-scoreboard/baseline.json`; container runs, one each, not benchmarks. Cold pilot phases: seam evidence evaluation about 81 s (heavy tail), cache store about 22 s (serial), file-fact cache about 16 s | #5363, #7220 | after |
+| Editor refresh latency: the 17 to 22 s reports were an unanswered `workDoneProgress/create`, fixed by #9156 | lane re-measurement on serde: about 0.6 s, down from 30.7 s before the fix; refresh settles in 0.25 to 2.1 s; first diagnostics about 2.4 ms after `didOpen` | #5317, #9156, #9158 | closed by #9156 for serde-sized workspaces; large-workspace refresh follows the speed row |
 | Oversized diff is all-or-nothing; generated files count toward the cap | 200k-line repro | #9277 | after |
 | Dependabot PRs cannot pass admission or fixture identity checks | four PRs on 2026-10-21 | #9259, #9261 | after |
 | Perl and corpus false verdicts (Perl 1/60; Rust 5/499, TypeScript 3/178, Python 0/80) | `verdict-corpus report` | #8979 and the corpus threads | yes |
@@ -46,5 +46,6 @@ per bullet in the issue. Acceptance criteria live in the issue.
 
 ## Not established
 
-LSP and editor latency on this build is not measured here. Install routes that
-need a published release cannot be checked before the cut.
+Editor latency was measured by another lane on serde, not on `ripr-swarm`
+itself. Install routes that need a published release cannot be checked before
+the cut.

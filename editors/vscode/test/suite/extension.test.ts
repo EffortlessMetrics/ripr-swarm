@@ -115,6 +115,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -292,6 +295,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -1581,10 +1587,12 @@ suite('Extension Smoke', () => {
     const context = createControllerTestContext({});
     try {
       await context.controller.start();
+      // The free-text log line never selects the baseRef step by wording.
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
       });
-      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Show Output'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -1596,7 +1604,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+        failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
@@ -1604,7 +1612,32 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+        failure: { kind: 'base_unresolvable', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Legacy servers send analysis_error for a missing base: only that
+      // kind keeps the old wording fallback (documented in client.ts).
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Wording under any other kind is never reclassified.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'base_unresolvable', message: 'x' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
@@ -4721,7 +4754,7 @@ suite('Extension Smoke', () => {
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          `ripr check --root ${rootArg} --base 'origin/main with space' --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
+          `ripr check --root ${rootArg} --base ${serverShellArg('origin/main with space')} --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
           'target/ripr/pilot/after.repo-exposure.json',
           { base: 'origin/main with space', mode: 'ready' }
         ),
@@ -4833,6 +4866,49 @@ suite('Extension Smoke', () => {
       await context.dispose();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await removeWorkspacePath(relativePath);
+    }
+  });
+
+  test('serverShellArg and the metacharacter check mirror the Windows console quoting (#2769)', () => {
+    // crates/ripr/src/agent/loop_commands.rs: shell_arg_for(value, windows = true).
+    assert.strictEqual(serverShellArg('origin/main', true), 'origin/main');
+    assert.strictEqual(serverShellArg('HEAD~1', true), '"HEAD~1"');
+    assert.strictEqual(serverShellArg('a"b', true), '"a""b"');
+    assert.strictEqual(serverShellArg('sub\\dir\\', true), '"sub\\dir\\\\"');
+    // `$` and backtick are expanded inside double quotes by PowerShell and Git
+    // Bash, so the server keeps the single-quote form for them.
+    assert.strictEqual(serverShellArg('a$b', true), "'a$b'");
+    assert.strictEqual(serverShellArg('a`b', true), "'a`b'");
+    assert.strictEqual(serverShellArg('HEAD~1', false), "'HEAD~1'");
+
+    const body = (arg: string) => `ripr check --root . --base ${arg} --mode draft --format repo-exposure-json`;
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD~1"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"origin/main with space"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"it\'s"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('""'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"sub\\dir\\\\"'), true));
+    // Not Windows: a double quote is refused, as before.
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"'), false));
+    // Windows: only a complete console-quoted span passes.
+    for (const bad of [
+      body('"HEAD~1'),
+      body('"a"b"'),
+      body('"$(calc)"'),
+      body('"`calc`"'),
+      body('"%PATH%"'),
+      body('"a\u201db"'),
+      body('"a\nb"'),
+      `${body('"HEAD~1"')} ; calc`,
+      `${body('"HEAD~1"')} & calc`,
+      `${body('"HEAD~1"')} | calc`,
+      body('"a" ; "b"') + ' --x "c',
+      body('abc\\def'),
+      // A `"` inside a single-quoted span cannot pair with a later `"`.
+      body(`'a" & calc & "b$'`)
+    ]) {
+      assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
     }
   });
 
@@ -4956,13 +5032,15 @@ suite('Extension Smoke', () => {
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
-    // The double-quoted base the client used to expect, and a base the payload
-    // does not carry.
-    assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
+    // The Windows console spelling of the base is the server's form on Windows
+    // only; elsewhere a double quote stays refused. And a base the payload does
+    // not carry.
+    assert.strictEqual(accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')), process.platform === 'win32');
     assert.ok(!accepts(snapshot(' --base origin/main', null)));
     assert.ok(!accepts(snapshot(' --base other', 'origin/main')));
     // `'\\''` needs a backslash, which fish reads differently: still refused.
-    assert.ok(!accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")));
+    // On Windows the server writes `"it's"` instead, which has none.
+    assert.strictEqual(accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")), process.platform === 'win32');
     // The quoted redirect span may not carry a line break, a backslash, or a
     // typographic quote that PowerShell reads as the end of the span.
     for (const bad of ['\n', '\\', '\u2019']) {
@@ -5709,6 +5787,23 @@ function firstPrReadFile(
     }
     return value;
   };
+}
+
+/**
+ * In the untrusted host the repair actions must stay refused: the clipboard keeps
+ * its previous text for each diagnostic-scoped copy. Returns true when that was asserted, so the caller skips the
+ * copy expectations that only hold for a trusted workspace (#2769).
+ */
+async function repairPacketRefusedInUntrustedHost(): Promise<boolean> {
+  if (!shouldSkipTrustedTestHost(process.env.RIPR_TEST_WORKSPACE_TRUST)) {
+    return false;
+  }
+  await writeClipboardText('untrusted-repair-sentinel');
+  for (const command of ['ripr.copyFirstPrRepairPacket', 'ripr.copyFirstPrVerifyCommand', 'ripr.copyFirstPrReceiptCommand']) {
+    await vscode.commands.executeCommand(command);
+    assert.strictEqual(await currentClipboardText(), 'untrusted-repair-sentinel', command);
+  }
+  return true;
 }
 
 async function withCurrentFirstPrDiagnostic(

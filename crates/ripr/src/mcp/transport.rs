@@ -3,7 +3,7 @@ use super::{
     server::InitializeSessionService,
     writer::FrameWriter,
 };
-use crate::workspace_status::WorkspaceStatus;
+use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use rmcp::{
     RoleServer, ServiceExt,
     model::{ClientJsonRpcMessage, RequestId, ServerJsonRpcMessage},
@@ -11,7 +11,7 @@ use rmcp::{
 };
 use serde_json::json;
 use std::{
-    io::Error,
+    io::{Error, Write},
     path::PathBuf,
     sync::{Arc, Mutex as StdMutex},
 };
@@ -398,6 +398,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
 }
 pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
     let (status, analysis_root) = WorkspaceStatus::resolve_with_root(explicit_root);
+    if let Some(warning) = startup_warning(&status) {
+        // Stdout is protocol-only; an operational failure belongs on stderr.
+        // Fallible write: `eprintln!` panics when a stderr write fails, which
+        // would abort startup before `serve`. A lost warning is acceptable;
+        // the typed `workspace_unavailable` replies still carry the failure.
+        let _ = writeln!(std::io::stderr(), "{warning}");
+    }
     serve(
         tokio::io::stdin(),
         tokio::io::stdout(),
@@ -405,6 +412,15 @@ pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), St
         analysis_root,
     )
     .await
+}
+/// One operator-facing line when the workspace root did not resolve, so the
+/// failure is not visible only as `workspace_unavailable` in tool output.
+/// Carries no path: the status document never exposes an absolute path.
+fn startup_warning(status: &WorkspaceStatus) -> Option<&'static str> {
+    (status.workspace_state == WorkspaceState::Unavailable).then_some(
+        "ripr mcp: warning: workspace root unavailable (not a usable repository root); \
+         tools will fail closed with workspace_unavailable. Restart with `--root <repository>`.",
+    )
 }
 async fn serve<R, W>(
     reader: R,

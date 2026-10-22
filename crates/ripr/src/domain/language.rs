@@ -667,6 +667,26 @@ impl StaticLimitKind {
 mod tests {
     use super::*;
 
+    #[test]
+    fn all_is_a_gap_free_ordinal_sequence() {
+        // The exhaustive match below forces an ordinal arm for a new variant.
+        // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
+        // enum: a variant added to the match but to neither `COUNT` nor `ALL`
+        // is not detected, only forced to be classified here.
+        const COUNT: usize = 5;
+        fn ordinal(language: LanguageId) -> usize {
+            match language {
+                LanguageId::Rust => 0,
+                LanguageId::TypeScript => 1,
+                LanguageId::JavaScript => 2,
+                LanguageId::Python => 3,
+                LanguageId::Perl => 4,
+            }
+        }
+        let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
+        assert_eq!(ordinals, (0..COUNT).collect::<Vec<_>>());
+    }
+
     /// #4323: a lost string-literal continuation left ~18-space runs inside
     /// this gloss, which rendered as mid-sentence gaps in human and JSON output.
     #[test]

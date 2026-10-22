@@ -519,3 +519,15 @@ reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-ver
 id = "RIPR-SPEC-0305"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+# Release ledger direct-main contract
+[[spec]]
+id = "RIPR-SPEC-0301"
+scope = "out"
+reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
