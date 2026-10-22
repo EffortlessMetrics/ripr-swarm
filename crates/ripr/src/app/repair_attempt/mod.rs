@@ -573,7 +573,7 @@ pub(crate) fn validate_verify_binding_from(
     let validated = crate::agent::artifact::validate_repo_exposure_artifact(
         &root,
         &before_snapshot,
-        "repair attempt before",
+        crate::agent::artifact::RETAINED_BEFORE_SUBJECT,
     )?;
     if verify_before_sha256 != validated.content_sha256 {
         return Err(format!(

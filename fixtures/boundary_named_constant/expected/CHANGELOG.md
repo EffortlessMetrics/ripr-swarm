@@ -249,3 +249,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (22)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

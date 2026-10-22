@@ -462,19 +462,36 @@ fn regeneration_guidance_for(root: &Path, program: Option<String>) -> String {
     format!("{recovery}. {binding}")
 }
 
+/// Subject label for the before snapshot retained by a repair attempt.
+pub(crate) const RETAINED_BEFORE_SUBJECT: &str = "repair attempt before";
+
+/// What to do about an unacceptable repo-exposure input. A retained before
+/// snapshot is historical evidence: regenerating at the current tree would
+/// not reproduce it and replacing it would break the attempt's commitment, so
+/// the advice is to start a new attempt instead (#9665 item 3).
+fn recovery_advice(root: &Path, subject: &str) -> String {
+    if subject == format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact") {
+        return "This is the before snapshot retained by a repair attempt, so regenerating at the current tree would not reproduce it and it must not be replaced. Start a new repair attempt with the current installed RIPR executable".to_string();
+    }
+    format!(
+        "Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact",
+        repo_exposure_regeneration_guidance(root)
+    )
+}
+
 fn legacy_repo_exposure_refusal(root: &Path, subject: &str) -> String {
     format!(
-        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. {}; the legacy artifact was not accepted",
         env!("CARGO_PKG_VERSION"),
-        repo_exposure_regeneration_guidance(root),
+        recovery_advice(root, subject),
     )
 }
 
 fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> String {
     format!(
-        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact; the foreign-producer artifact was not accepted",
+        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). {}; the foreign-producer artifact was not accepted",
         env!("CARGO_PKG_VERSION"),
-        repo_exposure_regeneration_guidance(root),
+        recovery_advice(root, subject),
     )
 }
 
@@ -2126,13 +2143,44 @@ mod tests {
     fn legacy_recovery_binds_relative_root_and_does_not_invent_label_flags() -> Result<(), String> {
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
         let expected = expected_recovery_command("selected root")?;
-        for label in ["receipt before", "repair attempt before", "packet input"] {
+        for label in ["receipt before", "packet input"] {
             let error = validate_repo_exposure_artifact(Path::new("selected root"), raw, label)
                 .err()
                 .ok_or("legacy artifact was accepted")?;
             if !error.contains(&expected) || error.contains(&format!("--{label}")) {
                 return Err(format!("invalid rooted/shared-consumer recovery: {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_before_snapshot_refusal_advises_a_new_attempt_not_regeneration()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let legacy = validate_repo_exposure_artifact(Path::new("."), raw, RETAINED_BEFORE_SUBJECT)
+            .err()
+            .ok_or("legacy retained snapshot was accepted")?;
+        let foreign = foreign_producer_refusal(
+            Path::new("."),
+            &format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact"),
+            "0.10.9",
+        );
+        for (kind, error) in [("legacy", legacy), ("foreign", foreign)] {
+            if !error.contains("Start a new repair attempt")
+                || !error.contains("must not be replaced")
+                || error.contains("Regenerate with")
+                || error.contains("Replace this input")
+            {
+                return Err(format!("{kind} retained-snapshot advice is lossy: {error}"));
+            }
+        }
+        // Other subjects keep the regeneration advice.
+        let other = foreign_producer_refusal(Path::new("."), "after", "0.10.9");
+        if !other.contains("Regenerate with the current installed RIPR executable") {
+            return Err(format!(
+                "non-retained subject lost regeneration advice: {other}"
+            ));
         }
         Ok(())
     }

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Agent refusal text now reads as guidance instead of internal spellings: repair-start refusals from a truncated seam inventory name the wider-budget recovery; ineligibility reasons render as user sentences; a not-ready repair route names the evidence it is still missing; the truncated-inventory agent card refusal names the paste-ready full-packet command; gap-packet refusals translate the `already_observed` token into words; and the external-observer brief ends in a by-hand instruction instead of a raw `key=value` dump (#9604).

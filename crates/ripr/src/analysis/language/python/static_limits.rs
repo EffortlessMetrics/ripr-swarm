@@ -1,12 +1,19 @@
+use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
+use super::source_facts::parse_module_result;
 use super::source_utils::SourceText;
-use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
+use super::{
+    PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
+    split_python_assignment,
+};
 use crate::domain::{OracleStrength, StaticLimitKind};
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
@@ -164,7 +171,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
+    if related_candidates_have_opaque_custom_assertion_limit(owner, related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -813,19 +820,60 @@ fn related_candidates_have_log_membership_limit(
                 .is_some_and(|assertion| {
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    assertion
-                        .gate_text
-                        .split_once(" in caplog.text")
-                        .is_some_and(|(checked, _)| {
-                            let checked = checked.trim_start();
-                            let checked = checked.strip_prefix("assert").unwrap_or(checked);
-                            words(checked).iter().any(|word| changed.contains(word))
-                        })
+                    caplog_membership_literals(&assertion.gate_text)
+                        .iter()
+                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
                 })
         })
 }
 
+/// The string literals an assertion checks for membership in `caplog.text`,
+/// read from the parsed expression so spacing, parentheses, line breaks and
+/// implicit literal concatenation do not change what is recognized.
+fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    let expression = gate_text.trim_start();
+    let expression = expression.strip_prefix("assert").unwrap_or(expression);
+    let source = format!("_ = (\n{expression}\n)\n");
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &source) else {
+        return Vec::new();
+    };
+    let mut literals = Vec::new();
+    for stmt in &module.body {
+        if let Stmt::Assign(assign) = stmt {
+            collect_caplog_membership_literals(assign.value.as_ref(), &mut literals);
+        }
+    }
+    literals
+}
+
+fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                collect_caplog_membership_literals(value, out);
+            }
+        }
+        Expr::Compare(compare)
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In)
+                && compare
+                    .comparators
+                    .first()
+                    .and_then(expr_full_name)
+                    .is_some_and(|name| name == "caplog.text") =>
+        {
+            if let Expr::Constant(constant) = compare.left.as_ref()
+                && let ast::Constant::Str(text) = &constant.value
+            {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 fn related_candidates_have_opaque_custom_assertion_limit(
+    owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> bool {
@@ -841,6 +889,14 @@ fn related_candidates_have_opaque_custom_assertion_limit(
             .assertions
             .iter()
             .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            // No assertion was read, but the admission scan found assertion-like
+            // code it cannot resolve and the owner is called inside a `lambda`
+            // handed to another call (`logged(lambda: must_equal(f(3), 9))`):
+            // the callback may well assert, so a gap that asks for an assertion
+            // is not honest. A bare call with no assertion keeps its gap.
+            || (candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == PythonAssertionAdmission::Unresolved
+                && owner_called_inside_lambda(&candidate.test.body_text, owner))
         {
             has_opaque_helper = true;
         }
@@ -850,6 +906,33 @@ fn related_candidates_have_opaque_custom_assertion_limit(
     }
 
     has_opaque_helper && !has_known_strong_oracle
+}
+
+/// Whether a line of the test body calls the owner inside a `lambda` body.
+/// Same-line only: a lambda body spanning lines is not read. A `key=lambda`
+/// sort key is inert, a lambda after an odd number of quotes sits in a string,
+/// and the body ends at the first `;`.
+fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
+    body_text.lines().any(|line| {
+        line.match_indices("lambda").any(|(index, _)| {
+            let before = &line[..index];
+            let rest = &line[index + "lambda".len()..];
+            let quotes = before.chars().filter(|ch| matches!(ch, '"' | '\'')).count();
+            before
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+                && rest
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_python_identifier_char(ch))
+                && quotes % 2 == 0
+                && !before.trim_end().ends_with("key=")
+                && rest.split_once(':').is_some_and(|(_, body)| {
+                    body_calls_owner(body.split(';').next().unwrap_or(body), owner)
+                })
+        })
+    })
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
