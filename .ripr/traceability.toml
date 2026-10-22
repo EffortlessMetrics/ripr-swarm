@@ -3104,6 +3104,8 @@ id = "RIPR-SPEC-0025"
 name = "PR inline comment publisher"
 spec = "docs/specs/RIPR-SPEC-0025-pr-inline-comment-publisher.md"
 tests = [
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_html_then_indented_code_when_neutralized_then_code_does_not_become_live_prose",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_blank_before_indented_code_when_neutralized_then_literal_code_is_preserved",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_block_boundaries_when_comment_prose_is_rendered_then_html_stays_literal",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_intentional_markdown_when_comment_prose_is_rendered_then_formatting_is_preserved",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_matches_fixture_corpus",

@@ -157,6 +157,21 @@ pub(crate) fn table_code_span(text: &str) -> String {
 /// neutralises `@mention` and raw HTML outside real code spans/blocks while
 /// preserving other Markdown formatting. Source offsets avoid AST reformatting.
 pub(crate) fn prose(text: &str) -> String {
+    let mut current = text.to_string();
+    loop {
+        let rendered = prose_once(&current);
+        if rendered == current {
+            return rendered;
+        }
+        // Escaping an HTML block can turn following indented code into prose.
+        // Reparse until code protection is valid in the emitted context too.
+        // Each changed pass consumes an unescaped backtick, HTML opener or
+        // mention prefix; escapes are never reversed, so this terminates.
+        current = rendered;
+    }
+}
+
+fn prose_once(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag};
 
     let mut out = String::with_capacity(text.len());

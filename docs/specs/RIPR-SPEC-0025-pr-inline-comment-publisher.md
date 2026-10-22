@@ -340,11 +340,15 @@ paragraph with field text. Preserve emphasis, links, paragraphs, and actual
 code spans or blocks.
 Neutralize raw HTML and mentions outside code. Backtick runs in different
 CommonMark blocks or GFM table cells do not form one code span; a soft newline
-inside one paragraph may belong to a span. Preserve the original bytes of
-recognized code, including fenced and indented blocks. Escape other backticks
+inside one paragraph may belong to a span. Preserve the bytes of code that
+remains literal in the rendered context, including fenced and indented blocks.
+Escape other backticks
 so neutralizing an HTML block cannot create a new accidental span. Re-rendering
-the result must be idempotent. Heading/list fields continue to use their
-single-line projection; this does not turn all prose into literal text.
+the result must be idempotent. Reparse after neutralization until no further
+edits are needed: escaping an HTML block can turn immediately following
+indented code into prose. A blank line before the indented code preserves its
+literal block. Heading/list fields continue to use their single-line
+projection; this does not turn all prose into literal text.
 
 The Markdown sibling should be short enough for a GitHub job summary and clear
 enough for review:

@@ -2098,3 +2098,70 @@ mod tests {
         })
     }
 }
+/// RIPR-SPEC-0025: escaping HTML must not invalidate protected code ranges.
+#[cfg(test)]
+mod context_transition_regression {
+    use super::*;
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+
+    fn body(field: &str, source: &str) -> String {
+        let item = if field == "reason" {
+            serde_json::json!({"reason": source})
+        } else {
+            serde_json::json!({"repair_card": {(field): source}})
+        };
+        comment_body(&item)
+    }
+
+    fn assert_safe_and_idempotent(body: &str) {
+        let mut in_code_block = false;
+        for event in Parser::new_ext(body, Options::ENABLE_TABLES) {
+            match event {
+                Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
+                Event::End(TagEnd::CodeBlock) => in_code_block = false,
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    assert!(
+                        html.is_empty(),
+                        "raw HTML after neutralization: {html:?}; body={body:?}"
+                    );
+                }
+                Event::Text(text) if !in_code_block => {
+                    assert!(
+                        !text.contains("@octocat"),
+                        "live mention after neutralization: {text:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            super::super::markdown::prose(body),
+            body,
+            "output must be idempotent"
+        );
+    }
+
+    #[test]
+    fn given_html_then_indented_code_when_neutralized_then_code_does_not_become_live_prose() {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for html in [
+                "<!-- comment -->",
+                "<script>\n</script>",
+                "<pre>\n</pre>",
+                "<?pi?>",
+            ] {
+                let rendered = body(field, &format!("{html}\n    @octocat <img src=x>"));
+                assert_safe_and_idempotent(&rendered);
+            }
+        }
+    }
+
+    #[test]
+    fn given_blank_before_indented_code_when_neutralized_then_literal_code_is_preserved() {
+        for field in ["why_this_matters", "repair", "reason"] {
+            let rendered = body(field, "<!-- comment -->\n\n    @octocat <img src=x>");
+            assert!(rendered.contains("    @octocat <img src=x>"));
+            assert_safe_and_idempotent(&rendered);
+        }
+    }
+}

@@ -371,6 +371,10 @@ hide raw HTML or mentions, while links, emphasis, valid multiline code spans,
 and fenced/indented code retain their Markdown meaning. These prose controls
 must reject a repair that escapes all intentional formatting.
 
+`context_transition_regression` also checks the rendered result after HTML
+neutralization changes block context. Its blank-line control must preserve
+indented code, and every emitted body must be idempotent under `prose`.
+
 ## CI Test Results
 
 The protected routed Rust lane has an intentional dual runner contract:
