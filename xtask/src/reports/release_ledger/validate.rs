@@ -379,7 +379,9 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
             "{sha}: final tree effect contradicts the cut tree: {message}"
         ));
     }
-    if basis.blamed_lines > 0 && basis.alive_paths == 0 && record.final_tree_effect != PRESENT_EFFECTIVE
+    if basis.blamed_lines > 0
+        && basis.alive_paths == 0
+        && record.final_tree_effect != PRESENT_EFFECTIVE
     {
         reasons.push(format!("{sha}: blamed lines need an alive path"));
     }
