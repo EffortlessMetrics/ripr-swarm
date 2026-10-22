@@ -1,0 +1,21 @@
+{
+  "case_id": "perl-hostile-glob-triple-unexercised",
+  "subject_id": "authored-perl-hostile-source",
+  "origin": "authored",
+  "anchor": "lib/Hostile.pm:46",
+  "behavior_family": "generated_owner",
+  "test_shape": "hostile_glob_assigned_subs",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "silent",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [],
+  "outcome": "false_silent",
+  "contradictions": [],
+  "findings_scored": 0,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}

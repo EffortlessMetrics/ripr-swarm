@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-idiom-closure-counter",
+  "subject_id": "authored-perl-idioms-toolkit",
+  "diff": "cases/perl-idiom-closure-counter.diff",
+  "anchor": {
+    "file": "lib/Toolkit.pm",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "closure_state",
+  "test_shape": "closure_captured_variable",
+  "hard_case": "The changed line initialises a variable captured by the returned closure; the owner is the anonymous sub's enclosing sub.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "my $n = $start + 1;",
+        "mutated_line": "my $n = $start + 1;",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: counter starts at its start",
+        "equivalence_review": "not equivalent: the counter starts one high"
+      },
+      {
+        "replacement": "my $n = 0;",
+        "mutated_line": "my $n = 0;",
+        "outcome": "tests_failed",
+        "failing_test": "t/toolkit.t: counter starts at its start",
+        "equivalence_review": "not equivalent: the counter ignores its start"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is($c->(), 5) then is($c->(), 6) pins the captured start and the increment. Spec cells: RIPR-SPEC-0064 oracle strength (is).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-idiom-closure-counter.json",
+    "sha256": "4ed5fd400ed2acea4de40c522b797d2329a7c08d37d044fc35884f9100d97a4b",
+    "provenance": "producer"
+  }
+}

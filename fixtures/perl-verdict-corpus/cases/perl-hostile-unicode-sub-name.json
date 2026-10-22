@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-hostile-unicode-sub-name",
+  "subject_id": "authored-perl-hostile-source",
+  "diff": "cases/perl-hostile-unicode-sub-name.diff",
+  "anchor": {
+    "file": "lib/Hostile.pm",
+    "line": 57
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "hostile_unicode_identifier",
+  "hard_case": "The owner and a variable have non-ASCII names under `use utf8`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "6 + $montant",
+        "mutated_line": "return 6 + $montant;",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: non-ASCII sub name works",
+        "equivalence_review": "not equivalent: the surcharge is six"
+      },
+      {
+        "replacement": "5 - $montant",
+        "mutated_line": "return 5 - $montant;",
+        "outcome": "tests_failed",
+        "failing_test": "t/hostile.t: non-ASCII sub name works",
+        "equivalence_review": "not equivalent: the surcharge subtracts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is(café_price(1), 6) pins the surcharge. Spec cells: RIPR-SPEC-0064 oracle strength (is).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-hostile-unicode-sub-name.json",
+    "sha256": "9858a53c6e205c7579ef8eac585e64a4a5bcde2a67b70e9d9c4725472f4c1010",
+    "provenance": "producer"
+  }
+}
