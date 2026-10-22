@@ -359,9 +359,9 @@ pub(in crate::analysis) fn apply_complete_proximity_macro_limit(
 ) {
     if finding.static_limit_kind.is_some()
         || finding.class != ExposureClass::WeaklyExposed
-        || !finding
+        || finding
             .related_tests_matched_total
-            .is_some_and(|total| total > finding.related_tests.len())
+            .is_none_or(|total| total <= finding.related_tests.len())
     {
         return;
     }
