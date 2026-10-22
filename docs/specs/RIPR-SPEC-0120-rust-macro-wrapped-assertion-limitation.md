@@ -152,9 +152,9 @@ arguments (`!x`, `a != b`) do not change this grade.
 - Known assertion macros such as `assert_eq!` remain handled by the existing
   oracle extractor, not by this limitation.
 - No-op or shadowed helpers and mismatched expected values gain no exposure
-  credit from the nested-expected-macro rule. A different owner in the
-  assertion, a bound owner value, and an owner mentioned only inside an
-  opaque nested macro retain the existing gap.
+  credit from the nested-expected-macro rule. Under the proximity-oracle
+  rule, a different owner in the assertion, a bound owner value, and an
+  owner mentioned only inside an opaque nested macro retain the existing gap.
 
 ## Wire Format
 

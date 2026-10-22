@@ -626,8 +626,13 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(macro_inputs) = macro_input_ranges(arguments) else {
         return false;
     };
+    let mut inputs = macro_inputs.iter().peekable();
     arguments.match_indices(owner_name).any(|(start, _)| {
-        if macro_inputs.iter().any(|range| range.contains(&start)) {
+        // Both iterators advance in source order; visit each opaque input once.
+        while inputs.peek().is_some_and(|range| range.end <= start) {
+            let _ = inputs.next();
+        }
+        if inputs.peek().is_some_and(|range| range.contains(&start)) {
             return false;
         }
         let qualified_or_ident = arguments[..start]
@@ -645,7 +650,7 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
 fn macro_input_ranges(text: &str) -> Option<Vec<std::ops::Range<usize>>> {
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     for (bang, _) in text.match_indices('!') {
-        if ranges.iter().any(|range| range.contains(&bang)) {
+        if ranges.last().is_some_and(|range| range.contains(&bang)) {
             continue;
         }
         let before = text[..bang].trim_end();
