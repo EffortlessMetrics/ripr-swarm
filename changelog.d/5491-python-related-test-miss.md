@@ -2,7 +2,7 @@
 - Python related-test rows on a weakly exposed finding now carry a typed `miss`
   and `why` in JSON, human, LSP and explain output: `weak_assertion` for a
   weak or smoke assertion, `missing_input` when a strong row's own calls never
-  reach the changed predicate boundary, and `observation_unconfirmed` when a
+  reach the changed predicate boundary (direct calls only, fail-closed), and `observation_unconfirmed` when a
   strong assertion is not credited as observing the changed sink. `no_call_path`
   follows separately. `no_assertion`,
   `assertion_not_observing`, `assertion_not_credited` and

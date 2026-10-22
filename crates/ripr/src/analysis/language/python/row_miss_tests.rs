@@ -625,6 +625,193 @@ mod direct {
         Ok(())
     }
 
+    const RES: &str = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+    const RES_IMPORT: &str = "from src.subject import can_reserve\n";
+
+    fn reserve(tests: &str) -> Result<Case, String> {
+        case(
+            RES,
+            &format!("{RES_IMPORT}{tests}"),
+            2,
+            "    if qty > on_hand:",
+            "    if qty >= on_hand:",
+        )
+    }
+
+    /// No row of `case` may claim `missing_input`, directly or via the pass.
+    fn assert_no_missing_input(case: &Case, label: &str) {
+        let count = related_test_candidates(&case.owner, &case.tests).len();
+        assert!(count > 0, "{label}: fixture rows must parse");
+        for index in 0..count {
+            assert!(!omission(case, index), "{label}: row {index} omission");
+        }
+        let rows = run(case, &ExposureClass::WeaklyExposed, false);
+        assert!(
+            rows.iter()
+                .all(|(_, miss)| *miss != Some(RelatedTestMiss::MissingInput)),
+            "{label}: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn positive_control_off_boundary_direct_call_is_an_omission() -> Result<(), String> {
+        let case = reserve("def test_a():\n    assert can_reserve(5, 3) == True\n")?;
+        assert!(omission(&case, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_old_equality_operand_is_not_an_omission() -> Result<(), String> {
+        let source =
+            "def is_pro(level):\n    if level == 3:\n        return True\n    return False\n";
+        let tests =
+            "from src.subject import is_pro\n\ndef test_a():\n    assert is_pro(2) == False\n";
+        let readable = case(source, tests, 2, "    if level == 2:", "    if level == 3:")?;
+        // Control: with a readable old pair, 2 sits on the OLD boundary.
+        assert!(!omission(&readable, 0));
+        let unreadable = case(
+            source,
+            tests,
+            2,
+            "    if level == 2 * 1:",
+            "    if level == 3:",
+        )?;
+        assert_no_missing_input(&unreadable, "old operand `2 * 1`");
+        Ok(())
+    }
+
+    #[test]
+    fn indirect_or_aliased_owner_reach_is_not_an_omission() -> Result<(), String> {
+        for (label, tests) in [
+            (
+                "helper in the test file",
+                "def helper():\n    return can_reserve(4, 4)\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n    assert helper() == True\n",
+            ),
+            (
+                "map reference",
+                "def test_a():\n    assert can_reserve(5, 3) == True\n    assert list(map(can_reserve, [4], [4])) == [True]\n",
+            ),
+            (
+                "functools.partial",
+                "import functools\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n    g = functools.partial(can_reserve, 4)\n    assert g(4) == True\n",
+            ),
+            (
+                "alias",
+                "def test_a():\n    f = can_reserve\n    assert can_reserve(5, 3) == True\n    assert f(4, 4) == True\n",
+            ),
+            (
+                "fixture parameter",
+                "import pytest\n\n@pytest.fixture\ndef reserver():\n    return can_reserve\n\ndef test_a(reserver):\n    assert can_reserve(5, 3) == True\n    assert reserver(4, 4) == True\n",
+            ),
+        ] {
+            assert_no_missing_input(&reserve(tests)?, label);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owner_that_rebinds_a_compared_parameter_is_not_an_omission() -> Result<(), String> {
+        let source = "def can_reserve(qty, on_hand):\n    qty = qty - 2\n    if qty >= on_hand:\n        return True\n    return False\n";
+        let tests = "from src.subject import can_reserve\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n";
+        let rebound = case(
+            source,
+            tests,
+            3,
+            "    if qty > on_hand:",
+            "    if qty >= on_hand:",
+        )?;
+        assert_no_missing_input(&rebound, "rebound qty");
+        // Control: the same call against a body that never rebinds is an omission.
+        assert!(omission(
+            &reserve("def test_a():\n    assert can_reserve(5, 3) == True\n")?,
+            0
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_kind_or_escaped_literals_are_unknown_not_unequal() -> Result<(), String> {
+        let flag = "def f(flag):\n    if flag == 1:\n        return True\n    return False\n";
+        for (label, tests) in [
+            (
+                "True vs 1",
+                "from src.subject import f\n\ndef test_a():\n    assert f(True) == True\n",
+            ),
+            (
+                "False vs 0",
+                "from src.subject import f\n\ndef test_a():\n    assert f(False) == False\n",
+            ),
+        ] {
+            let case = case(flag, tests, 2, "    if flag == 0:", "    if flag == 1:")?;
+            assert_no_missing_input(&case, label);
+        }
+        let name = "def f(name):\n    if name == 'a':\n        return True\n    return False\n";
+        let escaped = case(
+            name,
+            "from src.subject import f\n\ndef test_a():\n    assert f('\\x61') == True\n",
+            2,
+            "    if name == 'b':",
+            "    if name == 'a':",
+        )?;
+        assert_no_missing_input(&escaped, "escaped string");
+        // Control: two plain strings that differ are an omission.
+        let plain = case(
+            name,
+            "from src.subject import f\n\ndef test_a():\n    assert f('z') == False\n",
+            2,
+            "    if name == 'a':",
+            "    if name == 'a':",
+        )?;
+        assert!(omission(&plain, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn method_call_on_another_receiver_is_not_an_owner_call() -> Result<(), String> {
+        let source = "class Cart:\n    def can_reserve(self, qty, on_hand):\n        if qty >= on_hand:\n            return True\n        return False\n\nclass Other:\n    def can_reserve(self, qty, on_hand):\n        return True\n";
+        let build = |body: &str| {
+            case(
+                source,
+                &format!("from src.subject import Cart, Other\n\n{body}"),
+                3,
+                "        if qty > on_hand:",
+                "        if qty >= on_hand:",
+            )
+        };
+        for (label, body) in [
+            (
+                "other class",
+                "def test_a():\n    assert Other().can_reserve(5, 3) == True\n",
+            ),
+            (
+                "unknown receiver",
+                "def test_a(cart):\n    assert cart.can_reserve(5, 3) == True\n",
+            ),
+            (
+                "reassigned receiver",
+                "def test_a():\n    c = Cart()\n    c = Other()\n    assert c.can_reserve(5, 3) == True\n",
+            ),
+        ] {
+            assert_no_missing_input(&build(body)?, label);
+        }
+        // Control: a receiver provably the owner class is an owner call.
+        let owned = build("def test_a():\n    assert Cart().can_reserve(5, 3) == True\n")?;
+        assert!(omission(&owned, 0), "Cart().can_reserve is the owner");
+        Ok(())
+    }
+
+    #[test]
+    fn relational_change_that_moves_the_operand_is_not_an_omission() -> Result<(), String> {
+        let source = "def big(x):\n    if x > 20:\n        return True\n    return False\n";
+        let tests = "from src.subject import big\n\ndef test_a():\n    assert big(5) == False\n";
+        let moved = case(source, tests, 2, "    if x >= 10:", "    if x > 20:")?;
+        assert_no_missing_input(&moved, "x >= 10 -> x > 20");
+        // Control: same operands, operator change only, is an omission.
+        let same = case(source, tests, 2, "    if x >= 20:", "    if x > 20:")?;
+        assert!(omission(&same, 0));
+        Ok(())
+    }
+
     #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [

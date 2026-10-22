@@ -352,26 +352,54 @@ pub(super) fn python_row_boundary_omission(
 ) -> bool {
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
-    let (operators, old_equality_operands) = if relational.is_empty() {
+    // Old and new compared pairs. A relational change must keep the very same
+    // operands (`x >= 10` -> `x > 20` changes more than the operator), so its
+    // old pair is the new pair; an equality change must read both pairs.
+    let (operators, old_pair) = if relational.is_empty() {
         let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
             return false;
         };
-        (gate.operators, gate.old_operands)
+        let Some(old_pair) = gate.old_operands else {
+            return false;
+        };
+        (gate.operators, Some(old_pair))
     } else {
         (relational, None)
     };
-    let [(start, len)] = operators.as_slice() else {
+    let &[(start, len)] = operators.as_slice() else {
         return false;
     };
-    let Some((left, right)) = simple_comparison_operands(&condition, *start, *len) else {
+    let Some((left, right)) = simple_comparison_operands(&condition, start, len) else {
         return false;
     };
+    if old_pair.is_none() && !relational_operands_unchanged(old_line_text, &left, &right) {
+        return false;
+    }
+    // A compared parameter the body rebinds (`qty = qty + 1`) is not the
+    // call-site value; only parameters the body provably never rebinds count.
+    let operands = [Some(&left), Some(&right)]
+        .into_iter()
+        .chain(old_pair.iter().flat_map(|(l, r)| [Some(l), Some(r)]))
+        .flatten();
+    for operand in operands {
+        let base = integer_offset(operand).map_or(operand.as_str(), |(base, _)| base);
+        let is_parameter = owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == base);
+        if is_parameter && !owner.term_facts.is_stable_parameter(base) {
+            return false;
+        }
+    }
     // A free function's bare-name call is the owner's only when this test's
     // import resolves the name to the owner's module; a same-named function of
     // another module is not an owner call.
-    if matches!(owner.owner_kind, Some(OwnerKind::Function))
-        && owner_module_callees(candidate.test, owner).is_empty()
-    {
+    let method_call = !matches!(owner.owner_kind, Some(OwnerKind::Function));
+    if !method_call && owner_module_callees(candidate.test, owner).is_empty() {
+        return false;
+    }
+    let names = owner_call_names(owner, candidate.test, method_call);
+    if !super::row_reach::row_reaches_owner_only_by_direct_calls(owner, candidate.test, &names) {
         return false;
     }
     let constants = unrebound_constants(owner, all_candidates);
@@ -384,15 +412,60 @@ pub(super) fn python_row_boundary_omission(
         resolve_operand(left_operand, row, &constants),
         resolve_operand(right_operand, row, &constants),
     ) {
-        (Some(left_value), Some(right_value)) => !literals_equal(&left_value, &right_value),
+        (Some(left_value), Some(right_value)) => provably_unequal(&left_value, &right_value),
         _ => false,
     };
     rows.iter().all(|row| {
         off_boundary(&left, &right, row)
-            && old_equality_operands
+            && old_pair
                 .as_ref()
                 .is_none_or(|(old_left, old_right)| off_boundary(old_left, old_right, row))
     })
+}
+
+/// A relational change whose old line compares the same two operands with one
+/// relational operator.
+fn relational_operands_unchanged(old_line_text: Option<&str>, left: &str, right: &str) -> bool {
+    let Some(old) = old_line_text else {
+        return false;
+    };
+    let old_condition = predicate_condition(old);
+    let &[(start, len)] = relational_operators(&old_condition).as_slice() else {
+        return false;
+    };
+    simple_comparison_operands(&old_condition, start, len)
+        .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
+}
+
+/// Both literals are of one comparable kind and differ. Mixed kinds
+/// (`True` vs `1`), escaped or prefixed strings and anything unparsed are
+/// unknown, never "unequal".
+fn provably_unequal(left: &str, right: &str) -> bool {
+    #[derive(PartialEq)]
+    enum Kind {
+        Number(String),
+        Text(String),
+        Singleton(String),
+    }
+    fn kind(value: &str) -> Option<Kind> {
+        if matches!(value, "True" | "False" | "None") {
+            return Some(Kind::Singleton(value.to_string()));
+        }
+        if let Some(number) = canonical_decimal(value) {
+            return Some(Kind::Number(number));
+        }
+        let quoted = value.starts_with(['\'', '"']);
+        if quoted && !value.contains('\\') {
+            return python_string_literal_value(value).map(Kind::Text);
+        }
+        None
+    }
+    match (kind(left), kind(right)) {
+        (Some(left), Some(right)) => {
+            std::mem::discriminant(&left) == std::mem::discriminant(&right) && left != right
+        }
+        _ => false,
+    }
 }
 
 fn operand_provenance(operand: &str, value: &str, constants: &[PythonModuleConstant]) -> String {
@@ -930,7 +1003,11 @@ pub(super) fn strong_owner_call_rows_with_gaps(
 /// module-qualified spelling (`utils.sign`, #4567); a method is only called
 /// through its own attribute name. Module-qualified calls must bind here too,
 /// or a call the alignment credits would skip the boundary gate.
-fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -> Vec<String> {
+pub(super) fn owner_call_names(
+    owner: &PythonOwner,
+    test: &PythonTest,
+    method_call: bool,
+) -> Vec<String> {
     let mut names = vec![owner.name.clone()];
     if !method_call {
         names.extend(

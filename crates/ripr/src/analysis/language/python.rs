@@ -78,6 +78,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod row_reach;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;

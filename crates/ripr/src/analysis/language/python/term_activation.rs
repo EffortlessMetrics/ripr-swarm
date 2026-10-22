@@ -78,6 +78,12 @@ pub(super) struct PythonTermFacts {
 }
 
 impl PythonTermFacts {
+    /// Whether the body never rebinds this parameter (and has no scope the
+    /// walk cannot read), so a call-site value is the value the body sees.
+    pub(super) fn is_stable_parameter(&self, name: &str) -> bool {
+        self.stable_parameters.iter().any(|stable| stable == name)
+    }
+
     pub(super) fn returned_parameter(&self) -> Option<&str> {
         self.returned_parameter.as_deref()
     }

@@ -152,7 +152,13 @@ static limit, one row at a time, in `python/row_miss.rs`:
   owner call only when the row's import resolves the name to the owner's
   module; a same-named function of another module is not one. An unresolved
   operand or an unreadable call is unknown, and another row's input never
-  counts.
+  counts. The row must reach the owner only through direct calls: a helper,
+  alias, `map`/`partial` reference, fixture, dynamic construct or any other
+  callee the reader cannot vouch for keeps no miss, and a method call counts
+  only on a receiver provably the owner class. Compared parameters must be
+  ones the owner body never rebinds; a relational change must keep the same
+  operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,
+  never unequal.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
