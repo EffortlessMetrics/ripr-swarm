@@ -10,7 +10,7 @@ name: Merge-ready Conflict Notice
 # Security boundary (pull_request_target runs with a write-capable token):
 # - It checks out nothing and runs no PR-controlled code. The only code that
 #   runs is this file as it exists on the base branch.
-# - The only PR-derived values are the PR number and head SHA, passed through
+# - The only PR-derived values are the PR number, head SHA and base ref, passed through
 #   `env` and never interpolated into the script. The label name is compared
 #   in the job `if`, not in a run step.
 # - No third-party actions and no secrets beyond the job token. Permissions are
