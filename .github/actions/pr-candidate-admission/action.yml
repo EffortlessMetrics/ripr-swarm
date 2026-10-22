@@ -56,10 +56,10 @@ outputs:
     description: 'Comma-separated trusted competing PR numbers'
     value: ${{ steps.admit.outputs.competing_prs }}
   changed_files:
-    description: 'GitHub changed-files count for the current PR'
+    description: 'Counted changed files for the current PR (GitHub total minus declared generated files)'
     value: ${{ steps.admit.outputs.changed_files }}
   changed_lines:
-    description: 'GitHub additions plus deletions for the current PR'
+    description: 'Counted additions plus deletions for the current PR (GitHub total minus declared generated lines)'
     value: ${{ steps.admit.outputs.changed_lines }}
   cut_status:
     description: 'Hard-cut freeze status'

@@ -1,0 +1,11 @@
+diff --git a/src/rank.ts b/src/rank.ts
+index 0000000..1111111 100644
+--- a/src/rank.ts
++++ b/src/rank.ts
+@@ -3,5 +3,5 @@
+ }
+ 
+ export function medal(score: number): string {
+-  return score >= 50 ? "bronze" : "none";
++  return score >= 60 ? "bronze" : "none";
+ }

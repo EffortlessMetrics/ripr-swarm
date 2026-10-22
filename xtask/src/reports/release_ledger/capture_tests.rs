@@ -262,3 +262,18 @@ fn newline_prefixed_file_names_keep_their_tree_effect() -> Result<(), String> {
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn repeated_capture_flags_are_rejected_before_git_runs() -> Result<(), String> {
+    let args: Vec<String> = ["capture", "--base", "a", "--base", "b", "--output", "x"]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect();
+    let error = super::release_ledger(&args)
+        .err()
+        .ok_or("accepted a repeated flag")?;
+    require(
+        error.contains("more than once"),
+        "the repeated flag is named",
+    )
+}

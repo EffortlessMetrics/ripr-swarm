@@ -1,0 +1,52 @@
+{
+  "case_id": "py-grid-boundary-exact",
+  "subject_id": "authored-py-grid-boundary",
+  "diff": "cases/py-grid-boundary-exact.diff",
+  "anchor": {
+    "file": "grid_boundary/core.py",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 18 < age",
+        "mutated_line": "return 18 < age",
+        "outcome": "tests_failed",
+        "failing_test": "test_eighteen_is_adult_and_seventeen_is_not",
+        "equivalence_review": "not equivalent: 18 itself stops passing"
+      },
+      {
+        "replacement": "return 18 > age",
+        "mutated_line": "return 18 > age",
+        "outcome": "tests_failed",
+        "failing_test": "test_eighteen_is_adult_and_seventeen_is_not",
+        "equivalence_review": "not equivalent: the comparison is inverted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: boundary x exact pin. The test asserts at 18 and 17, both sides of the threshold, so both operator mutants fail.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
