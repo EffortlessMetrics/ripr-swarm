@@ -1213,7 +1213,13 @@ fn relative_gate_root_accepts_and_honors_absolute_recorded_root() -> Result<(), 
     let contents = r#"{"schema_version":"0.1","root":"/elsewhere/other","decisions":[{"root":"/elsewhere/other","seam_id":"8f7fa8644fd12280"}]}"#;
     let dir = temp_dir("gate-baseline-relative-root")?;
     let baseline = write_temp_json(&dir, "abs.json", contents)?;
-    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    let (fixture, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    // Relative inputs resolve against the gate root, so pin the guidance
+    // input to the hermetic copy while the root itself stays the relative `.`.
+    input.pr_guidance = input
+        .pr_guidance
+        .take()
+        .map(|relative| fixture.path().join(relative));
     input.root = PathBuf::from(".");
     input.baseline = Some(baseline);
     let report = build_gate_decision_report(&input)?;
