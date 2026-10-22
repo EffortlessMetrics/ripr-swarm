@@ -1,0 +1,12 @@
+diff --git a/src/logical.ts b/src/logical.ts
+--- a/src/logical.ts
++++ b/src/logical.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function isVisible(hidden: boolean): boolean {
+-  return !hidden;
++  return hidden === false;
+ }
+ 
+ export function shouldRetry(timedOut: boolean, attemptsLeft: boolean): boolean {

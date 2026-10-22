@@ -1,7 +1,7 @@
 use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::{FindingSelection, select_finding};
+use super::selector::FindingSelection;
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -49,6 +49,7 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         config,
         mode_explicit,
         worktree,
+        false,
         None,
     )
 }
@@ -67,9 +68,12 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     config: &RiprConfig,
     mode_explicit: bool,
     worktree: bool,
+    worktree_from_default: bool,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let committed_list_command =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
     let root = input.root.clone();
     // The worktree retry names the same repository and base the failed run
     // analyzed; a bare `ripr explain --worktree` prefix would analyze the
@@ -106,6 +110,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &candidates,
             &navigation.list_command(),
         )),
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            &navigation.list_command(),
+            &limitation,
+        )),
         FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
             selector,
             &navigation.list_command(),
@@ -114,6 +123,8 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             committed_history,
             &retry_command,
             &worktree_list_command,
+            &committed_list_command,
+            worktree_from_default,
         )),
     }
 }
@@ -122,7 +133,28 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
 /// base, `--worktree`, mode): a bare `ripr check --json` would list findings
 /// from the caller's directory and default base, and without `--worktree`
 /// it omits the findings only the uncommitted edits produce.
-pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
+pub(crate) fn no_finding_matched(
+    selector: &str,
+    list_command: &str,
+    repair_root: Option<&Path>,
+) -> String {
+    // Only the validated hex id is echoed into the suggested commands, never
+    // the typed selector, so a crafted `seam:` selector cannot reach a shell.
+    if let Some(seam_id) = seam_id_of(selector) {
+        let root_arg = repair_root
+            .map(|root| {
+                format!(
+                    " --root {}",
+                    crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::bound_root(&root.display().to_string())
+                    )
+                )
+            })
+            .unwrap_or_default();
+        return format!(
+            "no finding matched {selector:?}; this looks like a seam id (as printed by `ripr pilot`), and no finding in the analyzed scope is bound to it; `explain`/`context` select finding ids; run `ripr repair {seam_id}{root_arg}` or `ripr agent repair --seam-id {seam_id}{root_arg} --phase before` to work on the seam"
+        );
+    }
     let syntax_hint = if super::selector::location_selector_needs_syntax_hint(selector) {
         " for a file location, use file:line with a nonempty path and a positive decimal line number without leading zeros (for example src/lib.rs:12);"
     } else {
@@ -131,6 +163,15 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
     format!(
         "no finding matched {selector:?};{syntax_hint} run `{list_command}` to list available finding ids"
     )
+}
+
+/// The 16-lowercase-hex seam id behind a selector handed out by
+/// `ripr pilot`/`ripr repair`, with or without an explicit `seam:` prefix.
+/// Finding ids are `probe:`/`gap:` identities or `file:line` locations, so
+/// this never captures them; anything that is not exactly an id is `None`.
+fn seam_id_of(selector: &str) -> Option<&str> {
+    let id = selector.strip_prefix("seam:").unwrap_or(selector);
+    (id.len() == 16 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))).then_some(id)
 }
 
 /// The ambiguity message for a selector naming several findings (#8166
@@ -164,6 +205,27 @@ pub(crate) fn ambiguous_finding_match(
     message
 }
 
+/// The refusal for a selector the lookup could not decide (#8689): an
+/// unreadable or budget-truncated seam inventory means the reverse lookup
+/// checked nothing, so the message names the limitation and the recovery —
+/// a wider seam budget — mirroring the repair resolver's truncation
+/// wording, instead of claiming a clean miss.
+pub(crate) fn selector_limitation_fresh_run(
+    selector: &str,
+    list_command: &str,
+    limitation: &super::selector::SelectorLimitation,
+) -> String {
+    match limitation {
+        super::selector::SelectorLimitation::InventoryUnreadable => format!(
+            "could not resolve {selector:?}: the seam inventory is unreadable, so no match could be checked; run `{list_command}` to list available finding ids"
+        ),
+        super::selector::SelectorLimitation::InventoryTruncated { analyzed, total } => format!(
+            "could not resolve {selector:?}: the seam inventory is truncated ({analyzed} of {total} seams), so no match could be checked; {budget}, or run `{list_command}` to list available finding ids",
+            budget = super::task_first::WIDEN_SEAM_BUDGET
+        ),
+    }
+}
+
 /// The miss message for a fresh run, with the uncommitted-edits clause when
 /// the selector can only have come from a `--worktree` listing (#7328): a
 /// finding id copied from `ripr check --worktree` output dead-ends against
@@ -183,6 +245,10 @@ pub(crate) fn ambiguous_finding_match(
 /// name the listing that can actually contain the id, not a bare
 /// `ripr check --worktree --json` that analyzes the caller's directory at its
 /// default base.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the miss message carries the selector, both scope listings, and the retry together; splitting the packet would misalign the recovery contract"
+)]
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
@@ -191,8 +257,21 @@ pub(crate) fn no_finding_matched_fresh_run(
     committed_history: bool,
     retry_command: &str,
     worktree_list_command: &str,
+    committed_list_command: &str,
+    worktree_from_default: bool,
 ) -> String {
-    let mut message = no_finding_matched(selector, list_command);
+    // #9015: a selector copied from a committed listing carries no scope
+    // pin, so a dirty-default worktree run can miss it. The recovery's
+    // first listing must then replay the committed scope, not the
+    // defaulted working-tree scope that just missed.
+    if worktree && worktree_from_default && committed_history {
+        let mut message = no_finding_matched(selector, committed_list_command, Some(root));
+        message.push_str(&format!(
+            ". The working-tree scope was analyzed and also missed; list its finding ids with `{worktree_list_command}`"
+        ));
+        return message;
+    }
+    let mut message = no_finding_matched(selector, list_command, Some(root));
     if worktree || !committed_history || !selector.contains(':') {
         return message;
     }
@@ -245,7 +324,16 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         config,
         asserted_base,
     )?;
-    match select_finding(&findings, selector) {
+    // The artifact path reuses the same seam-side reverse lookups as the
+    // fresh path: seam IDs and hash-form canonical gap IDs bind through the
+    // current root's classified seams, so one ID spells the same finding on
+    // every explain surface (#8688).
+    match super::selector::select_finding_with_seam_reverse(
+        &findings,
+        &input.root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::human::render_finding_with_context_command(
                 finding,
@@ -261,7 +349,15 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             &candidates,
             "ripr check --json",
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json")),
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            "ripr check --json",
+            &limitation,
+        )),
+        FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json", None)),
     }
 }
 #[cfg(test)]
@@ -457,7 +553,51 @@ mod tests {
     /// including a 16-hex seam-shaped selector that names no finding in the
     /// selected diff.
     #[test]
+    fn crafted_seam_prefixed_selector_never_reaches_a_suggested_command() {
+        for selector in ["seam:$(touch pwned)", "seam:0123456789abcdeg", "seam:`id`"] {
+            let message = no_finding_matched(selector, "ripr check --json", None);
+            assert!(!message.contains("ripr repair"), "{message}");
+            assert!(
+                message.contains("to list available finding ids"),
+                "{message}"
+            );
+        }
+        let message = no_finding_matched("seam:0123456789abcdef", "ripr check --json", None);
+        assert!(
+            message.contains("`ripr repair 0123456789abcdef`"),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn explain_unmatched_and_seam_shaped_selectors_refuse_as_no_match() {
+        for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
+            let result = explain_fixture("collection_argument_plain", selector);
+            let message = result.err().unwrap_or_default();
+            let seam_shaped = selector == "0123456789abcdef";
+            assert_eq!(
+                message.contains("this looks like a seam id"),
+                seam_shaped,
+                "seam-id hint only for seam-shaped selectors: {message}"
+            );
+            assert_eq!(
+                message.contains("to list available finding ids"),
+                !seam_shaped,
+                "finding-id miss keeps the check hint, seam id drops it: {message}"
+            );
+            if seam_shaped {
+                assert!(
+                    message.contains("ripr repair 0123456789abcdef"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("ripr agent repair --seam-id 0123456789abcdef")
+                        && message.contains("--phase before"),
+                    "{message}"
+                );
+                assert!(message.contains("--root "), "{message}");
+            }
+        }
         for selector in ["probe:not-a-real-id", "0123456789abcdef"] {
             let result = explain_fixture("collection_argument_plain", selector);
             let message = result

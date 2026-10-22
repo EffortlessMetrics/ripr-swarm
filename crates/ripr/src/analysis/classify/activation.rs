@@ -149,6 +149,9 @@ struct ParameterValue {
     value: String,
     line: usize,
     text: String,
+    /// The test file whose call produced the row, so a fact built from it
+    /// can be matched back to that test alone.
+    file: Option<std::path::PathBuf>,
 }
 
 /// `value_facts_for_test` per (related test, owner), computed at most once
@@ -267,6 +270,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                     .map(|parameter| format!("{parameter} = {value}"))
                     .unwrap_or(value);
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -275,6 +279,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     context: path_value_context(&value),
@@ -292,6 +297,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in scalar_values(&argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: assertion.line,
                     text: assertion.text.clone(),
                     value,
@@ -301,6 +307,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
         for value in enum_variant_values(&assertion.text) {
             facts.push(ValueFact {
+                file: None,
                 line: assertion.line,
                 text: assertion.text.clone(),
                 context: path_value_context(&value),
@@ -315,6 +322,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_table_row(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -325,6 +333,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_builder_method(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -334,6 +343,11 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    // #8389: the run-wide value list merges facts from every related test, so
+    // each fact records its own test file; a bare line number is ambiguous.
+    for fact in &mut facts {
+        fact.file = Some(test.file.clone());
+    }
     sort_value_facts(&mut facts);
     facts
 }
@@ -415,9 +429,29 @@ fn observed_discriminator_values(
             })
             .or_else(|| visible_operand(&right, right_constant.as_ref()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
-            && left_value.value == right_value.value
+            && exact_values_equal(&left_value.value, &right_value.value)
         {
+            let (value, names_value) = equality_value(
+                &EqualitySide::new(
+                    &left,
+                    &left_value.value,
+                    left_parameter.as_deref(),
+                    left_resolved.as_ref(),
+                ),
+                &EqualitySide::new(
+                    &right,
+                    &right_value.value,
+                    right_parameter.as_deref(),
+                    right_resolved.as_ref(),
+                ),
+            );
             facts.push(ValueFact {
+                // A fact that names the local's value carries its test file:
+                // same-test pairing matches it by line and call text, and a
+                // second file's call on the same line must not satisfy it.
+                file: names_value
+                    .then(|| row.first().and_then(|cell| cell.file.clone()))
+                    .flatten(),
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -427,7 +461,7 @@ fn observed_discriminator_values(
                     left_value.provenance,
                     right_value.provenance,
                 ),
-                value: format!("{left} == {right}"),
+                value,
                 context: ValueContext::FunctionArgument,
             });
             continue;
@@ -450,6 +484,7 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
+                file: None,
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
@@ -467,6 +502,7 @@ fn observed_discriminator_values(
             index,
         ) {
             facts.push(ValueFact {
+                file: None,
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -476,6 +512,63 @@ fn observed_discriminator_values(
     }
 
     facts
+}
+
+/// The `left == right` text of an equality fact. A parameter compared with a
+/// local that the row's inputs evaluated (`bytes == unit`, `unit` being
+/// `if si { KIB } else { KB }`, on either side of the comparison) names the
+/// local's value instead of the local, so the fact reads like the literal
+/// comparison it is: same-test pairing matches `parameter == literal` terms
+/// against the literals the call feeds, and a local's name carries nothing to
+/// match.
+fn equality_value(left: &EqualitySide<'_>, right: &EqualitySide<'_>) -> (String, bool) {
+    match (left.kind, right.kind) {
+        (SideKind::Parameter, SideKind::Local) => {
+            (format!("{} == {}", left.text, right.value), true)
+        }
+        (SideKind::Local, SideKind::Parameter) => {
+            (format!("{} == {}", right.text, left.value), true)
+        }
+        _ => (format!("{} == {}", left.text, right.text), false),
+    }
+}
+
+fn is_plain_integer(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// One operand of an equality fact: its source text, its exact value in the
+/// row, and whether it is a plain owner parameter or a resolved local.
+struct EqualitySide<'a> {
+    text: &'a str,
+    value: &'a str,
+    kind: SideKind,
+}
+
+#[derive(Clone, Copy)]
+enum SideKind {
+    Parameter,
+    Local,
+    Other,
+}
+
+impl<'a> EqualitySide<'a> {
+    fn new(
+        text: &'a str,
+        value: &'a str,
+        parameter: Option<&str>,
+        resolved: Option<&ResolvedOperand>,
+    ) -> Self {
+        let kind = match resolved {
+            // Only an integer, the boundary a literal comparison would name;
+            // a boolean or text local keeps its own name.
+            Some(ResolvedOperand::Local(..)) if is_plain_integer(value) => SideKind::Local,
+            _ if parameter == Some(text.trim()) => SideKind::Parameter,
+            _ => SideKind::Other,
+        };
+        EqualitySide { text, value, kind }
+    }
 }
 
 /// The exact value of one comparison operand under one related-test
@@ -488,7 +581,11 @@ fn observed_discriminator_values(
 /// parameter.
 pub(crate) enum ResolvedOperand {
     Parameter(String),
-    Local(String, String),
+    /// A local binding's initializer plus the same-file constants it names
+    /// (`let unit = if si { KIB } else { KB };`), each declared once with
+    /// a plain decimal value. They join the row's exact inputs so the
+    /// bounded evaluator reads them like any other named value.
+    Local(String, String, Vec<(String, String)>),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
     /// whose return value is evaluated over the row's bound inputs
     /// (#3296 boolean-predicate helper family).
@@ -515,7 +612,26 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
-        return Some(ResolvedOperand::Local(operand.to_string(), initializer));
+        // A flag-selected initializer reads its flag from the caller's row
+        // and its arms from the file's constants, so neither may be rebound
+        // in the owner (`let si = !si;`, a local `KB`).
+        if initializer.trim_start().starts_with("if ")
+            && free_identifiers(&initializer)
+                .iter()
+                .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .any(|name| {
+                    name_rebound_in_owner(owner, name)
+                        || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
+                })
+        {
+            return None;
+        }
+        let constants = initializer_constants(owner, &initializer, parameters, index);
+        return Some(ResolvedOperand::Local(
+            operand.to_string(),
+            initializer,
+            constants,
+        ));
     }
     if let Some(parameter) = parameters
         .iter()
@@ -524,6 +640,39 @@ fn resolve_boundary_operand(
         return Some(ResolvedOperand::Parameter(parameter.clone()));
     }
     resolve_direct_call(operand, index, workspace_complete)
+}
+
+/// The same-file constants a local's initializer names, as name and plain
+/// decimal value. A constant declared twice, imported, or with a value
+/// ripr cannot read as one decimal literal is left out, so the evaluator
+/// fails closed on that name instead of guessing.
+pub(super) fn initializer_constants(
+    owner: &FunctionSummary,
+    initializer: &str,
+    parameters: &[String],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<(String, String)> {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return Vec::new();
+    };
+    free_identifiers(initializer)
+        .into_iter()
+        .filter(|name| {
+            is_constant_like(name)
+                && !matches!(name.as_str(), "true" | "false")
+                && !parameters.contains(name)
+                && !name_rebound_in_owner(owner, name)
+                && !name_imported_in_file(&facts.source, name)
+        })
+        .filter_map(|name| {
+            let constant = crate::analysis::value_resolution::named_constant(&facts.source, &name);
+            if !constant.is_declared_once() {
+                return None;
+            }
+            let value = constant.value()?.to_string();
+            Some((name, value))
+        })
+        .collect()
 }
 
 /// Decompose a direct-call text (`is_word_start(input, 0)`) into the
@@ -572,10 +721,16 @@ fn exact_operand_for_row(
     workspace_complete: bool,
 ) -> Option<ExactOperand> {
     match resolved {
-        ResolvedOperand::Local(name, initializer) => {
-            match super::value_transfer::evaluate_initializer(initializer, inputs) {
+        ResolvedOperand::Local(name, initializer, constants) => {
+            let mut with_constants = inputs.clone();
+            for (constant, value) in constants {
+                with_constants
+                    .entry(constant.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            match super::value_transfer::evaluate_initializer(initializer, &with_constants) {
                 super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
-                    exact_operand_from_evaluation(name, &value, &provenance, inputs),
+                    exact_operand_from_evaluation(name, &value, &provenance, &with_constants),
                 ),
                 _ => None,
             }
@@ -629,6 +784,43 @@ fn exact_operand_for_row(
             })
         }
     }
+}
+
+/// Whether the parameter a local is compared against holds a value the
+/// local can meet in this row. A local that folds to a plain integer meets
+/// only a plain integer cell: a string cell is the literal inside a call
+/// argument (`to_string(parse("128.000 GiB"), true)`), not the compared
+/// number, so such a row says nothing about the boundary. No counterpart
+/// parameter, or no cell for it, leaves the row as it was.
+fn counterpart_is_comparable(
+    row: &[ParameterValue],
+    counterpart: Option<&str>,
+    local_value: &str,
+) -> bool {
+    fn plain_decimal(text: &str) -> bool {
+        let digits = text.trim().replace('_', "");
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    }
+    let Some(cell) = counterpart.and_then(|parameter| parameter_value(row, parameter)) else {
+        return true;
+    };
+    !plain_decimal(local_value) || plain_decimal(&cell.value)
+}
+
+/// Whether two exact operand renderings are the same value. Equal text is
+/// equal; two plain decimal integers are equal when their digits are, so a
+/// test's `1_024` meets the evaluator's `1024`. A suffixed, signed, or
+/// non-decimal literal is compared as text only, never parsed from a guess.
+fn exact_values_equal(left: &str, right: &str) -> bool {
+    fn plain_decimal(text: &str) -> Option<String> {
+        let digits = text.trim().replace('_', "");
+        (!digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
+            .then(|| digits.trim_start_matches('0').to_string())
+    }
+    left == right
+        || plain_decimal(left)
+            .zip(plain_decimal(right))
+            .is_some_and(|(left, right)| left == right)
 }
 
 /// The parameter names implied by a row's cells, in binding order.
@@ -834,6 +1026,28 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    // A returned bare comparison reads the same boundary, but only a
+    // resolved gap counts: a boundary the lens cannot read leaves the
+    // return-value reading as it was and sets no unresolved reason.
+    let mut returned_unresolved = None;
+    if let Some(view) = returned_comparison_view(probe)
+        && let Some(fact) = missing_boundary_discriminator(
+            &view,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            &mut returned_unresolved,
+        )
+        && returned_unresolved.is_none()
+        && !owner_fn.is_some_and(|owner| {
+            observed_input_separates_threshold_move(&view, owner, related_tests)
+        })
+    {
+        missing.push(fact);
+    }
     if (matches!(probe.family, ProbeFamily::ErrorPath)
         || flow_sinks
             .iter()
@@ -881,6 +1095,243 @@ fn missing_discriminator_facts(
         return Vec::new();
     }
     missing
+}
+
+/// Whether the owner may compare something other than the caller's value for
+/// `name`. Coarse and fail-closed: true when `name` occurs as a token in the
+/// body before the probe line at all (any `let`, `for`, `if let`, `while let`,
+/// match-arm or closure binding, or any use that could feed a rebinding), when
+/// the probe line itself carries a binding form beside it, or when `name` is
+/// ever assigned or bound `mut`. A true result only declines the
+/// intermediate-input reading and keeps the gap (#9147).
+fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let tokens = |text: &str| {
+        text.match_indices(name)
+            .filter(|(start, _)| {
+                !text[..*start].chars().next_back().is_some_and(is_word)
+                    && !text[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start)
+            .collect::<Vec<_>>()
+    };
+    let lines: Vec<&str> = masked.lines().collect();
+    let probe_index = predicate_line.saturating_sub(owner.start_line);
+    // The signature is everything up to the body's opening brace.
+    let body_start = masked.find('{').map_or(0, |at| at + 1);
+    let before_probe = lines
+        .iter()
+        .take(probe_index)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if before_probe.len() > body_start && !tokens(&before_probe[body_start..]).is_empty() {
+        return true;
+    }
+    let probe_text = if probe_index == 0 {
+        lines
+            .first()
+            .map_or("", |line| &line[body_start.min(line.len())..])
+    } else {
+        lines.get(probe_index).copied().unwrap_or("")
+    };
+    if !tokens(probe_text).is_empty()
+        && ["let ", "|", "=>", " in ", "match "]
+            .iter()
+            .any(|form| probe_text.contains(form))
+    {
+        return true;
+    }
+    tokens(&masked)
+        .into_iter()
+        .any(|start| name_assigned_or_mut(&masked, name, start))
+}
+
+/// Whether the `name` token at `start` in the masked body is assigned or
+/// bound `mut`.
+fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
+    let after = masked[start + name.len()..].trim_start();
+    let assigned = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+    assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether the owner's body mentions `name` anywhere before the line that
+/// holds `initializer`. A flag the initializer reads must still be the
+/// caller's parameter there; any earlier mention (a `for si in ..`, an
+/// `if let Some(si)`, a closure or match-arm binding, or a use that feeds
+/// a rebinding) declines the read, as the scope is not tracked.
+fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    // The last occurrence, so a duplicate of the initializer text earlier in
+    // the body (which itself mentions the flag) can never hide a rebinding.
+    let Some(at) = owner.body.rfind(initializer.trim()) else {
+        return true;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let before = &masked[open + 1..at.max(open + 1)];
+    before.match_indices(name).any(|(start, _)| {
+        !before[..start].chars().next_back().is_some_and(is_word)
+            && !before[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// Whether the file brings `name` in with a `use` line, so a constant of
+/// that name declared elsewhere in the file is not the one the owner reads.
+pub(super) fn name_imported_in_file(source: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .any(|line| {
+            line.match_indices(name).any(|(start, _)| {
+                !line[..start].chars().next_back().is_some_and(is_word)
+                    && !line[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        })
+}
+
+/// Whether the owner rebinds `name` anywhere in its body: a `let`, or an
+/// assignment or `mut` binding of it. A flag or constant a local's
+/// initializer names must be the caller's value or the file's constant, so
+/// any rebinding declines the read (the verdict stays unresolved).
+fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
+    if owner_declares_local(owner, name, usize::MAX) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    // A destructuring `let (si, _) = ...;`, `let Some(si) = ... else`, or a
+    // local `const`/`static` binds the name in the pattern left of `=`.
+    let binds_in_pattern = masked.split([';', '\n']).any(|statement| {
+        let statement = statement.trim_start();
+        ["let ", "const ", "static "]
+            .iter()
+            .any(|keyword| statement.starts_with(keyword))
+            && statement.split('=').next().is_some_and(|pattern| {
+                pattern
+                    .match_indices(name)
+                    .any(|(at, _)| is_token(pattern, at))
+            })
+    });
+    if binds_in_pattern {
+        return true;
+    }
+    masked.match_indices(name).any(|(start, _)| {
+        !masked[..start].chars().next_back().is_some_and(is_word)
+            && !masked[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+            && name_assigned_or_mut(&masked, name, start)
+    })
+}
+
+/// Whether an observed exact input of the compared parameter separates the old
+/// and new returned comparison when only its integer-literal threshold moved
+/// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
+/// input is a discriminator even though it equals neither threshold, so the
+/// equality-boundary gap must not be borrowed (#9147). Fail-closed: any shape
+/// this cannot read exactly (a different operand, a non-parameter or reversed
+/// left side, a suffixed or computed literal, a non-integer input) declines
+/// and leaves the gap in place.
+fn observed_input_separates_threshold_move(
+    view: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+) -> bool {
+    fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let (left, right) = (clean_operand(left), clean_operand(right));
+                if left.is_empty() {
+                    return None;
+                }
+                return Some((operator, left, plain_integer(&right)?));
+            }
+        }
+        None
+    }
+    fn plain_integer(text: &str) -> Option<i128> {
+        let digits = text.trim().replace('_', "");
+        let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+        if unsigned.is_empty() || !unsigned.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+    fn holds(operator: &str, value: i128, threshold: i128) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let Some(before) = view.before.as_deref() else {
+        return false;
+    };
+    let (Some((old_op, old_left, old_threshold)), Some((new_op, new_left, new_threshold))) =
+        (parts(before), parts(&view.expression))
+    else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    if old_left != new_left
+        || !parameters.contains(&new_left)
+        || parameter_may_be_rebound(owner, &new_left, view.location.line)
+    {
+        return false;
+    }
+    // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
+    // may be another function, so a qualified call is never a separating
+    // input. Helper-transferred rows are not read.
+    let call_pattern = format!("{}(", owner.name);
+    owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |_, call| {
+            call.text.match_indices(&call_pattern).all(|(start, _)| {
+                !call.text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == ':' || ch == '.')
+            })
+        },
+        &ReceiverParameters::none(),
+    )
+    .iter()
+    .filter_map(|row| parameter_value(row, &new_left))
+    .filter_map(|cell| plain_integer(&cell.value))
+    .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
 }
 
 #[allow(
@@ -1033,7 +1484,7 @@ fn missing_boundary_discriminator(
         lefts.iter().any(|left_value| {
             rights
                 .iter()
-                .any(|right_value| right_value.value == left_value.value)
+                .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
         })
     });
 
@@ -1087,21 +1538,28 @@ fn missing_boundary_discriminator(
     // argument (#6672), no row says which side of the boundary a test
     // sits on, so naming a missing equality value would ask for a test
     // that may already exist. The boundary stays unresolved instead.
-    let operand_evaluates = |resolved: Option<&ResolvedOperand>| {
+    let operand_evaluates = |resolved: Option<&ResolvedOperand>, counterpart: Option<&str>| {
         resolved.is_some_and(|resolved| {
             call_values.iter().any(|row| {
                 let inputs: super::value_transfer::ExactInputs = row
                     .iter()
                     .map(|cell| (cell.parameter.clone(), cell.value.clone()))
                     .collect();
-                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete).is_some()
+                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                    .is_some_and(|exact| {
+                        !matches!(resolved, ResolvedOperand::Local(..))
+                            || counterpart_is_comparable(row, counterpart, &exact.value)
+                    })
             })
         })
     };
     // A constant-shaped operand keeps its own named-constant route.
-    let unknown = |operand: &str, parameter: Option<&str>, resolved: Option<&ResolvedOperand>| {
+    let unknown = |operand: &str,
+                   parameter: Option<&str>,
+                   resolved: Option<&ResolvedOperand>,
+                   counterpart: Option<&str>| {
         parameter.is_none()
-            && !operand_evaluates(resolved)
+            && !operand_evaluates(resolved, counterpart)
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
@@ -1110,12 +1568,24 @@ fn missing_boundary_discriminator(
     // row says which side of the boundary a test reaches either, so both
     // operands are named and the boundary stays unresolved.
     let unknown_operands = [
-        (&left, left_parameter.as_deref(), left_resolved.as_ref()),
-        (&right, right_parameter.as_deref(), right_resolved.as_ref()),
+        (
+            &left,
+            left_parameter.as_deref(),
+            left_resolved.as_ref(),
+            right_parameter.as_deref(),
+        ),
+        (
+            &right,
+            right_parameter.as_deref(),
+            right_resolved.as_ref(),
+            left_parameter.as_deref(),
+        ),
     ]
     .into_iter()
-    .filter(|(operand, parameter, resolved)| unknown(operand, *parameter, *resolved))
-    .map(|(operand, _, _)| operand.as_str())
+    .filter(|(operand, parameter, resolved, counterpart)| {
+        unknown(operand, *parameter, *resolved, *counterpart)
+    })
+    .map(|(operand, _, _, _)| operand.as_str())
     .collect::<Vec<_>>();
     if let Some(reason) = unresolved_boundary_input(
         owner,
@@ -1416,6 +1886,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            file: None,
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -2829,9 +3300,46 @@ fn owner_call_parameter_values(
     free_owner: bool,
     parameters: &[String],
 ) -> Vec<Vec<ParameterValue>> {
-    owner_call_parameter_values_where(related_tests, owner_name, free_owner, parameters, |_, _| {
-        true
-    })
+    owner_call_parameter_values_where(
+        related_tests,
+        owner_name,
+        free_owner,
+        parameters,
+        |_, _| true,
+        &ReceiverParameters::none(),
+    )
+}
+
+/// The entry parameters a method hop calls a method on (#9329), with the one
+/// reader of their argument text. A receiver parameter's cell is the
+/// canonical constructed string of its argument, or absent; it never takes
+/// the scalar a compound argument would otherwise lend it.
+struct ReceiverParameters<'a> {
+    names: Vec<String>,
+    value: Option<&'a ReceiverReader<'a>>,
+}
+
+type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+impl<'a> ReceiverParameters<'a> {
+    fn none() -> Self {
+        Self {
+            names: Vec::new(),
+            value: None,
+        }
+    }
+
+    fn cell(&self, parameter: &str, argument: &str) -> Option<Vec<String>> {
+        if !self.names.iter().any(|name| name == parameter) {
+            return None;
+        }
+        Some(
+            self.value
+                .and_then(|read| read(argument))
+                .into_iter()
+                .collect(),
+        )
+    }
 }
 
 /// `owner_call_parameter_values` over only the calls `keep` admits.
@@ -2841,6 +3349,7 @@ fn owner_call_parameter_values_where(
     free_owner: bool,
     parameters: &[String],
     keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
+    receivers: &ReceiverParameters<'_>,
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
@@ -2867,6 +3376,10 @@ fn owner_call_parameter_values_where(
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
+                    let parameter = parameters.get(idx)?;
+                    if let Some(values) = receivers.cell(parameter, argument) {
+                        return Some((parameter, values, argument.trim(), false));
+                    }
                     let values = owner_argument_values(test, argument);
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
@@ -2874,7 +3387,7 @@ fn owner_call_parameter_values_where(
                             argument.trim(),
                         )
                         .is_some();
-                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
+                    Some((parameter, values, argument.trim(), table_column))
                 })
                 .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
@@ -2910,6 +3423,7 @@ fn owner_call_parameter_values_where(
                             value: value.clone(),
                             line: call.line,
                             text: call.text.to_string(),
+                            file: Some(test.file.clone()),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -2968,7 +3482,7 @@ fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bo
             .all(|name| is_constant_like(name) || is_exact(name))
 }
 
-fn is_constant_like(name: &str) -> bool {
+pub(super) fn is_constant_like(name: &str) -> bool {
     matches!(name, "true" | "false")
         || (name.chars().any(|ch| ch.is_ascii_uppercase())
             && name
@@ -2980,7 +3494,7 @@ fn is_constant_like(name: &str) -> bool {
 /// macro name, a method or field after `.`, a path segment beside `::`, a
 /// type after `as`, a numeric literal or its suffix, or a char/byte
 /// literal's contents. Strings and comments are masked first.
-fn free_identifiers(text: &str) -> Vec<String> {
+pub(super) fn free_identifiers(text: &str) -> Vec<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
     let mut names = Vec::new();
@@ -3135,6 +3649,21 @@ pub(in crate::analysis) fn computed_input_parameters(
     computed
 }
 
+/// Capitalized identifiers in call text that are applied or path-qualified
+/// (`Size(..)`, `Size::new(..)`): the names a receiver argument may construct.
+fn constructor_names(text: &str) -> impl Iterator<Item = &str> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(|ch: char| ch.is_ascii_uppercase())
+        .filter(move |(at, _)| !text[..*at].chars().next_back().is_some_and(is_word))
+        .filter_map(move |(at, _)| {
+            let end = text[at..]
+                .find(|ch: char| !is_word(ch))
+                .map_or(text.len(), |n| at + n);
+            let after = &text[end..];
+            (after.starts_with('(') || after.starts_with("::")).then(|| &text[at..end])
+        })
+}
+
 /// Bind the entry function's direct test rows down the resolved chain
 /// to the owner's parameters. Each hop's call-site arguments bind
 /// positionally: a literal binds directly, the caller's own parameter
@@ -3156,6 +3685,14 @@ fn helper_transferred_rows(
     // #6780 Devin review: an entry call shadowed by a test-local closure or
     // nested fn never reaches the helper, so it binds no row (the same
     // shadow authority that denies its `helper_owner_call` relation).
+    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
+    // is the one parameter whose cell is a constructed receiver string.
+    let receiver_reader =
+        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receivers = ReceiverParameters {
+        names: entry.receiver.iter().cloned().collect(),
+        value: Some(&receiver_reader),
+    };
     let mut rows = owner_call_parameter_values_where(
         related_tests,
         &entry.caller.name,
@@ -3167,8 +3704,13 @@ fn helper_transferred_rows(
                 test,
                 &entry.caller.name,
                 call.line,
-            )
+            ) && !constructor_names(&call.text).any(|name| {
+                // #9329 Devin review: a test-local `let Size = |n| ..` makes
+                // `Size(1024)` something other than the tuple constructor.
+                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
+            })
         },
+        &receivers,
     );
     if rows.is_empty() {
         return Vec::new();
@@ -3217,6 +3759,24 @@ fn helper_transferred_rows(
                         .first()
                         .map(|cell| cell.text.clone())
                         .unwrap_or_default(),
+                    file: row.first().and_then(|cell| cell.file.clone()),
+                });
+            }
+            // #9329: a method hop hands its callee the receiver's value as
+            // the pseudo-parameter `self`, readable only as `self.<index>`.
+            // The owner (step 0) has no lower hop to read it, so no `self`
+            // cell ever lands in an owner row.
+            if step > 0
+                && let Some(receiver) = &hop.receiver
+                && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
+                && super::helper_transfer::is_receiver_cell(&cell.value)
+            {
+                bound.push(ParameterValue {
+                    parameter: RECEIVER_PSEUDO_PARAMETER.to_string(),
+                    value: cell.value.clone(),
+                    line: cell.line,
+                    text: cell.text.clone(),
+                    file: cell.file.clone(),
                 });
             }
             bound_rows.push(bound);
@@ -3241,15 +3801,29 @@ fn bind_helper_argument(
         return Some(literal);
     }
     let trimmed = argument.trim();
+    // #9329: exactly `self.<tuple index>`, read from the pseudo-parameter
+    // cell a method hop above handed down. Nothing else names `self`.
+    if let Some(field) = trimmed.strip_prefix("self.") {
+        return row
+            .iter()
+            .find(|cell| cell.parameter == RECEIVER_PSEUDO_PARAMETER)
+            .and_then(|cell| super::helper_transfer::project_receiver_field(&cell.value, field));
+    }
     caller_parameters
         .iter()
         .find(|parameter| parameter.as_str() == trimmed)
         .and_then(|parameter| {
             row.iter()
                 .find(|cell| cell.parameter == *parameter)
+                // A constructed receiver string is read only through
+                // `self.<index>`; it never binds as a parameter value.
+                .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
                 .map(|cell| cell.value.clone())
         })
 }
+
+/// The pseudo-parameter a method hop hands its callee for the receiver.
+const RECEIVER_PSEUDO_PARAMETER: &str = "self";
 
 fn parameter_value(row: &[ParameterValue], parameter: &str) -> Option<ParameterValue> {
     row.iter()
@@ -3287,10 +3861,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
 /// text before the parameter's first `:`, so a destructuring pattern is not
 /// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     parameters_in_arguments(&arguments)
@@ -3305,10 +3876,7 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// binds. Field names in a pattern are kept too, which only widens the
 /// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3322,10 +3890,7 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
 /// `i`. A parameter whose pattern binds more or fewer than one name
 /// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
 pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3344,6 +3909,22 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The contents of `function`'s parameter list with comments and strings
+/// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
+/// signature cannot add, split or shift parameter names (#7840).
+/// The top-level parameter texts of `function`'s whole signature, including a
+/// `self` receiver (`&self`, `b: ByteSize`), in order.
+pub(super) fn signature_parameter_texts(function: &FunctionSummary) -> Vec<String> {
+    signature_arguments(function)
+        .map(|arguments| split_top_level_args(&arguments))
+        .unwrap_or_default()
+}
+
+fn signature_arguments(function: &FunctionSummary) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
 }
 
 /// The `(` opening the parameter list: the first one after `fn` that sits
@@ -3623,6 +4204,165 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
         let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
         local_name.trim() == operand && right.trim() == parameter
     })
+}
+
+/// A `return_value` probe's changed expression is one bare relational
+/// comparison (`x > 101`), so the returned bool is the changed predicate and
+/// its boundary is the boundary a `predicate` probe on the same line reads.
+/// When the predicate lens resolves a missing boundary discriminator for it,
+/// the probe reads that gap too: reaching the owner with inputs that never
+/// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// or non-comparison expression keeps the return-value reading.
+///
+/// The probe re-read as the bare comparison it returns, when it is one. An
+/// explicit `return x > 101;` is the same returned comparison as the implicit
+/// tail `x > 101`, so a leading `return ` and trailing `;` are dropped from the
+/// changed and prior text before boundary extraction (#9116). Only the
+/// comparison itself is exposed: a comparison nested in a call, index,
+/// turbofish or compound value never normalises to one and keeps the
+/// return-value reading.
+pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let (expression, explicit) = strip_explicit_return(&probe.expression);
+    if explicit && !is_top_level_comparison(&expression) {
+        return None;
+    }
+    let before = probe.before.as_deref().map(|before| {
+        let (before, before_explicit) = strip_explicit_return(before);
+        (before, before_explicit)
+    });
+    if let Some((before, true)) = &before
+        && !is_top_level_comparison(before)
+    {
+        return None;
+    }
+    if expression.contains("&&")
+        || expression.contains("||")
+        || comparison_operands(&expression).is_none()
+        || !before
+            .as_ref()
+            .is_some_and(|(before, _)| same_comparison_shape(before, &expression))
+    {
+        return None;
+    }
+    let mut view = probe.clone();
+    view.expression = expression;
+    view.before = before.map(|(before, _)| before);
+    Some(view)
+}
+
+/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return`
+/// keyword comes back unchanged and `false`. The keyword must be followed by
+/// whitespace (space, tab, newline), so `returnx > 1`, `return_x > 1` and
+/// `returned > 1` stay identifiers.
+fn strip_explicit_return(text: &str) -> (String, bool) {
+    let trimmed = text.trim();
+    match trimmed.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => {
+            (rest.trim().trim_end_matches(';').trim().to_string(), true)
+        }
+        _ => (text.to_string(), false),
+    }
+}
+
+/// One relational comparison whose operator sits outside every bracket, with
+/// no turbofish: `x > 101` and `(a + 1) > 5` qualify; `f(a > 1)`,
+/// `v[a > 1]` and `x.parse::<i32>() > 5` do not.
+fn is_top_level_comparison(expression: &str) -> bool {
+    if expression.contains("::<") {
+        return false;
+    }
+    let chars: Vec<char> = expression.chars().collect();
+    let mut depth = 0i32;
+    let mut top_level = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars.get(index).copied().unwrap_or(' ');
+        index += 1;
+        match ch {
+            '"' => {
+                // A raw string has no escapes; its end cannot be found by this
+                // scan, so it is not a recognised comparison.
+                if matches!(
+                    index.checked_sub(2).and_then(|i| chars.get(i)),
+                    Some('r' | '#')
+                ) {
+                    return false;
+                }
+                loop {
+                    match chars.get(index) {
+                        None => return false,
+                        Some('\\') => index += 2,
+                        Some('"') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(_) => index += 1,
+                    }
+                }
+            }
+            '\'' => {
+                // Only a `'x'` or `'\...'` shape is a char literal; anything
+                // else (`'a` lifetimes, labels) keeps the plain scan.
+                if chars.get(index) == Some(&'\\') {
+                    // Skip the backslash and the escaped char, then find the
+                    // closing quote (`'\n'`, `'\''`, `'\x41'`, `'\u{41}'`).
+                    match chars
+                        .get(index + 2..)
+                        .and_then(|rest| rest.iter().position(|c| *c == '\''))
+                    {
+                        Some(offset) => index += 2 + offset + 1,
+                        None => return false,
+                    }
+                } else if chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                }
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            '<' | '>' | '=' | '!' if depth == 0 => top_level += 1,
+            '<' | '>' => return false,
+            _ => {}
+        }
+    }
+    depth == 0 && top_level > 0
+}
+
+/// Whether `before` and `after` are bare comparisons in the same operator
+/// family (`>`/`>=`, `<`/`<=`, `==`, `!=`) on the same left operand, so only
+/// the boundary differs. An operator change across families (`x == 100` to
+/// `x > 101`) can separate the versions at an off-boundary input, so it keeps
+/// the return-value reading.
+fn same_comparison_shape(before: &str, after: &str) -> bool {
+    fn operator_and_left(expression: &str) -> Option<(&'static str, String)> {
+        for (operator, family) in [
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "=="),
+            ("!=", "!="),
+            (">", ">"),
+            ("<", "<"),
+        ] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let left = clean_operand(left);
+                if !left.is_empty() && !clean_operand(right).is_empty() {
+                    return Some((family, left));
+                }
+            }
+        }
+        None
+    }
+    match (operator_and_left(before), operator_and_left(after)) {
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
 }
 
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
@@ -4035,6 +4775,10 @@ pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            // Same line/value/text from two files still collapses to one fact
+            // (the first file in path order), exactly as before #8389, so the
+            // JSON observed values and totals do not move.
+            .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
         left.line == right.line
@@ -4523,7 +5267,123 @@ fn looks_like_builder_method(line: &str) -> bool {
 }
 
 #[cfg(test)]
+mod method_hop_rows;
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn a_constant_the_file_imports_is_not_read_from_a_same_named_declaration() {
+        let source = "mod a { pub const KB: u64 = 1000; }\nmod b {\n    use external::KB;\n}\n";
+        assert!(name_imported_in_file(source, "KB"));
+        assert!(name_imported_in_file("pub use other::{KB, KIB};", "KIB"));
+        assert!(!name_imported_in_file(source, "KIB"));
+        // A longer name that merely contains it, and a comment, are not imports.
+        assert!(!name_imported_in_file("use external::KBPS;\n", "KB"));
+        assert!(!name_imported_in_file("// use external::KB;\n", "KB"));
+    }
+
+    #[test]
+    fn an_equality_fact_names_the_integer_a_local_evaluated_to() {
+        let local =
+            ResolvedOperand::Local("unit".into(), "if si { KIB } else { KB }".into(), vec![]);
+        let side =
+            |text, value, parameter, resolved| EqualitySide::new(text, value, parameter, resolved);
+        // A parameter against an evaluated local reads like the literal
+        // comparison, whichever side the local sits on.
+        assert_eq!(
+            equality_value(
+                &side("bytes", "1024", Some("bytes"), None),
+                &side("unit", "1024", None, Some(&local)),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        assert_eq!(
+            equality_value(
+                &side("unit", "1024", None, Some(&local)),
+                &side("bytes", "1024", Some("bytes"), None),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        // A boolean local, or two non-parameter operands, keep their text.
+        let open = ResolvedOperand::Local("open".into(), "label.starts_with(\"p\")".into(), vec![]);
+        assert_eq!(
+            equality_value(
+                &side("open", "true", None, Some(&open)),
+                &side("want", "true", Some("want"), None),
+            ),
+            ("open == want".to_string(), false)
+        );
+        assert_eq!(
+            equality_value(
+                &side("a", "1", None, Some(&local)),
+                &side("b", "1", None, Some(&local)),
+            ),
+            ("a == b".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn a_duplicate_of_the_initializer_text_cannot_hide_a_flag_rebinding() {
+        let init = "if si { KIB } else { KB }";
+        let body =
+            format!("{{\n let _u0 = {init};\n for si in [false] {{\n let unit = {init};\n }}\n}}");
+        let owner = function(&body);
+        assert!(name_seen_before(&owner, "si", init));
+        let single = function(&format!("{{\n let unit = {init};\n}}"));
+        assert!(!name_seen_before(&single, "si", init));
+    }
+
+    #[test]
+    fn exact_values_compare_plain_decimals_by_digits_only() {
+        assert!(exact_values_equal("1024", "1_024"));
+        assert!(exact_values_equal("1_000", "1000"));
+        assert!(exact_values_equal("\"a\"", "\"a\""));
+        // A suffixed, hex, signed or different value is never parsed into
+        // equality.
+        assert!(!exact_values_equal("1024", "1024u64"));
+        assert!(!exact_values_equal("1024", "0x400"));
+        assert!(!exact_values_equal("1024", "-1024"));
+        assert!(!exact_values_equal("1024", "1_025"));
+        assert!(!exact_values_equal("\"1024\"", "1024"));
+    }
+
+    #[test]
+    fn an_integer_local_meets_only_an_integer_counterpart_cell() {
+        let row = |value: &str| {
+            vec![ParameterValue {
+                parameter: "bytes".to_string(),
+                value: value.to_string(),
+                line: 1,
+                text: String::new(),
+                file: None,
+            }]
+        };
+        assert!(counterpart_is_comparable(
+            &row("1_024"),
+            Some("bytes"),
+            "1024"
+        ));
+        // The literal inside `to_string(parse("128.000 GiB"), true)` is not
+        // the compared number.
+        assert!(!counterpart_is_comparable(
+            &row("\"128.000 GiB\""),
+            Some("bytes"),
+            "1024"
+        ));
+        // Nothing to compare against leaves the row as it was.
+        assert!(counterpart_is_comparable(&row("\"x\""), None, "1024"));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("other"),
+            "1024"
+        ));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("bytes"),
+            "\"y\""
+        ));
+    }
+
     #[test]
     fn constructed_field_name_reads_plain_and_shorthand_initializers() {
         assert_eq!(constructed_field_name("retries: 1,"), Some("retries"));
@@ -4907,6 +5767,18 @@ mod tests {
         );
         let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
         assert!(function_parameters(&no_params).is_empty());
+    }
+
+    #[test]
+    fn signature_comments_do_not_shift_parameter_names() {
+        // #7840: a trailing comment holding a comma and a colon is not a
+        // parameter, for all three signature readers.
+        let commented = function(
+            "pub fn tier(\n    lo: u8, // lo: a, b: c\n    hi: u8, /* x: y, z: w */\n) -> u8 {\n    0\n}",
+        );
+        assert_eq!(function_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(signature_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(call_parameter_names(&commented), vec!["lo", "hi"]);
     }
 
     #[test]
@@ -5689,6 +6561,39 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
     }
 
+    /// #8999: a call through a local alias reads the alias call's own
+    /// arguments, never a target-looking quoted substring on the same line.
+    #[test]
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text() {
+        let owner = function("pub fn score(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::score;\nassert_eq!(f(7), \"score(100)\");";
+        let test = TestSummary {
+            name: "alias_call".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(&test, Some(&owner));
+        let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
+
+        assert!(
+            values.iter().any(|value| value.ends_with("7")),
+            "{values:?}"
+        );
+        assert!(
+            !values.iter().any(|value| value.contains("100")),
+            "{values:?}"
+        );
+    }
+
     #[test]
     fn value_facts_for_test_filters_non_owner_calls_and_reads_enum_call_arguments() {
         let owner = function(
@@ -6256,6 +7161,82 @@ assert_eq!(input.amount, 100);"#
         }
     }
 
+    /// #9116: an explicit `return` normalises only to a top-level comparison.
+    #[test]
+    fn explicit_return_normalises_only_a_top_level_comparison() {
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| (v.expression, v.before))
+        };
+        assert_eq!(
+            view("return x > 100", "return x > 101;"),
+            Some(("x > 101".to_string(), Some("x > 100".to_string())))
+        );
+        assert_eq!(
+            view("x > 100", "x > 101").map(|v| v.0),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(view("return f(x > 100)", "return f(x > 101)"), None);
+        assert_eq!(view("return v[x > 1]", "return v[x > 2]"), None);
+        assert_eq!(
+            view("return x.parse::<i32>() > 5", "return x.parse::<i32>() > 6"),
+            None
+        );
+        assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
+        assert_eq!(view("return x == 100", "return x > 101"), None);
+    }
+
+    /// #9145 keyword boundary: `return` is stripped before any whitespace, never
+    /// inside an identifier.
+    #[test]
+    fn explicit_return_keyword_needs_a_whitespace_boundary() {
+        let strip = |text: &str| strip_explicit_return(text);
+        assert_eq!(strip("return x > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\tx > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\nx > 1;"), ("x > 1".to_string(), true));
+        for identifier in ["returnx > 1", "return_x > 1", "returned > 1", "return"] {
+            assert_eq!(strip(identifier), (identifier.to_string(), false));
+        }
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| v.expression)
+        };
+        assert_eq!(
+            view("return\tx > 100", "return\tx > 101;"),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(
+            view("returned > 100", "returned > 101"),
+            Some("returned > 101".to_string())
+        );
+    }
+
+    /// #9145 literals: brackets and operators inside string or char literals do
+    /// not change depth or count as the comparison; lifetimes are not literals.
+    #[test]
+    fn top_level_comparison_skips_string_and_char_literals() {
+        assert!(is_top_level_comparison(r#"s == ")""#));
+        assert!(is_top_level_comparison(r#"s == "(""#));
+        assert!(is_top_level_comparison(r#"s == "a\"(" "#.trim()));
+        assert!(is_top_level_comparison("c == ')'"));
+        assert!(is_top_level_comparison("c == '('"));
+        assert!(is_top_level_comparison("c == '\\''"));
+        assert!(is_top_level_comparison("c == '\\n'"));
+        // Operators inside a literal are not the comparison.
+        assert!(!is_top_level_comparison(r#""a<b""#));
+        assert!(!is_top_level_comparison(r#"f("x", y > 1)"#));
+        // A bracket in a literal does not hide a real nested comparison.
+        assert!(!is_top_level_comparison(r#"f(")", a > 1)"#));
+        // Unterminated strings and raw strings fail closed.
+        assert!(!is_top_level_comparison(r#"s == "abc"#));
+        assert!(!is_top_level_comparison(r##"s == r#"a"#"##));
+        // Lifetimes keep the plain scan.
+        assert!(is_top_level_comparison("p(&'a x) > 1"));
+        assert!(!is_top_level_comparison("f(&'a str, a > 1)"));
+    }
+
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
     /// parameter `i`, receiver excluded.
     #[test]
@@ -6346,6 +7327,7 @@ assert_eq!(input.amount, 100);"#
 
     fn value_fact(line: usize, text: &str, value: &str, context: ValueContext) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -7019,12 +8001,14 @@ assert_eq!(input.amount, 100);"#
                     caller: inner.clone(),
                     call_text: format!("score({owner_argument})"),
                     arguments: vec![owner_argument.to_string()],
+                    receiver: None,
                     through_macro: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
                     call_text: "inner(x)".to_string(),
                     arguments: vec!["x".to_string()],
+                    receiver: None,
                     through_macro: false,
                 },
             ],

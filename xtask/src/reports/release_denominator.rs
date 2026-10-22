@@ -1982,7 +1982,7 @@ fn escape_cell(value: &str) -> String {
     value.replace('|', "\\|").replace(['\n', '\r'], " ")
 }
 
-fn digest_json<T: Serialize>(value: &T) -> Result<String, String> {
+pub(super) fn digest_json<T: Serialize>(value: &T) -> Result<String, String> {
     let bytes =
         serde_json::to_vec(value).map_err(|error| format!("failed to hash JSON: {error}"))?;
     let digest = Sha256::digest(bytes);
@@ -1995,7 +1995,7 @@ fn digest_json<T: Serialize>(value: &T) -> Result<String, String> {
     ))
 }
 
-fn is_sha(value: &str) -> bool {
+pub(super) fn is_sha(value: &str) -> bool {
     value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 

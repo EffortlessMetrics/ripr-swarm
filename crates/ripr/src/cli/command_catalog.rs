@@ -183,6 +183,7 @@ pub(crate) enum CommandDispatch {
     Explain,
     Context,
     Doctor,
+    Capabilities,
     Lsp,
     PrSummary,
     Annotations,
@@ -715,6 +716,11 @@ const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:explain", "explain", CommandDispatch::Explain),
     public_top("cmd:context", "context", CommandDispatch::Context),
     public_top("cmd:doctor", "doctor", CommandDispatch::Doctor),
+    public_top(
+        "cmd:capabilities",
+        "capabilities",
+        CommandDispatch::Capabilities,
+    ),
     public_top("cmd:lsp", "lsp", CommandDispatch::Lsp),
     public_top("cmd:cache", "cache", CommandDispatch::Cache),
     nested(
@@ -1475,6 +1481,30 @@ mod tests {
             .filter_map(|entry| entry.path.strip_prefix(&prefix))
             .filter(|child| !child.contains(' '))
             .collect()
+    }
+
+    #[test]
+    fn agent_subcommand_typos_suggest_every_catalog_child() -> Result<(), String> {
+        let children = catalog_children("agent");
+        assert!(!children.is_empty());
+        for child in children {
+            // A trailing extra character is one edit, without prefix matching.
+            let typo = format!("{child}x");
+            let error = match parse_agent_args(&args(&[&typo])) {
+                Err(error) => error,
+                Ok(command) => return Err(format!("agent {typo} was accepted: {command:?}")),
+            };
+            assert!(
+                error.contains(&format!("Did you mean `{child}`?")),
+                "agent {typo}: {error}"
+            );
+            // Mine the production error through the same catalog consumer used
+            // by the far-miss parity sweep below, including suggested errors.
+            let accepted = expected_subcommands_from_unknown_error(&error)?;
+            let accepted_refs: Vec<&str> = accepted.iter().map(String::as_str).collect();
+            assert!(two_way_path_violations(&catalog_children("agent"), &accepted_refs).is_empty());
+        }
+        Ok(())
     }
 
     #[test]

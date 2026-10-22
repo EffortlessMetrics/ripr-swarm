@@ -29,6 +29,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
+        mark_default_object_members(&ret.program.body, &mut owners);
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
         // can credit a test with observing it.
@@ -550,6 +551,80 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     }
 }
 
+/// Mark top-level function (or const arrow) owners held by the module's `export default {
+/// name }` object (RIPR-SPEC-0243 rule 5). Only an object made entirely of
+/// plain same-name entries qualifies: a spread, computed key, method, getter,
+/// renamed entry or duplicate key could replace or rebind a member, so any
+/// of them leaves every owner unmarked. A module with more than one default
+/// object export marks nothing.
+fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
+    use oxc_ast::ast::{ObjectPropertyKind, PropertyKey, PropertyKind};
+    let mut objects = body.iter().filter_map(|stmt| match stmt {
+        Statement::ExportDefaultDeclaration(export) => {
+            let mut expression = export.declaration.as_expression()?;
+            while let Expression::ParenthesizedExpression(paren) = expression {
+                expression = &paren.expression;
+            }
+            match expression {
+                Expression::ObjectExpression(object) => Some(object),
+                _ => None,
+            }
+        }
+        _ => None,
+    });
+    let (Some(object), None) = (objects.next(), objects.next()) else {
+        return;
+    };
+    let mut members: Vec<String> = Vec::new();
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return;
+        };
+        let (PropertyKind::Init, false, false) =
+            (property.kind, property.computed, property.method)
+        else {
+            return;
+        };
+        let (PropertyKey::StaticIdentifier(key), Expression::Identifier(value)) =
+            (&property.key, &property.value)
+        else {
+            return;
+        };
+        if key.name != value.name || members.iter().any(|seen| seen == key.name.as_str()) {
+            return;
+        }
+        members.push(key.name.to_string());
+    }
+    // An arrow owner qualifies only when its top-level binding is `const`:
+    // a `let`/`var` arrow can be rebound inside a nested function or block,
+    // which the top-level reassignment pass does not see.
+    let const_names: Vec<&str> = body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::VariableDeclaration(decl) => Some(&**decl),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => Some(&**decl),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|decl| decl.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+        .flat_map(|decl| decl.declarations.iter())
+        .flat_map(|declarator| declarator.id.get_binding_identifiers())
+        .map(|identifier| identifier.name.as_str())
+        .collect();
+    for owner in owners.iter_mut() {
+        let callable = match owner.owner_kind {
+            OwnerKind::Function => true,
+            OwnerKind::ArrowFunction => const_names.contains(&owner.name.as_str()),
+            _ => false,
+        };
+        if owner.class_name.is_none() && callable && members.contains(&owner.name) {
+            owner.default_object_member = true;
+        }
+    }
+}
+
 /// `module.exports` as a static member expression on the bare `module`
 /// identifier.
 fn is_module_exports(member: &StaticMemberExpression<'_>) -> bool {
@@ -753,6 +828,7 @@ pub(crate) fn owner_from_variable_declarator(
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
+            default_object_member: false,
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -806,6 +882,7 @@ pub(crate) fn owner_from_function(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -835,6 +912,7 @@ pub(crate) fn owner_from_arrow(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -905,6 +983,7 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1276,6 +1355,65 @@ pub(crate) fn detect_owner_extraction_gap(
         shape,
         snippet: snippet_for_span(source, span.0, span.1),
     })
+}
+
+/// Changed lines that sit inside a runtime enum member (`High = 3,`). The
+/// owner extractor indexes no enum, so such a line has no owner and the
+/// classifier returns nothing for it; without this the edit is silent apart
+/// from the file-level `typescript_owner_extraction_partial` disclosure
+/// (#9436). Ambient `declare enum` is type-only and never listed. A file that
+/// does not parse yields nothing, as its parse-error disclosure owns it.
+pub(crate) fn changed_enum_member_lines(
+    file: &Path,
+    source: &str,
+    changed_lines: &[usize],
+) -> std::collections::BTreeMap<usize, String> {
+    // A file without the keyword has no enum; skip the extra parse.
+    if changed_lines.is_empty() || !source.contains("enum") {
+        return std::collections::BTreeMap::new();
+    }
+    let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return std::collections::BTreeMap::new();
+        }
+        let raw = source;
+        let source = SourceText::new(source);
+        let mut lines = std::collections::BTreeMap::new();
+        let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
+            if decl.declare {
+                return;
+            }
+            for member in &decl.body.members {
+                let start = source.line_for_offset(member.span.start as usize);
+                let end = source.line_for_offset(member.span.end as usize);
+                // Enum and member names, not the line, identify the member so
+                // the finding id survives unrelated line shifts.
+                let name = raw
+                    .get(member.id.span().start as usize..member.id.span().end as usize)
+                    .unwrap_or("");
+                let identity = format!("{}::{name}", decl.id.name);
+                for line in (start..=end).filter(|line| changed.contains(line)) {
+                    lines.entry(line).or_insert_with(|| identity.clone());
+                }
+            }
+        };
+        for stmt in &ret.program.body {
+            match stmt {
+                Statement::TSEnumDeclaration(decl) => collect(decl),
+                Statement::ExportNamedDeclaration(export) => {
+                    if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref()
+                    {
+                        collect(decl);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines
+    })
+    .unwrap_or_default()
 }
 
 /// 1-based inclusive line ranges of top-level ambient declarations

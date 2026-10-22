@@ -976,3 +976,78 @@ The unchanged-after-attempt before/after corpus generation moves from 1.83 to
 1.84 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
 dependent verify/receipt byte hashes follow that exact change. Routing,
 unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8600 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.84 to
+1.85 for the call-fact budget withholding on repo seams. Content commitments
+and dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8948 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.85 to
+1.86 for the cached observed-value test file. Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #4680 / #9146 - module-motion classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.86 to 1.87. The actual normalized producer value was retained by the Rust-only
+CI run39597733101 on8d00251e when the strict producer-equality test exposed this
+stale pin. Recovery reproduced the prior fixture byte-for-byte, then verified
+that only the generation and its content commitment changed. The dependent
+verify commitments and receipt byte hashes bind those exact updated bytes.
+Semantic evidence, historical/noncurrent status, advisory output, unchanged
+movement, incomplete receipt routing and all tamper controls remain unchanged.
+This is a portable negative-control input update, not a new execution receipt.
+
+### #8051 - debug-assertion profile limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.87 to 1.88 for the `debug_assert_eq!` profile limit. Only the generation and
+its content commitment changed; the dependent verify commitments and receipt
+byte hashes bind those exact updated bytes. Semantic evidence, unchanged
+movement, incomplete receipt routing and all tamper controls remain unchanged.
+This is a portable negative-control input update, not a new execution receipt.
+
+### #8606 - mock call-count side-flip classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.88 to 1.89 for mock call-count side flips (RIPR-SPEC-0305). Only the
+generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### tokio spawned-task assertion pins classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.89 to 1.90 for joined `tokio::spawn` assertion pins (RIPR-SPEC-0197). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### skip-guarded table rows classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.90 to 1.91 for table loops that open with a literal skip-list guard
+(RIPR-SPEC-0229). Only the generation and its content commitment changed; the
+dependent verify commitments and receipt byte hashes bind those exact updated
+bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
+all tamper controls remain unchanged. This is a portable negative-control
+input update, not a new execution receipt.
+
+### caller-loop selector limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.91 to 1.92 for the caller-loop selector limit (RIPR-SPEC-0240, #5503). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.

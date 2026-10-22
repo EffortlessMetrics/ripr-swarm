@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_control_production_owner/input --diff <cwd>/fixtures/assertion_shaped_control_production_owner/diff.patch --mode fast probe:src_lib.rs:predicate:e177493b
   ripr context --root <cwd>/fixtures/assertion_shaped_control_production_owner/input --diff <cwd>/fixtures/assertion_shaped_control_production_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:e177493b
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:e177493b --root <cwd>/fixtures/assertion_shaped_control_production_owner/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/assertion_shaped_control_production_owner/input --at src/lib.rs:2 --kind predicate
 

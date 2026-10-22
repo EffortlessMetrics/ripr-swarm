@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/priority.py:is_priority:predicate_boundary:predicate:amount>=100
   Changed behavior: return amount >= 100
   Missing discriminator (1 of 2): Related Python test reaches `is_priority` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_priority.py:4 test_priority_amount
+  Related test: tests/test_priority.py:4 test_priority_amount (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_priority.py
   Suggested test: test_priority_amount
   Test node: tests/test_priority.py::test_priority_amount
@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_broad_boolean_assertion/input --diff <cwd>/fixtures/python_broad_boolean_assertion/diff.patch --mode fast probe:src_priority.py:python_preview:5c6fb782
   ripr context --root <cwd>/fixtures/python_broad_boolean_assertion/input --diff <cwd>/fixtures/python_broad_boolean_assertion/diff.patch --mode fast --at probe:src_priority.py:python_preview:5c6fb782
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/priority.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

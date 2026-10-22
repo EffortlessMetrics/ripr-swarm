@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422
   Changed behavior: response.status_code = 422
   Missing discriminator (1 of 2): Related Python test reaches `checkout` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value
-  Related test: tests/test_checkout.py:4 test_expired_coupon_response_smoke
+  Related test: tests/test_checkout.py:4 test_expired_coupon_response_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_checkout.py
   Suggested test: test_expired_coupon_response_smoke
   Test node: tests/test_checkout.py::test_expired_coupon_response_smoke
@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_api_route_decorator_repair_gap/input --diff <cwd>/fixtures/python_api_route_decorator_repair_gap/diff.patch --mode fast probe:app_checkout.py:python_preview:b4e7eda0
   ripr context --root <cwd>/fixtures/python_api_route_decorator_repair_gap/input --diff <cwd>/fixtures/python_api_route_decorator_repair_gap/diff.patch --mode fast --at probe:app_checkout.py:python_preview:b4e7eda0
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `app/checkout.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

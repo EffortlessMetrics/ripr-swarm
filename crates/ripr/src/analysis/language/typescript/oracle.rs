@@ -193,8 +193,94 @@ pub(crate) fn collect_callback_assertions(
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
     out
+}
+
+/// `true` when control can never fall through `stmt` to the statement after it:
+/// an unconditional `return`, `throw`, `break` or `continue`, or a block whose
+/// own statements contain one, or a
+/// `try` whose finalizer exits or whose block and catch (if any) both exit (#9138). Statements after it in the same list are dead
+/// code, so an assertion there never runs and cannot discriminate; collection
+/// withholds it, fail closed like a constant-falsy branch (#8714). Conditional
+/// exits (`if (x) return;`) are not decidable and keep the later credit.
+pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_) => true,
+        Statement::BlockStatement(block) => block.body.iter().any(statement_completes_abruptly),
+        // A decidable `if` runs exactly one branch; an undecidable one exits
+        // only when both branches provably do.
+        Statement::IfStatement(if_stmt) => match constant_condition_value(&if_stmt.test) {
+            Some(true) => statement_completes_abruptly(&if_stmt.consequent),
+            Some(false) => if_stmt
+                .alternate
+                .as_ref()
+                .is_some_and(statement_completes_abruptly),
+            None => {
+                statement_completes_abruptly(&if_stmt.consequent)
+                    && if_stmt
+                        .alternate
+                        .as_ref()
+                        .is_some_and(statement_completes_abruptly)
+            }
+        },
+        // A finalizer that exits replaces the try completion. Otherwise the
+        // block must exit and so must any catch (the catch is the only other
+        // way out of the try), unless the block's first statement is a
+        // non-throwing exit, which makes the catch unreachable (#9150). A
+        // loop or `switch` is never decided here.
+        Statement::TryStatement(try_stmt) => {
+            try_stmt
+                .finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
+                || (try_stmt.block.body.iter().any(statement_completes_abruptly)
+                    && (try_catch_is_unreachable(try_stmt)
+                        || try_stmt.handler.as_ref().is_none_or(|handler| {
+                            handler.body.body.iter().any(statement_completes_abruptly)
+                        })))
+        }
+        _ => false,
+    }
+}
+
+/// `true` when the `try` block's first statement is a non-throwing exit, so
+/// nothing can throw into its `catch` and the handler body is dead code
+/// (#9150). Collection and the conditional-credit walker skip such a handler.
+pub(crate) fn try_catch_is_unreachable(try_stmt: &oxc_ast::ast::TryStatement<'_>) -> bool {
+    try_stmt
+        .block
+        .body
+        .first()
+        .is_some_and(statement_is_non_throwing_exit)
+}
+
+/// `true` for a statement that leaves its block without throwing and without
+/// evaluating anything that could throw: a bare `return;`, a `return` of a
+/// plain literal, `break` or `continue` (#9150). As the FIRST statement of a
+/// `try` block nothing can throw into the `catch` first, so the `catch` can
+/// never run. Anything else (`return f();`, `throw`, a call before the exit)
+/// stays undecidable and keeps the fail-closed catch requirement.
+fn statement_is_non_throwing_exit(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
+        Statement::ReturnStatement(ret) => ret.argument.as_ref().is_none_or(|argument| {
+            matches!(
+                argument,
+                Expression::BooleanLiteral(_)
+                    | Expression::NumericLiteral(_)
+                    | Expression::StringLiteral(_)
+                    | Expression::NullLiteral(_)
+            )
+        }),
+        _ => false,
+    }
 }
 
 /// `true` when the statement list collects at least one assertion under
@@ -221,6 +307,9 @@ pub(crate) fn statements_collect_assertion_probe(
     let mut probe = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut probe);
+        if statement_completes_abruptly(stmt) && probe.is_empty() {
+            return false;
+        }
         if !probe.is_empty() {
             return true;
         }
@@ -437,6 +526,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
             if let Some(handler) = &try_stmt.handler
                 && !finalizer_replaces
+                && !try_catch_is_unreachable(try_stmt)
             {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,
@@ -874,6 +964,9 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 ) {
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, context, out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
 }
 
@@ -1032,6 +1125,13 @@ pub(crate) fn expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            outer_call
+                .arguments
+                .first()
+                .filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call,
         loose_number_expected: false,
@@ -1102,6 +1202,10 @@ pub(crate) fn ava_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
@@ -1750,6 +1854,10 @@ fn assert_call_assertion(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
@@ -1891,6 +1999,13 @@ fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
             .is_some_and(|id| id.name.as_str() == "expect"),
         _ => false,
     }
+}
+
+/// The source text of a dynamic matcher argument (`None` for a literal or
+/// no argument), kept so the classifier can read what the expected side is
+/// built from.
+fn dynamic_argument_text(argument: Option<&Argument<'_>>, source: &str) -> Option<String> {
+    argument.and_then(|arg| source_text_for_argument(arg, source))
 }
 
 /// `(expected literal text, is dynamic)` for an optional expected argument.
@@ -2049,6 +2164,10 @@ pub(crate) fn chai_expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,
@@ -2686,6 +2805,7 @@ pub(crate) fn is_execution_context_assertion_matcher(matcher: &str) -> bool {
 pub(crate) fn oracle_metadata_evidence_lines(
     assertion: &TypeScriptAssertion,
     test_file: &Path,
+    evidence_line: usize,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(observed) = &assertion.observed_expression {
@@ -2701,7 +2821,7 @@ pub(crate) fn oracle_metadata_evidence_lines(
     lines.push(format!(
         "typescript_oracle_evidence_ref: {}:{}",
         normalized_path(test_file),
-        assertion.line
+        evidence_line
     ));
     lines
 }
@@ -2741,12 +2861,14 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
         .filter_map(|candidate| {
             select_family_relevant_assertion(&candidate.test.assertions, Some(probe_family))
                 .assertion()
-                .map(|assertion| (assertion, &candidate.test.file))
+                .map(|assertion| (assertion, candidate.test))
         })
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {
-        Some((assertion, file)) => oracle_metadata_evidence_lines(assertion, file),
+        Some((assertion, test)) => {
+            oracle_metadata_evidence_lines(assertion, &test.file, test.evidence_line(assertion))
+        }
         None => Vec::new(),
     }
 }

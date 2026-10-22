@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-doctest-pin",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-doctest-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "doctest_assert_eq",
+  "hard_case": "The only test is the doc example on the function; there is no `#[test]` for it.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n * n",
+        "mutated_line": "n * n",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - cube (line 15)",
+        "equivalence_review": "not equivalent: `n.pow(3)` becomes `n * n`"
+      },
+      {
+        "replacement": "n * 3",
+        "mutated_line": "n * 3",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - cube (line 15)",
+        "equivalence_review": "not equivalent: `n.pow(3)` becomes `n * 3`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The doctest asserts cube(3) == 27; squaring gives 9 and tripling gives 9. Shape: rustdoc example as the pin.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

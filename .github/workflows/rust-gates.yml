@@ -41,6 +41,11 @@ on:
         required: false
         default: false
         type: boolean
+      pr-labels:
+        description: Comma-separated labels of the queued PR (merge_group events carry none).
+        required: false
+        default: ''
+        type: string
     outputs:
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
@@ -177,7 +182,9 @@ jobs:
         run: cargo policy preflight
 
       - name: Prepare locked owner-return fixture dependencies
-        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
       - name: Repository policy preflight
         id: precommit
@@ -305,7 +312,7 @@ jobs:
       # (fixtures/<language>-verdict-corpus) against their stored
       # runtime-mutant labels (RIPR-SPEC-0219). Its `cargo build` of ripr
       # finds the fixture step's artifacts current, so it compiles nothing
-      # new; it runs cases in parallel and runs no mutation testing. Required runs happen at Draft -> Ready and on main
+      # new; it runs cases in parallel and runs no mutation testing. Required runs happen on the merge-ready request and on main
       # pushes, so a verdict move is caught on the PR that makes it.
       - name: Verdict corpora
         id: verdict_corpus
@@ -313,11 +320,11 @@ jobs:
 
       - name: PR evidence
         id: pr_evidence
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
@@ -358,11 +365,35 @@ jobs:
           cargo xtask ripr-annotations
           cargo xtask ripr-annotations --check
 
-      - name: Proof route dry-run (advisory)
-        if: github.event_name == 'pull_request'
+      # Published schema vs real producer bytes on the candidate (#9505, #3920).
+      # Corpus rows read committed bytes via `git archive HEAD`; the runtime-only
+      # rows are fed this run's own producer output: doctor from the freshly
+      # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
+      # bytes the PR evidence step just wrote. A missing artifact file fails the
+      # step, so a producer that stops writing cannot silently turn a row into
+      # `not_run`. Producer-only rows (repair-attempt, execution_result) stay
+      # unrun here by design; see docs/verification/schema-producer-audit.md.
+      - name: Schema producer sweep
+        id: schema_producer_sweep
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          mkdir -p target/ripr/sweep
+          cargo run --quiet -p ripr -- doctor --json > target/ripr/sweep/doctor.json
+          artifacts=(--artifact schemas/ripr/doctor.schema.json=target/ripr/sweep/doctor.json)
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; then
+            artifacts+=(
+              --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json
+              --artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json
+            )
+          fi
+          cargo xtask schema-producer-sweep "${artifacts[@]}"
+
+      - name: Proof route dry-run (advisory)
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
           { echo "### Proof Route (dry-run, advisory)"; echo ""; cat target/ripr/reports/proof-route.md; } >> "$GITHUB_STEP_SUMMARY" || true
@@ -401,6 +432,7 @@ jobs:
           FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
+          SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
           {
             echo "## Rust gate outcomes"
@@ -424,6 +456,7 @@ jobs:
             printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
+            printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."
             echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."

@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/commands.py:ship:call_or_output_effect:side_effect:click.echo_shipment_queued
   Changed behavior: click.echo("shipment queued")
   Missing discriminator (1 of 2): Related Python test reaches `ship` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed output/log/call effect
-  Related test: tests/test_commands.py:4 test_ship_smoke
+  Related test: tests/test_commands.py:4 test_ship_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_commands.py
   Suggested test: test_ship_smoke
   Test node: tests/test_commands.py::test_ship_smoke
@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_cli_output_repair_gap/input --diff <cwd>/fixtures/python_cli_output_repair_gap/diff.patch --mode fast probe:src_commands.py:python_preview:e40b24a9
   ripr context --root <cwd>/fixtures/python_cli_output_repair_gap/input --diff <cwd>/fixtures/python_cli_output_repair_gap/diff.patch --mode fast --at probe:src_commands.py:python_preview:e40b24a9
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/commands.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

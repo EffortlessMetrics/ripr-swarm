@@ -177,6 +177,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
+                    file: None,
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -184,6 +185,21 @@ pub(super) fn python_boundary_evidence(
                 })
         })
         .collect();
+    // A comprehension filter ranges over a parameter's elements, so a call
+    // that binds that parameter to a literal list is an input the rule can see.
+    let filter = python_comprehension_filter(line_text);
+    if let Some(filter) = &filter {
+        observed_values.extend(rows.iter().filter_map(|row| {
+            let elements = row.elements.get(filter.iterable)?;
+            Some(ValueFact {
+                file: None,
+                line: row.line,
+                text: row.text.clone(),
+                value: format!("{} = [{}]", filter.iterable, elements.join(", ")),
+                context: ValueContext::FunctionArgument,
+            })
+        }));
+    }
     if observed_values.is_empty() {
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Unresolved,
@@ -219,14 +235,32 @@ pub(super) fn python_boundary_evidence(
     let mut observed_old = false;
     let mut left_values = Vec::new();
     let mut right_values = Vec::new();
+    // The comprehension local takes each element of its iterable; any other
+    // operand resolves to its one value.
+    let candidates = |operand: &str, row: &CallRow| -> Vec<String> {
+        match &filter {
+            Some(filter) if filter.local == operand => row
+                .elements
+                .get(filter.iterable)
+                .cloned()
+                .unwrap_or_default(),
+            _ => resolve_operand(operand, row, &constants)
+                .into_iter()
+                .collect(),
+        }
+    };
     for row in &rows {
-        let left_value = resolve_operand(&left, row, &constants);
-        let right_value = resolve_operand(&right, row, &constants);
-        if let (Some(left_value), Some(right_value)) = (&left_value, &right_value)
-            && literals_equal(left_value, right_value)
-        {
+        let left_candidates = candidates(&left, row);
+        let right_candidates = candidates(&right, row);
+        if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
+            right_candidates
+                .iter()
+                .find(|right_value| literals_equal(left_value, right_value))
+                .map(|right_value| (left_value, right_value))
+        }) {
             observed_new = true;
             observed_values.push(ValueFact {
+                file: None,
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
@@ -238,8 +272,8 @@ pub(super) fn python_boundary_evidence(
                 context: ValueContext::FunctionArgument,
             });
         }
-        left_values.extend(left_value);
-        right_values.extend(right_value);
+        left_values.extend(left_candidates);
+        right_values.extend(right_candidates);
         if let Some((old_left, old_right)) = &old_equality_operands {
             let old_left_value = resolve_operand(old_left, row, &constants);
             let old_right_value = resolve_operand(old_right, row, &constants);
@@ -249,6 +283,7 @@ pub(super) fn python_boundary_evidence(
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
+                    file: None,
                     line: row.line,
                     text: format!(
                         "{} | {}; {}",
@@ -382,6 +417,9 @@ fn predicate_condition(line_text: &str) -> String {
     if let Some(condition) = python_return_comparison(line_text) {
         return condition.to_string();
     }
+    if let Some(filter) = python_comprehension_filter(line_text) {
+        return filter.condition.to_string();
+    }
     let text = line_text.trim().trim_end_matches(':').trim();
     for prefix in ["if ", "elif ", "while "] {
         if let Some(stripped) = text.strip_prefix(prefix) {
@@ -394,6 +432,89 @@ fn predicate_condition(line_text: &str) -> String {
         return condition.trim().to_string();
     }
     text.to_string()
+}
+
+/// The `if` clause of a comprehension or generator expression on a changed
+/// line: `sum(p for p in prices if p > 0)`.
+pub(super) struct ComprehensionFilter<'a> {
+    pub(super) condition: &'a str,
+    /// The element name the clause binds (`p`).
+    pub(super) local: &'a str,
+    /// The iterable it ranges over (`prices`), a plain name.
+    pub(super) iterable: &'a str,
+}
+
+/// The filter clause of a comprehension when it is exactly one relational
+/// comparison between simple operands. The kept elements change only where an
+/// element meets the bound, so the line is a predicate: an exact oracle over
+/// elements far from the bound passes before and after the change. A clause
+/// with several comparisons, a computed operand, or an iterable that is not a
+/// plain name stays a return-value probe.
+pub(super) fn python_comprehension_filter(line_text: &str) -> Option<ComprehensionFilter<'_>> {
+    let text = line_text.trim();
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    let mut for_at = None;
+    for (idx, ch) in text.char_indices() {
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth > 0 && text[idx..].starts_with(" for ") => {
+                for_at = Some(idx + " for ".len());
+                break;
+            }
+            _ => {}
+        }
+    }
+    let rest = text.get(for_at?..)?;
+    let (local, rest) = rest.split_once(" in ")?;
+    let (iterable, rest) = rest.split_once(" if ")?;
+    let local = local.trim();
+    let iterable = iterable.trim();
+    if !super::static_limits::is_simple_python_identifier(local)
+        || !super::static_limits::is_simple_python_identifier(iterable)
+    {
+        return None;
+    }
+    let mut closer = rest.len();
+    let mut nested = 0usize;
+    for (idx, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => nested += 1,
+            ')' | ']' | '}' if nested == 0 => {
+                closer = idx;
+                break;
+            }
+            ')' | ']' | '}' => nested -= 1,
+            _ => {}
+        }
+    }
+    let condition = rest.get(..closer)?.trim();
+    let [(start, len)] = relational_operators(condition)[..] else {
+        return None;
+    };
+    let (left, right) = simple_comparison_operands(condition, start, len)?;
+    // The comparison must be the whole clause: a trailing `and False` or a
+    // further `if` clause can exclude the very element that meets the bound.
+    let whole_sides = is_simple_operand(&left)
+        && is_simple_operand(&right)
+        && condition.get(..start)?.trim() == left
+        && condition.get(start + len..)?.trim() == right;
+    if !whole_sides {
+        return None;
+    }
+    Some(ComprehensionFilter {
+        condition,
+        local,
+        iterable,
+    })
 }
 
 /// The comparison of a `return <a> <op> <b>` line whose returned expression
@@ -745,6 +866,14 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
 /// Owner parameters paired with the parametrize argname their argument names.
 type CaseArguments = Vec<(String, String)>;
 
+/// What one call's arguments bind: scalar literals, the parametrize pairing,
+/// and the element literals of list-like arguments.
+type BoundArguments = (
+    BTreeMap<String, Binding>,
+    CaseArguments,
+    BTreeMap<String, Vec<String>>,
+);
+
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
 pub(super) struct Binding {
@@ -758,6 +887,10 @@ pub(super) struct CallRow {
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) bindings: BTreeMap<String, Binding>,
+    /// The scalar literals of each owner parameter bound to a list, tuple or
+    /// set display (`prices` in `fetch_total([3, -1, 4])`), for the
+    /// comprehension-element boundary rule. Never read as a scalar binding.
+    pub(super) elements: BTreeMap<String, Vec<String>>,
 }
 
 /// Owner calls from related tests whose strongest assertion is strong: the
@@ -827,7 +960,7 @@ pub(super) fn strong_owner_call_rows_with_gaps(
         for name in owner_call_names(owner, candidate.test, method_call) {
             for (first_line, text) in &sources {
                 for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                    let Some((bindings, case_arguments)) =
+                    let Some((bindings, case_arguments, elements)) =
                         bind_call_arguments(owner, constants, candidate.test, skip, arglist)
                     else {
                         gaps = true;
@@ -835,17 +968,30 @@ pub(super) fn strong_owner_call_rows_with_gaps(
                     };
                     candidate_rows += 1;
                     let line = first_line + text[..offset].matches('\n').count();
-                    let text = call_line_text(text, offset, name.len() + arglist.len() + 2);
+                    // The call runs from its name to its closing parenthesis,
+                    // the byte after the arglist; whitespace between the name
+                    // and `(` is part of it.
+                    let arglist_end =
+                        arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
+                    let text = call_line_text(text, offset, arglist_end + 1 - offset);
                     match (&candidate.test.parametrize, case_arguments.is_empty()) {
                         (Some(parametrize), false) => {
                             rows.extend(parametrize.cases.iter().map(|case| {
-                                parametrize_case_row(line, &text, &bindings, &case_arguments, case)
+                                parametrize_case_row(
+                                    line,
+                                    &text,
+                                    &bindings,
+                                    &elements,
+                                    &case_arguments,
+                                    case,
+                                )
                             }));
                         }
                         _ => rows.push(CallRow {
                             line,
                             text,
                             bindings,
+                            elements,
                         }),
                     }
                 }
@@ -904,9 +1050,11 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     // A call that fits the window is kept whole: the lead shrinks so its
     // closing parenthesis stays inside.
     let lead = CALL_ROW_TEXT_LEAD.min(CALL_ROW_TEXT_LIMIT.saturating_sub(call_len));
+    // Round the start forward (toward the call) so the window never loses
+    // trailing bytes of a call that fits it.
     let mut from = offset.saturating_sub(lead).max(start);
     while !body.is_char_boundary(from) {
-        from -= 1;
+        from += 1;
     }
     let mut to = (from + CALL_ROW_TEXT_LIMIT).min(end);
     while !body.is_char_boundary(to) {
@@ -915,8 +1063,18 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     let window = body[from..to].trim();
     format!(
         "{}{window}{}",
-        if from > start { "..." } else { "" },
-        if to < end { "..." } else { "" }
+        // A marker only where visible text was cut, not bare indentation or
+        // trailing whitespace.
+        if body[start..from].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        },
+        if body[to..end].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        }
     )
 }
 
@@ -938,7 +1096,7 @@ fn bind_call_arguments(
     test: &PythonTest,
     skip: usize,
     arglist: &str,
-) -> Option<(BTreeMap<String, Binding>, CaseArguments)> {
+) -> Option<BoundArguments> {
     let positional: Vec<&str> = owner
         .parameters
         .iter()
@@ -948,6 +1106,7 @@ fn bind_call_arguments(
         .collect();
     let mut bound_names = Vec::new();
     let mut bindings = BTreeMap::new();
+    let mut elements = BTreeMap::new();
     let mut case_arguments = Vec::new();
     let mut position = 0usize;
     for segment in split_top_level_args(arglist) {
@@ -976,7 +1135,9 @@ fn bind_call_arguments(
             continue;
         };
         bound_names.push(name.clone());
-        if let Some(value) =
+        if let Some(literals) = literal_elements(value) {
+            elements.insert(name, literals);
+        } else if let Some(value) =
             literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
         {
             bindings.insert(
@@ -1010,7 +1171,28 @@ fn bind_call_arguments(
             );
         }
     }
-    Some((bindings, case_arguments))
+    Some((bindings, case_arguments, elements))
+}
+
+/// The scalar literals of a list, tuple or set display whose every element is
+/// a scalar literal (`[3, -1, 4]`); None for anything else, including a
+/// display with a computed or nested element, whose elements are not all
+/// known.
+fn literal_elements(text: &str) -> Option<Vec<String>> {
+    let text = text.trim();
+    let inner = ["[]", "()", "{}"].into_iter().find_map(|pair| {
+        let (open, close) = (pair.chars().next()?, pair.chars().nth(1)?);
+        text.strip_prefix(open)?.strip_suffix(close)
+    })?;
+    let segments: Vec<&str> = split_top_level_args(inner)
+        .into_iter()
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    segments
+        .iter()
+        .map(|segment| literal_value(segment))
+        .collect()
 }
 
 /// One call row per parametrize case: each paired owner parameter binds the
@@ -1019,16 +1201,21 @@ fn parametrize_case_row(
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
+    elements: &BTreeMap<String, Vec<String>>,
     case_arguments: &[(String, String)],
     case: &BTreeMap<String, String>,
 ) -> CallRow {
     let mut bindings = bindings.clone();
+    let mut elements = elements.clone();
     let mut shown = Vec::new();
     for (parameter, argname) in case_arguments {
         let Some(value) = case.get(argname) else {
             continue;
         };
         shown.push(format!("{argname}={value}"));
+        if let Some(literals) = literal_elements(value) {
+            elements.insert(parameter.clone(), literals);
+        }
         if let Some(value) = literal_value(value) {
             bindings.insert(
                 parameter.clone(),
@@ -1043,6 +1230,7 @@ fn parametrize_case_row(
         line,
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,
+        elements,
     }
 }
 
@@ -1218,4 +1406,70 @@ fn test_body_after_header(text: &str) -> Option<&str> {
     let close = matching_call_paren(text, open)?;
     let colon = close + text[close..].find(':')?;
     text.get(colon + 1..)
+}
+
+#[cfg(test)]
+mod call_line_text_tests {
+    use super::{CALL_ROW_TEXT_LIMIT, call_line_text};
+
+    #[test]
+    fn indentation_only_cut_emits_no_leading_marker() {
+        let body = format!("{}price(1) {}", " ".repeat(70), "x".repeat(250));
+        let text = call_line_text(&body, 70, "price(1)".len());
+        assert!(text.starts_with("price(1)"), "{text}");
+        assert!(text.ends_with("..."), "{text}");
+    }
+
+    #[test]
+    fn cut_content_still_emits_leading_marker() {
+        let body = format!("{} price(1) {}", "y".repeat(100), "x".repeat(250));
+        let text = call_line_text(&body, 101, "price(1)".len());
+        assert!(text.starts_with("..."), "{text}");
+    }
+
+    #[test]
+    fn multibyte_start_keeps_the_whole_call() {
+        // The lead lands inside a 3-byte char; a 238-byte call must still end
+        // with its closing parenthesis.
+        let call = format!("price({})", "a".repeat(238 - "price()".len()));
+        assert_eq!(call.len(), 238);
+        for pad in 0..4 {
+            let body = format!(
+                "{}{}{call} {}",
+                "x".repeat(pad),
+                "\u{20ac}".repeat(30),
+                "z".repeat(50)
+            );
+            let offset = body.find("price").unwrap_or(0);
+            let text = call_line_text(&body, offset, call.len());
+            assert!(text.contains(&call), "pad {pad}: {text}");
+        }
+    }
+
+    #[test]
+    fn exact_limit_line_is_whole_and_one_over_is_cut() {
+        let call = "price(1)";
+        let whole = format!("{call}{}", "x".repeat(CALL_ROW_TEXT_LIMIT - call.len()));
+        assert_eq!(whole.len(), CALL_ROW_TEXT_LIMIT);
+        assert_eq!(call_line_text(&whole, 0, call.len()), whole);
+        let over = format!("{whole}x");
+        let cut = call_line_text(&over, 0, call.len());
+        assert!(cut.starts_with(call) && cut.ends_with("..."), "{cut}");
+        assert!(!cut.contains(&over));
+    }
+
+    #[test]
+    fn exact_call_length_with_space_before_paren_keeps_the_closing_paren() {
+        let spaces = " ".repeat(30);
+        let argument = "a".repeat(200);
+        let body = format!(
+            "{}price{spaces}({argument}) tail {}",
+            "p".repeat(80),
+            "t".repeat(60)
+        );
+        let offset = body.find("price").unwrap_or(0);
+        let call_len = "price".len() + spaces.len() + argument.len() + 2;
+        let text = call_line_text(&body, offset, call_len);
+        assert!(text.contains(&format!("({argument})")), "{text}");
+    }
 }

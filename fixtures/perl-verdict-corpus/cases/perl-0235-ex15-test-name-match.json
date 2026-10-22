@@ -52,7 +52,7 @@
     "packet": "packets/perl-0235-ex15-test-name-match.json",
     "sha256": "a9d62f5d8382e12f1d172f6ade32ce0277afd3f6aa5f7f693982fc8e501fc234",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"test_name_match\"}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"test_name_match\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#15"

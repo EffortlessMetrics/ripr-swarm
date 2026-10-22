@@ -42,7 +42,7 @@ Evidence
   - source assertion argument value "request_identity_v2" at line 10
   - source assertion argument value 1 at line 10
   - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected
@@ -53,7 +53,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:e2ddad8e
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:e2ddad8e
 
-WARNING ./src/work_queue.rs:30
+NOTE ./src/work_queue.rs:30
   id: probe:src_work_queue.rs:match_arm:bb954c10
 
 Changed
@@ -68,7 +68,7 @@ Probe
   canonical gap: gap:rust:src/work_queue.rs:terminalize_proof:match_arm:match_arm:true_false=>lit726571756573745f6964656e746974795f7631
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 
 Evidence
   - reach yes: Related tests appear to reach terminalize_proof: terminal_projection_0
@@ -89,7 +89,7 @@ Evidence
   - source assertion argument value "request_identity_v2" at line 10
   - source assertion argument value 1 at line 10
   - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected

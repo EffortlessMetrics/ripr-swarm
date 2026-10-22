@@ -159,6 +159,19 @@ pub(crate) struct RepairAttemptManifest {
     /// one keep their exact bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_after_refusal: Option<RepairAttemptAfterRefusal>,
+    /// How many after-phase refusals this attempt has recorded in total. It is
+    /// monotonic and survives the history cap, so an attempt that already
+    /// failed many edits cannot look fresh. Excluded from the before
+    /// commitment; absent when zero.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub(crate) after_refusal_count: u32,
+    /// The most recent after-phase refusals, oldest first, capped at
+    /// `REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX` (the oldest entries drop first;
+    /// `after_refusal_count` keeps the true total). `last_after_refusal`
+    /// overwrites; this history does not. Excluded from the before commitment;
+    /// absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) after_refusal_history: Vec<RepairAttemptAfterRefusal>,
     /// Terminal static-result artifacts retained at finish (`agent_receipt`,
     /// and the `agent_verify` document it was built from). Absent or empty on
     /// legacy manifests. Excluded from the before commitment, so adding them
@@ -171,6 +184,57 @@ pub(crate) struct RepairAttemptManifest {
     /// record the locator; absolute checkout spelling is not identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<RepairAttemptStoreIdentity>,
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Most after-phase refusals retained in `after_refusal_history`.
+pub(crate) const REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX: usize = 8;
+
+/// After-phase refusals one attempt may record before its after phase stops
+/// retrying and requires a fresh attempt instead of looping.
+pub(crate) const REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET: u32 = 5;
+
+/// True once the attempt has recorded as many after-phase refusals as its
+/// retry budget allows. The attempt authority owns this decision; callers
+/// narrate it but do not recompute it.
+pub(crate) fn after_refusal_budget_exhausted(manifest: &RepairAttemptManifest) -> bool {
+    after_refusal_total(manifest) >= REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+}
+
+/// Total after-phase refusals the attempt recorded. A manifest written before
+/// the count existed carries only `last_after_refusal`, which is one known
+/// refusal, so the total never reads below that.
+pub(crate) fn after_refusal_total(manifest: &RepairAttemptManifest) -> u32 {
+    manifest
+        .after_refusal_count
+        .max(u32::from(manifest.last_after_refusal.is_some()))
+}
+
+/// Records one refusal: overwrites `last_after_refusal`, counts it, and
+/// appends it to the capped history without losing earlier entries.
+fn push_after_refusal(manifest: &mut RepairAttemptManifest, refusal: RepairAttemptAfterRefusal) {
+    // A legacy manifest holds its one known refusal only in the single slot:
+    // seed the count and history from it before the first append.
+    if manifest.after_refusal_count == 0
+        && manifest.after_refusal_history.is_empty()
+        && let Some(legacy) = manifest.last_after_refusal.clone()
+    {
+        manifest.after_refusal_count = 1;
+        manifest.after_refusal_history.push(legacy);
+    }
+    manifest.after_refusal_count = manifest.after_refusal_count.saturating_add(1);
+    manifest.after_refusal_history.push(refusal.clone());
+    let excess = manifest
+        .after_refusal_history
+        .len()
+        .saturating_sub(REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX);
+    if excess > 0 {
+        manifest.after_refusal_history.drain(..excess);
+    }
+    manifest.last_after_refusal = Some(refusal);
 }
 
 /// Why the last after phase of an attempt refused, recorded by the attempt
@@ -392,7 +456,41 @@ pub(crate) fn receipt_binding_from(
     {
         return Err("repair attempt packet binding is tampered or replayed".to_string());
     }
-    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
+    if !binding_holds {
+        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+    }
+    validate_trusted_head_surface(
+        &root,
+        &policy,
+        &verdict.changed_paths,
+        &manifest.repository_head,
+    )?;
+    let manifest_path = display_path(&manifest_path);
+    Ok(serde_json::json!({
+        "attempt_id": after.attempt_id.as_str(),
+        "manifest": manifest_path,
+        "seam_id": manifest.seam_id,
+        "before_head": manifest.repository_head,
+        "after_head": after.repository_head,
+        "packet_sha256": after.packet_sha256,
+        "delta_sha256": after.delta_sha256,
+        "current": after.current,
+        "edit_cage_verdict": after.verdict,
+    }))
+}
+
+/// Recompute the edit-cage delta from the live worktree under the admitting
+/// rule and compare it with the after verdict the finish bound. Shared by
+/// receipt issuance and the read-only currentness reading so `status` cannot
+/// call an attempt current that `receipt` would refuse (#9501). The error is
+/// an unreadable or tampered baseline; `false` is drift from the bound verdict.
+fn recompute_after_verdict_binding(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    after: &RepairAttemptAfter,
+) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
     if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
@@ -419,27 +517,8 @@ pub(crate) fn receipt_binding_from(
     let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
-    if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
-    }
-    validate_trusted_head_surface(
-        &root,
-        &policy,
-        &verdict.changed_paths,
-        &manifest.repository_head,
-    )?;
-    let manifest_path = display_path(&manifest_path);
-    Ok(serde_json::json!({
-        "attempt_id": after.attempt_id.as_str(),
-        "manifest": manifest_path,
-        "seam_id": manifest.seam_id,
-        "before_head": manifest.repository_head,
-        "after_head": after.repository_head,
-        "packet_sha256": after.packet_sha256,
-        "delta_sha256": after.delta_sha256,
-        "current": after.current,
-        "edit_cage_verdict": after.verdict,
-    }))
+    let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
+    Ok((verdict, holds))
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -1143,6 +1222,8 @@ fn complete_repair_attempt(
                 ],
                 after: None,
                 last_after_refusal: None,
+                after_refusal_count: 0,
+                after_refusal_history: Vec::new(),
                 terminal_artifacts: Vec::new(),
                 store: store.manifest_identity(),
             };
@@ -1819,6 +1900,8 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
     before.last_after_refusal = None;
+    before.after_refusal_count = 0;
+    before.after_refusal_history.clear();
     before.terminal_artifacts.clear();
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
@@ -2423,11 +2506,12 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     if reason.is_empty() {
         return Err("an after-phase refusal needs a non-empty reason".to_string());
     }
-    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+    let refusal = RepairAttemptAfterRefusal {
         reason,
         repository_head: crate::agent::artifact::current_git_head(&root).ok(),
         recorded_unix_ms: current_unix_ms()?,
-    });
+    };
+    push_after_refusal(&mut manifest, refusal);
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
@@ -2532,11 +2616,12 @@ fn record_terminal_after_refusal_beside_verdict(
         return Err("an after-phase refusal needs a non-empty reason".to_string());
     }
     let mut manifest = base_manifest;
-    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+    let refusal = RepairAttemptAfterRefusal {
         reason,
         repository_head: crate::agent::artifact::current_git_head(&root).ok(),
         recorded_unix_ms: current_unix_ms()?,
-    });
+    };
+    push_after_refusal(&mut manifest, refusal);
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
@@ -2700,6 +2785,22 @@ pub(crate) fn repair_attempt_head_reading(
             .map(|admission| matches!(admission, AfterPhaseHeadAdmission::Current { .. }))
     } else {
         current_head.map(|head| head == evidence_head)
+    };
+    // #9501: HEAD alone cannot call a finished attempt current. `agent receipt`
+    // recomputes the delta from the worktree and refuses drift (an uncommitted
+    // edit after the verdict), so the reading applies the same binding where a
+    // receipt could otherwise be issued; unreadable evidence is `unknown`.
+    let head_current = match (head_current, manifest.after.as_ref()) {
+        (Some(true), Some(after))
+            if manifest.state == RepairAttemptState::ReadyToFinish && after.current =>
+        {
+            match recompute_after_verdict_binding(root, manifest, after) {
+                Ok((_, true)) => Some(true),
+                Ok((_, false)) => Some(false),
+                Err(_) => None,
+            }
+        }
+        (reading, _) => reading,
     };
     RepairAttemptHeadReading {
         evidence_head,
@@ -3352,6 +3453,15 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt after-phase refusal has an empty reason".to_string());
     }
+    if manifest.after_refusal_history.len() > REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX
+        || (manifest.after_refusal_history.len() as u64) > u64::from(manifest.after_refusal_count)
+        || manifest
+            .after_refusal_history
+            .iter()
+            .any(|refusal| refusal.reason.trim().is_empty())
+    {
+        return Err("repair attempt after-phase refusal history is inconsistent".to_string());
+    }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
     }) {
@@ -3734,6 +3844,8 @@ mod tests {
             non_claims: vec!["not merge authority".to_string()],
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         })
@@ -3741,6 +3853,54 @@ mod tests {
 
     fn prepared_store(root: &Path) -> Result<RepairAttemptStoreRef, String> {
         resolve_store(root, None, RepairAttemptStoreAccess::Prepare)
+    }
+
+    /// #8726: a manifest written before the count existed carries one refusal
+    /// only in `last_after_refusal`. The count and history seed from it before
+    /// the first append, so the budget does not undercount by one.
+    #[test]
+    fn legacy_manifest_refusal_seeds_count_and_history_before_the_first_append()
+    -> Result<(), String> {
+        let root = test_root("legacy-refusal-seed")?;
+        let manifest = sample_manifest(&root)?;
+        let mut json = serde_json::to_value(&manifest).map_err(|error| error.to_string())?;
+        let object = json.as_object_mut().ok_or("manifest is not an object")?;
+        object.insert(
+            "last_after_refusal".to_string(),
+            serde_json::json!({"reason": "legacy refusal", "repository_head": null, "recorded_unix_ms": 7}),
+        );
+        for field in ["after_refusal_count", "after_refusal_history"] {
+            if object.remove(field).is_some() {
+                return Err(format!("a fresh manifest should omit `{field}`"));
+            }
+        }
+        let mut legacy: RepairAttemptManifest =
+            serde_json::from_value(json).map_err(|error| error.to_string())?;
+        if after_refusal_total(&legacy) != 1 || after_refusal_budget_exhausted(&legacy) {
+            return Err("a legacy manifest holds exactly one known refusal".to_string());
+        }
+        push_after_refusal(
+            &mut legacy,
+            RepairAttemptAfterRefusal {
+                reason: "second".to_string(),
+                repository_head: None,
+                recorded_unix_ms: 8,
+            },
+        );
+        let reasons = legacy
+            .after_refusal_history
+            .iter()
+            .map(|refusal| refusal.reason.as_str())
+            .collect::<Vec<_>>();
+        if legacy.after_refusal_count != 2 || reasons != ["legacy refusal", "second"] {
+            return Err(format!(
+                "legacy refusal was not seeded: {} {reasons:?}",
+                legacy.after_refusal_count
+            ));
+        }
+        validate_manifest(&legacy)?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
@@ -5750,6 +5910,64 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    /// #9501 negative experiment: `status` read currentness from HEAD alone, so
+    /// an uncommitted production edit after the finish still printed `current`
+    /// while `receipt` refused the same state. Both now share one binding.
+    #[test]
+    fn finished_attempt_currentness_follows_worktree_drift_like_the_receipt() -> Result<(), String>
+    {
+        let root = test_repo_root("worktree-drift-currentness")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            if finished.state != RepairAttemptState::ReadyToFinish {
+                return Err(format!("expected a finished attempt: {:?}", finished.state));
+            }
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let reading = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if reading.currentness() != "current" {
+                return Err(format!(
+                    "undrifted finished attempt must read current: {reading:?}"
+                ));
+            }
+
+            // Drift: an uncommitted production edit outside the allowed
+            // surface after the verdict was bound. HEAD does not move.
+            let production = root.join("src.rs");
+            std::fs::write(&production, "pub fn drifted() {}\n")
+                .map_err(|error| format!("write {} failed: {error}", production.display()))?;
+            if crate::agent::artifact::current_git_head(&root)? != head {
+                return Err("the drift must not move HEAD".to_string());
+            }
+            let drifted = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if drifted.currentness() == "current" {
+                return Err(format!(
+                    "a drifted worktree must not read current: {drifted:?}"
+                ));
+            }
+            // The authority path refuses the same state, and issues the
+            // receipt before the drift.
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse drift: {other:?}")),
+            }
+            std::fs::remove_file(&production)
+                .map_err(|error| format!("remove {} failed: {error}", production.display()))?;
+            let restored = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if restored.currentness() != "current" {
+                return Err(format!(
+                    "reverting the drift must restore current: {restored:?}"
+                ));
+            }
+            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// The after-phase window decision observes the production currentness

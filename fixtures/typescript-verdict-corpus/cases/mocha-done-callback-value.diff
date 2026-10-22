@@ -1,0 +1,9 @@
+diff --git a/src/loader.ts b/src/loader.ts
+index 0000000..1111111 100644
+--- a/src/loader.ts
++++ b/src/loader.ts
+@@ -1,3 +1,3 @@
+ export function load(done: (value: number) => void): void {
+-  setTimeout(() => done(3), 0);
++  setTimeout(() => done(4), 0);
+ }

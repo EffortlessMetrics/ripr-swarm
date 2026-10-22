@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod fact_index;
 mod static_limit;
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
@@ -235,10 +236,20 @@ impl LanguageAdapter for PerlAdapter {
             packet_to_findings_with_currentness(&packet, &change_lines, |file, change| {
                 perl_change_currentness(&options.root, changed_files, file, change)
             });
+        // #8661: the count names files this diff changes. A packet change in
+        // a file the diff adds no line to still yields its (unresolved)
+        // finding, but it is base-side evidence, not a changed file.
+        let touched: BTreeSet<String> = changed_files
+            .iter()
+            .filter(|diff_file| !diff_file.added_lines.is_empty())
+            .map(|diff_file| normalize_repo_relative(&diff_file.path.to_string_lossy()))
+            .collect();
         let changed_files = packet
             .changes
             .iter()
-            .map(|c| c.file_id.clone())
+            .filter_map(|change| packet.file(&change.file_id))
+            .filter(|file| touched.contains(&normalize_repo_relative(&file.path)))
+            .map(|file| file.file_id.clone())
             .collect::<BTreeSet<_>>()
             .len();
         let limitations = if packet.packet_status == PacketStatus::Partial {
@@ -654,6 +665,10 @@ fn packet_to_findings_with_currentness(
             }
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let observable_unavailable = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && packet.observable_declared_absent(&change.change_id);
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -935,6 +950,11 @@ fn packet_to_findings_with_currentness(
                 // settles it, instead of asking for an assertion that may exist.
                 "A related Perl test reaches this code with an assertion the fact producer grades broad, so ripr cannot tell whether it pins the changed behavior. If it asserts the specific message, class or value, no change is needed; otherwise tighten it."
                     .to_string()
+            } else if observable_unavailable {
+                // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
+                // asking for an assertion that may already exist.
+                "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
+                    .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
                 // No new test is needed; this is maintainer end-state outcome #2.
@@ -1109,6 +1129,9 @@ struct PerlFactPacket {
     verify_commands: Vec<VerifyCommandFact>,
     limitations: Vec<LimitationFact>,
     provenance: Vec<ProvenanceFact>,
+    /// Lazily built id index; not part of the wire format or of equality.
+    #[serde(skip)]
+    index: fact_index::LazyPacketIndex,
 }
 
 impl PerlFactPacket {
@@ -1548,49 +1571,57 @@ impl PerlFactPacket {
         format!("sha256:{}", hex_bytes(&digest))
     }
 
+    fn index(&self) -> &fact_index::PacketIndex {
+        // Length-only guard: it catches added/removed entries but not a
+        // same-length reorder or id edit. Production packets are immutable
+        // after ingestion; tests that mutate a used packet call `reset_index`.
+        let index = self.index.get_or_build(self);
+        debug_assert_eq!(
+            index.lens,
+            self.lens(),
+            "Perl packet mutated after its index was built; call reset_index()"
+        );
+        index
+    }
+
     fn file(&self, file_id: &str) -> Option<&FileFact> {
-        self.files.iter().find(|file| file.file_id == file_id)
+        self.files.get(*self.index().files.get(file_id)?)
     }
 
     fn owner(&self, owner_id: &str) -> Option<&OwnerFact> {
-        self.owners.iter().find(|owner| owner.owner_id == owner_id)
+        self.owners.get(*self.index().owners.get(owner_id)?)
     }
 
     fn change(&self, change_id: &str) -> Option<&ChangeFact> {
-        self.changes
-            .iter()
-            .find(|change| change.change_id == change_id)
+        self.changes.get(*self.index().changes.get(change_id)?)
     }
 
     fn oracle(&self, oracle_id: &str) -> Option<&OracleFact> {
-        self.oracles
-            .iter()
-            .find(|oracle| oracle.oracle_id == oracle_id)
+        self.oracles.get(*self.index().oracles.get(oracle_id)?)
     }
 
     fn relation(&self, relation_id: &str) -> Option<&RelationFact> {
         self.relations
-            .iter()
-            .find(|relation| relation.relation_id == relation_id)
+            .get(*self.index().relations.get(relation_id)?)
+    }
+
+    fn verify_command(&self, command_id: &str) -> Option<&VerifyCommandFact> {
+        self.verify_commands
+            .get(*self.index().verify_commands.get(command_id)?)
     }
 
     fn verify_command_for_test(&self, test_id: &str) -> Option<&VerifyCommandFact> {
         self.verify_commands
-            .iter()
-            .filter(|command| {
-                command.test_id.as_deref() == Some(test_id) && !command.argv.is_empty()
-            })
-            .min_by(|left, right| left.command_id.cmp(&right.command_id))
+            .get(*self.index().verify_by_test.get(test_id)?)
     }
 
     fn test(&self, test_id: &str) -> Option<&TestFact> {
-        self.tests.iter().find(|test| test.test_id == test_id)
+        self.tests.get(*self.index().tests.get(test_id)?)
     }
 
     fn provenance(&self, provenance_id: &str) -> Option<&ProvenanceFact> {
         self.provenance
-            .iter()
-            .find(|provenance| provenance.provenance_id == provenance_id)
+            .get(*self.index().provenance.get(provenance_id)?)
     }
 
     fn files_with_role(&self, role: FileRole) -> Vec<&FileFact> {
@@ -1643,9 +1674,14 @@ impl PerlFactPacket {
             return Vec::new();
         };
 
-        self.relations
+        let positions = self
+            .index()
+            .relations_by_change
+            .get(change_id)
+            .map_or(&[][..], Vec::as_slice);
+        positions
             .iter()
-            .filter(|relation| relation.change_id == change_id)
+            .filter_map(|&position| self.relations.get(position))
             .filter(|relation| relation.owner_id == change.owner_id)
             .filter_map(|relation| self.related_test_evidence(relation))
             .collect()
@@ -1677,10 +1713,7 @@ impl PerlFactPacket {
     }
 
     fn related_test_evidence(&self, relation: &RelationFact) -> Option<PerlRelatedTestEvidence> {
-        let test = self
-            .tests
-            .iter()
-            .find(|test| test.test_id == relation.test_id)?;
+        let test = self.test(&relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
         // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
         // relation, so it is neither classified nor displayed as its oracle.
@@ -1723,12 +1756,22 @@ impl PerlFactPacket {
             relation_kind: relation.relation_kind,
             reachability_hint: relation.reachability_hint,
             oracle_shape: oracle.map(|oracle| oracle.kind.assertion_shape().to_string()),
-            oracle_strength: oracle.map(|oracle| oracle.strength),
+            oracle_strength: oracle.map(OracleFact::effective_strength),
             class,
             confidence,
             verify_command,
             verify_command_id: verify_fact.map(|command| command.command_id.clone()),
             evidence_refs: evidence_refs.into_iter().collect(),
+        })
+    }
+
+    fn observable_declared_absent(&self, change_id: &str) -> bool {
+        self.change(change_id).is_some_and(|change| {
+            change.changed_observable.declared_absent()
+                || change
+                    .changed_observable
+                    .as_deref()
+                    .is_some_and(|text| text.trim().is_empty())
         })
     }
 
@@ -1749,7 +1792,16 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            ExposureClass::WeaklyExposed
+            if self.observable_declared_absent(&relation.change_id) {
+                // RIPR-SPEC-0235 rule 18: the producer found no changed
+                // observable, so there is nothing for the oracle's sink to
+                // align to and ripr cannot tell whether the strong oracle
+                // pins the change. Unknown, not a repairable gap (#8730). A
+                // packet that never carried the field keeps `weakly_exposed`.
+                ExposureClass::StaticUnknown
+            } else {
+                ExposureClass::WeaklyExposed
+            }
         } else if bound
             && oracle.is_broad_unresolved()
             && relation.relation_kind.supports_weak_oracle_credit()
@@ -1980,11 +2032,7 @@ impl PerlFactPacket {
         let verify = evidence
             .verify_command_id
             .as_deref()
-            .and_then(|command_id| {
-                self.verify_commands
-                    .iter()
-                    .find(|command| command.command_id == command_id)
-            })
+            .and_then(|command_id| self.verify_command(command_id))
             .ok_or(PerlActionabilityBlocker::MissingEvidenceRefs)?;
 
         push_actionability_ref(
@@ -2205,11 +2253,7 @@ impl PerlFactPacket {
         }
         if let Some(verify_command_id) = evidence.verify_command_id.as_ref() {
             ids.insert(verify_command_id.clone());
-            if let Some(verify_command) = self
-                .verify_commands
-                .iter()
-                .find(|command| command.command_id == *verify_command_id)
-            {
+            if let Some(verify_command) = self.verify_command(verify_command_id) {
                 ids.extend(verify_command.provenance_refs.iter().cloned());
             }
         }
@@ -2237,9 +2281,12 @@ impl PerlFactPacket {
     ) -> Option<CanonicalPerlGapIdentity> {
         let change = self.change(change_id)?;
         let assertion_shape = self
-            .relations
+            .index()
+            .relations_by_change
+            .get(change.change_id.as_str())
+            .map_or(&[][..], Vec::as_slice)
             .iter()
-            .filter(|relation| relation.change_id == change.change_id)
+            .filter_map(|&position| self.relations.get(position))
             .find_map(|relation| {
                 relation
                     .oracle_id
@@ -2732,6 +2779,28 @@ impl OwnerKind {
     }
 }
 
+/// The `changed_observable` of a change, keeping "the packet never carried
+/// the field" (an older packet) apart from "the producer wrote `null`".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ObservableField(Option<Option<String>>);
+
+impl<'de> Deserialize<'de> for ObservableField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<String>::deserialize(deserializer).map(|text| Self(Some(text)))
+    }
+}
+
+impl ObservableField {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_ref()?.as_deref()
+    }
+
+    /// The producer wrote the field and found no observable.
+    fn declared_absent(&self) -> bool {
+        matches!(&self.0, Some(None))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct ChangeFact {
     change_id: String,
@@ -2743,9 +2812,10 @@ struct ChangeFact {
     /// Campaign 31 step 2 contract freeze (ripr-swarm#1379): the observable
     /// the change produces (e.g. `"$amount / 2"` for a return change).
     /// Producer-emitted; consumed by H2 classification for sink alignment.
-    /// `#[serde(default)]` so older packets without the field still parse.
+    /// `#[serde(default)]` so older packets without the field still parse;
+    /// an explicit `null` is the producer saying it found no observable.
     #[serde(default)]
-    changed_observable: Option<String>,
+    changed_observable: ObservableField,
     /// The concrete discriminator derived from the change (e.g.
     /// `"$amount == $threshold"`). The documented (SPEC-0064, #6829)
     /// canonical-gap discriminator channel: when present, it forms the
@@ -2981,15 +3051,48 @@ enum OracleStrength {
 }
 
 impl OracleFact {
+    /// The strength ripr reads. `isnt(got, v)` rejects one value, so it passes
+    /// for every wrong result but `v` and cannot pin the changed behavior; a
+    /// producer that grades it `strong_exact` is read as a smoke check here,
+    /// which credits nothing and is not an unresolved broad matcher either
+    /// (RIPR-SPEC-0235 rule 17).
+    fn effective_strength(&self) -> OracleStrength {
+        if matches!(
+            self.strength,
+            OracleStrength::StrongExact | OracleStrength::WeakBroad
+        ) && self.is_negated_comparison()
+        {
+            OracleStrength::WeakSmoke
+        } else {
+            self.strength
+        }
+    }
+
+    fn is_negated_comparison(&self) -> bool {
+        let Some(expression) = self.expression.as_deref() else {
+            return false;
+        };
+        let call = expression.trim_start();
+        let call = call
+            .strip_prefix("Test::More::")
+            .or_else(|| call.strip_prefix("Test2::V0::"))
+            .or_else(|| call.strip_prefix("Test2::V1::"))
+            .unwrap_or(call);
+        call.strip_prefix("isnt").is_some_and(|rest| {
+            !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
+        })
+    }
+
     fn is_strong_exact(&self) -> bool {
-        self.strength == OracleStrength::StrongExact && self.kind.supports_strong_exact()
+        self.effective_strength() == OracleStrength::StrongExact
+            && self.kind.supports_strong_exact()
     }
 
     /// A `weak_broad` label on a kind that can pin the changed behavior. The
     /// packet does not say whether the matcher pins a message, a class or
     /// nothing, and ripr does not parse Perl to find out.
     fn is_broad_unresolved(&self) -> bool {
-        self.strength == OracleStrength::WeakBroad && self.kind.supports_strong_exact()
+        self.effective_strength() == OracleStrength::WeakBroad && self.kind.supports_strong_exact()
     }
 }
 
@@ -3205,7 +3308,9 @@ fn sink_aligned_observation(
         // changed observable. Exact equality is the safe bar; the normalized
         // observable covers the common `return <expr>` form. Anything else
         // fails closed (returns None at the end of the loop).
-        if observed_sink == changed_observable || observed_sink == normalized_observable {
+        if sink_text_eq(observed_sink, changed_observable)
+            || sink_text_eq(observed_sink, normalized_observable)
+        {
             return Some(SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
@@ -3217,6 +3322,85 @@ fn sink_aligned_observation(
         }
     }
     None
+}
+
+/// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
+/// cannot change what the expression means. It fails closed: text with a
+/// construct whose spacing can carry meaning (`/`, `~`, `#`, a backtick, `$"`,
+/// `$'`, or a `q`, `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word) compares
+/// exactly. Otherwise whitespace inside a quoted literal is kept, and outside
+/// one it is dropped except between two identifier characters
+/// (`$a lt $b` is not `$altb`), between two characters that can fuse into one
+/// operator (`- -1` is not `--1`), and next to a `.` (`1 . 5` is not `1.5`).
+/// A sigil ends an identifier, so `scalar @a` equals `scalar@a`.
+fn sink_text_eq(left: &str, right: &str) -> bool {
+    left == right
+        || canonical_sink_text(left)
+            .zip(canonical_sink_text(right))
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn canonical_sink_text(text: &str) -> Option<String> {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let fuses = |c: char| matches!(c, '<' | '>' | '=' | '!' | '&' | '|' | '*' | '+' | '-' | ':');
+    if text.contains(['/', '~', '`', '#']) || text.contains("$\"") || text.contains("$'") {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut pending_space = false;
+    let mut word = String::new();
+    for c in text.trim().chars() {
+        if let Some(open) = quote {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        if is_word(c) {
+            word.push(c);
+        } else {
+            if matches!(
+                word.as_str(),
+                "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+            ) {
+                return None;
+            }
+            word.clear();
+        }
+        if c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space {
+            if let Some(prev) = out.chars().next_back()
+                && ((is_word(prev) && is_word(c))
+                    || (fuses(prev) && fuses(c))
+                    || prev == '.'
+                    || c == '.')
+            {
+                out.push(' ');
+            }
+            pending_space = false;
+        }
+        if c == '\'' || c == '"' {
+            quote = Some(c);
+        }
+        out.push(c);
+    }
+    if matches!(
+        word.as_str(),
+        "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+    ) {
+        return None;
+    }
+    Some(out)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -3732,6 +3916,10 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod fact_index_projection_tests;
+#[cfg(test)]
+mod fact_index_tests;
 #[cfg(test)]
 mod tests;
 /// Packet-backed findings the output, LSP and MCP projection tests share

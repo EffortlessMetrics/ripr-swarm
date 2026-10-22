@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_unsupported_syntax_limit/input --diff <cwd>/fixtures/python_unsupported_syntax_limit/diff.patch --mode fast probe:src_mapper.py:python_preview:ebfdf92c
   ripr context --root <cwd>/fixtures/python_unsupported_syntax_limit/input --diff <cwd>/fixtures/python_unsupported_syntax_limit/diff.patch --mode fast --at probe:src_mapper.py:python_preview:ebfdf92c
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_mapper.py:python_preview:ebfdf92c --root <cwd>/fixtures/python_unsupported_syntax_limit/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

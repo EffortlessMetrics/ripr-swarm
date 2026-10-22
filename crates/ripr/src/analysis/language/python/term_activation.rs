@@ -447,6 +447,7 @@ pub(super) fn python_inactive_term_evidence(
             return None;
         }
         observed_values.push(ValueFact {
+            file: None,
             line: row.line,
             text: row.text.clone(),
             value: format!("{argument} = {value}"),

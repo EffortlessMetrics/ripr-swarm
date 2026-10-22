@@ -109,6 +109,40 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
     }
 }
 
+/// The exact value of a product of non-negative integers (#9329): factors
+/// joined by `*`, each a plain decimal literal or an identifier bound in
+/// `inputs` to a plain decimal. Nothing else is read: no parentheses, sums,
+/// casts, suffixes or method calls. The product is checked against `max`
+/// (the result type's largest value), so an overflow answers `None` instead
+/// of a wrapped or clamped value. This is a separate entry from
+/// [`evaluate_initializer`]: it never changes what a `let` initializer
+/// evaluates to.
+pub(crate) fn evaluate_integer_product(
+    expression: &str,
+    inputs: &ExactInputs,
+    max: u128,
+) -> Option<u128> {
+    let mut product: u128 = 1;
+    for factor in expression.trim().split('*') {
+        let factor = factor.trim();
+        let digits = if factor.chars().all(|ch| ch.is_ascii_digit()) {
+            factor
+        } else if is_identifier(factor) {
+            inputs.get(factor)?.as_str()
+        } else {
+            return None;
+        };
+        if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        product = product.checked_mul(digits.parse::<u128>().ok()?)?;
+        if product > max {
+            return None;
+        }
+    }
+    Some(product)
+}
+
 type EvalResult = Result<TypedValue, EvalOutcome>;
 
 fn unsupported(edge: &str) -> EvalOutcome {
@@ -145,6 +179,9 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
                 "identifier `{text}` is not one of the exact inputs"
             ))),
         };
+    }
+    if let Some(outcome) = eval_if_else(text, inputs, steps) {
+        return outcome;
     }
     if let Some(outcome) = eval_slicing(text, inputs, steps) {
         return outcome;
@@ -307,6 +344,103 @@ fn apply_method(
         detail,
     });
     Ok(next)
+}
+
+/// `if flag { A } else { B }` (or `if !flag`) over an exact boolean input:
+/// the taken arm is evaluated and the other is never read. The condition
+/// must be one identifier bound to a `true`/`false` input; any other
+/// condition shape, a missing `else`, or trailing text fails closed.
+fn eval_if_else(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> Option<EvalResult> {
+    let rest = text.strip_prefix("if ")?;
+    let open = rest.find('{')?;
+    let condition = rest[..open].trim();
+    let (negated, flag) = match condition.strip_prefix('!') {
+        Some(flag) => (true, flag.trim()),
+        None => (false, condition),
+    };
+    if !is_identifier(flag) {
+        return None;
+    }
+    let (then_arm, after_then) = take_braced(&rest[open..])?;
+    let after_else = after_then.trim_start().strip_prefix("else")?.trim_start();
+    let (else_arm, tail) = take_braced(after_else)?;
+    if !tail.trim().is_empty() {
+        return None;
+    }
+    let taken = match eval_expression(flag, inputs, &mut Vec::new()) {
+        Ok(TypedValue::Bool(value)) => value != negated,
+        Ok(_) => {
+            return Some(Err(unsupported(&format!(
+                "if condition `{flag}` is not a boolean input"
+            ))));
+        }
+        Err(outcome) => return Some(Err(outcome)),
+    };
+    steps.push(EvalStep {
+        operation: "if_else".to_string(),
+        detail: format!(
+            "`{condition}` selects the {} arm",
+            if taken { "then" } else { "else" }
+        ),
+    });
+    let arm = if taken { then_arm } else { else_arm };
+    Some(eval_expression(arm.trim(), inputs, steps))
+}
+
+/// The inside of the leading `{ ... }` block and the text after it.
+/// String literals are skipped so a brace inside one does not close it.
+fn take_braced(text: &str) -> Option<(&str, &str)> {
+    let body = text.strip_prefix('{')?;
+    let mut depth = 1usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut skip_to = 0usize;
+    for (at, character) in body.char_indices() {
+        if at < skip_to {
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            // A char literal (`'}'`, `'{'`, `'\''`) is skipped whole; a
+            // lifetime has no closing quote two characters on.
+            '\'' => {
+                let rest = &body[at + 1..];
+                let width = if rest.starts_with('\\') {
+                    rest.get(2..)
+                        .and_then(|tail| tail.find('\''))
+                        .map(|n| n + 3)
+                } else {
+                    let mut chars = rest.chars();
+                    chars
+                        .next()
+                        .filter(|_| chars.next() == Some('\''))
+                        .map(|first| first.len_utf8() + 1)
+                };
+                if let Some(width) = width {
+                    skip_to = at + 1 + width;
+                }
+            }
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&body[..at], &body[at + 1..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `Option::map_or(default, |param| param)`: only the literal default
@@ -660,6 +794,80 @@ mod tests {
     }
 
     #[test]
+    fn if_else_reads_the_arm_a_boolean_input_selects() {
+        let arms = [("KIB", "1_024"), ("KB", "1_000")];
+        let with = |flag: &'static str| {
+            let mut table = vec![("si", flag)];
+            table.extend(arms);
+            table
+        };
+        let selected = "if si { KIB } else { KB }";
+        assert_eq!(exact(selected, &with("true")), TypedValue::Index(1_024));
+        assert_eq!(exact(selected, &with("false")), TypedValue::Index(1_000));
+        let negated = "if !si { KB } else { KIB }";
+        assert_eq!(exact(negated, &with("true")), TypedValue::Index(1_024));
+        assert_eq!(exact(negated, &with("false")), TypedValue::Index(1_000));
+        assert_eq!(
+            exact("if si { 7 } else { 9 }", &with("false")),
+            TypedValue::Index(9)
+        );
+    }
+
+    #[test]
+    fn if_else_arms_may_hold_braces_in_char_and_string_literals() {
+        let table = [("flag", "true")];
+        assert_eq!(
+            exact("if flag { '}' } else { 'x' }", &table),
+            TypedValue::Char('}')
+        );
+        assert_eq!(
+            exact("if flag { '{' } else { 'x' }", &table),
+            TypedValue::Char('{')
+        );
+        assert_eq!(
+            exact("if flag { \"}\" } else { \"x\" }", &table),
+            TypedValue::Str("}".into())
+        );
+        assert_eq!(
+            exact("if !flag { '{' } else { 'x' }", &table),
+            TypedValue::Char('x')
+        );
+    }
+
+    #[test]
+    fn if_else_fails_closed_off_its_exact_shape() {
+        let table = [("si", "true"), ("KIB", "1_024"), ("n", "3")];
+        // An arm whose constant is not an exact input names that identifier.
+        assert_eq!(
+            unsupported_edge("if si { KIB } else { KB }", &[("si", "false")]),
+            "identifier `KB` is not one of the exact inputs"
+        );
+        // The condition must be one boolean input, not a computed test.
+        assert_eq!(
+            unsupported_edge("if n { KIB } else { 0 }", &table),
+            "if condition `n` is not a boolean input"
+        );
+        assert_eq!(
+            unsupported_edge("if flag { KIB } else { 0 }", &table),
+            "identifier `flag` is not one of the exact inputs"
+        );
+        // No `else`, trailing text, and a compound condition are not read.
+        for shape in [
+            "if si { KIB }",
+            "if si { KIB } else { 0 } + 1",
+            "if si && n { KIB } else { 0 }",
+        ] {
+            assert!(
+                matches!(
+                    evaluate_initializer(shape, &inputs(&table)),
+                    EvalOutcome::Unsupported { .. }
+                ),
+                "`{shape}` must not evaluate"
+            );
+        }
+    }
+
+    #[test]
     fn find_family_covers_present_absent_empty_and_multibyte() {
         let table = &[("input", "\"a.b\""), ("delim", "'.'")];
         assert_eq!(
@@ -877,5 +1085,57 @@ mod tests {
             other => return Err(format!("expected exact, got {other:?}")),
         }
         Ok(())
+    }
+
+    // #9329: the integer product reader stays a separate, closed entry.
+    #[test]
+    fn integer_product_reads_only_factors_and_checks_the_type_bound() {
+        let inputs: ExactInputs = [("size", "3"), ("KIB", "1024"), ("name", "x1")]
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let max = u128::from(u64::MAX);
+        assert_eq!(
+            evaluate_integer_product("size * KIB", &inputs, max),
+            Some(3072)
+        );
+        assert_eq!(
+            evaluate_integer_product(" 4 * 1024 ", &inputs, max),
+            Some(4096)
+        );
+        assert_eq!(evaluate_integer_product("size", &inputs, max), Some(3));
+        // The bound is the result type's maximum, checked at every step.
+        assert_eq!(evaluate_integer_product("size * KIB", &inputs, 3071), None);
+        let huge: ExactInputs = [("n", u64::MAX.to_string())]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        assert_eq!(evaluate_integer_product("n * 2", &huge, max), None);
+        assert_eq!(evaluate_integer_product("n * 1", &huge, max), Some(max));
+        // Nothing but `*` over literals and bound plain decimals.
+        for expression in [
+            "",
+            "size *",
+            "* size",
+            "size * * KIB",
+            "size + KIB",
+            "size - 1",
+            "(size) * 2",
+            "size * missing",
+            "name * 2",
+            "size as u64",
+            "size * 1u64",
+            "size * -1",
+            "size.pow(2)",
+            "size ** 2",
+            "1_024 * 2",
+            "0x10 * 2",
+        ] {
+            assert_eq!(
+                evaluate_integer_product(expression, &inputs, max),
+                None,
+                "{expression:?}"
+            );
+        }
     }
 }

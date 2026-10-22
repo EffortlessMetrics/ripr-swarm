@@ -1,0 +1,12 @@
+diff --git a/shapes/models.py b/shapes/models.py
+--- a/shapes/models.py
++++ b/shapes/models.py
+@@ -6,7 +6,7 @@
+ @dataclass
+ class Invoice:
+     amount: int
+-    tax_rate: float = 0.2
++    tax_rate: float = 0.25
+     tags: list = field(default_factory=list)
+ 
+     def total(self):

@@ -1160,11 +1160,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                 "packaged CLI check did not retain the requested base identity".to_string(),
             );
         }
-        if check_json
-            .get("analysis_outcome")
-            .and_then(|outcome| outcome.get("analysis_complete"))
-            != Some(&Value::Bool(true))
-        {
+        if crate::check_document_analysis_complete(&check_json) != Some(true) {
             return Err("packaged CLI check did not report complete analysis".to_string());
         }
         let finding = first_finding_id(&check_json)
@@ -2725,7 +2721,10 @@ fn vsix_packaging_check() -> ReleaseReadinessCheck {
     let package_json = Path::new("editors/vscode/package.json");
     let release_doc = Path::new("docs/RELEASE_MARKETPLACE.md");
     let icon = Path::new("editors/vscode/icon.png");
-    let command = "npm --prefix editors/vscode run package";
+    // Static presence check only: it does not run packaging. The inventory and
+    // license-notice proof is `npm run package` / `vscode-verify-vsix`, run by
+    // ci.yml and publish-extension.yml.
+    let command = "static presence check (no VSIX is built)";
     let mut missing = Vec::new();
     for path in [package_json, release_doc, icon] {
         if !path.exists() {

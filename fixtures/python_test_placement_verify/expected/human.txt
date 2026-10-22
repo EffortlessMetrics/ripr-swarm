@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold
   Changed behavior: if amount >= threshold:
   Missing discriminator (1 of 2): Related Python test reaches `calculate_discount` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_pricing.py:4 test_calculate_discount_smoke
+  Related test: tests/test_pricing.py:4 test_calculate_discount_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_pricing.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_pricing.py::test_calculate_discount_smoke
@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_test_placement_verify/input --diff <cwd>/fixtures/python_test_placement_verify/diff.patch --mode fast probe:src_pricing.py:python_preview:b6c16437
   ripr context --root <cwd>/fixtures/python_test_placement_verify/input --diff <cwd>/fixtures/python_test_placement_verify/diff.patch --mode fast --at probe:src_pricing.py:python_preview:b6c16437
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pricing.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).

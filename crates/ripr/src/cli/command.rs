@@ -40,6 +40,7 @@ pub(super) enum CliCommand {
     Explain(Vec<String>),
     Context(Vec<String>),
     Doctor(Vec<String>),
+    Capabilities(Vec<String>),
     Lsp(Vec<String>),
     PrSummary(Vec<String>),
     Annotations(Vec<String>),
@@ -200,6 +201,7 @@ fn cli_command_from_dispatch(
         CommandDispatch::Explain => CliCommand::Explain(command_args),
         CommandDispatch::Context => CliCommand::Context(command_args),
         CommandDispatch::Doctor => CliCommand::Doctor(command_args),
+        CommandDispatch::Capabilities => CliCommand::Capabilities(command_args),
         CommandDispatch::Lsp => CliCommand::Lsp(command_args),
         CommandDispatch::PrSummary => CliCommand::PrSummary(command_args),
         CommandDispatch::Annotations => CliCommand::Annotations(command_args),
@@ -216,6 +218,22 @@ fn cli_command_from_dispatch(
 }
 
 fn unknown_command_error(command: &str) -> String {
+    // A flag in command position means options were put before the command.
+    if command.starts_with('-') {
+        if let Some(flag) = closest_flag(command) {
+            return format!(
+                "unknown command {command:?}. Did you mean `{flag}`? Run `ripr --help`."
+            );
+        }
+        let example = if command == "--root" {
+            "--root .".to_string()
+        } else {
+            format!("{command} ...")
+        };
+        return format!(
+            "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
+        );
+    }
     // Version is a flag here, not a subcommand; say so instead of a bare refusal.
     if command == "version" {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
@@ -230,6 +248,10 @@ fn unknown_command_error(command: &str) -> String {
 }
 
 fn closest_command(command: &str) -> Option<&'static str> {
+    closest_of(command, &known_commands())
+}
+
+fn closest_of(command: &str, candidates: &[&'static str]) -> Option<&'static str> {
     // Scale the budget with length so short unrelated names (`bogus`) do not
     // match a command three edits away.
     let typo_budget = match command.chars().count() {
@@ -237,12 +259,46 @@ fn closest_command(command: &str) -> Option<&'static str> {
         5..=7 => 2,
         _ => 3,
     };
-    known_commands()
-        .into_iter()
+    candidates
+        .iter()
+        .copied()
         .map(|known| (known, edit_distance(command, known)))
         .filter(|(_, distance)| *distance <= typo_budget)
         .min_by_key(|(known, distance)| (*distance, *known))
         .map(|(known, _)| known)
+}
+
+/// A top-level flag typo is one slip away (a dropped, doubled or swapped
+/// character). A wider budget would call valid command-local options such as
+/// `--head` or `--reason` typos of `--help` or `--version`.
+fn closest_flag(command: &str) -> Option<&'static str> {
+    ["--version", "--help"]
+        .into_iter()
+        .find(|flag| is_single_slip(command, flag))
+}
+
+fn is_single_slip(left: &str, right: &str) -> bool {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    if left == right {
+        return false;
+    }
+    if left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+    let common = left.iter().zip(&right).take_while(|(a, b)| a == b).count();
+    let (left_rest, right_rest) = (&left[common..], &right[common..]);
+    match left.len().cmp(&right.len()) {
+        std::cmp::Ordering::Equal => {
+            left_rest[1..] == right_rest[1..]
+                || (left_rest.len() >= 2
+                    && left_rest[0] == right_rest[1]
+                    && left_rest[1] == right_rest[0]
+                    && left_rest[2..] == right_rest[2..])
+        }
+        std::cmp::Ordering::Less => left_rest == &right_rest[1..],
+        std::cmp::Ordering::Greater => &left_rest[1..] == right_rest,
+    }
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {
@@ -420,10 +476,66 @@ mod tests {
     }
 
     #[test]
+    fn flag_in_command_position_says_options_go_after_the_command() {
+        assert_eq!(
+            CliCommand::from_parts(Some("--root"), args(&["."])),
+            Err(
+                "unknown command \"--root\"; options go after the command, e.g. `ripr check --root .`"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            unknown_command_error("--base"),
+            "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
+        );
+    }
+
+    #[test]
     fn cli_command_from_parts_preserves_unknown_command_error() {
         assert_eq!(
             CliCommand::from_parts(Some("unknown"), Vec::new()),
             Err("unknown command \"unknown\". Run `ripr --help`.".to_string())
+        );
+    }
+
+    #[test]
+    fn cli_command_from_parts_suggests_the_nearest_top_level_flag() {
+        assert_eq!(
+            CliCommand::from_parts(Some("--versoin"), Vec::new()),
+            Err(
+                "unknown command \"--versoin\". Did you mean `--version`? Run `ripr --help`."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("-version"), Vec::new()),
+            Err(
+                "unknown command \"-version\". Did you mean `--version`? Run `ripr --help`."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("--hepl"), Vec::new()),
+            Err(
+                "unknown command \"--hepl\". Did you mean `--help`? Run `ripr --help`.".to_string()
+            )
+        );
+        // Valid command-local options keep the placement guidance.
+        for option in ["--head", "--reason"] {
+            assert_eq!(
+                CliCommand::from_parts(Some(option), Vec::new()),
+                Err(format!(
+                    "unknown command {option:?}; options go after the command, e.g. `ripr check {option} ...`"
+                ))
+            );
+        }
+        // A flag nowhere near a top-level flag gets no invented suggestion.
+        assert_eq!(
+            CliCommand::from_parts(Some("--bogus"), Vec::new()),
+            Err(
+                "unknown command \"--bogus\"; options go after the command, e.g. `ripr check --bogus ...`"
+                    .to_string()
+            )
         );
     }
 

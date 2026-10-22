@@ -1,3 +1,5 @@
+mod module_extraction;
+
 use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
@@ -27,7 +29,7 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     index_from_files_at_stamp(files, stamp)
 }
 
-fn claim_index_fixture_root(stamp: u128) -> Result<AuthorityFixtureRoot, String> {
+pub(super) fn claim_index_fixture_root(stamp: u128) -> Result<AuthorityFixtureRoot, String> {
     static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
     for _ in 0..32 {
         let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
@@ -82,7 +84,7 @@ fn index_from_files_at_stamp(
     })
 }
 
-struct AuthorityFixtureRoot(PathBuf);
+pub(super) struct AuthorityFixtureRoot(PathBuf);
 
 impl std::ops::Deref for AuthorityFixtureRoot {
     type Target = Path;
@@ -511,6 +513,12 @@ fn value_facts_share_one_file_scan_per_file() -> Result<(), String> {
     first.value_facts(&index);
     if second.file_value_scan.get().is_none() {
         return Err("first test's facts did not populate the shared file scan".to_string());
+    }
+    if !first
+        .value_facts(&index)
+        .shares_module_constants_with(second.value_facts(&index))
+    {
+        return Err("tests in one file must share one constants map, not clone it".to_string());
     }
     // Identity alone would pass with an empty shared scan: both tests must
     // still resolve the same-file constant through it.
@@ -3116,6 +3124,43 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
             "cancelled pass evaluated {} seams on rayon workers",
             evidence.len()
         ));
+    }
+    Ok(())
+}
+
+/// #9211 for the seam walk: a stage big enough to need the whole-index tables
+/// pays the workspace macro-site scan once on the caller before any seam is
+/// queued, not whichever worker asks first while the others wait. A small
+/// stage reads none of them and pays nothing.
+#[test]
+fn evidence_pass_warms_the_workspace_scan_once_and_only_for_large_stages() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("the fixture must build a context")?;
+    if seams.len() >= WARM_MIN_SEAMS {
+        return Err("the fixture must be a small stage".into());
+    }
+    let evidence = pass.evidence_for(&seams);
+    if evidence.len() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    if context.workspace_scan_passes() != 0 {
+        return Err("a small stage must not pay the whole-index scan".into());
+    }
+    pass.warm_shared_tables(context, None, &None);
+    // At most the ambiguity pass plus one completion; the fixture has no
+    // macro-site consumer, so only the warm can have paid it.
+    let paid = context.workspace_scan_passes();
+    if !(1..=2).contains(&paid) {
+        return Err(format!("expected the primed scan, got {paid} passes"));
+    }
+    pass.warm_shared_tables(context, None, &None);
+    pass.evidence_for(&seams);
+    if context.workspace_scan_passes() != paid {
+        return Err("a later stage must not rescan the workspace".into());
     }
     Ok(())
 }

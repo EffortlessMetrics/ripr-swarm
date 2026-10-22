@@ -502,3 +502,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — opaque_fixture_builder (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — opaque_fixture_builder (19)
+
+Reason:
+RIPR-SPEC-0001: infection_unknown names that the compared value is read from the test input at run time and what would settle it (#9276)
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — opaque_fixture_builder (20)
+
+Reason:
+RIPR-SPEC-0001: an unmapped local boundary operand and a neutral input-free fallback name the literal inputs that would settle the unknown (#9276)
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
