@@ -231,8 +231,14 @@ pub(crate) fn ts_field_update_precedes_read(
         {
             return None;
         }
+        // Every other use is `recv.name`: a computed access (`recv["f"] = 9`), an
+        // alias (`const a = recv`), or the instance passed on (`Object.assign(recv, ..)`)
+        // can write the field where this scan cannot see it.
         let Some(member) = body[at + receiver.len()..].strip_prefix('.') else {
-            continue;
+            if at == *declaration + body[*declaration..].find(receiver).unwrap_or(0) {
+                continue;
+            }
+            return None;
         };
         let name_len = member
             .find(|c: char| !is_identifier_part(c))
@@ -367,6 +373,14 @@ mod tests {
         assert_eq!(precedes(skipped), None);
         let braceless = "{ const stats = new Stats(); if (ready) stats.recordHit(); expect(stats.hits).toBe(1); }";
         assert_eq!(precedes(braceless), None);
+        let computed = "{ const stats = new Stats(); stats.recordHit(); stats[\"hits\"] = 9; expect(stats.hits).toBe(9); }";
+        assert_eq!(precedes(computed), None);
+        let aliased = "{ const stats = new Stats(); stats.recordHit(); const alias = stats; alias.hits = 9; expect(stats.hits).toBe(9); }";
+        assert_eq!(precedes(aliased), None);
+        let escaped = "{ const stats = new Stats(); stats.recordHit(); Object.assign(stats, { hits: 9 }); expect(stats.hits).toBe(9); }";
+        assert_eq!(precedes(escaped), None);
+        let direct = "{ const stats = new Stats(); stats.recordHit(); stats.hits = 9; expect(stats.hits).toBe(9); }";
+        assert_eq!(precedes(direct), None);
         let reassigned = "{ let stats = new Stats(); stats.recordHit(); stats = new Stats(); expect(stats.hits).toBe(1); }";
         assert_eq!(precedes(reassigned), None);
     }

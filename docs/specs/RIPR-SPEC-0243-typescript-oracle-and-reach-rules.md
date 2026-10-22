@@ -910,8 +910,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     called the method on, in the read's own scope, as a statement of its
     own, before the read. The method body has no `return` or `throw` before
     the statement, no nested function or arrow, and uses `this` only as
-    `this.name`; the old line updated the same field. The receiver is not
-    reassigned, written through, or mutated by another method call; the owner
+    `this.name`; the old line updated the same field. The receiver is only
+    ever used as `recv.name` (no computed access, alias, or pass to another
+    function) and is not reassigned, written through, or mutated by another
+    method call; the owner
     call's argument is not a neutral literal (`0`, `""`, `false`, `null`);
     and the expected value is not one (a zero equals the field's initial
     state). Rejected: early exits, computed or escaped writes, other
