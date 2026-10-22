@@ -4402,13 +4402,11 @@ mod tests {
             .find(|run| run.language == "rust")
             .ok_or_else(|| "a vendored skip must record the Rust run".to_string())?;
         assert_eq!(rust_run.status, LanguageRunStatus::Partial);
-        assert!(
-            rust_run
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.starts_with("1 generated or vendored Rust file(s)")),
-            "{:?}",
-            rust_run.reason
+        assert_eq!(
+            rust_run.reason.as_deref(),
+            Some(
+                "1 generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns"
+            )
         );
         Ok(())
     }
