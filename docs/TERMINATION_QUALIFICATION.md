@@ -16,6 +16,12 @@ cargo xtask termination-qualification --binary <path-to-ripr> \
   --removal-manifest target/ripr/termination-qualification/removal-builds/manifest.json
 ```
 
+On the cut, run the first command in a clean checkout of `CANDIDATE_SHA` with
+`--profile release`, and replace `--expected-commit` with
+`--candidate-manifest <#1609 manifest.json>`, which supplies `candidate.sha`.
+That field is this harness's whole contract with the manifest; #1609's DTO owns
+the rest.
+
 A single control can still be named with `--removal-control <family>=<binary>`;
 a family takes one control only, from either source.
 
@@ -37,6 +43,13 @@ and bounded drains.
 | `python_nesting` | `ripr check --diff` | long binary, ternary, `not`, unary minus and `await` runs; long `elif` chain; a deep-but-supported control; comment and string lookalikes |
 | `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, many-star and many-segment nonmatches |
 | `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
+
+Corpus generation `ripr-termination-corpus-v2` retains the original row IDs and
+expectations and adds generated-file leading `./`, inner `.`, and empty-segment
+rows from the same literal table as suppression policy. A normalized nonmatch
+is retained for both consumers. This expands the glob corpus from 29 to 34 rows;
+the packet format remains `ripr-termination-qualification-v1`. Historical
+version 1 packets retain their original corpus identity and coverage.
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
 and a changed file whose finding must stay visible. `pilot` is the only route
@@ -69,7 +82,9 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
   the harness decided what ran: the child sees only the harness `PATH` and no
   ambient `ripr`, runs in the owned case root, cannot read an artifact that was
   in the workspace before launch (the harness removes it first), and runs the
-  admitted bytes after the candidate path is rewritten.
+  admitted bytes after the candidate path is rewritten. A passing row whose
+  workspace cannot be removed becomes an `instrument_failure`; the denial is
+  injected, because a root user ignores directory mode bits.
 - **Repeat control** reruns the corpus; every row's semantic content must match.
 - **Removal controls** run a family's discriminator rows against a binary with
   the repair disabled. At least one row must abort, hang, or return a false
@@ -107,17 +122,14 @@ reports in `--version`, not the build that produced it. It does not exercise LSP
 Known gaps against the child issues, each deliberate for this first harness:
 
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
-- #4510 controls not built: simulated cleanup failure (a root user ignores
-  directory mode bits, so there is no portable way to deny deletion), a decoy
-  repository in the caller's directory, and parsing of the #1609 manifest
-  itself (the manifest does not exist yet; `--expected-commit` takes its
-  candidate SHA). `--expected-sha256` is optional. A non-Unix host is refused,
-  not skipped.
+- #4510 controls not built: a decoy repository in the caller's directory.
+  `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
+- The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
+  and is tested against an inline fixture, not the real DTO.
 - A control passed with `--removal-control` instead of a manifest is bound to
   the candidate by `--version` only; the packet says so in the control detail.
 - The candidate in the packet is the shipped binary, not the manifest's own
   candidate build; the binding between them is the commit in `--version`, not
   a byte comparison.
 - Glob corpus omits mixed separators, root-relative boundaries and an empty
-  path, and the generated-file family omits `.`/empty-segment and
-  adjacent-`**` rows.
+  path, and the generated-file family omits adjacent-`**` rows.

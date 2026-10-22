@@ -792,7 +792,7 @@ fn write_bound_repo_exposure_fixture(
     "kind": "repo_exposure",
     "schema_version": "1",
     "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.11.0"}},
+    "producer": {{"tool": "ripr", "version": "{producer_version}"}},
     "repository": {{"root": "{root_identity}", "head": "{head}"}},
     "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
     "snapshot_identity": "snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}",
@@ -801,7 +801,8 @@ fn write_bound_repo_exposure_fixture(
   "scope": "repo",
   "run_status": "complete",
   "seams": [{seam_json}]
-}}"#
+}}"#,
+        producer_version = env!("CARGO_PKG_VERSION"),
     );
     let mut hasher = Sha256::new();
     hasher.update(raw.as_bytes());
@@ -1015,7 +1016,7 @@ fn bind_repo_exposure_fixture_with_worktree(
         "kind": "repo_exposure",
         "schema_version": "1",
         "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.11.0"},
+        "producer": {"tool": "ripr", "version": env!("CARGO_PKG_VERSION")},
         "repository": {"root": root_identity, "head": head},
         "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v4:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
         "snapshot_identity": format!("snapshot:input:v4:fnv1a64:00000000000000f1;revision:{head}"),
@@ -10414,9 +10415,9 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
-            "producer versions differ",
+            "produced by RIPR 0.10.0",
         ),
         (
             "analysis mode",
@@ -11313,7 +11314,7 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.11.0\"",
+            concat!("\"version\": \"", env!("CARGO_PKG_VERSION"), "\""),
             "\"version\": \"0.10.0\"",
         ),
         (
@@ -11358,6 +11359,10 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
         let stderr = String::from_utf8_lossy(&output.stderr);
         let expected = if label == "analysis profile" {
             "invalid or unknown producer identity"
+        } else if label == "producer version" {
+            // #9500: a version other than the consumer's is refused at
+            // artifact validation, before pair comparability is reached.
+            "produced by RIPR 0.10.0"
         } else {
             "[incomparable_analysis_inputs]"
         };

@@ -17,10 +17,11 @@ use super::dto::{
     EffectBasis, HISTORY_NO_BLOB_EFFECT, MergedPr, PRESENT_BUT_SUPERSEDED, PRESENT_EFFECTIVE,
     Range, SCHEMA_VERSION, Source,
 };
+use super::inline_tests;
 use crate::reports::release_denominator::is_sha;
 
 pub(super) const FACTS_KIND: &str = "release_ledger_git_facts";
-const GIT_TIMEOUT: Duration = Duration::from_mins(5);
+pub(super) const GIT_TIMEOUT: Duration = Duration::from_mins(5);
 const BLAME_TIMEOUT: Duration = Duration::from_mins(2);
 const SHA_CHUNK: usize = 200;
 
@@ -62,6 +63,10 @@ pub(super) struct CommitFacts {
     pub(super) issue_refs: Vec<u64>,
     /// Sorted, unique paths this commit changed against its first parent.
     pub(super) paths: Vec<String>,
+    /// Product-class `.rs` paths this commit changed only inside `#[cfg(test)]`
+    /// items (sorted). Absent in older facts, which read as none.
+    #[serde(default)]
+    pub(super) inline_test_paths: Vec<String>,
     pub(super) final_tree_effect: String,
     pub(super) effect_basis: EffectBasis,
 }
@@ -111,6 +116,14 @@ pub(super) fn capture(args: &CaptureArgs<'_>) -> Result<GitFacts, String> {
         &alive,
         &renamed,
     )?;
+    let parents: Vec<(String, Option<String>)> = reachable
+        .iter()
+        .map(|sha| {
+            let parent = commits.get(sha).and_then(|c| c.parents.first().cloned());
+            (sha.clone(), parent)
+        })
+        .collect();
+    let mut inline = inline_tests::inline_test_paths(args.repo, &parents, &touched)?;
     let mut records = Vec::with_capacity(reachable.len());
     let mut merged_prs = Vec::new();
     for sha in &reachable {
@@ -136,6 +149,7 @@ pub(super) fn capture(args: &CaptureArgs<'_>) -> Result<GitFacts, String> {
             pr_refs,
             issue_refs,
             paths: paths.into_iter().collect(),
+            inline_test_paths: inline.remove(sha).unwrap_or_default(),
             final_tree_effect: classify_effect(&basis).to_string(),
             effect_basis: basis,
         });
@@ -477,7 +491,7 @@ fn git_text(repo: &Path, args: &[&str]) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_error| format!("git {} produced non-UTF-8 output", args[0]))
 }
 
-fn git_bytes(repo: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
+pub(super) fn git_bytes(repo: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
     let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let output = crate::run::capture_bytes_in_dir_with_timeout(
         Path::new("git"),

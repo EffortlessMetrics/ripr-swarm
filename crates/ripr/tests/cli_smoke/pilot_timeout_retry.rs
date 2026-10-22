@@ -75,6 +75,15 @@ fn timeout_json_retry_replays_as_json_from_a_foreign_directory() -> TestResult {
         .env("RIPR_RETRY_PROBE_MARKER", &marker);
     let partial = bounded(first)?;
     assert_eq!(partial.status.code(), Some(0), "{partial:?}");
+    // #9368 item 2: exit 0 on a timeout partial run is deliberate; the
+    // stderr contract line is what keeps a CI pipeline from reading the
+    // timeout as success.
+    let partial_stderr = String::from_utf8_lossy(&partial.stderr);
+    assert!(
+        partial_stderr.contains("exited 0 deliberately")
+            && partial_stderr.contains("top-level status"),
+        "timeout partial run must disclose its exit-code CI contract on stderr:\n{partial_stderr}"
+    );
     assert!(
         marker.is_file(),
         "the deliberately stalled probe did not run"
