@@ -231,10 +231,7 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
         }
         let before: String = chars[..start].iter().collect();
         let before = before.trim_end();
-        if KEYWORDS.contains(&word.as_str())
-            || params.iter().any(|param| *param == word)
-            || before.ends_with("new")
-        {
+        if KEYWORDS.contains(&word.as_str()) || params.contains(&word) || before.ends_with("new") {
             continue;
         }
         return true;
