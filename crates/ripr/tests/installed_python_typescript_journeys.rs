@@ -548,27 +548,26 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             // The selected (top) finding is the one the check screen offered
             // no start for; other findings of the same diff keep their own
             // independent packet decisions.
-            for variant_gap in [selected_typescript_gap(&out)?] {
-                let (start_ok, start) = ripr(
-                    &vdecoy,
-                    &[
-                        "agent",
-                        "repair",
-                        "--gap-id",
-                        &variant_gap,
-                        "--base",
-                        "HEAD~1",
-                        "--root",
-                        &vroot_arg,
-                        "--phase",
-                        "before",
-                    ],
-                )?;
-                expect_exit(start_ok, false, variant)?;
-                need(&start, "repair packet is not ready", variant)?;
-                if attempt_manifests(&vroot)? != 0 || vroot.join("target/ripr/workflow").exists() {
-                    return Err(format!("{variant} left an attempt behind:\n{start}"));
-                }
+            let variant_gap = selected_typescript_gap(&out)?;
+            let (start_ok, start) = ripr(
+                &vdecoy,
+                &[
+                    "agent",
+                    "repair",
+                    "--gap-id",
+                    &variant_gap,
+                    "--base",
+                    "HEAD~1",
+                    "--root",
+                    &vroot_arg,
+                    "--phase",
+                    "before",
+                ],
+            )?;
+            expect_exit(start_ok, false, variant)?;
+            need(&start, "repair packet is not ready", variant)?;
+            if attempt_manifests(&vroot)? != 0 || vroot.join("target/ripr/workflow").exists() {
+                return Err(format!("{variant} left an attempt behind:\n{start}"));
             }
             decoy_untouched(&vdecoy)?;
         } else if !projected {

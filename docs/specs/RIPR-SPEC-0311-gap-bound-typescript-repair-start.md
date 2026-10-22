@@ -84,8 +84,41 @@ existed with no way to begin the attempt.
   the manifest and snapshot are recorded, the eight variants stay unrouted
   with negative start assertions, and Python assertions are unchanged.
 
-## Non-goals
+## Non-Goals
 
 - `--phase after`, receipts and verification run (later slices).
 - Runtime mutation outcomes or sufficiency claims; results are static exposure
   evidence only.
+
+## Acceptance Examples
+
+1. On the installed TypeScript head fixture, `ripr check` prints
+   `ripr agent repair --gap-id <gap> --base <base> --phase before`; running
+   it is accepted, awaits the focused test edit, and records a manifest whose
+   `seam_id` is the gap and whose `gap_binding.base` is the base.
+2. The same start for a let-bound, imported or reach-barrier variant is
+   refused with `the repair packet is not ready` and leaves no attempt.
+3. `agent status` for the gap attempt never names `--seam-id`.
+
+## Test Mapping
+
+- `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `typescript_literal_threshold_packet_is_complete_and_controls_fail_closed`.
+- `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/app/repair_attempt/mod.rs`,
+  `crates/ripr/src/app/agent_status.rs` and
+  `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
+  traceability entry.
+
+## Implementation Mapping
+
+- `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
+  verify route.
+- `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
+- `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
+  `begin_gap_bound_repair_attempt_with_identity`.
+- `crates/ripr/src/app/task_first.rs`, `app/navigation.rs`,
+  `output/human/triage.rs`: the printed start line.
+
+## Metrics
+
+- `unit_test_pass_rate`: the tests above are required Rust tests.
