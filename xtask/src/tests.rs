@@ -6,6 +6,7 @@
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
