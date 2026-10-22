@@ -238,6 +238,20 @@ matches its recorded digest. A `blocking_unresolved` row fails the run; resolve 
 with a reviewed override and rerun, never by editing `ledger.json`. The command
 does not freeze, select, qualify, tag or publish.
 
+The ledger records `--audit` exactly as given and validation re-reads that path,
+so pass a path that resolves from where the command runs (an absolute path is
+safest) and do not edit the audit file after the run.
+
+Rehearsal (2026-10-22, main `28557f03a`): a packet copied from the dry-run
+packet with `open_prs.captured_at_main` set to the chosen cut, `open_prs.rows`
+empty and the 12 `pending` claims set to `final_candidate_execution_only` ran
+through all four steps and validated `--final` (2,471 records, no
+`blocking_unresolved`); editing the audit file afterwards fails validation on its
+digest. The packet and outputs are retained under
+`/mnt/project-files/release/ledger/rehearsal-2026-10-22/`. They prove the
+mechanics only; a rehearsal packet is not a selection and its resolutions are not
+claims.
+
 ## Required Evidence
 
 One negative control per rule above, each starting from a valid ledger, plus a
