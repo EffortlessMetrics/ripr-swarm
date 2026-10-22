@@ -860,6 +860,17 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_cancellation_fails_closed"
 ]
 fixtures = [
+  "fixtures/inherent_receiver_operand_item_shadow",
+  "fixtures/inherent_receiver_macro_discard",
+  "fixtures/inherent_receiver_foreign_helper",
+  "fixtures/inherent_receiver_local_wrapper",
+  "fixtures/inherent_receiver_module_type_shadow",
+  "fixtures/inherent_receiver_dormant_body",
+  "fixtures/inherent_receiver_async_operand",
+  "fixtures/inherent_receiver_async_operand_helper",
+  "fixtures/inherent_receiver_async_function",
+  "fixtures/inherent_receiver_free_helper_identity",
+  "fixtures/inherent_receiver_helper_scope_shadow",
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/rust_constructor_field_observation",
@@ -8511,6 +8522,17 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
 ]
 fixtures = [
+  "fixtures/inherent_receiver_operand_item_shadow",
+  "fixtures/inherent_receiver_macro_discard",
+  "fixtures/inherent_receiver_foreign_helper",
+  "fixtures/inherent_receiver_local_wrapper",
+  "fixtures/inherent_receiver_module_type_shadow",
+  "fixtures/inherent_receiver_dormant_body",
+  "fixtures/inherent_receiver_async_operand",
+  "fixtures/inherent_receiver_async_operand_helper",
+  "fixtures/inherent_receiver_async_function",
+  "fixtures/inherent_receiver_free_helper_identity",
+  "fixtures/inherent_receiver_helper_scope_shadow",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",
