@@ -5382,6 +5382,13 @@ pub(crate) fn classify_change_with_alias_state(
         alias_map,
         workspace_root,
     ));
+    pin_facts.extend(ts_boolean_pin_facts(
+        &probe_shape.family,
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    ));
     if !pin_facts.is_empty() {
         project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
     }

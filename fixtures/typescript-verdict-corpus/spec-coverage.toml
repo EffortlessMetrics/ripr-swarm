@@ -774,21 +774,6 @@ issue = 9497
 reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
 
 [[known_false]]
-case = "ts-grid-boundary-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-equality-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
-case = "ts-grid-logical-exact"
-issue = 9532
-reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
-
-[[known_false]]
 case = "ts-grid-boundary-table"
 issue = 9533
 reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."

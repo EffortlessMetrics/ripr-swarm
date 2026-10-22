@@ -6,7 +6,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 | Language | False | Cases |
 | --- | --- | --- |
 | Rust | 13 | 558 |
-| TypeScript | 33 | 309 |
+| TypeScript | 30 | 309 |
 | Python | 25 | 191 |
 | Perl | 1 | 60 |
 
@@ -40,7 +40,7 @@ spec or the analyzer. Never exclude or reclassify it.
 | TS Playwright and hostile | `pw-expect-soft-second-term`, `pw-step-heavy-parcel-threshold`, `pw-tothrow-anchored-regex`, `pw-loop-registered-rounding-mode` (#9434), `pw-fixme-clamp-upper-bound` (#9436) | see each |
 | TS mocha and node:test | nine false actionable rows (`mocha-*`, `node-*`) | #9496 |
 | TS skip and unexercised bound credited | `mocha-it-skip-sole-pin`, `mocha-clamp-unexercised-lower-arm`, `node-t-skip-inside-test`, `node-first-attempt-nonnegative-bound` | #9497 |
-| TS operator grid | `ts-grid-*` (eleven rows) | #9515, #9532, #9533, #9534 |
+| TS operator grid | `ts-grid-*` (eight rows) | #9515, #9533, #9534 |
 | Python operator grid | `py-grid-*` (seven rows): the original three bare-boolean rows, then `-arithmetic-property`, `-arithmetic-table`, `-delete-helper`, `-returns-property` | #9542 (three), #9594 (four) |
 | Python hostile inputs | `py-hostile-*` (five rows) | #9415, #9419, #9423, #9426 |
 
