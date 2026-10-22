@@ -56,6 +56,7 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
 ///   (`a / b` against `a * b`);
 /// - the old line is the new line's left operand alone (`return a;` against
 ///   `return a * b;`), an added factor or term.
+///
 /// Any other edit (a changed operand, a dropped term, an unrelated operator)
 /// can be pinned by an identity input, so the credit stays.
 pub(crate) fn ts_identity_hides_edit(old: &str, new: &str) -> bool {
