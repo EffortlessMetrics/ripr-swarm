@@ -270,12 +270,23 @@ fn child_gone(pid_file: &Path) -> bool {
     }
 }
 
+/// What a `termination-removal-builds` manifest vouches for about one control:
+/// the commit it was built from, the exact bytes, and the edits applied.
+pub(crate) struct Binding {
+    pub(crate) family: Family,
+    pub(crate) id: String,
+    pub(crate) expected_sha256: String,
+    pub(crate) edits_sha256: String,
+    pub(crate) source_commit: String,
+}
+
 /// Run each family's discriminator rows against a supplied pre-repair binary.
 /// At least one row must abort, hang, or return a false-clean result.
 pub(crate) fn removal_controls(
     work_root: &Path,
     cases: &[Case],
     supplied: &[(Family, PathBuf)],
+    bindings: &[Binding],
     candidate_sha256: &str,
     candidate_version: &str,
     deadline: Duration,
@@ -340,7 +351,7 @@ pub(crate) fn removal_controls(
                 continue;
             }
         };
-        if control_version != candidate_version {
+        if super::removal_builds::without_dirty(&control_version) != candidate_version {
             control.observed = Some("version_mismatch".to_string());
             control.detail = format!(
                 "control reports `{control_version}`, not the candidate's `{candidate_version}`; \
@@ -349,7 +360,45 @@ pub(crate) fn removal_controls(
             out.push(control);
             continue;
         }
-        let binary = Binary { path: path.clone() };
+        let binding = bindings.iter().find(|binding| binding.family == family);
+        if let Some(binding) = binding {
+            let candidate_commit = super::removal_builds::version_commit(candidate_version);
+            if sha != binding.expected_sha256 {
+                control.observed = Some("manifest_sha_mismatch".to_string());
+                control.detail = format!(
+                    "control {sha} is not the {} binary the manifest recorded ({})",
+                    binding.id, binding.expected_sha256
+                );
+                out.push(control);
+                continue;
+            }
+            if candidate_commit != Some(binding.source_commit.as_str()) {
+                control.observed = Some("source_commit_mismatch".to_string());
+                control.detail = format!(
+                    "the manifest was built from {}, the candidate reports {}",
+                    binding.source_commit,
+                    candidate_commit.unwrap_or("no commit")
+                );
+                out.push(control);
+                continue;
+            }
+        }
+        // Run an owned copy and re-hash it, so the control cannot change
+        // between admission and the rows that rely on it.
+        let copy_dir = work_root.join(format!("{id}-binary"));
+        let copy = copy_dir.join("ripr-control");
+        let copied = fs::create_dir_all(&copy_dir)
+            .and_then(|()| fs::copy(path, &copy).map(|_| ()))
+            .map_err(|error| error.to_string());
+        let intact = copied.is_ok()
+            && fs::read(&copy).is_ok_and(|bytes| crate::blind_journey::sha256_hex(&bytes) == sha);
+        if !intact {
+            control.observed = Some("snapshot_failed".to_string());
+            control.detail = format!("could not snapshot the control: {copied:?}");
+            out.push(control);
+            continue;
+        }
+        let binary = Binary { path: copy };
         let mut observed = Vec::new();
         let mut signal = false;
         for case in cases
@@ -362,7 +411,13 @@ pub(crate) fn removal_controls(
         }
         control.discriminated = signal;
         control.observed = Some(observed.join(", "));
-        control.detail = format!("control sha256 {sha}");
+        control.detail = match binding {
+            Some(binding) => format!(
+                "control sha256 {sha}; manifest-bound to {} (edits {}, source {})",
+                binding.id, binding.edits_sha256, binding.source_commit
+            ),
+            None => format!("control sha256 {sha}; bound to the candidate by `--version` only"),
+        };
         out.push(control);
     }
     out
