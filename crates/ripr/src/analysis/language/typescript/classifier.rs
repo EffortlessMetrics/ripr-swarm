@@ -5032,11 +5032,15 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
-                    span.match_indices("expect(").any(|(at, _)| {
-                        !span[..at]
-                            .chars()
-                            .next_back()
-                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                    // `assert.equal(...)` / `assert(...)` of `node:assert` reads
+                    // like `expect(...)`: both still run when the runner
+                    // reaches the callback (#9686).
+                    ["expect(", "assert.", "assert("].iter().any(|call| {
+                        span.match_indices(call).any(|(at, _)| {
+                            !span[..at].chars().next_back().is_some_and(|c| {
+                                c.is_alphanumeric() || matches!(c, '_' | '$' | '.')
+                            })
+                        })
                     })
                 })
         })
