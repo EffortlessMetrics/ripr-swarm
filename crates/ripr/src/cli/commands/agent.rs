@@ -658,7 +658,14 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
-            let message = if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+            let message = if let Some(language) =
+                crate::app::task_first::non_rust_item_language(seam_id)
+            {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
+                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                )
+            } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )
@@ -2355,9 +2362,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),

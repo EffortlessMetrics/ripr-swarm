@@ -45,6 +45,7 @@ mod recommendation;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
+mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
@@ -166,6 +167,7 @@ pub(crate) use recommendation::recommendation_calibration;
 pub(crate) use release::release_readiness;
 pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;
+pub(crate) use release_ledger::release_ledger;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
 pub(crate) use repair_card_usability::repair_card_usability_report;

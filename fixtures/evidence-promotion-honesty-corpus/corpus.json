@@ -10513,6 +10513,25 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_macro_site_scoped_rest_limit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/macro_site_scoped_rest_limit",
+      "vector": "scoped_rest_definition_cannot_promote_binding_uncertainty_to_a_gap",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
     }
   ]
 }

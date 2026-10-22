@@ -666,12 +666,17 @@
       "claim_id": "macro-site-parity",
       "owner_issue": 8265,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "The macro-site retention parity regression has a Draft repair (#8772).",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "Retained workspace macro-site disclosures match the singleton reference, scoped sites are excluded in both retention phases, and an unrelated scoped definition no longer turns binding uncertainty into an actionable gap (#8772).",
       "related_issues": [
         8772
       ],
-      "next": "Land #8772 or record a release hold with the failing predicate. Owner: #8265 repair owner."
+      "implementation_refs": [
+        "pr:8772"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/8265#issuecomment-6331576474"
+      ]
     },
     {
       "claim_id": "git-path-inventories",
@@ -707,9 +712,14 @@
       "claim_id": "distribution-rehearsal-archive",
       "owner_issue": 9273,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Server-archive and Linux glibc 2.34 rehearsal on a current head has not run.",
-      "next": "Run the rehearsal and retain its receipt. Owner: archive rehearsal owner."
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "Server-archive qualification (all five targets plus manifest) and the Linux glibc 2.34 floor passed on a current main (0.11.0); the same workflow runs against the frozen candidate under #2769.",
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39678302594",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9273",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
+      ],
+      "non_claim": "The release does not claim the archive or the glibc 2.34 floor for the final candidate until the same workflow runs against the frozen candidate ref; first-run-archive still defaults to the published 0.10.0 until #9275 merges."
     },
     {
       "claim_id": "distribution-rehearsal-wheel",

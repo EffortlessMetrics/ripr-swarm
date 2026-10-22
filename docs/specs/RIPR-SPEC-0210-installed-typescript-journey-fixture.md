@@ -58,7 +58,7 @@ fixture identity to reference.
   inclusive (`subtotal >= 10000`); the related Vitest test covers subtotals
   9999 and 10001 and misses exactly 10000, so the expected repair is one
   equality assertion and no production edit, independently understandable
-  from source. Every snapshot's `package-lock.json` is the full lockfile (vitest 3.2.4,
+  from source. Every snapshot's `package-lock.json` is the full lockfile (vitest 5.0.5,
   `npm ci`-installable) that backs the
   npm-runner selection that makes the printed `vitest run test/pricing.test.ts`
   command executable in the documented npm environment.

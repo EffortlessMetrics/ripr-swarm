@@ -168,6 +168,7 @@ pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
 pub use ripr::CheckInput
 pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
+pub use ripr::DiffScopeFilter
 pub use ripr::ExposureClass
 pub use ripr::Finding
 pub use ripr::GitCandidateBase
@@ -213,6 +214,7 @@ pub use ripr::Summary
 pub use ripr::SuppressedCheckFinding
 pub use ripr::TestEvidenceEntry
 pub use ripr::TestEvidenceSummary
+pub use ripr::analysis::DiffScopeFilter
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
