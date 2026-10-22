@@ -431,7 +431,11 @@ values defined in RIPR-SPEC-0026:
   or `__getattr__` indirection)
 - `missing_import_graph` (the symbol is imported from a module the
   adapter cannot resolve syntactically, or the changed line uses dynamic import
-  syntax such as `importlib.import_module(...)` / `__import__(...)`)
+  syntax such as `importlib.import_module(...)` / `__import__(...)`; a changed
+  line that calls an imported symbol keeps the limit unless the old/new token
+  diff shows only literals, operators or local names changed: an edit that names
+  an import alias, an attribute after `.`, a keyword argument name or an
+  f-string still limits, #9226)
 - `decorator_indirection` (the decorator changes the call semantics in a
   way the syntax-first adapter cannot follow; simple route decorators such as
   `@app.get(...)`, `@api.post(...)`, or `@router.api_route(...)` may be treated

@@ -809,8 +809,14 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
         Some("assert config[\"port\"] > 0")
     );
     assert_eq!(
-        super::static_limits::static_limit_for_focused_change(new, &focus, &owners[0], &candidates)
-            .map(|limit| limit.kind),
+        super::static_limits::static_limit_for_focused_change(
+            new,
+            &focus,
+            Some(old),
+            &owners[0],
+            &candidates,
+        )
+        .map(|limit| limit.kind),
         Some(StaticLimitKind::PropertyBasedTest)
     );
     // Without the old line the sibling key is not ruled out, which is why the
