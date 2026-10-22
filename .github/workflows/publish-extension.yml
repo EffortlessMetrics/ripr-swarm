@@ -178,7 +178,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: editors/vscode
+        working-directory: .github/ovsx
     env:
       RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -191,9 +191,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
+          cache-dependency-path: .github/ovsx/package-lock.json
 
-      # ovsx comes from the locked devDependency graph (exact pin), not the
+      # ovsx comes from the isolated exact-pinned lock in .github/ovsx, not the
       # registry's latest; lifecycle scripts stay off in the job holding the PAT.
       - name: Install locked publish tooling
         run: npm ci --ignore-scripts
@@ -201,7 +201,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-vsix
-          path: editors/vscode/dist
+          path: .github/ovsx/dist
 
       - name: Require OVSX_PAT
         if: ${{ env.OVSX_PAT == '' }}

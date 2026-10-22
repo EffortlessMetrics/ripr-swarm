@@ -1476,3 +1476,175 @@ fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String
     }
     Ok(())
 }
+
+const PINNED_CODECOV: &str =
+    "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2";
+
+fn repo_workflow(name: &str) -> Result<String, String> {
+    let root = crate::test_support::workspace_root()?;
+    fs::read_to_string(root.join(".github/workflows").join(name)).map_err(|error| error.to_string())
+}
+
+#[test]
+fn unpinned_third_party_action_is_rejected_and_the_sha_pin_passes() -> Result<(), String> {
+    let pinned = repo_workflow("coverage.yml")?;
+    assert!(
+        pinned.contains(PINNED_CODECOV),
+        "fixture must start from the SHA-pinned codecov step"
+    );
+    let empty = BTreeMap::new();
+    assert_eq!(
+        workflow_unpinned_action_violations("coverage.yml", &pinned, &empty),
+        Vec::<String>::new(),
+        "the checked-in SHA-pinned workflow must pass with no exception"
+    );
+
+    let unpinned = pinned.replace(PINNED_CODECOV, "codecov/codecov-action@v6");
+    let violations = workflow_unpinned_action_violations("coverage.yml", &unpinned, &empty);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("codecov/codecov-action@v6"));
+    assert!(violations[0].contains("full commit SHA"));
+    Ok(())
+}
+
+#[test]
+fn unpinned_action_rule_scopes_to_third_party_and_rejects_short_or_branch_refs() {
+    let text = r#"
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/local
+      - uses: peter-evans/create-pull-request@5f6978f # short sha is mutable-ambiguous
+      - name: branch
+        uses: Swatinem/rust-cache@main
+      - run: echo "uses: evil/action@v1"
+      # uses: commented/out@v1
+      - uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
+"#;
+    let violations = workflow_unpinned_action_violations("w.yml", text, &BTreeMap::new());
+    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("create-pull-request@5f6978f"))
+    );
+    assert!(violations.iter().any(|v| v.contains("rust-cache@main")));
+}
+
+#[test]
+fn unpinned_action_allowlist_is_a_ratchet() {
+    let text = "      - uses: Swatinem/rust-cache@v2\n";
+    let row = |count| {
+        BTreeMap::from([(
+            ("w.yml".to_string(), "Swatinem/rust-cache@v2".to_string()),
+            count,
+        )])
+    };
+    assert!(workflow_unpinned_action_violations("w.yml", text, &row(1)).is_empty());
+    let over = workflow_unpinned_action_violations("w.yml", &format!("{text}{text}"), &row(1));
+    assert_eq!(over.len(), 1, "{over:?}");
+    assert!(over[0].contains("allowed 1"));
+    let stale = workflow_unpinned_action_violations("w.yml", "steps: []\n", &row(1));
+    assert_eq!(stale.len(), 1, "{stale:?}");
+    assert!(stale[0].contains("only 0 remain"));
+    // A row for another file never excuses this file.
+    assert_eq!(
+        workflow_unpinned_action_violations("other.yml", text, &row(1)).len(),
+        1
+    );
+}
+
+#[test]
+fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Result<(), String> {
+    let allowlist = parse_count_allowlist(
+        UNPINNED_ACTION_ALLOWLIST,
+        &fs::read_to_string(crate::test_support::workspace_root()?.join(UNPINNED_ACTION_ALLOWLIST))
+            .map_err(|error| error.to_string())?,
+    )?;
+    for name in [
+        "publish-extension.yml",
+        "badge-endpoints.yml",
+        "coverage.yml",
+        "test-analytics.yml",
+    ] {
+        let path = format!(".github/workflows/{name}");
+        assert!(
+            !allowlist.keys().any(|(allowed, _)| *allowed == path),
+            "{path} holds a secret or write token and must not be allowlisted"
+        );
+        let text = repo_workflow(name)?;
+        assert!(
+            !third_party_action_refs(&text).is_empty() || name == "publish-extension.yml",
+            "{name} must have third-party steps for the pin check to grip"
+        );
+        assert_eq!(
+            workflow_unpinned_action_violations(&path, &text, &allowlist),
+            Vec::<String>::new()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn workflow_level_contents_write_is_rejected_but_job_level_is_allowed() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    assert!(workflow_level_write_permission_violations("p.yml", &text).is_empty());
+    assert!(
+        text.contains("\n    permissions:\n      contents: write\n"),
+        "attach-release-asset must keep its job-level write"
+    );
+    let widened = text.replacen(
+        "permissions:\n  contents: read\n",
+        "permissions:\n  contents: write\n",
+        1,
+    );
+    assert_ne!(
+        widened, text,
+        "the workflow-level block must exist to mutate"
+    );
+    let violations = workflow_level_write_permission_violations("p.yml", &widened);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("workflow-level `contents: write`"));
+    Ok(())
+}
+
+#[test]
+fn publish_jobs_run_locked_tools_without_the_registry_latest() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    for job in ["publish-vs-marketplace", "publish-open-vsx"] {
+        let header = format!("  {job}:");
+        let mut block = String::new();
+        let mut inside = false;
+        for line in text.lines() {
+            let top_level_job = line.starts_with("  ")
+                && !line.starts_with("   ")
+                && line.trim_end().ends_with(':');
+            if top_level_job {
+                inside = line == header;
+            }
+            if inside {
+                block.push_str(line);
+                block.push('\n');
+            }
+        }
+        assert!(!block.is_empty(), "missing job {job}");
+        assert!(
+            block.contains("environment: "),
+            "{job} needs an environment gate"
+        );
+        assert!(
+            block.contains("npm ci --ignore-scripts"),
+            "{job} must install the locked graph"
+        );
+        assert!(
+            block.contains("npx --no-install"),
+            "{job} must not fetch tools at run time"
+        );
+        assert!(
+            !block.contains("npx -y"),
+            "{job} must not run registry-latest tools"
+        );
+    }
+    Ok(())
+}

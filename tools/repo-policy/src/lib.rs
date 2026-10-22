@@ -403,6 +403,7 @@ pub fn fix_kind_name(fix_kind: &FixKind) -> &'static str {
 pub fn check_workflows_impl() -> Result<(), String> {
     let budgets = read_workflow_budgets("policy/workflow_allowlist.txt")?;
     let runtime_allowlist = read_count_allowlist("policy/workflow_action_runtime_allowlist.txt")?;
+    let unpinned_allowlist = read_count_allowlist(UNPINNED_ACTION_ALLOWLIST)?;
     let mut violations = Vec::new();
 
     // Share only this invocation's YAML inputs; unbudgeted files still reach
@@ -432,6 +433,15 @@ pub fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(workflow_unpinned_action_violations(
+            &normalized,
+            &text,
+            &unpinned_allowlist,
+        ));
+        violations.extend(workflow_level_write_permission_violations(
+            &normalized,
+            &text,
+        ));
         violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
@@ -687,6 +697,126 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
         if body.contains(" #") {
             violations.push(format!(
                 "{path}:{} plain-scalar `run:` contains ` #`, which YAML reads as a comment and truncates the command; use a `run: |` block scalar",
+                index + 1
+            ));
+        }
+    }
+    violations
+}
+
+/// Reviewed exceptions to the third-party action SHA-pin rule (#9303).
+pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
+
+/// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
+///
+/// First-party `actions/*`, local `./` actions and comments are not third-party.
+/// A `uses:` is recognised only as a step/job key (optionally after `- `), so
+/// the same text inside a `run:` string or a comment is not mistaken for one.
+fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
+    let mut refs = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        let Some(value) = trimmed.strip_prefix("uses:") else {
+            continue;
+        };
+        let value = value.split(" #").next().unwrap_or("").trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        if value.is_empty() || value.starts_with("./") || value.starts_with("actions/") {
+            continue;
+        }
+        refs.push((index + 1, value.to_string()));
+    }
+    refs
+}
+
+fn is_full_commit_sha(reference: &str) -> bool {
+    reference.len() == 40
+        && reference
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Fail a third-party action (or reusable workflow) that is not pinned to a
+/// full 40-hex commit SHA.
+///
+/// A tag or branch is mutable: whoever controls it can change the code that
+/// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
+/// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
+/// tag pins are held in `policy/workflow_unpinned_action_allowlist.txt` with a
+/// per-file count; the allowlist is a ratchet, so a stale (too generous) row
+/// also fails and a pin that lands must lower its row.
+pub fn workflow_unpinned_action_violations(
+    path: &str,
+    text: &str,
+    allowlist: &BTreeMap<(String, String), usize>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut found: BTreeMap<String, usize> = BTreeMap::new();
+    for (line_number, reference) in third_party_action_refs(text) {
+        let pinned = reference
+            .rsplit_once('@')
+            .is_some_and(|(_, tail)| is_full_commit_sha(tail));
+        if pinned {
+            continue;
+        }
+        *found.entry(reference.clone()).or_default() += 1;
+        if !allowlist.contains_key(&(path.to_string(), reference.clone())) {
+            violations.push(format!(
+                "{path}:{line_number} third-party action `{reference}` is not pinned to a full commit SHA; pin `owner/repo@<40-hex> # <tag>` (resolve the tag to its commit) or add a reviewed row to {UNPINNED_ACTION_ALLOWLIST}"
+            ));
+        }
+    }
+    for ((allowed_path, reference), allowed) in allowlist {
+        if allowed_path != path {
+            continue;
+        }
+        let count = found.get(reference).copied().unwrap_or(0);
+        if count > *allowed {
+            violations.push(format!(
+                "{path} uses unpinned `{reference}` {count} time(s), allowed {allowed} in {UNPINNED_ACTION_ALLOWLIST}"
+            ));
+        } else if count < *allowed {
+            violations.push(format!(
+                "{UNPINNED_ACTION_ALLOWLIST} allows `{reference}` {allowed} time(s) in {path} but only {count} remain; lower or remove the row"
+            ));
+        }
+    }
+    violations
+}
+
+/// Fail a workflow whose top-level `permissions:` grants `contents: write`.
+///
+/// A workflow-wide write token reaches every job, including secret-holding
+/// ones (#9303). Grant write at job level, on the job that needs it.
+pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut in_block = false;
+    for (index, line) in text.lines().enumerate() {
+        if line.starts_with("permissions:") {
+            in_block = true;
+            if line.trim_end() == "permissions: write-all" {
+                violations.push(format!(
+                    "{path}:{} workflow-level `permissions: write-all`; grant scopes per job",
+                    index + 1
+                ));
+            }
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        let body = line.trim();
+        if body.is_empty() || body.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            in_block = false;
+            continue;
+        }
+        if body.starts_with("contents:") && body.trim_start_matches("contents:").trim() == "write" {
+            violations.push(format!(
+                "{path}:{} workflow-level `contents: write` reaches every job; declare it on the job that needs it",
                 index + 1
             ));
         }
