@@ -2087,6 +2087,9 @@ impl Backend {
     }
 
     fn mark_attempt_cancelled(&self, request: &RefreshRequest) {
+        // An aborted refresh future never reaches the outcome handler, so
+        // drop its uncovered save digests here (#9366).
+        self.invalidate_uncovered_save_digests();
         let Ok(mut health) = self.analysis_health.lock() else {
             return;
         };
@@ -12421,6 +12424,68 @@ mod work_done_progress_guard_tests {
     use super::*;
     use crate::lsp::progress::ProgressEvent;
     use tower_lsp_server::LspService;
+
+    #[test]
+    fn dropped_refresh_guard_invalidates_only_uncovered_save_digests() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri_of = |name: &str| {
+                format!("file:///workspace/src/{name}.rs")
+                    .parse::<Uri>()
+                    .map_err(|err| format!("uri: {err}"))
+            };
+            let (covered_uri, uncovered_uri) = (uri_of("covered")?, uri_of("uncovered")?);
+
+            // `covered` is saved and then covered by a published snapshot.
+            backend.record_saved_content_digest_and_advance(&covered_uri, "c".to_string());
+            let first = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(first) = &first else {
+                return Err(format!("expected Start decision, got {first:?}"));
+            };
+            let first = first.as_ref().clone();
+            backend.record_health_outcome(&first, RefreshAttemptOutcome::Published);
+            // `uncovered` is saved afterwards; the still-active refresh is aborted.
+            backend.record_saved_content_digest_and_advance(&uncovered_uri, "u".to_string());
+            let held = |backend: &Backend| -> Vec<Uri> {
+                backend
+                    .saved_content_digests
+                    .lock()
+                    .map(|digests| digests.keys().cloned().collect())
+                    .unwrap_or_default()
+            };
+            if held(backend).len() != 2 {
+                return Err("precondition: both digests recorded".to_string());
+            }
+            {
+                let _guard = RefreshCancellationGuard::new(
+                    backend,
+                    &backend.refresh_scheduler,
+                    &backend.refresh_idle,
+                    first,
+                );
+            }
+            let remaining = held(backend);
+            if remaining != vec![covered_uri] {
+                return Err(format!(
+                    "aborted refresh must drop only the uncovered digest: {remaining:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
 
     #[test]
     fn dropped_refresh_guard_ends_active_and_queued_progress_exactly_once() -> Result<(), String> {
