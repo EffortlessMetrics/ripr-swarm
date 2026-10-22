@@ -1125,6 +1125,13 @@ pub(crate) fn expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            outer_call
+                .arguments
+                .first()
+                .filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call,
         loose_number_expected: false,
@@ -1195,6 +1202,10 @@ pub(crate) fn ava_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
@@ -1860,6 +1871,10 @@ fn assert_call_assertion(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
@@ -2015,6 +2030,13 @@ fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
     }
 }
 
+/// The source text of a dynamic matcher argument (`None` for a literal or
+/// no argument), kept so the classifier can read what the expected side is
+/// built from.
+fn dynamic_argument_text(argument: Option<&Argument<'_>>, source: &str) -> Option<String> {
+    argument.and_then(|arg| source_text_for_argument(arg, source))
+}
+
 /// `(expected literal text, is dynamic)` for an optional expected argument.
 fn expected_argument_metadata(
     expected_arg: Option<&Argument<'_>>,
@@ -2165,6 +2187,10 @@ pub(crate) fn chai_expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,

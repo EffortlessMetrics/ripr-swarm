@@ -629,6 +629,11 @@ id = "RIPR-SPEC-0309"
 scope = "out"
 reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
@@ -641,11 +646,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
-
-[[known_false]]
-case = "py-shapes-async-default"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
 case = "py-shapes-context-exit-record"
@@ -678,16 +678,6 @@ issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
 
 [[known_false]]
-case = "py-shapes-match-wildcard-arm"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
-case = "py-shapes-relative-import-missing-tier"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-idioms-caplog-message"
 issue = 9424
 reason = "caplog text assertions pin log messages but are graded weak (#9424)."
@@ -701,11 +691,6 @@ reason = "caplog level edit; abstain with a typed limit (#9424)."
 case = "py-idioms-approx-constant-within-tolerance"
 issue = 9428
 reason = "pytest.approx credited as an exact-value oracle for a within-tolerance edit (#9428)."
-
-[[known_false]]
-case = "py-idioms-unittest-setup-sign"
-issue = 9412
-reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
 
 [[known_false]]
 case = "py-grid-boundary-exact"
@@ -743,6 +728,21 @@ issue = 9423
 reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
 
 [[known_false]]
-case = "py-hostile-star-import-exported"
-issue = 9415
-reason = "False actionable: `from m import *` is not resolved to public names (#9415)."
+case = "py-grid-arithmetic-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-arithmetic-table"
+issue = 9594
+reason = "False actionable: table-loop assertion not credited for an arithmetic edit (#9594)."
+
+[[known_false]]
+case = "py-grid-delete-helper"
+issue = 9594
+reason = "False actionable: field update read through a same-file helper is not credited (#9594)."
+
+[[known_false]]
+case = "py-grid-returns-property"
+issue = 9594
+reason = "False exposed: property assertion credited as exact for a returns edit (#9594)."

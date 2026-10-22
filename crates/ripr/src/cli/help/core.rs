@@ -263,7 +263,9 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif
+                               human, human-full, json, github, sarif,
+                               check-findings-json (identified snapshot
+                               for `agent verify`)
                              Badge (diff-scoped, for README status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
@@ -412,6 +414,13 @@ Environment variables:
                                     effective limit are clamped with disclosure.
                                     Invalid values fail closed as
                                     partial_budget_invalid. Default: 1000.
+  RIPR_CHECK_FINDINGS_BYTES         Byte budget for the findings array in
+                                    `check --format json`; a render above the
+                                    budget fails the run closed instead of
+                                    emitting an unusable document. Set to 0
+                                    to remove the cap (unbounded); an
+                                    unparseable value fails the run.
+                                    Default: 1000000 (1 MB).
   RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
                                     invocation in the diff-load path. A git command
                                     that exceeds the deadline is terminated and the
@@ -609,6 +618,15 @@ Options:
   --json       Emit the core checks as stable JSON and use the same exit status.
   --profile    Check installed-binary analysis (default) or prerequisites for
                building RIPR from source.
+
+Environment variables:
+  RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and
+                  writes use this path instead of the default
+                  {workspace_root}/target/ripr/cache). Useful for read-only
+                  or immutable source checkouts and for redirecting the
+                  cache to a faster or larger volume. Unset or empty keeps
+                  the default. Example:
+                  RIPR_CACHE_DIR=/var/cache/ripr ripr check
 
 Default human output fits one 80x24 screen: failures first, each with a Fix
 line, then compact passing groups. `-v`/`--verbose` prints binary identity,

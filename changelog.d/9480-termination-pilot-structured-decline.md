@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The termination harness now validates a pilot decline as one structured fact: the summary and the artifact must agree on file, reason carrying the expected token and count, and the row's count is read from those fields (#9480).
