@@ -42,7 +42,11 @@ export function stringValues(value: Record<string, unknown> | undefined): string
  * An unterminated span is refused.
  */
 export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = false): boolean {
-  const checked = windowsQuoting ? command.replace(WINDOWS_CONSOLE_QUOTED_SPAN, 'X') : command;
+  // Single-quoted spans are skipped as a whole so a `"` inside one is still
+  // refused and cannot pair up with a later `"` as a console-quoted span.
+  const checked = windowsQuoting
+    ? command.replace(WINDOWS_QUOTED_OR_SINGLE_SPAN, (span) => (span.startsWith("'") ? span : 'X'))
+    : command;
   if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(checked)) {
     return true;
   }
@@ -59,7 +63,7 @@ export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = fa
  * typographic quotes PowerShell reads as quotes are refused as in the POSIX
  * form. Backslashes are literal inside the span (a trailing run is doubled).
  */
-const WINDOWS_CONSOLE_QUOTED_SPAN = /"(?:[^"$`%\r\n\0\u2018-\u201f]|"")*"/g;
+const WINDOWS_QUOTED_OR_SINGLE_SPAN = /'[^']*'|"(?:[^"$`%\r\n\0\u2018-\u201f]|"")*"/g;
 
 /** Whether this extension host runs the server on Windows, where `shell_arg` quotes for the console. */
 export function isWindowsHost(): boolean {

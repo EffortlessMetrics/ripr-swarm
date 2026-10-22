@@ -4879,6 +4879,8 @@ suite('Extension Smoke', () => {
     assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD~1"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"origin/main with space"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"a""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"it\'s"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('""'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"sub\\dir\\\\"'), true));
     // Not Windows: a double quote is refused, as before.
     assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
@@ -4896,7 +4898,9 @@ suite('Extension Smoke', () => {
       `${body('"HEAD~1"')} & calc`,
       `${body('"HEAD~1"')} | calc`,
       body('"a" ; "b"') + ' --x "c',
-      body('abc\\def')
+      body('abc\\def'),
+      // A `"` inside a single-quoted span cannot pair with a later `"`.
+      body(`'a" & calc & "b$'`)
     ]) {
       assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
     }
