@@ -756,7 +756,9 @@ fn spare_by_field(index: &RustIndex) -> std::collections::BTreeMap<&'static str,
 
 #[test]
 fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<(), String> {
-    use crate::analysis::facts::model::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
+    use crate::analysis::facts::model::{
+        ReturnFact, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    };
 
     let mut facts = large_file()?;
     // Producers push facts one at a time and leave spare room on every
@@ -777,6 +779,10 @@ fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<
     function.nested_fn_names.push("inner".into());
     function.let_bindings.push(binding);
     function.literals.push(literal.clone());
+    function.returns.push(ReturnFact {
+        line: 1,
+        text: "input.len()".into(),
+    });
     function.name.reserve_exact(8);
     function.calls.reserve_exact(8);
     function.returns.reserve_exact(8);
@@ -837,6 +843,13 @@ fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<
         binding.name.reserve_exact(8);
     }
     facts.literals.push(literal);
+    facts.returns.push(ReturnFact {
+        line: 1,
+        text: "input.len()".into(),
+    });
+    for ret in &mut facts.returns {
+        ret.text.reserve_exact(8);
+    }
     for literal in &mut facts.literals {
         literal.value.reserve_exact(8);
     }
@@ -864,6 +877,10 @@ fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<
     file.functions.reserve_exact(8);
     file.tests.reserve_exact(8);
     let before = spare_by_field(&index);
+    // A label only appears once the fixture holds an element for it, and the
+    // checks below walk the labels present, so pin the count: a field the
+    // fixture stops populating must fail here rather than drop out.
+    assert_eq!(before.len(), 47, "labels: {:?}", before.keys());
     // The fixture must leave room on every claimed field, so a field that
     // stays at its starting room after finalization names the shrink call
     // that stopped running.
