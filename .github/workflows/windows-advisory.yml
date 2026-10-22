@@ -887,20 +887,20 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
 
-      # A compile failure must not skip the later selector evidence: continue so
-      # the mocha step below records the missing suite as a failing verdict.
+      # A compile failure must not skip the later selector evidence, and must not
+      # be hidden by a passing suite (tsc can emit JS while exiting nonzero): the
+      # outcome is retained and consumed by the mocha step's recorded status.
       - name: Compile VS Code extension tests (#9498)
-        continue-on-error: true
         shell: bash
         working-directory: editors/vscode
         run: |
-          npm ci && npx tsc -p ./
+          mkdir -p ../../target; set +e; npm ci && npx tsc -p ./; compile_status=$?; printf '%s\n' "$compile_status" > ../../target/subset-vscode-install-lock-compile.status; exit 0
 
       - name: Run VS Code managed-server install lock suite (advisory, #9498)
         shell: bash
         working-directory: editors/vscode
         run: |
-          mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
+          mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then echo "subset-vscode-install-lock: npm ci or tsc failed; a passing suite does not clear it" | tee -a ../../target/subset-vscode-install-lock.log; printf '%s\n' 1 > ../../target/subset-vscode-install-lock.status; fi; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
@@ -1483,6 +1483,7 @@ jobs:
             target/subset-lsp-initialize.status
             target/subset-vscode-install-lock.log
             target/subset-vscode-install-lock.status
+            target/subset-vscode-install-lock-compile.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status
