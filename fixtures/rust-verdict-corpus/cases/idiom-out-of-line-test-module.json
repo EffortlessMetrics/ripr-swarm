@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-out-of-line-test-module",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-out-of-line-test-module.diff",
+  "anchor": {
+    "file": "src/ranges.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "out_of_line_test_module_file",
+  "hard_case": "The tests sit in `src/ranges/tests.rs`, declared with `#[cfg(test)] mod tests;`, not inline.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(hi - lo).abs() + 1",
+        "mutated_line": "(hi - lo).abs() + 1",
+        "outcome": "tests_failed",
+        "failing_test": "ranges::tests::span_ignores_order",
+        "equivalence_review": "not equivalent: `(hi - lo).abs()` becomes `(hi - lo).abs() + 1`"
+      },
+      {
+        "replacement": "hi - lo",
+        "mutated_line": "hi - lo",
+        "outcome": "tests_failed",
+        "failing_test": "ranges::tests::span_ignores_order",
+        "equivalence_review": "not equivalent: `(hi - lo).abs()` becomes `hi - lo`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "span_ignores_order asserts both orders give 7, so an off-by-one and the unsigned-less difference both fail. Shape: out-of-line test module.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

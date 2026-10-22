@@ -29,6 +29,11 @@ description = "Language shapes: operator, conversion, iterator, Drop and Default
 floor = 33
 
 [[axis]]
+id = "std_test_form"
+description = "Standard-library test forms without a test crate: should_panic(expected), Result-returning tests, catch_unwind, hand-rolled mocks and recorders, seeded property loops, table-driven loops, assertion helpers and macros, Display string pins, doctests, tests/ integration tests, out-of-line test modules and fixture builders."
+floor = 21
+
+[[axis]]
 id = "hostile_input"
 description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
 floor = 12
@@ -921,3 +926,23 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-async-fn-block-on"
 issue = 9443
 reason = "Async fn driven by block_on is not followed (#9443)."
+
+[[known_false]]
+case = "idiom-assert-macro-wrapper"
+issue = 7089
+reason = "A user macro_rules! wrapping assert_eq! hides the owner pin; the weak gap should take the macro-wrapped limit (#7089)."
+
+[[known_false]]
+case = "idiom-display-string-pin"
+issue = 9608
+reason = "A Display impl pinned through to_string() reads as a weak gap (#9608)."
+
+[[known_false]]
+case = "idiom-fixture-builder-total"
+issue = 9609
+reason = "A method pinned on a fixture-built receiver reads as a weak gap (#9609)."
+
+[[known_false]]
+case = "idiom-hand-mock-exact-line"
+issue = 9610
+reason = "An effect recorded by a hand-written test double and pinned exactly reads as a weak gap (#9610)."
