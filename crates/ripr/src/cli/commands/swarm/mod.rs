@@ -3,6 +3,7 @@ mod ingest;
 mod queue;
 
 use crate::cli::help;
+use crate::cli::suggest::unknown_value;
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
     let Some((subcommand, rest)) = args.split_first() else {
@@ -28,8 +29,10 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
             }
             ingest::run(ingest::parse_options(rest)?)
         }
-        other => Err(format!(
-            "unknown swarm subcommand {other:?}; expected `queue` or `ingest`"
+        other => Err(unknown_value(
+            "swarm subcommand",
+            other,
+            &["queue", "ingest"],
         )),
     }
 }
@@ -46,7 +49,14 @@ mod tests {
     fn rejects_unknown_subcommands_and_missing_root() {
         assert_eq!(
             run(&args(&["unknown"])),
-            Err("unknown swarm subcommand \"unknown\"; expected `queue` or `ingest`".to_string())
+            Err("unknown swarm subcommand \"unknown\". Accepted: queue, ingest.".to_string())
+        );
+        assert_eq!(
+            run(&args(&["queu"])),
+            Err(
+                "unknown swarm subcommand \"queu\". Did you mean `queue`? Accepted: queue, ingest."
+                    .to_string()
+            )
         );
         assert_eq!(run(&args(&[])), Ok(()));
         assert_eq!(run(&args(&["queue", "--help"])), Ok(()));

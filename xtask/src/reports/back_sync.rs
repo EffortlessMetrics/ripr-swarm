@@ -495,9 +495,33 @@ fn git_common_dir(root: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("failed to resolve git common directory: {error}"))
 }
 
+fn configured_origin_url(root: &Path) -> Result<String, String> {
+    // Judge the origin as configured in the checkout. `remote get-url`
+    // applies `url.<base>.insteadOf`, so an operator's (or the checkout's
+    // own) rewrite could turn a foreign origin into an approved one.
+    // `--local` also keeps the read independent of user/system config.
+    let origin = git(
+        root,
+        &[
+            "config",
+            "--local",
+            "--no-includes",
+            "--get-all",
+            "remote.origin.url",
+        ],
+    )?;
+    // Count before trimming so an empty extra value cannot hide.
+    if origin.lines().count() != 1 {
+        return Err(
+            "origin is ambiguous: remote.origin.url must have exactly one value".to_string(),
+        );
+    }
+    Ok(origin.trim().to_string())
+}
+
 fn ensure_remote(root: &Path, expected: &str, role: &str) -> Result<(), String> {
-    let actual = git(root, &["remote", "get-url", "origin"])?;
-    if canonical_remote(actual.trim()).as_deref() != Some(&expected.to_ascii_lowercase()) {
+    let actual = configured_origin_url(root).map_err(|error| format!("{role} {error}"))?;
+    if canonical_remote(&actual).as_deref() != Some(&expected.to_ascii_lowercase()) {
         return Err(format!("{role} origin does not identify {expected}"));
     }
     Ok(())
@@ -913,6 +937,63 @@ mod tests {
             return Err("nested owner path accepted".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn ensure_remote_judges_configured_origin_not_insteadof_rewrite() -> Result<(), String> {
+        let root = temp_root("back-sync-origin")?;
+        let _cleanup = Cleanup(root.clone());
+        init_repo(&root)?;
+        let approved = "https://github.com/EffortlessMetrics/ripr-swarm.git";
+        let foreign = "https://example.invalid/foreign.git";
+        git(&root, &["remote", "add", "origin", foreign])?;
+        git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "url.https://github.com/EffortlessMetrics/ripr-swarm.git.insteadOf",
+                foreign,
+            ],
+        )?;
+        let rewritten = git(&root, &["remote", "get-url", "origin"])?;
+        if canonical_remote(rewritten.trim()).as_deref() != Some("effortlessmetrics/ripr-swarm") {
+            return Err(format!(
+                "discriminator setup failed: get-url did not rewrite, got {}",
+                rewritten.trim()
+            ));
+        }
+        if ensure_remote(&root, "EffortlessMetrics/ripr-swarm", "swarm").is_ok() {
+            return Err("rewritten foreign origin accepted".to_string());
+        }
+        git(&root, &["remote", "set-url", "origin", approved])?;
+        git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "--unset",
+                "url.https://github.com/EffortlessMetrics/ripr-swarm.git.insteadOf",
+            ],
+        )?;
+        ensure_remote(&root, "EffortlessMetrics/ripr-swarm", "swarm")?;
+        git(
+            &root,
+            &[
+                "config",
+                "--local",
+                "--add",
+                "remote.origin.url",
+                "https://example.invalid/second.git",
+            ],
+        )?;
+        match ensure_remote(&root, "EffortlessMetrics/ripr-swarm", "swarm") {
+            Ok(()) => Err("multi-valued origin accepted".to_string()),
+            Err(error) if error.contains("ambiguous") => Ok(()),
+            Err(error) => Err(format!(
+                "multi-valued origin failed for the wrong reason: {error}"
+            )),
+        }
     }
 
     #[test]

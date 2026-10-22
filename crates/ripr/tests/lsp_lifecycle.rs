@@ -972,6 +972,31 @@ fn stdin_eof_before_initialize_still_exits() -> Result<(), String> {
 }
 
 #[test]
+fn zero_length_frame_does_not_delay_the_next_reply() -> Result<(), String> {
+    let mut session = LspSession::spawn()?;
+    // The tower-lsp codec treats an empty body as "no message" and leaves the
+    // bytes after it buffered; without the transport's read split, a request
+    // written in the same burst is answered only once more input or EOF
+    // arrives. Send the empty frame and a valid request in ONE write.
+    let id = session.next_id;
+    session.next_id += 1;
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": initialize_params(),
+    })
+    .to_string();
+    let mut burst = b"Content-Length: 0\r\n\r\n".to_vec();
+    burst.extend_from_slice(format!("Content-Length: {}\r\n\r\n{init}", init.len()).as_bytes());
+    session.send_raw(&burst)?;
+    let response = session.await_response(id, RESPONSE_TIMEOUT)?;
+    expect_result(&response, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+    shutdown_exit_and_wait(&mut session)
+}
+
+#[test]
 fn malformed_frame_yields_parse_error_then_the_server_exits() -> Result<(), String> {
     let mut session = LspSession::spawn()?;
     // `Content-Length` is mandatory and must be an integer; this frame is

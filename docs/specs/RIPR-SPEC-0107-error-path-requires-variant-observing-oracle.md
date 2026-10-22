@@ -375,6 +375,19 @@ only changed behavior on the line is which inputs return `Err`
 (`side_flip/guard.rs`). Every other `error_path` probe still needs a
 variant-observing oracle.
 
+Wording rule (#9122, 2026-10-21): when the strongest credited oracle for a
+non-`error_path` family (for example a predicate or call probe) is an
+`exact_error_variant` or `guarded_result_match` assertion in a test related
+only by proximity (`RelationReason::is_proximity_only`: same test file,
+same module, or a weak name-token link), the discriminator summary names no
+assertion kind and reads "Strong oracle found: assertion kind not
+established (test linked by file, module or name proximity only)". The
+location clause must cover name-token proximity as well as file and module
+location. Grading, classes and actionability are unchanged. Tests:
+`proximity_only_error_variant_assertion_is_not_named_for_a_predicate`,
+`name_token_proximity_error_variant_assertion_names_no_kind_or_location`,
+`proximity_only_strong_oracle_names_no_kind`.
+
 RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
 `exposed` needs one `exact_error_variant` assertion that itself credits a
 sink-alignment branch. This spec's Rust rules do not apply to Python.

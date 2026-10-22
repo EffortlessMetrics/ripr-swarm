@@ -11,7 +11,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::human::terminal_safe;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
-use crate::output::path::{display_path, display_path_text};
+use crate::output::path::{display_path, display_path_text, human_path};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
 };
@@ -24,6 +24,14 @@ use crate::output::pilot::{
     PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
+
+/// Pilot picks are ordered by static evidence (grip class, a missing
+/// value, a related test, a suggested assertion), not by measured mutant
+/// yield: published pilot precision is well below the ranking bar in
+/// `docs/PUBLIC_PROOF.md`. Human output must say so where it presents a
+/// pick as a recommendation, so the order is not read as "highest-value
+/// test first". Structured (JSON) output is unchanged.
+const EXPLORATORY_SEAMS_NOTE: &str = "Exploratory seams, not ranked by expected mutant yield: this order groups seams by static evidence and by whether a focused test can be suggested. It has not been shown to put the seams most likely to catch a wrong result first, so treat each pick as a place to inspect, not as the highest-value test to add.";
 
 const PYTHON_PREVIEW_SUPPORTED_FEATURES: &[&str] = &[
     "project_detection",
@@ -122,7 +130,7 @@ pub(crate) fn render_pilot_summary_json(
     // total above covers only the kept seams and is a lower bound.
     out.push_str(&format!(
         "  \"actionable_seams_total_is_lower_bound\": {},\n",
-        context.seam_limit.is_some()
+        context.seam_limit.is_some() || !declined_rust_files(context).is_empty()
     ));
     match context.seam_limit {
         Some(limit) => out.push_str(&format!(
@@ -133,6 +141,7 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"seam_limit\": null,\n"),
     }
+    push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
         withheld_static_limitations(classified)
@@ -218,7 +227,10 @@ pub(crate) fn render_pilot_summary_md(
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     out.push_str(&format!("- Timeout: {} ms\n", context.timeout_ms));
     match context.config_path {
-        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
+        // #8696: the stored config path is canonical (#7652), which on
+        // Windows carries the verbatim `\\?\` prefix; human surfaces route
+        // through `human_path` like the check header and doctor lines.
+        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
     if let Some(scope) = scope_line(context, true) {
@@ -293,6 +305,8 @@ pub(crate) fn render_pilot_summary_md(
         }
     } else {
         out.push_str("## Top Recommendation\n\n");
+        out.push_str(EXPLORATORY_SEAMS_NOTE);
+        out.push_str("\n\n");
         if let Some(label) = current_change_label(context, top[0]) {
             out.push_str(&format!("- Current change: {}\n", label.markdown()));
         }
@@ -307,8 +321,10 @@ pub(crate) fn render_pilot_summary_md(
             .any(|entry| repair_start_command(context.root, entry).is_some())
         {
             out.push_str("## Ranked Actionable Seams\n\n");
+            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
         } else {
             out.push_str("## Ranked Seams\n\n");
+            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
             out.push_str(
                 "None of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.\n\n",
             );
@@ -370,6 +386,7 @@ pub(crate) fn render_pilot_summary_md(
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_md(&mut out, first_use);
     }
+    push_declined_rust_files_md(&mut out, declined_rust_files(context));
     if let Some(excluded) = rust_excluded(context) {
         push_rust_exclusion_md(&mut out, excluded);
     }
@@ -552,7 +569,9 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  root: {}\n", display_path(context.root)));
     out.push_str(&format!("  mode: {}\n", context.mode.as_str()));
     match context.config_path {
-        Some(path) => out.push_str(&format!("  config: loaded {}\n", display_path(path))),
+        // #8696: same human-path rule as the markdown summary — the
+        // canonical `source_path` must not leak the verbatim `\\?\` prefix.
+        Some(path) => out.push_str(&format!("  config: loaded {}\n", human_path(path))),
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
@@ -585,6 +604,7 @@ pub(crate) fn render_pilot_terminal(
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
+        out.push_str(&format!("  {EXPLORATORY_SEAMS_NOTE}\n"));
         if let Some(label) = current_change_label(context, entry) {
             out.push_str(&format!("  current change: {}\n", label.terminal()));
         }
@@ -689,6 +709,7 @@ pub(crate) fn render_pilot_terminal(
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_terminal(&mut out, first_use);
     }
+    push_declined_rust_files_terminal(&mut out, declined_rust_files(context));
     if let Some(excluded) = rust_excluded(context) {
         push_rust_exclusion_terminal(&mut out, excluded);
     }
@@ -798,7 +819,12 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // #8766: nothing was ranked, so no focused test was named and there
+        // is nothing to run "after adding" yet.
+        out.push_str(
+            "No seam was ranked, so there is no focused test to add; rerun `ripr pilot` after the code or its tests change.\n",
+        );
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));
@@ -1276,6 +1302,77 @@ fn rust_excluded(context: PilotSummaryContext<'_>) -> Option<usize> {
     context
         .language_routes
         .and_then(PilotLanguageRoutes::rust_exclusion)
+}
+
+/// Rust files a parse limit declined (#9308); empty when none were.
+fn declined_rust_files(context: PilotSummaryContext<'_>) -> &[crate::analysis::DeclinedRustFile] {
+    context
+        .language_routes
+        .map(|routes| routes.declined_rust_files.as_slice())
+        .unwrap_or(&[])
+}
+
+const DECLINED_RUST_GUIDANCE: &str = "These files were read lexically, which emits no probe shapes, so their tests and seams are under-credited and this run is not a complete result. Split them below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`.";
+
+fn declined_path(file: &crate::analysis::DeclinedRustFile) -> String {
+    crate::terminal_text::terminal_safe(file.path.to_string_lossy().replace('\\', "/"))
+}
+
+fn push_declined_rust_files_json(out: &mut String, declined: &[crate::analysis::DeclinedRustFile]) {
+    // Omitted when none were declined, so pilot JSON for ordinary
+    // repositories is unchanged.
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("  \"declined_rust_files\": {\n");
+    out.push_str(&format!("    \"file_count\": {},\n", declined.len()));
+    out.push_str("    \"files\": [");
+    for (idx, file) in declined.iter().take(10).enumerate() {
+        out.push_str(if idx == 0 { "\n" } else { ",\n" });
+        out.push_str(&format!(
+            "      {{ \"path\": \"{}\", \"reason\": \"{}\" }}",
+            json_escape(&declined_path(file)),
+            json_escape(&file.reason)
+        ));
+    }
+    out.push_str("\n    ],\n");
+    out.push_str(&format!(
+        "    \"files_omitted\": {},\n",
+        declined.len().saturating_sub(10)
+    ));
+    json_string_field(out, 4, "guidance", DECLINED_RUST_GUIDANCE, false);
+    out.push_str("  },\n");
+}
+
+fn push_declined_rust_files_md(out: &mut String, declined: &[crate::analysis::DeclinedRustFile]) {
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("## Rust Files Declined By A Parse Limit\n\n");
+    for file in declined.iter().take(10) {
+        out.push_str(&format!("- `{}`: {}\n", declined_path(file), file.reason));
+    }
+    if declined.len() > 10 {
+        out.push_str(&format!("- and {} more\n", declined.len() - 10));
+    }
+    out.push_str(&format!("\n{DECLINED_RUST_GUIDANCE}\n\n"));
+}
+
+fn push_declined_rust_files_terminal(
+    out: &mut String,
+    declined: &[crate::analysis::DeclinedRustFile],
+) {
+    if declined.is_empty() {
+        return;
+    }
+    out.push_str("Rust files declined by a parse limit:\n");
+    for file in declined.iter().take(10) {
+        out.push_str(&format!("  {}: {}\n", declined_path(file), file.reason));
+    }
+    if declined.len() > 10 {
+        out.push_str(&format!("  and {} more\n", declined.len() - 10));
+    }
+    out.push_str(&format!("  {DECLINED_RUST_GUIDANCE}\n\n"));
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {

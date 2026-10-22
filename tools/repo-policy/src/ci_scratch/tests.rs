@@ -13,19 +13,13 @@
 //!   script (no lock check; lock check replaced by an mtime test) and require
 //!   the same harness to fail, so the harness cannot pass vacuously.
 
-use std::path::Path;
-
 use super::{
     LOCK_PROBE, RUST_GATES_PATH, SCRATCH_GC_PATH, SCRATCH_LEASE_ACTION_PATH,
     scratch_lease_contract_violations,
 };
 
 fn repo_text(path: &str) -> Result<String, String> {
-    crate::read_text_lossy(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(path),
-    )
+    crate::read_text_lossy(&crate::test_support::workspace_root()?.join(path))
 }
 
 fn repo_contract_inputs() -> Result<(Vec<(String, String)>, String), String> {

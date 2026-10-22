@@ -74,14 +74,35 @@ fn union_mutation_visits_shared_flat_only_and_file_only_once() -> Result<(), Str
 }
 
 #[test]
-fn compaction_keeps_independent_membership_and_duplicate_occurrences() -> Result<(), String> {
+fn remove_file_purges_flat_and_file_memberships() -> Result<(), String> {
     let facts = large_file()?;
     let mut index = RustIndex::default();
     index.insert_file(PathBuf::from("shared.rs"), facts.clone(), true);
     index.insert_file(PathBuf::from("local.rs"), facts.clone(), false);
+    index.non_utf8_sources.insert(PathBuf::from("shared.rs"));
+    assert!(index.remove_file(Path::new("shared.rs")));
+    assert!(!index.remove_file(Path::new("shared.rs")));
+    assert_eq!(index.tests().len(), 0);
+    assert_eq!(index.functions().len(), 0);
+    assert!(!index.non_utf8_sources.contains(Path::new("shared.rs")));
+    index.finalize()?;
+    assert_eq!(index.tests().len(), 0);
+    assert_eq!(index.files().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn compaction_keeps_independent_membership_and_duplicate_occurrences() -> Result<(), String> {
+    let facts = large_file()?;
+    let mut index = RustIndex::default();
+    // One flat-only occurrence plus two file-only occurrences of the same
+    // payload under one path (the second insert replaces the first file
+    // membership): compaction keeps the flat occurrence and the surviving
+    // file occurrence as independent records.
+    index.push_test(facts.tests[0].clone());
+    index.insert_file(PathBuf::from("local.rs"), facts.clone(), false);
     index.insert_file(PathBuf::from("local.rs"), facts, false);
     assert_eq!(index.test_facts.len(), 3);
-    index.remove_file(Path::new("shared.rs"));
     index.finalize()?;
     assert_eq!(index.tests().len(), 1);
     assert_eq!(index.test_facts.len(), 2);

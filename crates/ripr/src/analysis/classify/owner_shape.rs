@@ -377,7 +377,7 @@ mod tests {
                 .map(|call| CallFact {
                     line: 1,
                     name: call.to_string(),
-                    text: format!("{call}()"),
+                    text: format!("{call}()").into(),
                 })
                 .collect(),
             returns: Vec::new(),

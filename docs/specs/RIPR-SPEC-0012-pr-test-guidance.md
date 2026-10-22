@@ -374,7 +374,23 @@ The JSON report uses schema version `0.1`:
 - `summary.suppressed` - candidate recommendations hidden by configured
   severity, suppression, caps, or missing guidance.
 - `summary.unchanged_tests` - `true` when the pull request did not change a
-  nearby test for the selected recommendations.
+  nearby test for the selected recommendations. Diff-backed disclosure includes
+  removals in default Cargo test layouts and edits inside locally resolved direct/inline
+  Rust test/helper function spans. Added lines use head-source spans; removed lines use
+  reconstructed old-source spans and old coordinates. These disclosure paths
+  never become current-line placement targets or evidence of discrimination.
+  Resolved diff attribution owns this flag, including a resolved empty test set;
+  filename-based display grouping cannot add changed tests to that result.
+  Callers without diff attribution retain the existing fallback behavior.
+  Unavailable source, exhausted disclosure budget, or unresolved attribution
+  within this bounded classifier withholds `true` and
+  emits a warning; it does not alter the causal analysis status or hide an open
+  recommendation. Whole-file deletions currently retain a shared deletion count
+  without old-side test-role attribution, so any whole-file deletion (including
+  production or documentation files) conservatively takes this unresolved path.
+  No confirmed test path is inferred from that count.
+  External module composition and broader test-role resolution
+  remain separate work (#3213).
 - `comments[].id` - stable report-local ID.
 - `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
 - `comments[].placement` - GitHub-compatible changed-line placement.
@@ -535,6 +551,27 @@ PR test guidance must not:
   default.
 
 ## Test Mapping
+
+`review_test_changes::review_comments_discloses_removed_and_inline_test_edits`
+uses twelve real Git fixtures to pin separate/inline assertion deletion and
+replacement, shifted old coordinates, production-only controls, and unchanged
+recommendation classification/placement. The renderer test
+`unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations` pins the
+conservative unavailable-attribution warning without hiding the card.
+`review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree` uses real
+Git history and a smaller dirty worktree to pin byte/file disclosure budgets,
+the affirmative production-only control, and unchanged cards/causal receipts.
+`review_comments_disclosure_keeps_test_named_production_source_in_its_role`
+pins that a production file's test-shaped name does not establish a test role.
+`review_comments_preserves_unchanged_tests_for_test_named_production` follows
+separate and inline production-only edits through real Git diffs to final JSON;
+`resolved_production_edits_do_not_become_test_edits_from_filename` pins producer
+precedence for both Rust test-shaped suffixes. The Git regression also retains
+whole-test deletion with a surviving related test and shifted-coordinate controls.
+`review_comments_marks_whole_file_deletions_unresolved` separately pins complete
+test-file and production-file deletions: uncertainty is explicit, the surviving
+recommendation and complete causal receipt remain, and the fourteen surviving-file
+controls above continue to require resolved attribution.
 
 Initial implementation should add tests for:
 

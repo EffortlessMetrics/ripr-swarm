@@ -98,6 +98,11 @@ pub(crate) enum CheckFailureKind {
     /// kind is a sentinel for that routing decision, not an envelope
     /// identity that reaches the wire.
     SelectorMiss,
+    /// The `ripr check` wall-clock budget ran out before analysis finished
+    /// (#5369). The run produced no findings: a refusal, never a clean pass.
+    AnalysisTimeout,
+    /// The shared diff parser refused part of an agent brief working set.
+    DiffInputUnsupported,
 }
 
 impl CheckFailureKind {
@@ -112,6 +117,8 @@ impl CheckFailureKind {
             Self::GapLedgerUnusable => "gap_ledger_unusable",
             Self::SeamIdUnknown => "seam_id_unknown",
             Self::SelectorMiss => "selector_miss",
+            Self::AnalysisTimeout => "analysis_timeout",
+            Self::DiffInputUnsupported => "diff_input_unsupported",
         }
     }
 
@@ -127,6 +134,8 @@ impl CheckFailureKind {
             Self::GapLedgerUnusable => "analysis/gap-ledger",
             Self::SeamIdUnknown => "analysis/seam-inventory",
             Self::SelectorMiss => "analysis/selector",
+            Self::AnalysisTimeout => "analysis/timeout",
+            Self::DiffInputUnsupported => "analysis/diff-input",
         }
     }
 }
@@ -234,6 +243,23 @@ impl CoreError {
     pub(crate) fn seam_id_unknown(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SeamIdUnknown,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr check` run that exhausted its wall-clock budget (#5369).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn analysis_timeout(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::AnalysisTimeout,
+            detail: detail.into(),
+        }
+    }
+
+    /// A brief diff contains regions the shared parser could not examine.
+    pub(crate) fn diff_input_unsupported(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::DiffInputUnsupported,
             detail: detail.into(),
         }
     }

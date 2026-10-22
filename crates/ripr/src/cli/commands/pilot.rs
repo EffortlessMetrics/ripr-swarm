@@ -89,7 +89,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let options = parse_pilot_options(args)?;
+    let mut options = parse_pilot_options(args)?;
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out. The
+    // default packet directory follows the resolved root.
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if !options.root_explicit && !options.out_explicit {
+        options.out_dir = default_pilot_out_dir(&options.root);
+    }
     if !options.root.is_dir() {
         return Err(format!(
             "pilot root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
@@ -183,6 +189,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 limit_info: None,
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
+                declined_rust_files: Vec::new(),
             },
             load_pilot_current_change(&input, git_timeout),
         ))
@@ -234,9 +241,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let corpus_key = report.corpus_key;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let declined_rust_files = report.declined_rust_files.clone();
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     // The current change is loaded before the budget cut so an actionable
     // changed seam past the cut is kept and can still rank change-first. A
@@ -354,7 +363,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis::workspace_unanalyzed_source_languages(&input.root),
         !rust_files.is_empty(),
     )
-    .with_rust_exclusion(rust_excluded);
+    .with_rust_exclusion(rust_excluded)
+    .with_declined_rust_files(declined_rust_files.clone());
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -412,6 +422,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            &declined_rust_files,
         ),
     )?;
 
@@ -666,7 +677,9 @@ fn collect_pilot_python_first_use(
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
     let mut options = PilotOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         out_dir: PathBuf::from(DEFAULT_PILOT_OUT_DIR),
+        out_explicit: false,
         mode: Mode::Draft,
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
@@ -682,6 +695,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -715,6 +729,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         }
         i += 1;
     }
+    options.out_explicit = out_explicit;
     if !out_explicit {
         options.out_dir = default_pilot_out_dir(&options.root);
     }
@@ -977,7 +992,9 @@ mod tests {
             options,
             Ok(PilotOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 out_dir: PathBuf::from("target/pilot"),
+                out_explicit: true,
                 mode: Mode::Ready,
                 explicit: CheckInputExplicit {
                     mode: true,
@@ -1112,6 +1129,7 @@ mod tests {
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
+                    declined_rust_files: Vec::new(),
                 })
             },
         );
@@ -1291,6 +1309,12 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unwritable_out_dir_names_out_not_out_dir",
+            env.denies_creation()?,
+        ) {
+            return Ok(());
+        }
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match pilot(&args(&["--root", root, "--out", out])) {

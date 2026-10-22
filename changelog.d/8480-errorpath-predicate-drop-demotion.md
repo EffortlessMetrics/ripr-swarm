@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An `error_path` or `predicate` finding whose returned record type has a non-plain `Drop` impl in the workspace now demotes to `weakly_exposed` at the final semantic owner, joining the `return_value` demotion: the credited error and boundary assertions hold the returned value while they decide, so dropping it while unwinding from a failed assertion may exit the process before the failure is reported. Plain (empty or comment-only) Drop bodies keep those findings `exposed` (#8480, RIPR-SPEC-0197).
