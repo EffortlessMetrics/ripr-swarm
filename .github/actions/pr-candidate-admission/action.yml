@@ -139,6 +139,9 @@ runs:
 
         python3 "$action_root/candidate_admission.py" --self-test
         python3 "$action_root/release_cut_admission.py" --self-test
+        # Generated declarations must name data files only (see docs/CI.md).
+        python3 "$action_root/candidate_admission.py" --check-attributes "${GITHUB_WORKSPACE}/.gitattributes" \
+          || refuse_early "generated_declaration_invalid" "a linguist-generated declaration in .gitattributes is outside the declarable generated shapes in candidate_admission.py"
 
         validate_candidate_result() {
           local file="$1" rc="$2" allowed="$3"
@@ -241,6 +244,15 @@ runs:
             proposed_args=(--proposed-packet "$proposed_packet")
           fi
 
+          # Generated paths: live base only; missing file exempts nothing, other failures refuse.
+          attrs="$tmp/gitattributes"
+          attrs_args=()
+          if gh api -H "Accept: application/vnd.github.raw" "repos/${ADMISSION_REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>"$packet_err"; then
+            attrs_args=(--generated-attributes "$attrs")
+          elif ! grep -q 'HTTP 404' "$packet_err"; then
+            refuse_early "generated_paths_read_failed" "the generated-path declaration could not be read from the live base; refresh the exact base evidence and retry"
+          fi
+
           docs_flag=()
           [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
           candidate_allowed="admitted,refused"
@@ -251,6 +263,8 @@ runs:
             --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
             --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
             --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+            --pr-files "$pr_files" \
+            "${attrs_args[@]}" \
             "${docs_flag[@]}" > "$result"
           rc_candidate=$?
           python3 "$action_root/release_cut_admission.py" \

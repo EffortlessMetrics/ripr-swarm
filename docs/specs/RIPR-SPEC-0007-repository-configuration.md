@@ -265,6 +265,14 @@ and initialization options supply only the keys the pull did not return.
 Given ripr.toml contains an unknown key or invalid value,
 when ripr loads the config,
 then the user-facing error names the config path and parse problem.
+
+Given --candidate-tree selects an immutable tree with malformed ripr.toml,
+when check refuses that config,
+then the human diagnostic explains how to fix or remove the candidate's file
+and rerun with a new candidate-tree identity; editing only the worktree file
+cannot repair that immutable subject. A config-free candidate uses the built-in
+defaults, not a parent or worktree config. The JSON refusal retains its redacted
+first-line message, config_invalid identity and analysis/config-load route.
 ```
 
 ### Duplicate suppression declarations fail closed
@@ -434,6 +442,17 @@ prints each advisory starting with `~ ` and exits with the status of its core
 checks alone; only a failed core check or required runtime probe prints `!`
 and exits 3.
 
+### Doctor cache-writability probe depth (#6707)
+
+Doctor's cache probe checks every directory a production cache writes
+entries into, as listed by the caches' own constructors. For a sharded
+cache it also probes subdirectory creation inside each existing per-key
+directory (`sharded_dir/<key>`), because publication creates a generation
+directory there. The file probe writes and syncs a small payload so a
+volume with free inodes but no free blocks is reported. A probe whose
+cleanup removal fails is reported instead of silently leaving
+`.ripr-doctor-probe-*` residue. When the workspace root is missing,
+doctor does not run the cache probe at all.
 ### Doctor refuses a checkout-local Perl exporter on PATH (#5349)
 
 ```text
@@ -473,6 +492,19 @@ not the symlink spelling.
   (Unix-only literal-star filesystem fixture).
 - `crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters`
   pins the second consumer's emitted literal rule.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::probe_creatable_dir_reports_a_directory_that_denies_creation`
+  pins the directory-creation probe against a directory that denies it.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories`
+  pins the probe on an existing sharded entry directory.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories`
+  pins the deepened probe inside an existing per-key directory.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::probe_removal_failure_is_reported_not_left_silent`
+  pins probe-cleanup failures being reported rather than ignored.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_screen_skips_the_cache_probe_when_the_root_is_missing`
+  pins that a missing workspace root is never cache-probed.
+- `crates/ripr/src/analysis/seam_cache.rs::tests::production_entry_dirs_match_every_production_cache_constructor`
+  pins doctor's probe list to the production cache constructors,
+  including their subdirectory flags.
 
 - `crates/ripr/tests/default_suppression_disclosure.rs` — real CLI explicit
   opt-in, unchanged full stdout, malformed-unused versus explicit refusal,
@@ -500,6 +532,8 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::parse_error_hint_matches_discovery_after_the_broken_file_is_removed`
 - `crates/ripr/src/config.rs::tests::unreadable_config_error_ends_with_a_recovery_line`
 - `crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::malformed_candidate_config_names_recovery_without_changing_json_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::repaired_and_config_free_candidates_ignore_a_broken_worktree_config`
 - `crates/ripr/tests/cli_smoke.rs::doctor_verbose_malformed_config_omits_the_loader_recovery_line`
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
