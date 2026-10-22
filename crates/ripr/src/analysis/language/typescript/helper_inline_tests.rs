@@ -199,11 +199,121 @@ fn ts_test_with_a_declaration_or_parameter_is_not_inlined() {
 fn ts_helper_called_away_from_the_boundary_is_not_exposed() -> Result<(), String> {
     let text = source(HELPER, "  checkPass(60, true);\n");
     let finding = finding_for(&text)?;
-    assert_ne!(
+    assert_eq!(
         finding.class,
-        ExposureClass::Exposed,
-        "an input away from the boundary must not read exposed: {:?}",
+        ExposureClass::WeaklyExposed,
+        "an input away from the boundary reads weakly exposed, never exposed: {:?}",
         finding.evidence
     );
     Ok(())
+}
+
+#[test]
+fn ts_this_arguments_or_assertion_named_parameters_are_not_inlined() {
+    let cases = [
+        "function checkPass(score: number, want: boolean): void {\n  assert.equal(passes(this.x), want);\n}\n\n",
+        "function checkPass(score: number, want: boolean): void {\n  assert.equal(passes(arguments[0]), want);\n}\n\n",
+        "function checkPass(expect: number, want: boolean): void {\n  assert.equal(passes(expect), want);\n}\n\n",
+        "function checkPass(assert: number, want: boolean): void {\n  assert.equal(passes(1), want);\n}\n\n",
+    ];
+    for helper in cases {
+        let text = source(helper, "  checkPass(50, true);\n");
+        assert_eq!(assertion_count(&text), 0, "{helper}");
+    }
+}
+
+#[test]
+fn ts_numeric_argument_used_as_a_member_object_is_not_inlined() {
+    let helper = "function checkPass(score: number, want: boolean): void {\n  assert.equal(passes(Number(score.toFixed(1))), want);\n}\n\n";
+    let text = source(helper, "  checkPass(5, true);\n");
+    assert_eq!(assertion_count(&text), 0);
+}
+
+fn raw(test_head: &str, body: &str) -> String {
+    format!("{IMPORTS}{HELPER}{test_head} {{\n{body}}});\n")
+}
+
+#[test]
+fn ts_the_rewrite_is_exactly_the_substituted_assertions() -> Result<(), String> {
+    let text = source(HELPER, "  checkPass(50, true);\n  checkPass(49, false);\n");
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), &text);
+    let test = tests
+        .iter()
+        .find(|test| test.local_name == "pass mark")
+        .ok_or_else(|| "the test is extracted".to_string())?;
+    assert!(
+        test.body_text
+            .contains("  assert.equal(passes(50), true);\n  assert.equal(passes(49), false);"),
+        "{}",
+        test.body_text
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_opaque_files_are_not_inlined() {
+    for line in ["eval(\"1\");\n", "const s = \"\\u0041\";\n"] {
+        let text = format!("{line}{}", source(HELPER, "  checkPass(50, true);\n"));
+        assert_eq!(assertion_count(&text), 0, "{line}");
+    }
+}
+
+#[test]
+fn ts_callbacks_that_are_not_plain_sync_arrows_are_not_inlined() {
+    for head in [
+        "test(\"pass mark\", async () =>",
+        "test(\"pass mark\", function* ()",
+        "test(\"pass mark\", function named()",
+        "test(\"pass mark\", (t) =>",
+    ] {
+        let text = raw(head, "  checkPass(50, true);\n");
+        assert_eq!(assertion_count(&text), 0, "{head}");
+    }
+}
+
+#[test]
+fn ts_a_test_nested_in_describe_is_not_inlined() {
+    let text = format!(
+        "{IMPORTS}{HELPER}describe(\"suite\", () => {{\n  test(\"pass mark\", () => {{\n    checkPass(50, true);\n  }});\n}});\n"
+    );
+    assert_eq!(assertion_count(&text), 0);
+}
+
+#[test]
+fn ts_a_call_that_does_not_own_its_lines_is_not_inlined() {
+    for body in [
+        "  checkPass(50, true); checkPass(49, false);\n",
+        "  checkPass(50, true); // pin\n",
+        "  checkPass(\n    50, true);\n",
+    ] {
+        let text = source(HELPER, body);
+        assert_eq!(assertion_count(&text), 0, "{body}");
+    }
+}
+
+#[test]
+fn ts_an_assertion_the_substitution_cannot_prove_is_not_inlined() {
+    for assertion in [
+        "assert.ok([1].some((x) => x === score));",
+        "assert.equal(passes(score), want, `${score}`);",
+        "assert.equal(passes(score), want, \"a\\nb\");",
+        "assert.deepEqual({ score }, want);",
+        "assert.ok(score++);",
+        "assert.ok((score = 1));",
+        "assert.ok(function () { return score; });",
+    ] {
+        let helper = format!(
+            "function checkPass(score: number, want: boolean): void {{\n  {assertion}\n}}\n\n"
+        );
+        let text = source(&helper, "  checkPass(50, true);\n");
+        assert_eq!(assertion_count(&text), 0, "{assertion}");
+    }
+}
+
+#[test]
+fn ts_a_body_with_a_non_expression_statement_is_not_inlined() {
+    for first in ["const x = 1;", "if (true) {}", "let y;"] {
+        let text = source(HELPER, &format!("  {first}\n  checkPass(50, true);\n"));
+        assert_eq!(assertion_count(&text), 0, "{first}");
+    }
 }

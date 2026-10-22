@@ -73,6 +73,9 @@ mod dropped_term_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
+mod helper_inline;
+#[cfg(test)]
+mod helper_inline_tests;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -120,9 +123,6 @@ mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
-mod helper_inline;
-#[cfg(test)]
-mod helper_inline_tests;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;

@@ -171,10 +171,10 @@ fn given_a_test_with_a_local_or_parameter_then_no_shadowing_is_risked() {
 fn given_a_helper_called_away_from_the_boundary_then_it_is_not_exposed() -> Result<(), String> {
     let source = test_source(HELPER, "    check_pass(60, True)\n");
     let finding = finding_for(&source)?;
-    assert_ne!(
+    assert_eq!(
         finding.class,
-        ExposureClass::Exposed,
-        "an input away from the boundary must not read exposed: {:?}",
+        ExposureClass::WeaklyExposed,
+        "an input away from the boundary reads weakly exposed, never exposed: {:?}",
         finding.evidence
     );
     Ok(())
@@ -189,4 +189,159 @@ fn given_a_file_that_is_not_a_test_file_then_nothing_is_inlined() {
         .find(|test| test.name == "test_pass_mark")
         .map_or(0, |test| test.assertions.len());
     assert_eq!(count, 0);
+}
+
+fn body_of(source: &str) -> String {
+    extract_tests(Path::new("tests/test_core.py"), source)
+        .iter()
+        .find(|test| test.name == "test_pass_mark")
+        .map(|test| test.body_text.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn given_a_conditional_or_nested_redefinition_then_it_stays_unknown() {
+    let plain = "def check_pass(score, want):\n    assert passes(score) == want\n\n\n";
+    let conditional = format!(
+        "{plain}if False:\n    def check_pass(score, want):\n        assert passes(score) != want\n\n\n"
+    );
+    assert_eq!(
+        assertion_count(&test_source(&conditional, "    check_pass(50, True)\n")),
+        0
+    );
+    assert_eq!(
+        assertion_count(&test_source(plain, "    check_pass(50, True)\n")),
+        1
+    );
+}
+
+#[test]
+fn given_a_negative_literal_then_it_is_parenthesised() {
+    let helper = "def check_pass(score, want):\n    assert passes(score ** 2) == want\n\n\n";
+    let source = test_source(helper, "    check_pass(-2, True)\n");
+    assert_eq!(assertion_count(&source), 1);
+    assert!(body_of(&source).contains("passes((-2) ** 2)"), "{source}");
+}
+
+#[test]
+fn given_a_non_ascii_literal_then_it_is_copied_whole() {
+    let helper = "def check_pass(score, want):\n    assert passes(score) == want, 'caf\u{e9} \u{2713}'\n\n\n";
+    let source = test_source(helper, "    check_pass(50, True)\n");
+    assert_eq!(assertion_count(&source), 1);
+    assert!(
+        body_of(&source).contains("'caf\u{e9} \u{2713}'"),
+        "{source}"
+    );
+}
+
+#[test]
+fn given_a_non_ascii_parameter_name_then_it_is_substituted_whole() {
+    let helper = "def check_pass(scor\u{e9}, want):\n    assert passes(scor\u{e9}) == want\n\n\n";
+    let source = test_source(helper, "    check_pass(50, True)\n");
+    assert!(body_of(&source).contains("passes(50)"), "{source}");
+}
+
+#[test]
+fn given_a_numeric_argument_used_as_a_member_object_then_it_stays_unknown() {
+    let helper =
+        "def check_pass(score, want):\n    assert passes(score.bit_length()) == want\n\n\n";
+    let source = test_source(helper, "    check_pass(5, True)\n");
+    assert_eq!(assertion_count(&source), 0);
+    assert!(!body_of(&source).contains("5.bit_length"), "{source}");
+}
+
+#[test]
+fn given_a_walrus_in_the_test_body_then_it_stays_unknown() {
+    let source = test_source(
+        HELPER,
+        "    (passes := lambda s: True)\n    check_pass(50, True)\n",
+    );
+    assert_eq!(assertion_count(&source), 0);
+}
+
+#[test]
+fn given_the_literals_then_the_rewrite_is_exactly_the_substituted_asserts() {
+    let source = test_source(
+        HELPER,
+        "    check_pass(50, True)\n    check_pass(49, False)\n",
+    );
+    let body = body_of(&source);
+    assert!(
+        body.ends_with("    assert passes(50) == True, 50\n    assert passes(49) == False, 49"),
+        "{body}"
+    );
+}
+
+#[test]
+fn given_dynamic_name_binding_in_the_file_then_nothing_is_inlined() {
+    for line in [
+        "NAMES = globals()\n",
+        "setattr(object(), 'x', 1)\n",
+        "exec('x = 1')\n",
+        "VALUE = eval('1')\n",
+        "from os.path import *\n",
+    ] {
+        let source = format!(
+            "{line}{}",
+            test_source(HELPER, "    check_pass(50, True)\n")
+        );
+        assert_eq!(assertion_count(&source), 0, "{line}");
+    }
+}
+
+#[test]
+fn given_a_helper_that_is_not_a_plain_function_then_it_stays_unknown() {
+    let cases = [
+        "@decorate\ndef check_pass(score, want):\n    assert passes(score) == want\n\n\n",
+        "async def check_pass(score, want):\n    assert passes(score) == want\n\n\n",
+        "def check_pass(*scores):\n    assert passes(1) == scores\n\n\n",
+        "def check_pass(score, **extra):\n    assert passes(score) == extra\n\n\n",
+        "def check_pass(score, *, want):\n    assert passes(score) == want\n\n\n",
+        "def check_pass(score, want):\n    \"doc\"\n    print(score)\n\n\n",
+    ];
+    for helper in cases {
+        let source = test_source(helper, "    check_pass(50, True)\n");
+        assert_eq!(assertion_count(&source), 0, "{helper}");
+    }
+}
+
+#[test]
+fn given_a_call_that_does_not_own_its_lines_then_it_stays_unknown() {
+    for body in [
+        "    check_pass(50, True); check_pass(49, False)\n",
+        "    check_pass(50, True)  # pin\n",
+        "    check_pass(\n        50, True)\n",
+    ] {
+        let source = test_source(HELPER, body);
+        assert_eq!(assertion_count(&source), 0, "{body}");
+    }
+}
+
+#[test]
+fn given_an_assert_the_substitution_cannot_prove_then_it_stays_unknown() {
+    for assertion in [
+        "assert (lambda s: s)(score) == want",
+        "assert passes(score) == [want]",
+        "assert passes(score) == {want}",
+        "assert passes(score) == want, 'a\\nb'",
+        "assert (flag := passes(score)) == want",
+        "assert all(passes(score) for _ in want)",
+    ] {
+        let helper = format!("def check_pass(score, want):\n    {assertion}\n\n\n");
+        let source = test_source(&helper, "    check_pass(50, True)\n");
+        assert_eq!(assertion_count(&source), 0, "{assertion}");
+    }
+}
+
+#[test]
+fn given_a_test_with_a_non_expression_statement_then_it_stays_unknown() {
+    for first in [
+        "x = 1",
+        "import os",
+        "with open('f'):\n        pass",
+        "del x",
+    ] {
+        let source = test_source(HELPER, &format!("    {first}\n    check_pass(50, True)\n"));
+        assert_eq!(assertion_count(&source), 0, "{first}");
+    }
 }

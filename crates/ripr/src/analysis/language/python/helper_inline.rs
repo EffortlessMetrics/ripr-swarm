@@ -59,7 +59,10 @@ pub(super) fn inline_test_helpers(source: &str, body: &[Stmt]) -> Option<String>
         let Stmt::FunctionDef(test) = stmt else {
             continue;
         };
-        if !test.name.as_str().starts_with("test") || !plain_test(test) {
+        if !test.name.as_str().starts_with("test")
+            || !plain_test(test)
+            || text_for_range(source, test.range).contains(":=")
+        {
             continue;
         }
         for statement in &test.body {
@@ -177,7 +180,17 @@ fn collect_helpers(source: &str, body: &[Stmt]) -> BTreeMap<String, Helper> {
             .iter()
             .filter(|other| matches!(other, Stmt::FunctionDef(f) if f.name.as_str() == name))
             .count();
-        if definitions != 1 {
+        // Any other `def NAME` (conditional, nested, in a class) also rebinds.
+        let spelled = source
+            .match_indices(name)
+            .filter(|(at, _)| {
+                let head = source[..*at].trim_end();
+                head.ends_with("def")
+                    && !head[..head.len() - 3].ends_with(word_char)
+                    && !source[*at + name.len()..].starts_with(word_char)
+            })
+            .count();
+        if definitions != 1 || spelled != 1 {
             continue;
         }
         helpers.insert(
@@ -232,7 +245,12 @@ fn helper_call<'a>(source: &str, statement: &'a Stmt) -> Option<(&'a str, Vec<St
         if !is_literal(argument) {
             return None;
         }
-        arguments.push(text_for_range(source, argument.range()));
+        let text = text_for_range(source, argument.range());
+        arguments.push(if matches!(argument, Expr::UnaryOp(_)) {
+            format!("({text})")
+        } else {
+            text
+        });
     }
     Some((name.id.as_str(), arguments))
 }
@@ -288,31 +306,24 @@ fn substitute(text: &str, parameters: &[String], arguments: &[String]) -> Option
     {
         return None;
     }
-    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut index = 0;
-    let mut quote: Option<u8> = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
+    let mut quote: Option<char> = None;
+    while index < text.len() {
+        let ch = text[index..].chars().next()?;
         if let Some(open) = quote {
-            if byte == open {
+            if ch == open {
                 quote = None;
             }
-            // A parameter name inside a string is left alone only when it is
-            // not a parameter at all; see the post-check below.
-            out.push(byte as char);
-            index += 1;
+            out.push(ch);
+            index += ch.len_utf8();
             continue;
         }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            out.push(byte as char);
-            index += 1;
-            continue;
-        }
-        if byte == b'_' || byte.is_ascii_alphabetic() {
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+        } else if word_char(ch) {
             let end = text[index..]
-                .find(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+                .find(|next: char| !word_char(next))
                 .map_or(text.len(), |at| index + at);
             let word = &text[index..end];
             if let Some(position) = parameters.iter().position(|parameter| parameter == word) {
@@ -321,25 +332,22 @@ fn substitute(text: &str, parameters: &[String], arguments: &[String]) -> Option
                 // An attribute, a keyword argument, or an assignment target
                 // is not a plain value read.
                 let keyword = after.starts_with('=') && !after.starts_with("==");
-                if before.ends_with('.') || keyword {
+                let argument = arguments.get(position)?;
+                // A numeric literal cannot be a member object (`5.bit_length()`
+                // is a syntax error that would drop the whole file's tests).
+                let numeric = argument.starts_with(|c: char| c.is_ascii_digit() || c == '(');
+                if before.ends_with('.') || keyword || (numeric && after.starts_with(['.', '('])) {
                     return None;
                 }
-                out.push_str(&arguments[position]);
+                out.push_str(argument);
             } else {
                 out.push_str(word);
             }
             index = end;
             continue;
         }
-        if byte >= 0x80 {
-            // Non-ASCII identifiers or text: copy the whole char.
-            let ch = text[index..].chars().next()?;
-            out.push(ch);
-            index += ch.len_utf8();
-            continue;
-        }
-        out.push(byte as char);
-        index += 1;
+        out.push(ch);
+        index += ch.len_utf8();
     }
     // A parameter name left inside a string literal would have been rewritten
     // by a naive pass; refuse rather than guess which reading is intended.

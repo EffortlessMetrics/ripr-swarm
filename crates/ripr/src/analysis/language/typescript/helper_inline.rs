@@ -53,7 +53,7 @@ pub(crate) fn inline_test_helpers(
     source: &str,
 ) -> Option<SuiteFactoryExpansion> {
     let code = byte_preserving_code_mask(source)?;
-    if code.len() != source.len() || file_is_opaque(&code) {
+    if code.len() != source.len() || file_is_opaque(&code) || source.contains("\\u") {
         return None;
     }
     let helpers = collect_helpers(program, source, &code);
@@ -174,6 +174,9 @@ fn collect_helpers(
                         && parameter.accessibility.is_none()
                         && !parameter.readonly =>
                 {
+                    // A parameter named like the assertion root would be replaced
+                    // by a literal and change what the statement calls.
+                    plain &= !matches!(identifier.name.as_str(), "assert" | "expect");
                     parameters.push(identifier.name.to_string());
                 }
                 _ => plain = false,
@@ -198,6 +201,13 @@ fn collect_helpers(
                 break;
             };
             if text.contains('\n') {
+                plain = false;
+                break;
+            }
+            // `this` and `arguments` bind to the helper call, not the test.
+            if identifier_occurrences(masked, "this").next().is_some()
+                || identifier_occurrences(masked, "arguments").next().is_some()
+            {
                 plain = false;
                 break;
             }
@@ -365,6 +375,15 @@ fn substitute(
         for at in identifier_occurrences(masked, parameter) {
             // `{` was refused, so a key or shorthand cannot occur; a ternary
             // `?:` or call argument keeps its operand.
+            // A numeric literal cannot be a member object or callee
+            // (`5.toFixed(1)` is a syntax error that would drop the file).
+            let numeric = arguments
+                .get(position)?
+                .starts_with(|c: char| c.is_ascii_digit() || c == '(');
+            let after = masked[at + parameter.len()..].trim_start();
+            if numeric && after.starts_with(['.', '?', '[', '(']) {
+                return None;
+            }
             spans.push((at, at + parameter.len(), position));
         }
     }
