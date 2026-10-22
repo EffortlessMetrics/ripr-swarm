@@ -70,6 +70,9 @@ jobs:
       # it by native PID. This is intended to leave a log and a status to upload;
       # only a forced stall on the runner proves it. The watchdog polls every 10
       # seconds and exits when nextest does, so nothing outlives the step.
+      # The MSYS PID of the background job is not a native PID. Only a PID read from
+      # /proc/<pid>/winpid reaches taskkill; with no mapping the watchdog records
+      # that and kills the MSYS job only.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
@@ -78,16 +81,21 @@ jobs:
           shard=${{ matrix.shard }}
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
-          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null || echo "$nextest_pid")
+          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9)
           (
             set +e
             for _ in $(seq 1 264); do
               sleep 10
               kill -0 "$nextest_pid" 2> /dev/null || exit 0
             done
-            echo "fired winpid=$winpid" > target/shard-$shard.watchdog
-            powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
-            taskkill //F //T //PID "$winpid" > /dev/null 2>&1
+            if [ -z "$winpid" ]; then
+              echo "fired unmapped msys_pid=$nextest_pid; no native PID, no taskkill" > target/shard-$shard.watchdog
+              kill -9 "$nextest_pid" > /dev/null 2>&1
+            else
+              echo "fired winpid=$winpid" > target/shard-$shard.watchdog
+              powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
+              taskkill //F //T //PID "$winpid" > /dev/null 2>&1
+            fi
           ) > /dev/null 2>&1 &
           watchdog_pid=$!
           set +e
