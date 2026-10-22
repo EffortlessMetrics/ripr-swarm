@@ -155,8 +155,17 @@ pub(super) fn classify_path(path: &str) -> PathClass {
     PathClass::Other
 }
 
-pub(super) fn strongest_class(paths: &[String]) -> Option<PathClass> {
-    paths.iter().map(|path| classify_path(path)).max()
+/// The strongest class of a commit's paths, counting a product path the commit
+/// edited only inside `#[cfg(test)]` items as evidence.
+fn commit_class(commit: &CommitFacts) -> Option<PathClass> {
+    commit
+        .paths
+        .iter()
+        .map(|path| match classify_path(path) {
+            PathClass::Product if commit.inline_test_paths.contains(path) => PathClass::Evidence,
+            class => class,
+        })
+        .max()
 }
 
 struct Decision {
@@ -194,7 +203,7 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
     if commit.paths.is_empty() {
         return blocked("empty", "empty diff: needs an override", limitations);
     }
-    let class = strongest_class(&commit.paths).unwrap_or(PathClass::Other);
+    let class = commit_class(commit).unwrap_or(PathClass::Other);
     // Rule 0 looks at every path, not the strongest class: an unclassified path
     // beside a product path must not be hidden by the product class.
     if first_parent

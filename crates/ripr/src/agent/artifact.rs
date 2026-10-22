@@ -45,6 +45,11 @@ const REPO_EXPOSURE_PRODUCER_COMMAND: &str = "ripr check --format repo-exposure-
 const REPO_SEAMS_ANALYSIS_FORMAT: &str = "repo-seams-json";
 const REPO_SEAMS_PRODUCER_COMMAND: &str = "ripr check --format repo-seams-json";
 
+/// `analysis.format` / `analysis.command` token of the diff-scoped check
+/// findings identity envelope (ADR 0020 amendment).
+const CHECK_FINDINGS_ANALYSIS_FORMAT: &str = "check-findings-json";
+const CHECK_FINDINGS_PRODUCER_COMMAND: &str = "ripr check --format check-findings-json";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RepoExposureArtifactContext {
     pub(crate) root: PathBuf,
@@ -88,7 +93,7 @@ impl RepoExposureArtifactContext {
             root,
             mode,
             base_revision,
-            config,
+            crate::config::repo_exposure_config_identity_hash(config),
             REPO_EXPOSURE_ANALYSIS_FORMAT,
         )
     }
@@ -107,8 +112,30 @@ impl RepoExposureArtifactContext {
             root,
             mode,
             base_revision,
-            config,
+            crate::config::repo_exposure_config_identity_hash(config),
             REPO_SEAMS_ANALYSIS_FORMAT,
+        )
+    }
+
+    /// Build the portable identity for one diff-scoped check findings run
+    /// (ADR 0020 amendment). The analysis format is part of the canonical
+    /// identity, so a `check-findings-json` artifact never shares an input
+    /// identity with a repo-scoped artifact on the same tree.
+    pub(crate) fn for_check_findings(
+        root: PathBuf,
+        mode: String,
+        base_revision: Option<String>,
+        config: &crate::config::RiprConfig,
+    ) -> Result<Self, String> {
+        // The diff check consumes language selection and TypeScript settings
+        // the Rust-only inventory never reads, so its identity covers every
+        // finding-affecting field.
+        Self::for_analysis_format(
+            root,
+            mode,
+            base_revision,
+            crate::config::check_artifact_config_identity_hash(config),
+            CHECK_FINDINGS_ANALYSIS_FORMAT,
         )
     }
 
@@ -116,7 +143,7 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
+        config_identity: String,
         analysis_format: &str,
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
@@ -134,7 +161,7 @@ impl RepoExposureArtifactContext {
             analysis_format,
             manifest_identity,
             lockfile_identity,
-            crate::config::repo_exposure_config_identity_hash(config),
+            config_identity,
             env!("CARGO_PKG_VERSION"),
         );
         let input_identity = format!(
@@ -244,6 +271,20 @@ pub(crate) fn repo_seams_artifact_metadata(
         "repo_seams",
         REPO_SEAMS_ANALYSIS_FORMAT,
         REPO_SEAMS_PRODUCER_COMMAND,
+        content_sha256,
+    )
+}
+
+/// Producer-owned identity envelope for a `check-findings-json` artifact.
+pub(crate) fn check_findings_artifact_metadata(
+    context: &RepoExposureArtifactContext,
+    content_sha256: &str,
+) -> Result<Value, String> {
+    analysis_artifact_metadata(
+        context,
+        "check_findings",
+        CHECK_FINDINGS_ANALYSIS_FORMAT,
+        CHECK_FINDINGS_PRODUCER_COMMAND,
         content_sha256,
     )
 }
@@ -419,15 +460,198 @@ pub(crate) fn validate_repo_exposure_artifact(
             "agent verify {label} artifact contains an invalid canonical seam"
         ));
     }
-    if identity.kind != "repo_exposure"
+    validate_artifact_identity(root, raw, label, identity, &REPO_EXPOSURE_IDENTITY_SPEC)
+}
+
+/// Producer tokens one validated artifact kind must carry in its identity
+/// envelope (ADR 0019 shared projection, ADR 0020).
+struct ArtifactIdentitySpec {
+    kind: &'static str,
+    format: &'static str,
+    command: &'static str,
+}
+
+const REPO_EXPOSURE_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec {
+    kind: "repo_exposure",
+    format: REPO_EXPOSURE_ANALYSIS_FORMAT,
+    command: REPO_EXPOSURE_PRODUCER_COMMAND,
+};
+
+/// Validate one `agent verify` snapshot with the authority its declared
+/// producer kind selects: a `check_findings` artifact takes the check-findings
+/// validator, every other document the repo-exposure validator (so its
+/// legacy-shape diagnostics are unchanged). Both run the one shared identity,
+/// commitment and Git-provenance validator.
+pub(crate) fn validate_verify_snapshot(
+    root: &Path,
+    raw: &str,
+    label: &str,
+) -> Result<ValidatedArtifact, String> {
+    if declared_artifact_kind(raw).as_deref() == Some("check_findings") {
+        return validate_check_findings_artifact(root, raw, label).map(|checked| checked.artifact);
+    }
+    validate_repo_exposure_artifact(root, raw, label)
+}
+
+fn declared_artifact_kind(raw: &str) -> Option<String> {
+    let Ok(Value::Object(document)) = serde_json::from_str::<Value>(raw) else {
+        return None;
+    };
+    document
+        .get("artifact")?
+        .get("kind")?
+        .as_str()
+        .map(str::to_string)
+}
+
+const CHECK_FINDINGS_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec {
+    kind: "check_findings",
+    format: CHECK_FINDINGS_ANALYSIS_FORMAT,
+    command: CHECK_FINDINGS_PRODUCER_COMMAND,
+};
+
+/// One finding of a validated `check-findings-json` artifact, reduced to the
+/// fields a gap-keyed comparison needs. `canonical_gap_id` is the finding's
+/// own producer-stated gap identity, or the TypeScript identity derived from
+/// its content-addressed finding id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckFindingsGap {
+    pub(crate) gap_id: String,
+    pub(crate) classification: String,
+    pub(crate) file: String,
+    pub(crate) line: u64,
+}
+
+/// A `check-findings-json` artifact whose producer envelope, content
+/// commitment, completeness and findings shape were all validated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ValidatedCheckFindings {
+    pub(crate) artifact: ValidatedArtifact,
+    pub(crate) gaps: Vec<CheckFindingsGap>,
+}
+
+/// Validate a `check-findings-json` artifact with the same identity,
+/// commitment and Git-provenance authority as `validate_repo_exposure_artifact`
+/// (one shared validator, no weaker twin), then require a complete document: an
+/// analysis that did not complete, or a findings array bounded to a prefix,
+/// cannot show a gap as closed.
+pub(crate) fn validate_check_findings_artifact(
+    root: &Path,
+    raw: &str,
+    label: &str,
+) -> Result<ValidatedCheckFindings, String> {
+    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
+        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
+    })?;
+    let CheckFindingsDocument {
+        schema_version,
+        artifact: identity,
+        analysis_outcome,
+        analysis_scope,
+        run_limitations,
+        findings,
+    } = document;
+    if schema_version.trim().is_empty() {
+        return Err(format!(
+            "agent verify {label} artifact has an empty check schema version"
+        ));
+    }
+    let artifact =
+        validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
+    let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
+    Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+/// A run that analyzed only a partition of the diff, or disclosed any run
+/// limitation, cannot show a gap's absence as closure: the gap may sit in the
+/// part that was not analyzed.
+fn check_findings_run_is_whole(
+    label: &str,
+    analysis_scope: Option<&Value>,
+    run_limitations: Option<&[Value]>,
+) -> Result<(), String> {
+    if analysis_scope.is_some() {
+        return Err(format!(
+            "agent verify {label} artifact analyzed only a partial diff scope (analysis_scope), so a missing gap cannot be read as closed; regenerate it over the whole diff"
+        ));
+    }
+    if run_limitations.is_some_and(|limitations| !limitations.is_empty()) {
+        return Err(format!(
+            "agent verify {label} artifact discloses run limitations, so a missing gap cannot be read as closed; regenerate it without limitations"
+        ));
+    }
+    Ok(())
+}
+
+/// The completeness and shape rules a validated findings document must meet
+/// before its gaps can be compared.
+fn check_findings_gaps(
+    label: &str,
+    analysis_outcome: Option<CheckFindingsOutcome>,
+    findings: &[CheckFindingsFinding],
+) -> Result<Vec<CheckFindingsGap>, String> {
+    let Some(outcome) = analysis_outcome else {
+        return Err(format!(
+            "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
+        ));
+    };
+    if outcome.analysis_complete != Some(true) || outcome.document_complete == Some(false) {
+        return Err(format!(
+            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); regenerate it before verifying",
+            outcome.analysis_complete, outcome.document_complete
+        ));
+    }
+    let mut gaps = Vec::new();
+    for finding in findings {
+        let Some(gap_id) = finding.gap_id() else {
+            continue;
+        };
+        let classification = finding.classification.clone().unwrap_or_default();
+        let (file, line) = finding.probe.as_ref().map_or((String::new(), 0), |probe| {
+            (
+                probe.file.clone().unwrap_or_default(),
+                probe.line.unwrap_or(0),
+            )
+        });
+        if classification.trim().is_empty() || file.trim().is_empty() || line == 0 {
+            return Err(format!(
+                "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`"
+            ));
+        }
+        gaps.push(CheckFindingsGap {
+            gap_id,
+            classification,
+            file,
+            line,
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(duplicate) = gaps.iter().find(|gap| !seen.insert(gap.gap_id.as_str())) {
+        return Err(format!(
+            "agent verify {label} artifact names gap `{}` more than once",
+            duplicate.gap_id
+        ));
+    }
+    Ok(gaps)
+}
+
+fn validate_artifact_identity(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    identity: ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<ValidatedArtifact, String> {
+    if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
         || identity.producer.tool != "ripr"
         || identity.producer.version.trim().is_empty()
-        || identity.analysis.format != "repo-exposure-json"
+        || identity.analysis.format != spec.format
         || identity.analysis.mode.trim().is_empty()
         || identity.analysis.input_identity.trim().is_empty()
-        || identity.analysis.command != "ripr check --format repo-exposure-json"
+        || identity.analysis.command != spec.command
         || identity.analysis.profile != identity.analysis.mode
         || !matches!(
             identity.analysis.worktree.as_str(),
@@ -766,6 +990,57 @@ struct RepoExposureDocument {
     scope: String,
     artifact: ArtifactIdentity,
     seams: Vec<RepoExposureSeam>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsDocument {
+    schema_version: String,
+    artifact: ArtifactIdentity,
+    analysis_outcome: Option<CheckFindingsOutcome>,
+    analysis_scope: Option<Value>,
+    run_limitations: Option<Vec<Value>>,
+    findings: Vec<CheckFindingsFinding>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsOutcome {
+    analysis_complete: Option<bool>,
+    document_complete: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsFinding {
+    id: String,
+    canonical_gap_id: Option<String>,
+    classification: Option<String>,
+    probe: Option<CheckFindingsProbe>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsProbe {
+    file: Option<String>,
+    line: Option<u64>,
+}
+
+impl CheckFindingsFinding {
+    /// The finding's gap identity: the producer-stated `canonical_gap_id`, or
+    /// the TypeScript content-addressed identity derived from its finding id.
+    fn gap_id(&self) -> Option<String> {
+        if let Some(gap_id) = self
+            .canonical_gap_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            return Some(gap_id.to_string());
+        }
+        self.id
+            .starts_with("probe:")
+            .then(|| self.id.contains(":typescript_preview:"))
+            .filter(|is_typescript| *is_typescript)
+            .map(|_| {
+                crate::output::typescript_packet_projection::typescript_canonical_gap_id(&self.id)
+            })
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1347,6 +1622,116 @@ fn replace_content_commitment(
 
 #[cfg(test)]
 mod tests {
+    fn findings_fixture(
+        document: serde_json::Value,
+    ) -> Result<(Option<CheckFindingsOutcome>, Vec<CheckFindingsFinding>), String> {
+        let parsed: CheckFindingsDocumentForTest =
+            serde_json::from_value(document).map_err(|error| error.to_string())?;
+        Ok((parsed.analysis_outcome, parsed.findings))
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CheckFindingsDocumentForTest {
+        analysis_outcome: Option<CheckFindingsOutcome>,
+        findings: Vec<CheckFindingsFinding>,
+    }
+
+    fn ts_finding(fp8: &str, classification: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("probe:src_pricing.ts:typescript_preview:{fp8}"),
+            "classification": classification,
+            "probe": { "file": "src/pricing.ts", "line": 5 }
+        })
+    }
+
+    #[test]
+    fn check_findings_gaps_key_typescript_findings_by_derived_gap_id() -> Result<(), String> {
+        let (outcome, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": { "analysis_complete": true },
+            "findings": [ts_finding("1a2b3c4d", "weakly_exposed")]
+        }))?;
+        let gaps = check_findings_gaps("before", outcome, &findings)?;
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].gap_id, "gap:typescript:typescript_preview:1a2b3c4d");
+        assert_eq!(gaps[0].classification, "weakly_exposed");
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_gaps_refuse_a_missing_or_incomplete_analysis() -> Result<(), String> {
+        for outcome in [
+            None,
+            Some(serde_json::json!({ "analysis_complete": false })),
+            Some(serde_json::json!({ "analysis_complete": true, "document_complete": false })),
+            Some(serde_json::json!({})),
+        ] {
+            let mut document = serde_json::json!({ "findings": [] });
+            if let Some(outcome) = outcome {
+                document["analysis_outcome"] = outcome;
+            }
+            let (outcome, findings) = findings_fixture(document)?;
+            if check_findings_gaps("after", outcome, &findings).is_ok() {
+                return Err("an unproven-complete findings document was accepted".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_refuse_a_partial_scope_or_any_run_limitation() -> Result<(), String> {
+        let scope = serde_json::json!({ "run_status": "limited_partial_scope" });
+        let limitation = serde_json::json!({ "category": "diff_scope" });
+        check_findings_run_is_whole("after", None, None)?;
+        check_findings_run_is_whole("after", None, Some(&[]))?;
+        if check_findings_run_is_whole("after", Some(&scope), None).is_ok() {
+            return Err("a partial diff scope was accepted".to_string());
+        }
+        if check_findings_run_is_whole("after", None, Some(&[limitation])).is_ok() {
+            return Err("a run limitation was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_gaps_refuse_duplicate_and_malformed_findings() -> Result<(), String> {
+        let complete = serde_json::json!({ "analysis_complete": true });
+        let (outcome, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": complete,
+            "findings": [ts_finding("1a2b3c4d", "exposed"), ts_finding("1a2b3c4d", "exposed")]
+        }))?;
+        let error = check_findings_gaps("after", outcome, &findings)
+            .err()
+            .ok_or("duplicate gap id accepted")?;
+        assert!(error.contains("more than once"), "{error}");
+
+        let mut no_line = ts_finding("1a2b3c4d", "exposed");
+        no_line["probe"]["line"] = serde_json::json!(0);
+        let (outcome, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": complete,
+            "findings": [no_line]
+        }))?;
+        let error = check_findings_gaps("after", outcome, &findings)
+            .err()
+            .ok_or("zero line accepted")?;
+        assert!(error.contains("invalid finding"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn verify_snapshot_dispatch_routes_only_the_declared_findings_kind() {
+        let findings = r#"{"artifact":{"kind":"check_findings"}}"#;
+        let exposure = r#"{"artifact":{"kind":"repo_exposure"}}"#;
+        assert_eq!(
+            declared_artifact_kind(findings).as_deref(),
+            Some("check_findings")
+        );
+        assert_eq!(
+            declared_artifact_kind(exposure).as_deref(),
+            Some("repo_exposure")
+        );
+        assert_eq!(declared_artifact_kind("not json"), None);
+        assert_eq!(declared_artifact_kind(r#"{"findings":[]}"#), None);
+    }
     /// #8152 review: recovery labels must name the shell family the rendered
     /// command actually parses in. The pure double-quote form is cmd.exe
     /// paste-able; a single-quoted segment (a `$`/backtick value, or a
@@ -3346,6 +3731,53 @@ mod tests {
         Ok(())
     }
 
+    /// A diff check consumes settings the Rust-only inventory never reads
+    /// (here the TypeScript path resolution; Rust-only builds have no such setting), so the findings artifact's input
+    /// identity must move with them
+    /// while the repo-exposure identity stays put (#9103 review).
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn check_findings_identity_tracks_diff_only_settings_but_repo_exposure_does_not()
+    -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let plain = crate::config::RiprConfig::default();
+            let moved =
+                crate::config::tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
+            let findings = |config: &crate::config::RiprConfig| {
+                RepoExposureArtifactContext::for_check_findings(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    config,
+                )
+            };
+            let exposure = |config: &crate::config::RiprConfig| {
+                RepoExposureArtifactContext::for_repo_exposure(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    config,
+                )
+            };
+            if findings(&plain)?.input_identity == findings(&moved)?.input_identity {
+                return Err("a diff-only setting must change the findings identity".to_string());
+            }
+            if exposure(&plain)?.input_identity != exposure(&moved)?.input_identity {
+                return Err(
+                    "the Rust-only inventory identity must ignore a diff-only setting".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
     /// (#2823 test 4) Movement of every semantic input — mode, base, config,
     /// manifest content, lockfile content — changes the input identity. The
     /// profile is bound to the mode by envelope validation
@@ -3521,7 +3953,10 @@ mod tests {
                     "typescript.resolve_tsconfig_paths",
                     "[typescript]\nresolve_tsconfig_paths = false\n",
                 ),
-                ("perl.timeout_ms", "[perl]\ntimeout_ms = 1234\n"),
+                (
+                    "perl.timeout_ms",
+                    "[typescript]\nresolve_tsconfig_paths = false\n",
+                ),
             ];
             for (case, toml) in unconsumed {
                 let moved = crate::config::tests_only_parse(toml)?;

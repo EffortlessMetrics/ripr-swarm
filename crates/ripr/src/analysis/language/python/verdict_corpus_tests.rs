@@ -1749,6 +1749,135 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
     Ok(())
 }
 
+const STOCK: &str = "class Stock:\n    def __init__(self, count):\n        self.count = count\n\n    def take(self, n):\n        self.count -= n\n        return self.count\n";
+const STOCK_OLD: &str = "        self.count += n";
+const STOCK_IMPORT: &str = "import unittest\n\nfrom src.shop import Stock";
+
+fn stock_class(class_body: &str) -> Result<ExposureClass, String> {
+    classify(STOCK, 6, STOCK_OLD, &test_module(STOCK_IMPORT, class_body))
+}
+
+const STOCK_TEST: &str =
+    "    def test_take(self):\n        self.assertEqual(self.stock.take(2), 3)\n";
+
+#[test]
+fn a_receiver_built_in_set_up_is_the_owners_class() -> Result<(), String> {
+    // #9417: `self.stock = Stock(5)` in `setUp` binds the receiver the test
+    // calls, as `stock = Stock(5)` in the test body does.
+    assert_eq!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // `setUpClass` binds `cls.stock`, which the test reads as `self.stock`.
+    assert_eq!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n        cls.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // pytest's `setup_method` on a plain `Test` class.
+    assert_eq!(
+        stock_class(
+            "class TestStock:\n    def setup_method(self):\n        self.stock = Stock(5)\n\n    def test_take(self):\n        assert self.stock.take(2) == 3\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_set_up_receiver_that_is_not_unambiguously_the_owners_class_does_not_credit()
+-> Result<(), String> {
+    let hook = "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n\n";
+    // Rebound in the test body, so the setUp instance is not the receiver.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def test_take(self):\n        self.stock = Mock()\n        self.assertEqual(self.stock.take(2), 3)\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // Reassigned by a helper method of the same class.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def reset(self):\n        self.stock = make_stock()\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // A second assignment in the hook itself.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5)\n        self.stock = Stock(1)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The hook builds a different class than the owner's.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Other(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // A subclass may replace the hook the inherited test runs under.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}{STOCK_TEST}\n\nclass Variant(StockTests):\n    def setUp(self):\n        self.stock = Mock()\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The call is on another attribute than the one the hook builds.
+    assert_ne!(
+        stock_class(&format!(
+            "{hook}    def test_take(self):\n        self.assertEqual(self.other.take(2), 3)\n"
+        ))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_set_up_hook_the_framework_does_not_run_or_that_shadows_the_class_does_not_credit()
+-> Result<(), String> {
+    // A plain pytest class never runs `setUp`; the class-level fallback is what
+    // `self.stock` resolves to.
+    assert_ne!(
+        stock_class(
+            "class TestStock:\n    stock = Other(5)\n\n    def setUp(self):\n        self.stock = Stock(5)\n\n    def test_take(self):\n        assert self.stock.take(2) == 3\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // The xunit hook of a `TestCase` is not run by unittest either.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    stock = Other(5)\n\n    def setup_method(self):\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // Two writes on one line: the second replaces the first.
+    assert_ne!(
+        stock_class(&format!(
+            "class StockTests(unittest.TestCase):\n    def setUp(self):\n        self.stock = Stock(5); self.stock = Other(5)\n\n{STOCK_TEST}"
+        ))?,
+        ExposureClass::Exposed
+    );
+    // The hook rebinds the constructor name locally.
+    for rebind in [
+        "from other import Stock",
+        "Stock = Other",
+        "import other as Stock",
+    ] {
+        assert_ne!(
+            stock_class(&format!(
+                "class StockTests(unittest.TestCase):\n    def setUp(self):\n        {rebind}\n        self.stock = Stock(5)\n\n{STOCK_TEST}"
+            ))?,
+            ExposureClass::Exposed,
+            "{rebind}"
+        );
+    }
+    Ok(())
+}
+
 /// A star import names every public owner of its module, so a strong exact
 /// assertion on the starred name observes the owner. Private names stay out
 /// of a star import, and an import from another module never binds it.

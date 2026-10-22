@@ -772,16 +772,10 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let after_path = validate_agent_verify_snapshot_path(&options.root, &options.after, "--after")?;
     let before_json = read_agent_verify_snapshot(&before_path, "before")?;
     let after_json = read_agent_verify_snapshot(&after_path, "after")?;
-    let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &before_json,
-        "before",
-    )?;
-    let after_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &after_json,
-        "after",
-    )?;
+    let before_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &before_json, "before")?;
+    let after_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &after_json, "after")?;
     crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_pair_lineage(&options.root, &before_identity, &after_identity)

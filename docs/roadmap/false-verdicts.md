@@ -5,7 +5,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 13 | 558 |
+| Rust | 17 | 579 |
 | TypeScript | 32 | 309 |
 | Python | 25 | 191 |
 | Perl | 1 | 60 |
@@ -29,6 +29,7 @@ spec or the analyzer. Never exclude or reclassify it.
 | Group | Cases | Owner |
 | --- | --- | --- |
 | Rust exact pin read as gap | `shape-thread-join-result`, `shape-sort-direction-truncate`, `shape-let-else-branch-pinned`, `-closure-returned-adder`, `-collect-result-short-circuit`, `-impl-trait-return-filter` | #9440 |
+| Rust std test forms (`idiom-*`) | `idiom-assert-macro-wrapper` (#7089), `idiom-display-string-pin` (#9608), `idiom-fixture-builder-total` (#9609), `idiom-hand-mock-exact-line` (#9610) | see each |
 | Rust async owner | `shape-async-fn-block-on` | #9443 |
 | Rust generated and fn-value owners | `shape-hostile-owner-as-path-value`, `-owner-through-fn-pointer`, `-cfg-attr-test`, `-macro-defined-owner` | #9442 |
 | Rust const-generic and cast | `shape-cast-truncation-mask` | #9444 |
