@@ -1093,7 +1093,9 @@ fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> b
     let Some(open) = masked.find('{') else {
         return true;
     };
-    let Some(at) = owner.body.find(initializer.trim()) else {
+    // The last occurrence, so a duplicate of the initializer text earlier in
+    // the body (which itself mentions the flag) can never hide a rebinding.
+    let Some(at) = owner.body.rfind(initializer.trim()) else {
         return true;
     };
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -5084,6 +5086,17 @@ mod tests {
         // A longer name that merely contains it, and a comment, are not imports.
         assert!(!name_imported_in_file("use external::KBPS;\n", "KB"));
         assert!(!name_imported_in_file("// use external::KB;\n", "KB"));
+    }
+
+    #[test]
+    fn a_duplicate_of_the_initializer_text_cannot_hide_a_flag_rebinding() {
+        let init = "if si { KIB } else { KB }";
+        let body =
+            format!("{{\n let _u0 = {init};\n for si in [false] {{\n let unit = {init};\n }}\n}}");
+        let owner = function(&body);
+        assert!(name_seen_before(&owner, "si", init));
+        let single = function(&format!("{{\n let unit = {init};\n}}"));
+        assert!(!name_seen_before(&single, "si", init));
     }
 
     #[test]
