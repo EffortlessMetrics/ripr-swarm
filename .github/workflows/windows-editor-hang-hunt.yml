@@ -112,6 +112,41 @@ jobs:
             "RIPR_EXTENSION=$(Join-Path $extract 'extension')" >> $env:GITHUB_ENV
           } finally { Pop-Location }
 
+      - name: Time the Windows server probe phases
+        shell: pwsh
+        working-directory: editors/vscode
+        run: |
+          # #9631: the extension probes through powershell.exe plus an Add-Type C# compile.
+          # Record how long each part takes cold and warm on this runner, outside the journey.
+          $timing = [ordered]@{}
+          function Measure-Ms([scriptblock]$block) {
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+            & $block *> $null
+            [int]$watch.ElapsedMilliseconds
+          }
+          $timing.ripr_version_ms = @(1..3 | ForEach-Object { Measure-Ms { & $env:RIPR_SERVER --version } })
+          $timing.powershell_empty_ms = @(1..3 | ForEach-Object { Measure-Ms { powershell.exe -NoProfile -NonInteractive -Command 'exit 0' } })
+          $script = Join-Path $env:QUAL_TEMP_ROOT 'time-probe.js'
+          @'
+          const { spawnProbeProcess } = require(process.argv[2]);
+          const server = process.argv[3];
+          const runs = [];
+          const next = (i) => {
+            if (i === 3) { console.log(JSON.stringify(runs)); return; }
+            const started = Date.now();
+            const child = spawnProbeProcess(server, ['--version'], false);
+            child.stdout.resume();
+            child.stderr.resume();
+            child.once('close', () => { runs.push(Date.now() - started); next(i + 1); });
+          };
+          next(0);
+          '@ | Set-Content -Encoding utf8 $script
+          $timing.extension_probe_ms = @(node $script (Resolve-Path out\src\lspCompatibility.js).Path $env:RIPR_SERVER | ConvertFrom-Json)
+          $timing | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-probe-timing.json")
+          Get-Content (Join-Path $env:HUNT_ROOT "shard$($env:SHARD)-probe-timing.json")
+        env:
+          SHARD: ${{ matrix.shard }}
+
       - name: Repeat the trusted editor journey
         shell: pwsh
         working-directory: editors/vscode

@@ -191,6 +191,10 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` â†’ smoke oracle
+  - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
+    single resolved workspace function owner provably returns `bool` is an
+    exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
+    or non-literal argument stays smoke
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
