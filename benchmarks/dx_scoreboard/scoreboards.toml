@@ -57,6 +57,26 @@ sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
 
+# Larger workspaces, where the inner loop is judged. Warm checks on small
+# libraries meet the 2 s bar easily; these rows are the ones that can miss it.
+# The warm check is bimodal by diff: a commit with no product Rust runs in
+# well under a second, while one that edits product Rust in a macro-dense
+# workspace pays for the workspace-wide scans.
+[[corpus]]
+id = "cargo"
+url = "https://github.com/rust-lang/cargo"
+sha = "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928"
+base_sha = "0c38e943f4640efe8ade36f1034fdd8d87c26dcb"
+note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
+heavy = true
+
+[[corpus]]
+id = "ripr-swarm-current"
+url = "https://github.com/EffortlessMetrics/ripr-swarm"
+sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
+note = "this repository at its 2026-10 size (~2100 .rs files); the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
+heavy = true
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]
