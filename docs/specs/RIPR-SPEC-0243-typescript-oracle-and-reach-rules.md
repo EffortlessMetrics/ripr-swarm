@@ -707,7 +707,9 @@ prove its condition costs an abstention or a gap, never a credit.
    input may run zero times, the same limit every return-value credit has
    when the test's inputs never reach the changed line), the body has no
    nested function, class or method, and no other statement writes the
-   target between the declaration and the return. The changed span is the
+   target between the declaration and the return. For a `this.name` target
+   no call may sit between the assignment and the return, because a method
+   (`this.reset()`) can rewrite the field unseen. The changed span is the
    statement between the common prefix and suffix of the old and new line,
    widened to the nearest `;`, `{` or `}`, so one statement of a minified
    line is read alone.
@@ -720,7 +722,12 @@ prove its condition costs an abstention or a gap, never a credit.
    credited when a strong, pinned, exact-value assertion of an oracle
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
-   `null`/`undefined` by equality; a member path only by the same text. Two
+   `null`/`undefined` by equality; a member path only by the same text, and
+   not when the test body rebinds the path's root (`const Level = ...`). The
+   assertion must observe the owner's whole result (not `price(150) > 0`),
+   through the owner's name or an import alias, and an expected value that
+   provably equals neither the old nor the new arm is dead and credits
+   nothing. Two
    different member paths decide nothing, because enum members may share a
    value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
    rule.

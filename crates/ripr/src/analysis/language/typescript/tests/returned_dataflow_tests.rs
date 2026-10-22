@@ -681,3 +681,93 @@ fn the_remaining_rule_15_guards_each_keep_their_fallback() -> Result<(), String>
     );
     Ok(())
 }
+
+// ------------------------------------------------- review of record: #9493
+
+#[test]
+fn an_edited_arm_is_credited_through_an_import_alias() -> Result<(), String> {
+    let test = vitest(
+        "import { Level, weight as w } from \"../src/level\";",
+        "it(\"high\", () => {\n  expect(w(Level.High)).toBe(10);\n});",
+    );
+    let finding = finding_for_edit(
+        "arm-alias",
+        "level",
+        LEVEL,
+        7,
+        "  return level === Level.High ? 10 : 1;",
+        &test,
+    )?;
+    assert_credited(&finding, "a renamed import still calls the owner");
+    Ok(())
+}
+
+#[test]
+fn an_edited_arm_refuses_wrappers_dead_expectations_and_shadowed_roots() -> Result<(), String> {
+    let price = "export function price(amount: number): number {\n  return amount > 100 ? 140 : amount;\n}\n";
+    let old = "  return amount > 100 ? 130 : amount;";
+    let wrapped = vitest(
+        "import { price } from \"../src/price\";",
+        "it(\"is positive\", () => {\n  expect(price(150) > 0).toBe(true);\n});",
+    );
+    let finding = finding_for_edit("arm-wrapper", "price", price, 2, old, &wrapped)?;
+    assert_not_credited(&finding, "a comparison on the call hides the changed value");
+    let dead = vitest(
+        "import { price } from \"../src/price\";",
+        "it(\"never true\", () => {\n  expect(price(150)).toBe(999);\n});",
+    );
+    let finding = finding_for_edit("arm-dead", "price", price, 2, old, &dead)?;
+    assert_not_credited(&finding, "999 equals neither arm value");
+    let shadowed = vitest(
+        "import { weight } from \"../src/level\";",
+        "it(\"high\", () => {\n  const Level = { High: 1 };\n  expect(weight(Level.High)).toBe(1);\n});",
+    );
+    let finding = finding_for_edit(
+        "arm-shadowed-root",
+        "level",
+        LEVEL,
+        7,
+        "  return level === Level.High ? 10 : 1;",
+        &shadowed,
+    )?;
+    assert_not_credited(&finding, "a test-local Level is not the owner's enum");
+    Ok(())
+}
+
+#[test]
+fn a_loop_bound_is_credited_through_an_import_alias() -> Result<(), String> {
+    let source = "export function* range(n: number): Generator<number> {\n  for (let i = 0; i <= n; i++) {\n    yield i;\n  }\n}\n";
+    let test = vitest(
+        "import { range as r } from \"../src/range\";",
+        "it(\"counts\", () => {\n  expect([...r(3)]).toEqual([0, 1, 2, 3]);\n});",
+    );
+    let finding = finding_for_edit(
+        "loop-alias",
+        "range",
+        source,
+        2,
+        "  for (let i = 0; i < n; i++) {",
+        &test,
+    )?;
+    assert_credited(&finding, "a renamed generator import is the owner");
+    Ok(())
+}
+
+#[test]
+fn a_method_call_before_the_return_hides_the_changed_field() -> Result<(), String> {
+    let source = "export class Account {\n  constructor(public balance: number) {}\n\n  reset(): void {\n    this.balance = 0;\n  }\n\n  deposit(amount: number): number {\n    this.balance += amount;\n    this.reset();\n    return this.balance;\n  }\n}\n";
+    let test = vitest(
+        "import { Account } from \"../src/account\";",
+        "it(\"resets\", () => {\n  expect(new Account(10).deposit(5)).toBe(0);\n});",
+    );
+    let finding = finding_for_edit(
+        "state-intervening-call",
+        "account",
+        source,
+        9,
+        "    this.balance -= amount;",
+        &test,
+    )?;
+    assert_not_credited(&finding, "this.reset() can rewrite the field");
+    Ok(())
+}

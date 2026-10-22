@@ -100,7 +100,25 @@ pub(crate) fn ts_returned_state_change(
     if blocks.iter().any(|kind| *kind != BlockKind::Loop) {
         return false;
     }
+    // A method called after the assignment can rewrite `this.name`
+    // (`this.reset()`) without spelling it as a write target here.
+    if target.starts_with("this.") && body.get(statement_end..return_at).is_none_or(has_call) {
+        return false;
+    }
     other_writes_are_declarations(&body, target, statement_at, return_at)
+}
+
+/// Whether `text` holds a call expression: a `(` that follows an identifier,
+/// `)` or `]` and is not the head of a control keyword.
+fn has_call(text: &str) -> bool {
+    text.match_indices('(').any(|(at, _)| {
+        let before = text[..at].trim_end();
+        let word = trailing_identifier(before);
+        if matches!(word, "for" | "while" | "if" | "switch" | "catch" | "return") {
+            return false;
+        }
+        before.ends_with([')', ']']) || !word.is_empty()
+    })
 }
 
 /// The text of the statement the change touches: the span between the common

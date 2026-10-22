@@ -43,6 +43,9 @@ pub(crate) struct TernaryArmChange {
     pub(crate) operand: ArmConstant,
     /// `true` when the changed arm runs while the condition holds.
     pub(crate) arm_runs_when: bool,
+    /// The changed arm before and after the edit, when each is a constant.
+    old_arm: Option<ArmConstant>,
+    new_arm: Option<ArmConstant>,
 }
 
 impl TernaryArmChange {
@@ -51,6 +54,27 @@ impl TernaryArmChange {
         parse_arm_constant(argument)
             .and_then(|argument| evaluate(self.comparison, &argument, &self.operand))
             .is_some_and(|holds| holds == self.arm_runs_when)
+    }
+
+    /// Whether `expected` provably equals neither the old nor the new value
+    /// of the changed arm, so an assertion on it fails on both versions.
+    pub(crate) fn expected_is_dead(&self, expected: &str) -> bool {
+        let (Some(expected), Some(old), Some(new)) =
+            (parse_arm_constant(expected), &self.old_arm, &self.new_arm)
+        else {
+            return false;
+        };
+        evaluate(ArmComparison::Equal, &expected, old) == Some(false)
+            && evaluate(ArmComparison::Equal, &expected, new) == Some(false)
+    }
+
+    /// The first segment of a member-path operand (`Level` of `Level.High`),
+    /// whose binding a test could shadow with a different value.
+    pub(crate) fn member_root(&self) -> Option<&str> {
+        match &self.operand {
+            ArmConstant::Member(path) => path.split('.').next(),
+            _ => None,
+        }
     }
 }
 
@@ -76,6 +100,11 @@ pub(crate) fn ts_ternary_arm_change(
         (false, true) => false,
         _ => return None,
     };
+    let (old_arm, new_arm) = if arm_runs_when {
+        (&old.when_true_text, &new.when_true_text)
+    } else {
+        (&old.when_false_text, &new.when_false_text)
+    };
     let (parameter, comparison, operand) = parameter_comparison(&new.condition_text, owner)?;
     let param_index = owner.params.iter().position(|param| *param == parameter)?;
     if !ts_parameter_is_stable(owner.source_text.as_deref()?, &parameter) {
@@ -86,6 +115,8 @@ pub(crate) fn ts_ternary_arm_change(
         comparison,
         operand,
         arm_runs_when,
+        old_arm: parse_arm_constant(old_arm),
+        new_arm: parse_arm_constant(new_arm),
     })
 }
 
@@ -96,6 +127,9 @@ struct ConditionalParts {
     condition: String,
     when_true: String,
     when_false: String,
+    /// The arms as written, trimmed, for constant parsing.
+    when_true_text: String,
+    when_false_text: String,
 }
 
 /// Splits `return c ? a : b;` into whitespace-free parts. Nested conditionals
@@ -152,6 +186,8 @@ fn conditional_parts(line_text: &str) -> Option<ConditionalParts> {
         condition: normalize(condition),
         when_true: normalize(expression.get(question + 1..colon)?),
         when_false: normalize(expression.get(colon + 1..)?),
+        when_true_text: expression.get(question + 1..colon)?.trim().to_string(),
+        when_false_text: expression.get(colon + 1..)?.trim().to_string(),
     })
 }
 

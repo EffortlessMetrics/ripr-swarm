@@ -1366,8 +1366,17 @@ pub(crate) fn ts_arm_change_witnessed(
         {
             return false;
         }
+        // A test that rebinds the enum root compares its own constants, not
+        // the owner module's.
+        if change
+            .member_root()
+            .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
+        {
+            return false;
+        }
         let receivers =
             unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         test.assertions.iter().any(|assertion| {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
@@ -1378,28 +1387,26 @@ pub(crate) fn ts_arm_change_witnessed(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
-            if assertion_is_self_comparing(assertion, observed) {
+            if assertion_is_self_comparing(assertion, observed)
+                || assertion
+                    .expected_value_or_variant
+                    .as_deref()
+                    .is_some_and(|expected| change.expected_is_dead(expected))
+            {
                 return false;
             }
-            let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
-            if argument_lists.is_empty()
-                && let Some(arguments) =
-                    ts_observed_local_owner_call_arguments(test, assertion, &owner.name, &receivers)
-            {
-                argument_lists.push(arguments);
-            }
-            argument_lists.into_iter().any(|arguments| {
-                let arguments = substitute_constant_arguments(
-                    arguments,
-                    test,
-                    owner,
-                    alias_map,
-                    workspace_root,
-                );
-                arguments
-                    .get(change.param_index)
-                    .is_some_and(|argument| change.selects_changed_arm(argument))
-            })
+            // The assertion observes the owner's whole result, not a wrapper
+            // (`price(150) > 0`) that hides the changed value.
+            let Some(arguments) =
+                ts_observed_owner_call_arguments(test, assertion, &names, owner, &receivers)
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            arguments
+                .get(change.param_index)
+                .is_some_and(|argument| change.selects_changed_arm(argument))
         })
     })
 }
@@ -1425,6 +1432,7 @@ pub(crate) fn ts_loop_bound_witnessed(
         }
         let receivers =
             unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         test.assertions.iter().any(|assertion| {
             // A sequence is compared with an array, which the extractor reads
             // as a dynamic expected side; it only has to not be the owner's
@@ -1438,7 +1446,9 @@ pub(crate) fn ts_loop_bound_witnessed(
                 return false;
             };
             if assertion_is_self_comparing(assertion, observed)
-                || expected_side_calls_owner(&test.body_text, observed, &owner.name)
+                || names
+                    .iter()
+                    .any(|name| expected_side_calls_owner(&test.body_text, observed, name))
             {
                 return false;
             }
@@ -1457,19 +1467,14 @@ pub(crate) fn ts_loop_bound_witnessed(
             else {
                 return false;
             };
-            owner_call_arguments(call, &owner.name, &receivers)
-                .into_iter()
-                .any(|arguments| {
-                    let drained = call == format!("{}({})", owner.name, arguments.join(","));
-                    let arguments = substitute_constant_arguments(
-                        arguments,
-                        test,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    );
-                    drained && change.reaches_bound(&arguments)
-                })
+            // The call must be the whole drained expression.
+            let Some(arguments) = ts_whole_owner_call_arguments(call, &names, owner, &receivers)
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            change.reaches_bound(&arguments)
         })
     })
 }
