@@ -16225,6 +16225,12 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_owner_body_is_deferred_then_no_changed_effect_is_credited",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_helper_when_deferred_owner_is_only_a_method_token_then_no_branch_restores_credit",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_synchronous_field_helper_when_body_runs_then_changed_effect_stays_credited",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_deferred_helper_when_a_write_is_unmodeled_then_method_credit_still_refuses",
+  "crates/ripr/src/analysis/language/python/helper_assertions_tests.rs::given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_preserved",
+  "crates/ripr/src/analysis/language/python/sink_alignment.rs::helper_origin_tests::helper_origin_survives_reported_oracle_fallback_without_tainting_raw_assertions",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_a_discarded_short_function_result",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_preserve_a_short_function_output_assertion",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_module_comparison_text",
@@ -16232,11 +16238,18 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_assertion_helper_field",
+  "fixtures/python_assertion_helper_wrong_receiver",
+  "fixtures/python_assertion_helper_wrong_field",
+  "fixtures/python_assertion_helper_weak_comparison",
+  "fixtures/python_assertion_helper_async_owner",
+  "fixtures/python_assertion_helper_generator_owner",
   "fixtures/python_empty_sink_unrelated_short_function",
   "fixtures/python_empty_sink_observed_short_function",
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
   "crates/ripr/src/analysis/language/python/probe_shape.rs",
@@ -17178,6 +17191,26 @@ tests = [
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_returned_closure_the_test_applies_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_closure_that_may_not_run_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::another_exit_before_the_closure_tail_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_slice_adaptor_stays_with_the_closure_adaptor_rule",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_statement_acting_on_the_returned_value_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_effect_on_a_value_the_owner_does_not_return_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_let_else_exit_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_plain_branch_exit_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_pin_of_less_than_the_whole_result_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_empty_or_zero_input_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_option_combinator_after_an_iterator_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_let_else_initializer_or_a_second_exit_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_shadowed_or_reassigned_receiver_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_closure_the_tail_never_calls_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_single_line_let_else_initializer_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_equality_that_may_not_run_does_not_withhold",
+  "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
   "fixtures/macro_site_scoped_rest_limit",
@@ -17188,6 +17221,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/analysis/classify/pinned_shape.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",

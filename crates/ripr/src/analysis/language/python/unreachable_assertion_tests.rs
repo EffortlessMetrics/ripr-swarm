@@ -184,6 +184,7 @@ fn given_a_module_level_skip_then_every_test_in_the_file_is_activation_controlle
     for header in [
         "import pytest\npytest.importorskip('no_such_module')\n",
         "import pytest\npytest.skip('no', allow_module_level=True)\n",
+        "import pytest\nnp = pytest.importorskip('no_such_module')\n",
         "from pytest import importorskip\nimportorskip('no_such_module')\n",
         "import pytest\npytestmark = pytest.mark.skip(reason='no')\n",
         "from pytest import mark\npytestmark = mark.skip(reason='no')\n",
@@ -213,5 +214,118 @@ fn given_a_guarded_or_unrelated_module_statement_then_no_test_is_controlled() {
         let tests = parse(&source);
         assert_eq!(tests.len(), 1, "{header}");
         assert_eq!(activation_control(&tests[0]), None, "{header}");
+    }
+}
+
+/// A boolean-literal condition that never triggers the skip leaves the test
+/// running (`skipif(False)`); every other condition is evaluated at collection
+/// time and keeps the control.
+#[test]
+fn given_a_skip_condition_that_is_a_inert_literal_then_the_test_is_not_controlled() {
+    for (decorator, controlled) in [
+        ("pytest.mark.skipif(False, reason='never')", false),
+        ("pytest.mark.skipif(condition=False, reason='never')", false),
+        ("pytest.mark.xfail(False, reason='never')", false),
+        ("pytest.mark.skipif(True, reason='always')", true),
+        (
+            "pytest.mark.skipif(sys.platform == 'win32', reason='os')",
+            true,
+        ),
+        ("pytest.mark.skipif(DISABLED, reason='flag')", true),
+        ("pytest.mark.skipif('False', reason='string')", true),
+        ("pytest.mark.skipif(not False, reason='expr')", true),
+        ("pytest.mark.skip(reason='always')", true),
+        ("pytest.mark.xfail(reason='unconditional')", true),
+        ("pytest.mark.xfail(True, reason='always')", true),
+        // The runner rejects a boolean condition without a string reason, so the
+        // body never runs; a second positional is a condition, not a reason; a
+        // `condition=` keyword overrides the positional one.
+        ("pytest.mark.skipif(False)", true),
+        ("pytest.mark.skipif(condition=False)", true),
+        ("pytest.mark.skipif(False, reason=None)", true),
+        ("pytest.mark.skipif(False, 'never')", true),
+        ("pytest.mark.skipif(False, True, reason='r')", true),
+        (
+            "pytest.mark.skipif(False, sys.platform == 'win32', reason='r')",
+            true,
+        ),
+        (
+            "pytest.mark.skipif(False, reason='r', condition=True)",
+            true,
+        ),
+        ("pytest.mark.xfail(False)", true),
+        ("pytest.mark.xfail(False, run=False)", true),
+        ("pytest.mark.xfail(False, True, reason='r')", true),
+        ("pytest.mark.skipif(*FLAGS, reason='r')", true),
+    ] {
+        let source = format!(
+            "import pytest\nimport sys\n\n@{decorator}\ndef test_x():\n    assert 1 == 1\n"
+        );
+        assert_eq!(
+            activation_control(&first(&source)).is_some(),
+            controlled,
+            "{decorator}"
+        );
+    }
+    for (decorator, controlled) in [
+        ("unittest.skipIf(False, 'never')", false),
+        ("unittest.skipUnless(True, 'never')", false),
+        ("unittest.skipIf(False, reason='never')", false),
+        ("unittest.skipIf(False)", true),
+        ("unittest.skipIf(False, 'never', 'extra')", true),
+        ("unittest.skipIf(True, 'always')", true),
+        ("unittest.skipUnless(False, 'always')", true),
+    ] {
+        let source = format!(
+            "import unittest\n\nclass T(unittest.TestCase):\n    @{decorator}\n    def test_x(self):\n        self.assertEqual(1, 1)\n"
+        );
+        assert_eq!(
+            activation_control(&first(&source)).is_some(),
+            controlled,
+            "{decorator}"
+        );
+    }
+}
+
+#[test]
+fn given_an_inert_skip_on_a_module_mark_then_the_file_stays_active() {
+    let inert = "import pytest\npytestmark = pytest.mark.skipif(False, reason='never')\n\n\ndef test_a():\n    assert 1 == 1\n";
+    assert_eq!(activation_control(&first(inert)), None);
+    let live = "import pytest\npytestmark = [pytest.mark.skipif(False, reason='never'), pytest.mark.skip(reason='no')]\n\n\ndef test_a():\n    assert 1 == 1\n";
+    assert!(activation_control(&first(live)).is_some());
+}
+
+/// `importorskip` of a module every interpreter ships never skips; an
+/// installable module, a `minversion` or a `reason` is a real collection-time
+/// check and keeps the control.
+#[test]
+fn given_importorskip_of_an_always_present_module_then_the_file_stays_active() {
+    for (header, controlled) in [
+        ("import pytest\npytest.importorskip('json')\n", false),
+        ("import pytest\npytest.importorskip(\"math\")\n", false),
+        (
+            "from pytest import importorskip\nimportorskip('re')\n",
+            false,
+        ),
+        ("import pytest\npytest.importorskip('numpy')\n", true),
+        ("import pytest\nnp = pytest.importorskip('numpy')\n", true),
+        ("import pytest\nj = pytest.importorskip('json')\n", false),
+        (
+            "import pytest\npytest.importorskip('json', minversion='99')\n",
+            true,
+        ),
+        (
+            "import pytest\npytest.importorskip('json', reason='x')\n",
+            true,
+        ),
+        ("import pytest\npytest.importorskip(name)\n", true),
+        ("import pytest\npytest.importorskip('tkinter')\n", true),
+    ] {
+        let source = format!("{header}\n\ndef test_a():\n    assert 1 == 1\n");
+        assert_eq!(
+            activation_control(&first(&source)).is_some(),
+            controlled,
+            "{header}"
+        );
     }
 }
