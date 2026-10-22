@@ -6,6 +6,12 @@
 //! framework is either governed by the framework-agnostic `any` cells or has
 //! its own framework-specific cell; the checker rejects a disposition that
 //! contradicts the table.
+//!
+//! Limit: Rust cannot enumerate enum variants, so `ALL_FRAMEWORKS` is a
+//! second hand-kept list. The exhaustive matches force classification, and
+//! the ordinal check catches duplicates, gaps and a stale count, but a
+//! variant classified in `ordinal` and `disposition` yet left out of both
+//! `FRAMEWORK_COUNT` and `ALL_FRAMEWORKS` is not checked against the table.
 
 use super::package::TsFramework;
 use crate::domain::LanguageId;
@@ -21,7 +27,11 @@ enum Disposition {
     FrameworkCell,
 }
 
-const ALL_FRAMEWORKS: [TsFramework; 6] = [
+/// Number of `TsFramework` variants. `ordinal` must stay below it, so a new
+/// variant forces this bump, which in turn forces `ALL_FRAMEWORKS` to grow.
+const FRAMEWORK_COUNT: usize = 6;
+
+const ALL_FRAMEWORKS: [TsFramework; FRAMEWORK_COUNT] = [
     TsFramework::Jest,
     TsFramework::Vitest,
     TsFramework::Bun,
@@ -106,7 +116,7 @@ fn current_entries() -> Vec<(&'static str, Disposition)> {
 #[test]
 fn the_framework_list_covers_every_variant() {
     let ordinals: Vec<usize> = ALL_FRAMEWORKS.iter().copied().map(ordinal).collect();
-    assert_eq!(ordinals, (0..ALL_FRAMEWORKS.len()).collect::<Vec<_>>());
+    assert_eq!(ordinals, (0..FRAMEWORK_COUNT).collect::<Vec<_>>());
 }
 
 #[test]

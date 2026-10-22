@@ -671,6 +671,10 @@ mod tests {
     fn all_lists_every_language_variant() {
         // Exhaustive: a new variant fails to compile here until it is placed
         // in `ALL`, which the capability table's every-language check walks.
+        // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
+        // enum: a variant added to the match but to neither `COUNT` nor `ALL`
+        // is not detected, only forced to be classified here.
+        const COUNT: usize = 5;
         fn ordinal(language: LanguageId) -> usize {
             match language {
                 LanguageId::Rust => 0,
@@ -681,7 +685,7 @@ mod tests {
             }
         }
         let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
-        assert_eq!(ordinals, (0..LanguageId::ALL.len()).collect::<Vec<_>>());
+        assert_eq!(ordinals, (0..COUNT).collect::<Vec<_>>());
     }
 
     /// #4323: a lost string-literal continuation left ~18-space runs inside
