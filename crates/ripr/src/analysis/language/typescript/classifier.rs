@@ -6404,7 +6404,13 @@ fn ts_neutral_operand_hides(
             if !neutral {
                 return false;
             }
-            accounted += ts_owner_calls_in(observed, &names, &receivers);
+            // A nested owner call (`scaled(1, scaled(3, 4))`) has arguments
+            // this reader does not check.
+            let calls = ts_owner_calls_in(observed, &names, &receivers);
+            if calls != 1 {
+                return false;
+            }
+            accounted += calls;
             seen = true;
         }
         if ts_owner_calls_in(&candidate.test.body_text, &names, &receivers) != accounted {

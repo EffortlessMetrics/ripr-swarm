@@ -8,8 +8,8 @@ fn neutral_operand_change_reads_one_bounded_shape() {
     for (line, want) in [
         ("  return unit * qty;", Some(('*', "qty", "1"))),
         ("return 2 / qty;", Some(('/', "qty", "1"))),
-        ("return base + tip;", Some(('+', "tip", "0"))),
-        ("return base - tip;", Some(('-', "tip", "0"))),
+        ("return base + tip;", None),
+        ("return base - tip;", None),
         ("return unit * qty + fee;", None),
         ("return unit ** qty;", None),
         ("return unit * 1;", None),
@@ -120,24 +120,25 @@ fn identity_operand_in_every_tested_call_withdraws_credit() -> Result<(), String
 }
 
 #[test]
-fn zero_operand_hides_the_opposite_additive_operator() -> Result<(), String> {
+fn additive_identity_is_not_read_because_plus_concatenates_strings() -> Result<(), String> {
     let owner =
-        "export function total(base: number, tip: number): number {\n  return tip + base;\n}\n";
-    let run = |label: &str, body: &str| {
-        let test = format!(
-            "import {{ total }} from \"../src/lib\";\ntest(\"total\", () => {{\n{body}\n}});\n"
-        );
-        finding_for(
-            label,
-            owner,
-            "  return tip + base;",
-            "  return base + tip;",
-            &test,
-        )
-    };
-    let finding = run("zero-tip", "  expect(total(10, 0)).toBe(10);")?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
-    let finding = run("nonzero-tip", "  expect(total(10, 5)).toBe(15);")?;
+        "export function label(base: string, tip: number): string {\n  return tip + base;\n}\n";
+    let test = "import { label } from \"../src/lib\";\ntest(\"label\", () => {\n  expect(label(\"x\", 0)).toBe(\"x0\");\n});\n";
+    // `tip + base` against `base + tip` concatenates in another order.
+    let finding = finding_for(
+        "plus-string",
+        owner,
+        "  return tip + base;",
+        "  return base + tip;",
+        test,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn nested_owner_call_keeps_credit() -> Result<(), String> {
+    let finding = scaled_finding("nested-call", "  expect(scaled(1, scaled(3, 4))).toBe(12);")?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
@@ -195,7 +196,7 @@ fn identity_operand_rule_needs_an_in_place_operand_rewrite() {
     for (old, new, want) in [
         ("return qty * unit;", "return unit * qty;", true),
         ("return qty * unit;", "return qty * unit;", true),
-        ("return qty + unit;", "return unit + qty;", true),
+        ("return qty + unit;", "return unit + qty;", false),
         ("return a - b;", "return b - a;", false),
         ("return a - b;", "return a / b;", false),
         ("return a + b;", "return a * b;", false),

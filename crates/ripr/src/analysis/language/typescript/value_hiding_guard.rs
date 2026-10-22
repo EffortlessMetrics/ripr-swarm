@@ -15,13 +15,13 @@ use super::*;
 pub(crate) struct NeutralOperandChange {
     /// The owner parameter the right operand reads.
     pub(crate) parameter: String,
-    /// `"1"` for `*` and `/`, `"0"` for `+` and `-`.
+    /// `"1"`, the identity of `*` and `/`.
     pub(crate) neutral: &'static str,
     /// The operator as written.
     pub(crate) operator: char,
 }
 
-/// `return <operand> <op> <param>;` with `op` one of `* / + -`, a plain
+/// `return <operand> <op> <param>;` with `op` one of `*` or `/`, a plain
 /// identifier or number on the left and an identifier on the right. Anything
 /// else (a longer expression, a compound operator, a literal right operand)
 /// is `None`, so the rule never reads a shape it cannot bound.
@@ -34,7 +34,7 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
         .trim()
         .strip_suffix(';')?
         .trim();
-    let operator_at = expression.find(['*', '/', '+', '-'])?;
+    let operator_at = expression.find(['*', '/'])?;
     let operator = expression[operator_at..].chars().next()?;
     let (left, right) = (
         expression[..operator_at].trim(),
@@ -48,11 +48,7 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
     }
     Some(NeutralOperandChange {
         parameter: right.to_string(),
-        neutral: if matches!(operator, '*' | '/') {
-            "1"
-        } else {
-            "0"
-        },
+        neutral: "1",
         operator,
     })
 }
@@ -68,7 +64,7 @@ pub(crate) fn ts_operands_rewritten_in_place(old: &str, new: &str) -> bool {
     };
     let mut swapped = old_ops.clone();
     swapped.reverse();
-    old_op == new_op && matches!(new_op, '*' | '+') && (new_ops == old_ops || new_ops == swapped)
+    old_op == new_op && new_op == '*' && (new_ops == old_ops || new_ops == swapped)
 }
 
 fn operands(line: &str) -> Option<(Vec<String>, char)> {

@@ -16500,7 +16500,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_does_not_bind_a_rebound_parameter",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::neutral_operand_change_reads_one_bounded_shape",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_operand_in_every_tested_call_withdraws_credit",
-  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::zero_operand_hides_the_opposite_additive_operator",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::additive_identity_is_not_read_because_plus_concatenates_strings",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::nested_owner_call_keeps_credit",
   "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::owner_only_relation_holds_for_a_constant_and_withdraws_credit",
 ]
 fixtures = [
