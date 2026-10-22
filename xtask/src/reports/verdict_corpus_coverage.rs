@@ -36,6 +36,9 @@ pub(crate) struct Ledger {
     /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
     #[serde(default)]
     pub(crate) oracle: Option<super::oracle::OracleGate>,
+    /// The operator-grid and trap gate (`verdict_corpus_grid.rs`).
+    #[serde(default)]
+    pub(crate) grid: Option<super::grid::GridGate>,
     /// Every false verdict the corpus still scores, each with its owner
     /// (`verdict_corpus_known_false.rs`).
     #[serde(default)]

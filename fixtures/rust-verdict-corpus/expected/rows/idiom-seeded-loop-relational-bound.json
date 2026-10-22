@@ -1,0 +1,22 @@
+{
+  "case_id": "idiom-seeded-loop-relational-bound",
+  "subject_id": "authored-idiom-kit",
+  "origin": "authored",
+  "anchor": "src/seeded.rs:14",
+  "behavior_family": "return_value",
+  "test_shape": "seeded_property_loop_relational",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "py-hostile-star-import-no-all-public",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-star-import-no-all-public.diff",
+  "anchor": {
+    "file": "hostile/stars_no_all.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_star_import_public_name_without_all",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.12.14, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a - b",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_stars_no_all.py::test_public_star_total",
+        "equivalence_review": "not equivalent: the sum becomes a difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Without __all__, `from hostile.stars_no_all import *` imports public_star_total, and the exact sum assertion detects this edit.",
+  "labeling_observation": {
+    "ripr_commit": "ecc99e459921aa3172d9ff5b28c7d7503cb4f7e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

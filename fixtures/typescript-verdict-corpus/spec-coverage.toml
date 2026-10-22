@@ -634,6 +634,11 @@ id = "RIPR-SPEC-0309"
 scope = "out"
 reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
@@ -652,30 +657,10 @@ case = "jest-mined-private-impl-dispatcher"
 issue = 6655
 reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
 
-[[known_false]]
-case = "shape-arrow-const-export"
-issue = 9435
-reason = "Exact oracle ignored on arrow-const export (#9435)."
 
-[[known_false]]
-case = "shape-reduce-initial-value"
-issue = 9435
-reason = "Exact oracle ignored on reduce seed (#9435)."
 
-[[known_false]]
-case = "shape-class-method-compound-assign"
-issue = 9435
-reason = "Exact oracle ignored on compound assign (#9435)."
 
-[[known_false]]
-case = "shape-enum-branch-weight"
-issue = 9435
-reason = "Exact oracle ignored on enum comparison (#9435)."
 
-[[known_false]]
-case = "shape-generator-upper-bound"
-issue = 9435
-reason = "Exact oracle ignored on loop bound (#9435)."
 
 [[known_false]]
 case = "shape-nullish-middle-operand"
@@ -696,11 +681,6 @@ reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
 case = "shape-static-factory-rounding"
 issue = 9437
 reason = "Exact-oracle credit on an arm the tests never reach (#9437)."
-
-[[known_false]]
-case = "shape-enum-member-value-unread"
-issue = 9436
-reason = "Enum member value edit reads silent; claimed by the Declined-Rust-file thread (#9436)."
 
 [[known_false]]
 case = "pw-expect-soft-second-term"
@@ -727,10 +707,6 @@ case = "pw-fixme-clamp-upper-bound"
 issue = 9436
 reason = "test.fixme credited as a live test (#9436)."
 
-[[known_false]]
-case = "hostile-minified-line-pinned"
-issue = 9435
-reason = "Exact oracle ignored on a minified line (#9435)."
 
 [[known_false]]
 case = "mocha-before-hook-trimmed-name"
@@ -818,11 +794,6 @@ issue = 9533
 reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
 
 [[known_false]]
-case = "ts-grid-delete-exact"
-issue = 9515
-reason = "False actionable: delete-operator edit with an exact assertion reads as a gap (#9515)."
-
-[[known_false]]
 case = "ts-grid-delete-helper"
 issue = 9534
 reason = "False actionable: field update read through a same-file helper is not credited (#9534)."
@@ -831,13 +802,3 @@ reason = "False actionable: field update read through a same-file helper is not 
 case = "ts-grid-delete-table"
 issue = 9534
 reason = "False actionable: field update read through a literal table is not credited (#9534)."
-
-[[known_false]]
-case = "ts-grid-arithmetic-property"
-issue = 9515
-reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9515)."
-
-[[known_false]]
-case = "ts-grid-returns-property"
-issue = 9515
-reason = "False exposed: property assertion credited as exact for a returns edit (#9515)."
