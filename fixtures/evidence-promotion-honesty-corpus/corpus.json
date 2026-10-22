@@ -10907,6 +10907,30 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "ts_field_update_getter_backed_cannot_promote",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_update_getter_backed",
+      "vector": "field_update_through_a_getter_or_setter_refuses_credit",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
