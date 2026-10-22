@@ -728,6 +728,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     evaluate whether the module is installed, so `importorskip` of a present
     module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
     `py-trap-module-loaded`, #9691).
+25. **A property check pins no value.** An `==` assertion that compares the
+    owner with itself (`f(f(x)) == f(x)`, either order, at any nesting) or
+    compares an owner call with a `for` loop variable it was passed
+    (`for n in range(1, 5): assert f(1, n) == n`) is a weak relational
+    check, as a tautology is (rule 1). Idempotence holds for any constant
+    return and an identity over a loop variable holds for `n / 1`, so neither
+    notices an edit. An independent expected value (a literal, or a name
+    bound outside a loop) still pins (`py-grid-returns-property`,
+    `py-grid-arithmetic-property`, #9594).
 
 ### Verdict ladder
 
