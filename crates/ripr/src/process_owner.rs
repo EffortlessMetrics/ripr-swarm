@@ -107,6 +107,11 @@ pub struct OwnedProcess {
     child: Box<dyn ChildWrapper>,
     #[cfg(not(windows))]
     child: std::process::Child,
+    /// Test-only failure injection (#9323 controls 8 and 9): when set, the
+    /// tree-termination request reports this error instead of being issued,
+    /// so the typed cleanup-failure path can be exercised on every platform.
+    #[cfg(test)]
+    injected_kill_failure: Option<std::io::ErrorKind>,
 }
 
 impl OwnedProcess {
@@ -126,7 +131,7 @@ impl OwnedProcess {
             let mut wrapped = CommandWrap::from(command);
             wrapped.wrap(JobObject);
             let child = wrapped.spawn()?;
-            Ok(Self { child })
+            Ok(Self::from_child(child))
         }
         #[cfg(not(windows))]
         {
@@ -135,7 +140,25 @@ impl OwnedProcess {
             // the Windows arm's by-value consumption.
             let mut command = command;
             let child = command.spawn()?;
-            Ok(Self { child })
+            Ok(Self::from_child(child))
+        }
+    }
+
+    #[cfg(windows)]
+    fn from_child(child: Box<dyn ChildWrapper>) -> Self {
+        Self {
+            child,
+            #[cfg(test)]
+            injected_kill_failure: None,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn from_child(child: std::process::Child) -> Self {
+        Self {
+            child,
+            #[cfg(test)]
+            injected_kill_failure: None,
         }
     }
 
@@ -208,6 +231,10 @@ impl OwnedProcess {
     /// owner's terminate-then-reap sequence stays the single reaping
     /// authority.
     fn request_kill(&mut self) -> std::io::Result<()> {
+        #[cfg(test)]
+        if let Some(kind) = self.injected_kill_failure.take() {
+            return Err(std::io::Error::new(kind, "injected termination failure"));
+        }
         #[cfg(windows)]
         {
             self.child.start_kill()
@@ -373,7 +400,6 @@ mod tests {
     use std::io::Read;
     use std::process::Stdio;
 
-    #[cfg(windows)]
     fn platform_sleep_command(seconds: u32) -> Command {
         #[cfg(windows)]
         {
@@ -635,53 +661,113 @@ mod tests {
 
     /// Arguments containing spaces, embedded quotes, a trailing backslash and
     /// non-ASCII text reach the child unchanged through the suspended-create
-    /// path (#3803 native control 11). The child writes the arguments it
-    /// received to a file as UTF-8, so console code pages cannot alter the
-    /// observation.
-    #[cfg(windows)]
+    /// path (#3803 native control 11). The child is this test binary running
+    /// [`argument_recorder_child`], which records its own `env::args` as UTF-8
+    /// to a file, so only the Rust command-line round trip is observed, with
+    /// no shell parser or console code page in between.
     #[test]
-    fn windows_arguments_round_trip_through_owned_spawn() -> Result<(), String> {
-        let dir = std::env::temp_dir().join(format!("ripr-owner-args-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
-        let script = dir.join("echo-args.ps1");
-        let out = dir.join("args.txt");
-        std::fs::write(
-            &script,
-            "param([string]$OutFile)\n[System.IO.File]::WriteAllLines($OutFile, [string[]]$args, (New-Object System.Text.UTF8Encoding($false)))\n",
-        )
-        .map_err(|err| format!("write script: {err}"))?;
+    fn arguments_round_trip_through_owned_spawn() -> Result<(), String> {
+        let out = std::env::temp_dir().join(format!("ripr-owner-args-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&out);
         let expected = [
             "two words",
             "say \"hi\"",
             "naïve ✓ ключ",
             "trailing slash\\",
         ];
-        let mut command = Command::new("powershell");
+        let exe = std::env::current_exe().map_err(|err| format!("current_exe: {err}"))?;
+        let mut command = Command::new(exe);
         command
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-            .arg(&script)
-            .arg(&out)
+            .args([
+                "--exact",
+                "--nocapture",
+                "process_owner::tests::argument_recorder_child",
+                "--",
+            ])
             .args(expected)
+            .env("RIPR_OWNER_ARGV_OUT", &out)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::null());
         let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
-        let mut stderr = String::new();
-        if let Some(mut pipe) = owned.stderr_pipe().take() {
-            let _ = pipe.read_to_string(&mut stderr);
-        }
         let status = owned.wait().map_err(|err| format!("wait: {err}"))?;
         let observed = std::fs::read_to_string(&out);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&out);
         if !status.success() {
-            return Err(format!("child failed ({status}): {stderr}"));
+            return Err(format!("recorder child failed: {status}"));
         }
-        let observed = observed.map_err(|err| format!("read args: {err}"))?;
+        let observed = observed.map_err(|err| format!("read recorded args: {err}"))?;
         let lines: Vec<&str> = observed.lines().collect();
-        if lines != expected {
-            return Err(format!("arguments changed in transit: {lines:?}"));
+        let tail = lines
+            .iter()
+            .position(|line| *line == "--")
+            .map(|at| lines.get(at + 1..).unwrap_or_default().to_vec())
+            .ok_or_else(|| format!("no argument separator recorded: {lines:?}"))?;
+        if tail != expected {
+            return Err(format!("arguments changed in transit: {tail:?}"));
         }
         Ok(())
+    }
+
+    /// Child half of [`arguments_round_trip_through_owned_spawn`]: a no-op
+    /// unless the parent set the output variable.
+    #[test]
+    fn argument_recorder_child() -> Result<(), String> {
+        let Some(path) = std::env::var_os("RIPR_OWNER_ARGV_OUT") else {
+            return Ok(());
+        };
+        let mut text = String::new();
+        for arg in std::env::args() {
+            text.push_str(&arg);
+            text.push('\n');
+        }
+        std::fs::write(path, text).map_err(|err| format!("record args: {err}"))
+    }
+
+    /// A failed tree-termination request never reads as a clean end: the
+    /// owner reports the incomplete cleanup as a typed error, still reaps the
+    /// direct child through the bounded fallback, and leaves nothing running
+    /// (#3803 native control 9, via the test-only injection).
+    #[test]
+    fn injected_termination_failure_surfaces_as_incomplete_tree_cleanup() -> Result<(), String> {
+        let mut owned = OwnedProcess::spawn(platform_sleep_command(60))
+            .map_err(|err| format!("spawn: {err}"))?;
+        owned.injected_kill_failure = Some(std::io::ErrorKind::PermissionDenied);
+        let error = match owned.terminate_tree() {
+            Ok(()) => return Err("an injected failure must not report a clean end".to_string()),
+            Err(error) => error,
+        };
+        if !error.contains("incomplete tree cleanup") {
+            return Err(format!("cleanup failure lost its typed marker: {error}"));
+        }
+        // The fallback ended the direct child, so ownership is not leaked.
+        match owned.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(
+                "the direct child remained running after the failed-cleanup fallback".to_string(),
+            ),
+            Err(err) => Err(format!("probe after fallback: {err}")),
+        }
+    }
+
+    /// Cancellation lands at each stage of the child's life without error:
+    /// while running, again after it was already ended, and after it exited
+    /// on its own (#3803 native control 8).
+    #[test]
+    fn terminate_tree_is_safe_at_every_stage() -> Result<(), String> {
+        let mut running = OwnedProcess::spawn(platform_sleep_command(60))
+            .map_err(|err| format!("spawn running: {err}"))?;
+        running.terminate_tree()?;
+        if !matches!(running.try_wait(), Ok(Some(_))) {
+            return Err("running child was not reaped by terminate_tree".to_string());
+        }
+        // Idempotent: a second request after the end is still a clean end.
+        running.terminate_tree()?;
+
+        let mut finished = OwnedProcess::spawn(platform_sleep_command(0))
+            .map_err(|err| format!("spawn finished: {err}"))?;
+        finished.wait().map_err(|err| format!("wait: {err}"))?;
+        finished.terminate_tree()
     }
 
     /// Poll until the marker holds a whole PID. `Set-Content` creates the
