@@ -12773,10 +12773,8 @@ fn receiver_checks_over_many_owners_share_one_workspace_scan() {
         })
         .sum();
     assert!(fresh_passes >= 4, "each fresh memo pays its own scan");
-    let index_text = format!(
-        "use demo::Widget;\n\n#[test]\nfn t() {{\n    assert_eq!(Widget::new().read(), 4);\n    assert_eq!(Widget::new().peek(), 4);\n}}\n"
-    );
-    let index = index(&[(LIB, WIDGET_LIB), (TESTS, &index_text)]);
+    let index_text = "use demo::Widget;\n\n#[test]\nfn t() {\n    assert_eq!(Widget::new().read(), 4);\n    assert_eq!(Widget::new().peek(), 4);\n}\n";
+    let index = index(&[(LIB, WIDGET_LIB), (TESTS, index_text)]);
     let test = index.tests().iter().find(|test| test.name == "t");
     assert!(test.is_some());
     let Some(test) = test else { return };

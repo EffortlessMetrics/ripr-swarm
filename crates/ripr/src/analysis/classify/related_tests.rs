@@ -1232,16 +1232,11 @@ fn find_related_tests_with_candidates<'a>(
             // whether the shadow is inline (#6951) or in an out-of-line
             // parent module (#6950). A single-file rename of the type
             // refuses the same way (#7067).
-            let test_source = index
-                .files()
-                .get(&test.file)
-                .map(|facts| facts.data().source.as_ref());
             owner_call_relation_reason(
                 test,
                 owner_fn,
                 owner_name,
                 &indexed_same_name_ids,
-                test_source,
                 index,
                 dispatches_to_fmt,
                 pin_syntax,
@@ -3935,10 +3930,6 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
             Some(owner),
             &owner.name,
             &[],
-            index
-                .files()
-                .get(&caller.file)
-                .map(|facts| facts.data().source.as_ref()),
             index,
             false,
             pin_syntax,
@@ -4065,11 +4056,14 @@ fn owner_call_relation_reason(
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
     same_name_ids: &[&str],
-    test_source: Option<&str>,
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
     pin_syntax: &super::OwnerPinSyntax,
 ) -> RelationReason {
+    let test_source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
