@@ -1095,5 +1095,7 @@ for typed pointer owner pins (RIPR-SPEC-0197, #9478). A clean native producer
 at 39d5d7ad728055b090965cc1d60bb9006813c78a supplied the snapshot, verify and
 receipt outputs. The existing CLI-test normalization changes only generation,
 content commitments and dependent byte hashes. Historical currentness and the
-incomplete portable receipt remain explicit; its four existing envelope
-differences from the native receipt are retained, without an equivalence claim.
+incomplete portable receipt remain explicit. Five literal envelope differences
+from the native receipt are retained, including an absent portable
+`seam.guidance_note` versus native `null`; four differences remain if absent and
+null are treated as equal. Full envelope equivalence is not claimed.
