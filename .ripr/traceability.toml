@@ -13266,6 +13266,12 @@ name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/owner_pin_execution.rs::tokio_spawned_task_counts_only_when_joined_and_unwrapped",
+  "crates/ripr/tests/invisible_change.rs::an_input_where_pow_bases_agree_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::an_input_below_the_cap_does_not_expose_a_raised_cap",
+  "crates/ripr/tests/invisible_change.rs::a_second_input_that_separates_the_versions_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_input_that_hits_the_cap_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_owner_call_in_the_expected_operand_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_computed_argument_keeps_the_credit",
   "crates/ripr/tests/returned_comparison_boundary.rs::inputs_far_from_the_threshold_do_not_expose_the_returned_comparison",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_input_at_the_changed_boundary_keeps_the_returned_comparison_exposed",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_returned_compound_predicate_keeps_the_return_value_reading",
@@ -16722,6 +16728,24 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::escaped_runtime_identifiers_withhold_credit_but_quoted_escapes_do_not",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_mutations_withhold_canonical_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_enum_member_callees_never_establish_read_only_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::grouped_scalar_enum_reads_preserve_a_canonical_witness",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::reexports_do_not_invent_local_enum_bindings",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::mutation_through_another_canonical_import_alias_withholds_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::namespace_enum_object_escapes_taint_other_canonical_aliases",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::unrelated_callable_imports_and_scalar_namespace_reads_preserve_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::extension_colliding_modules_cannot_establish_enum_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::canonical_enum_imports_aliases_and_reexports_select_the_edited_arm",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::an_owner_imported_enum_keeps_its_canonical_identity",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_spelling_without_the_same_declaration_never_credits",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_reexports_require_a_real_export_at_every_module",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::enum_imported_local_reexports_share_the_existing_hop_budget",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::mutated_or_escaped_enum_roots_never_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::an_enclosing_scope_enum_shadow_never_credits",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::owner_enum_shadows_and_opaque_declarations_never_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs::scalar_edited_arm_witnesses_are_unchanged",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_no_test_input_enters_withdraws_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_some_test_input_can_enter_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::an_else_arm_is_entered_by_the_inputs_that_fail_the_guard",
@@ -16852,8 +16876,16 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_the_expansion_refuses_keeps_the_factory_disclosed",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_test_the_expansion_leaves_unchanged_is_not_disclosed_as_dropped",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_conditional_credit_disclosure_names_a_line_of_the_file",
+  "crates/ripr/src/analysis/language/typescript/tests/rethrow_catch_tests.rs::a_handler_that_only_rethrows_the_caught_error_keeps_the_body_assertions",
+  "crates/ripr/src/analysis/language/typescript/tests/rethrow_catch_tests.rs::a_handler_that_can_swallow_or_replace_the_failure_withholds_the_body",
+  "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::a_rethrow_only_wrapper_call_is_replaced_on_its_own_line",
+  "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::a_swallowing_or_transforming_wrapper_is_not_eligible",
+  "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::a_call_in_any_other_shape_leaves_the_wrapper_unexpanded",
+  "crates/ripr/src/analysis/language/typescript/rethrow_wrapper.rs::tests::one_unreplaceable_mention_keeps_every_call_as_written",
 ]
 fixtures = [
+  "fixtures/typescript_enum_wrong_export",
+  "fixtures/typescript_enum_canonical_alias",
   "fixtures/typescript_local_registration",
   "fixtures/typescript-verdict-corpus",
   "fixtures/javascript_awaited_registration",
@@ -16865,6 +16897,7 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
@@ -17136,6 +17169,26 @@ tests = [
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_returned_closure_the_test_applies_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_closure_that_may_not_run_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::another_exit_before_the_closure_tail_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_slice_adaptor_stays_with_the_closure_adaptor_rule",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_statement_acting_on_the_returned_value_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_effect_on_a_value_the_owner_does_not_return_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_let_else_exit_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_plain_branch_exit_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_pin_of_less_than_the_whole_result_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_empty_or_zero_input_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_option_combinator_after_an_iterator_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_let_else_initializer_or_a_second_exit_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_shadowed_or_reassigned_receiver_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_closure_the_tail_never_calls_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::a_single_line_let_else_initializer_keeps_the_gap",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_equality_that_may_not_run_does_not_withhold",
+  "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
   "fixtures/macro_site_scoped_rest_limit",
@@ -17146,6 +17199,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/analysis/classify/pinned_shape.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
@@ -17854,6 +17908,27 @@ metrics = [
   "unit_test_pass_rate",
 ]
 
+[[behavior]]
+id = "RIPR-SPEC-0291"
+name = "Agent brief start-command root display contract"
+spec = "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md"
+tests = [
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_next_commands_preserve_literal_backslash_unix_root",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_seam_verification_preserves_literal_backslash_unix_root",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_verification_preserves_a_literal_backslash_unix_root",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_ranked_seam_summary",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_loaded_config_and_empty_file_scope",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/agent_brief.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0294"
