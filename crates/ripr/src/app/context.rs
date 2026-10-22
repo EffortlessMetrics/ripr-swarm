@@ -74,6 +74,7 @@ pub(crate) fn collect_context_with_config_and_worktree(
         max_related_tests,
         config,
         worktree,
+        false,
         mode_explicit,
         None,
     )
@@ -97,6 +98,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
     max_related_tests: usize,
     config: &RiprConfig,
     worktree: bool,
+    worktree_from_default: bool,
     mode_explicit: bool,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, crate::core_error::CoreError> {
@@ -112,6 +114,8 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
         super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
     let retry_command = worktree_navigation.context_command(selector);
     let worktree_list_command = worktree_navigation.list_command();
+    let committed_list_command =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
     let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
         check_with_progress(input, config, AnalysisProgressScope::Worktree, sink)?
@@ -158,6 +162,8 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 committed_history,
                 &retry_command,
                 &worktree_list_command,
+                &committed_list_command,
+                worktree_from_default,
             ),
         )),
     }

@@ -96,6 +96,12 @@ mod tests {
     }
 
     #[test]
+    fn only_the_working_tree_source_reports_working_tree() {
+        assert!(LiveDiffSource::WorkingTree.is_working_tree());
+        assert!(!LiveDiffSource::CommittedHistory.is_working_tree());
+    }
+
+    #[test]
     fn forced_sources_win_without_running_the_probe() {
         let ran = std::cell::Cell::new(false);
         let probe = || {
