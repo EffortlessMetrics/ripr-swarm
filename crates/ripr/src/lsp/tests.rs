@@ -8679,6 +8679,96 @@ fn diagnostic_for_finding_underlines_indented_expression_not_leading_whitespace(
     Ok(())
 }
 
+/// #8589: a bare `\r` ends an editor line but not an analyzer line, so the
+/// analyzer's line 2 here spans editor lines 1..=3 and the expression sits on
+/// editor line 2.
+#[test]
+fn diagnostic_for_finding_follows_editor_lines_when_file_uses_bare_cr() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-bare-cr")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    fs::write(
+        src.join("pricing.rs"),
+        "fn probe_line() {\n    let a = 1;\r    return x >= 5;\r    let b = 2;\n}\n",
+    )
+    .map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+
+    if diagnostic.range.start.line != 2 {
+        return Err(format!(
+            "expected editor line 2, got {}",
+            diagnostic.range.start.line
+        ));
+    }
+    if diagnostic.range.end.line != 2 {
+        return Err(format!(
+            "expected a single-line range ending on line 2, got {}",
+            diagnostic.range.end.line
+        ));
+    }
+    if diagnostic.range.start.character != 11 || diagnostic.range.end.character != 17 {
+        return Err(format!(
+            "expected characters 11..17, got {}..{}",
+            diagnostic.range.start.character, diagnostic.range.end.character
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn saved_editor_line_counts_bare_crs_on_earlier_analyzer_lines() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\nc\n", 1, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_falls_back_to_the_first_editor_line_when_expression_is_empty_or_absent() {
+    let contents = "a\rb\rc\nd\n";
+    for expression in ["", "missing"] {
+        assert_eq!(
+            super::diagnostics::saved_editor_line(contents, 0, expression),
+            Some((0, "a".to_string())),
+            "expression {expression:?}"
+        );
+    }
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 0, "c"),
+        Some((2, "c".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_handles_a_cr_only_file_without_a_trailing_terminator() {
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+    assert_eq!(
+        super::diagnostics::saved_editor_line("a\rb\r", 0, "b"),
+        Some((1, "b".to_string()))
+    );
+}
+
+#[test]
+fn saved_editor_line_keeps_the_analyzer_line_without_a_bare_cr() {
+    let contents = "a\r\nb\r\nc\n";
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 1, "b"),
+        Some((1, "b".to_string()))
+    );
+    assert_eq!(
+        super::diagnostics::saved_editor_line(contents, 5, "b"),
+        None
+    );
+}
+
 #[test]
 fn diagnostic_for_finding_hover_covers_expression_not_indentation() -> Result<(), String> {
     let root = unique_lsp_test_root("finding-range-hover")?;
