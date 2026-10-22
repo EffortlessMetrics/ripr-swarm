@@ -426,6 +426,33 @@ mod tests {
     }
 
     #[test]
+    fn following_emitted_continuations_visits_every_row_once_in_order() -> Result<(), String> {
+        let root = Root::with_invalid("walk", &["a0", "a1", "a2", "a3", "a4"])?;
+        let mut document = page(&root, None, 0, Some(2))?;
+        let mut seen: Vec<String> = directories(&document)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut requests = 1;
+        // Only the arguments the server emitted are used to ask for the next page.
+        while let Some(next) = document["continuation"].get("next_page") {
+            let arguments = &next["arguments"];
+            let offset = arguments["offset"].as_u64().ok_or("continuation offset")?;
+            let limit = arguments["limit"].as_u64().map(|limit| limit as usize);
+            let id = arguments["inventory_id"].as_str();
+            document = page(&root, id, offset as usize, limit)?;
+            seen.extend(directories(&document).into_iter().map(String::from));
+            requests += 1;
+            if requests > 5 {
+                return Err("continuation did not terminate".to_string());
+            }
+        }
+        assert_eq!(seen, ["a0", "a1", "a2", "a3", "a4"]);
+        assert_eq!(requests, 3);
+        Ok(())
+    }
+
+    #[test]
     fn unlimited_request_omits_limit_from_the_continuation_and_caps_at_256() -> Result<(), String> {
         let names: Vec<String> = (0..MAX_PAGE_ITEMS + 2)
             .map(|n| format!("a{n:04}"))
