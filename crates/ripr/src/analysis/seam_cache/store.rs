@@ -665,6 +665,30 @@ pub(super) fn with_shard_publish_workers<T>(workers: usize, run: impl FnOnce() -
 }
 
 #[cfg(test)]
+std::thread_local! {
+    static SHARD_SPAWN_BLOCKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `run` with every shard-writer spawn refused, as a thread limit would.
+#[cfg(test)]
+pub(super) fn with_blocked_shard_spawns<T>(run: impl FnOnce() -> T) -> T {
+    let previous = SHARD_SPAWN_BLOCKED.with(|flag| flag.replace(true));
+    let result = run();
+    SHARD_SPAWN_BLOCKED.with(|flag| flag.set(previous));
+    result
+}
+
+#[cfg(test)]
+fn shard_spawn_blocked() -> bool {
+    SHARD_SPAWN_BLOCKED.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn shard_spawn_blocked() -> bool {
+    false
+}
+
+#[cfg(test)]
 fn shard_publish_workers(shard_count: usize) -> usize {
     SHARD_WORKERS_OVERRIDE
         .with(std::cell::Cell::get)
@@ -702,47 +726,48 @@ fn write_shards_in_parallel(
     let stop = AtomicBool::new(false);
     let results: Mutex<Vec<Option<Result<ShardedCacheShardRef, String>>>> =
         Mutex::new((0..shard_count).map(|_| None).collect());
-    let spawn_failure = Mutex::new(None::<String>);
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            let spawned = std::thread::Builder::new()
-                .name("ripr-cache-shard".to_string())
-                .stack_size(SHARD_PUBLISH_WORKER_STACK_BYTES)
-                .spawn_scoped(scope, || {
-                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        while !stop.load(Ordering::Acquire) {
-                            let index = next.fetch_add(1, Ordering::AcqRel);
-                            let Some(range) = ranges.get(index) else {
-                                break;
-                            };
-                            let outcome =
-                                crate::analysis::cancellation::checkpoint().and_then(|()| {
-                                    write_shard(
-                                        key,
-                                        seams,
-                                        range,
-                                        index,
-                                        shard_count,
-                                        sharded_dir,
-                                        publication_id,
-                                    )
-                                });
-                            if outcome.is_err() {
-                                stop.store(true, Ordering::Release);
+            let spawned = if shard_spawn_blocked() {
+                Err(io::Error::other("injected shard writer spawn failure"))
+            } else {
+                std::thread::Builder::new()
+                    .name("ripr-cache-shard".to_string())
+                    .stack_size(SHARD_PUBLISH_WORKER_STACK_BYTES)
+                    .spawn_scoped(scope, || {
+                        crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                            while !stop.load(Ordering::Acquire) {
+                                let index = next.fetch_add(1, Ordering::AcqRel);
+                                let Some(range) = ranges.get(index) else {
+                                    break;
+                                };
+                                let outcome =
+                                    crate::analysis::cancellation::checkpoint().and_then(|()| {
+                                        write_shard(
+                                            key,
+                                            seams,
+                                            range,
+                                            index,
+                                            shard_count,
+                                            sharded_dir,
+                                            publication_id,
+                                        )
+                                    });
+                                if outcome.is_err() {
+                                    stop.store(true, Ordering::Release);
+                                }
+                                if let Ok(mut slots) = results.lock()
+                                    && let Some(slot) = slots.get_mut(index)
+                                {
+                                    *slot = Some(outcome);
+                                }
                             }
-                            if let Ok(mut slots) = results.lock()
-                                && let Some(slot) = slots.get_mut(index)
-                            {
-                                *slot = Some(outcome);
-                            }
-                        }
-                    });
-                });
-            if let Err(error) = spawned {
-                stop.store(true, Ordering::Release);
-                if let Ok(mut slot) = spawn_failure.lock() {
-                    slot.get_or_insert(format!("spawn sharded cache writer failed: {error}"));
-                }
+                        });
+                    })
+            };
+            if spawned.is_err() {
+                // Workers already started keep claiming; whatever they do not
+                // reach is written on the caller thread below.
                 break;
             }
         }
@@ -751,17 +776,30 @@ fn write_shards_in_parallel(
         .into_inner()
         .map_err(|poisoned| format!("sharded cache writer state was poisoned: {poisoned}"))?;
     let mut refs = Vec::with_capacity(shard_count);
-    for slot in slots {
+    for (index, slot) in slots.into_iter().enumerate() {
         match slot {
             Some(Ok(shard)) => refs.push(shard),
             Some(Err(error)) => return Err(error),
-            None => break,
+            None => {
+                // Claims are issued in index order and the first error stops
+                // them, so an unclaimed shard means no worker could be spawned
+                // for it (a thread limit): write it here rather than leave the
+                // cache cold.
+                let Some(range) = ranges.get(index) else {
+                    return Err("classified cache shard range is out of bounds".to_string());
+                };
+                crate::analysis::cancellation::checkpoint()?;
+                refs.push(write_shard(
+                    key,
+                    seams,
+                    range,
+                    index,
+                    shard_count,
+                    sharded_dir,
+                    publication_id,
+                )?);
+            }
         }
-    }
-    if refs.len() != shard_count {
-        let failure = spawn_failure.into_inner().ok().flatten();
-        return Err(failure
-            .unwrap_or_else(|| "sharded cache publication left shards unwritten".to_string()));
     }
     Ok(refs)
 }
@@ -1949,6 +1987,39 @@ mod tests {
     }
 
     #[test]
+    fn parallel_shard_publication_falls_back_to_the_caller_when_no_worker_spawns()
+    -> Result<(), String> {
+        let seams: Vec<_> = (0..24)
+            .map(|i| classified_with_pad(&format!("s{i}")))
+            .collect();
+        let key = empty_key();
+        let one = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 24, &seams[..1]))?;
+        let ceiling = one.saturating_add(one / 2).max(one.saturating_add(64));
+        let dir = isolated_dir("shards-no-spawn");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+
+        let status = with_blocked_shard_spawns(|| {
+            with_shard_publish_workers(4, || {
+                cache.store_classified_seams_with_record_and_byte_limits(
+                    &key, &seams, None, 3, ceiling,
+                )
+            })
+        })?;
+        let shards = shard_files(&cache, &key)?.len();
+        let round_trip_result = round_trip(&cache, &key, &seams);
+        ignore_remove_dir_all(&dir);
+
+        assert!(
+            status.label.contains("shards_"),
+            "the fixture must publish shards: {}",
+            status.label
+        );
+        assert!(shards > 4, "every shard must be written: {shards}");
+        round_trip_result
+    }
+
+    #[test]
     fn parallel_shard_publication_stops_on_cancellation_without_a_manifest() -> Result<(), String> {
         use crate::analysis::cancellation::{AnalysisCancellationToken, AnalysisClock, with_token};
         use std::sync::Arc;
@@ -1964,11 +2035,17 @@ mod tests {
         let dir = isolated_dir("shards-cancelled");
         ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir.clone());
+        with_shard_publish_workers(4, || {
+            cache.store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 3, ceiling)
+        })?;
+        let prior = listed_generation_dirs(&cache, &key)?;
+        round_trip(&cache, &key, &seams)?;
 
         // The budget expires only once three shard files exist, so the earlier
         // checkpoints pass and only a worker's per-shard checkpoint can notice.
         let started = Instant::now();
         let sharded_dir = cache.sharded_entry_dir(&key);
+        let prior_names = prior.clone();
         let tripped = Arc::new(AtomicBool::new(false));
         let clock_tripped = Arc::clone(&tripped);
         let most_written = Arc::new(AtomicUsize::new(0));
@@ -1978,6 +2055,9 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .flatten()
+                .filter(|generation| {
+                    !prior_names.contains(&generation.file_name().to_string_lossy().into_owned())
+                })
                 .filter_map(|generation| std::fs::read_dir(generation.path()).ok())
                 .flat_map(|files| files.flatten())
                 .filter(|file| file.file_name().to_string_lossy().starts_with("shard-"))
@@ -1998,7 +2078,7 @@ mod tests {
                 )
             })
         });
-        let loaded = cache.load_classified_seams(&key);
+        let kept = round_trip(&cache, &key, &seams);
         let leftover = listed_generation_dirs(&cache, &key)?;
         ignore_remove_dir_all(&dir);
 
@@ -2018,14 +2098,11 @@ mod tests {
                 .is_some_and(|error| error.starts_with("analysis cancelled:")),
             "a cancelled publication must fail as cancelled: {result:?}"
         );
-        assert!(
-            !matches!(loaded, CacheLoad::Hit(_)),
-            "a cancelled publication must not admit a generation"
+        assert_eq!(
+            leftover, prior,
+            "the unpublished generation must be removed and the prior one kept"
         );
-        assert!(
-            leftover.is_empty(),
-            "the unpublished generation must be removed: {leftover:?}"
-        );
+        kept?;
         Ok(())
     }
 
