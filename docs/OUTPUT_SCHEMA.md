@@ -7705,7 +7705,10 @@ Field contract:
   when a format times out, a later format is skipped after timeout, any run
   has cache `store_errors` or `corrupt_ignored` entries, any run has no
   observed cache receipt, or output parity is unchecked; otherwise `pass`.
-  Exit codes alone never earn `pass`.
+  Exit codes alone never earn `pass`. Output parity is currently always
+  unchecked, so today's reports are `warn` at best; `cargo xtask
+  release-readiness` carries that as a non-required `warn` and forwards
+  `status_reasons` into its detail.
 - `output_parity` - `not_checked`: this report runs each format once and does
   not compare cache-served output with a cold recomputation, so until it does
   `status` cannot be `pass`.

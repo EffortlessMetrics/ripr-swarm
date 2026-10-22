@@ -659,7 +659,6 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
     }
     Ok(())
 }
-#[cfg(target_os = "linux")]
 /// Spawn the exact `ripr` binary with `RIPR_CACHE_DIR` removed, so the default
 /// `<root>/target/ripr/cache` resolution is the one under test (#9503).
 fn run_ripr_default_cache(
@@ -807,15 +806,39 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
 fn cache_root_flag_rejects_missing_repeated_and_unresolvable_values() -> Result<(), String> {
     let base = temp_dir("root-flag-errors");
     fs::create_dir_all(&base).map_err(|error| error.to_string())?;
-    for args in [
-        &["cache", "status", "--root"][..],
-        &["cache", "clear", "--root", "--force"][..],
-        &["cache", "status", "--root", "a", "--root", "b"][..],
-        &["cache", "status", "--root", "/definitely/not/a/dir"][..],
+    for (args, cause, env) in [
+        (
+            &["cache", "status", "--root"][..],
+            "--root requires a path",
+            &[][..],
+        ),
+        (
+            &["cache", "clear", "--root", "--force"][..],
+            "--root requires a path",
+            &[][..],
+        ),
+        (
+            &["cache", "status", "--root", "a", "--root", "b"][..],
+            "repeats --root",
+            &[][..],
+        ),
+        (&["cache", "status", "--root=a"][..], "--root", &[][..]),
+        (
+            &["cache", "status", "--root", "/definitely/not/a/dir"][..],
+            "/definitely/not/a/dir",
+            &[][..],
+        ),
+        // A nonexistent --root is an error even when RIPR_CACHE_DIR governs.
+        (
+            &["cache", "status", "--root", "/definitely/not/a/dir"][..],
+            "/definitely/not/a/dir",
+            &[(CACHE_DIR_ENV, "/tmp/ripr-cache-env-governs")][..],
+        ),
     ] {
-        let output = run_ripr_default_cache(&base, args, &[])?;
-        if output.status.success() {
-            return Err(format!("{args:?} must fail"));
+        let output = run_ripr_default_cache(&base, args, env)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() || !stderr.contains(cause) {
+            return Err(format!("{args:?} must fail naming {cause:?}: {stderr}"));
         }
     }
     remove_base(&base)
@@ -975,6 +998,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn directory_swap_cache_snapshot(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut snapshots = Vec::new();
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {

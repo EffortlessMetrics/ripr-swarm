@@ -155,11 +155,17 @@ fn cache_dir_for_explicit_root(
     env_value: Result<String, std::env::VarError>,
 ) -> Result<PathBuf, String> {
     let explicit_cache_dir = matches!(&env_value, Ok(value) if !value.trim().is_empty());
+    // A --root that is not a directory is an error whether or not
+    // RIPR_CACHE_DIR governs the cache location.
+    let canonical = std::fs::canonicalize(root)
+        .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?;
+    if !canonical.is_dir() {
+        return Err(format!("cache root {} is not a directory", root.display()));
+    }
     let workspace_root = if explicit_cache_dir {
         root.to_path_buf()
     } else {
-        std::fs::canonicalize(root)
-            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
+        canonical
     };
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
@@ -644,7 +650,8 @@ fn run_status(args: &[String]) -> Result<(), String> {
         render_status(&cache_dir, real_dir.as_deref(), &status, is_json)?
     );
     if !is_json {
-        eprintln!("{}", cleanup_hint(&cache_dir, root.as_deref()));
+        let env_governs = std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty());
+        eprintln!("{}", cleanup_hint(&cache_dir, root.as_deref(), env_governs));
     }
 
     Ok(())
@@ -659,7 +666,7 @@ fn run_status(args: &[String]) -> Result<(), String> {
 /// when `clear` would refuse (relative, symlinked, near-root, ...), the hint
 /// carries the actual refusal reason instead of recommending a command that
 /// fails.
-fn cleanup_hint(cache_dir: &Path, root: Option<&Path>) -> String {
+fn cleanup_hint(cache_dir: &Path, root: Option<&Path>, env_governs: bool) -> String {
     if let Err(reason) = classify_cache_root(cache_dir) {
         return format!(
             "The cache is disposable; ripr rebuilds it on the next run. `ripr cache clear` \
@@ -667,13 +674,28 @@ fn cleanup_hint(cache_dir: &Path, root: Option<&Path>) -> String {
             reason.trim_start_matches("refusing to clear ")
         );
     }
-    let root_flag = root
-        .map(|root| format!(" --root {}", root.display()))
-        .unwrap_or_default();
+    // RIPR_CACHE_DIR governs the location regardless of --root, so the printed
+    // commands carry --root only when it actually selects the directory.
+    let root_flag = match root {
+        Some(root) if !env_governs => format!(" --root {}", shell_quote(&root.to_string_lossy())),
+        _ => String::new(),
+    };
     format!(
         "The cache is disposable; ripr rebuilds it on the next run. To clear it, run \
          `ripr cache clear{root_flag} --dry-run` to preview, then `ripr cache clear{root_flag} --force`."
     )
+}
+
+/// Quote a path in a suggested command only when it needs quoting.
+fn shell_quote(text: &str) -> String {
+    if text
+        .chars()
+        .all(|ch| ch.is_alphanumeric() || "/._-:+@%".contains(ch))
+    {
+        text.to_string()
+    } else {
+        format!("\"{}\"", text.replace('"', "\\\""))
+    }
 }
 
 fn run_clear(args: &[String]) -> Result<(), String> {
@@ -1271,11 +1293,19 @@ mod tests {
         }
         // Hint: clearable root keeps the generic command (with --root echoed);
         // a refused root names the reason and no longer recommends --force.
-        let generic = cleanup_hint(&expected, Some(&root));
+        let generic = cleanup_hint(&expected, Some(&root), false);
         if !generic.contains("`ripr cache clear --root ") || generic.contains("would refuse") {
             return Err(format!("generic hint drifted: {generic}"));
         }
-        let refused = cleanup_hint(Path::new("relative/cache"), None);
+        // RIPR_CACHE_DIR governs: the hint must not echo --root.
+        let governed = cleanup_hint(&expected, Some(&root), true);
+        if governed.contains("--root") {
+            return Err(format!("env-governed hint echoed --root: {governed}"));
+        }
+        if shell_quote("/tmp/a b") != "\"/tmp/a b\"" || shell_quote("/tmp/ab") != "/tmp/ab" {
+            return Err("shell_quote drifted".to_string());
+        }
+        let refused = cleanup_hint(Path::new("relative/cache"), None, false);
         if !refused.contains("would refuse to clear it")
             || !refused.contains("absolute path")
             || refused.contains("`ripr cache clear --force`")
