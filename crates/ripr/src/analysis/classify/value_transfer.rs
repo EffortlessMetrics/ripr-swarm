@@ -215,13 +215,13 @@ pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 3] = ["arith", "split_whitespace
 
 /// Results above this bound fail closed: the unwritten integer type of a
 /// literal-only expression could change the answer beyond it.
-const ARITHMETIC_LIMIT: usize = 1 << 31;
+const ARITHMETIC_LIMIT: usize = (1 << 31) - 1;
 
 /// Exact integer arithmetic (`+ - * / %`) over two exact `Index` operands
 /// (`data.len() % 2`, `2 + 2`, `(n + 1) * 2`). The split is at the lowest
 /// precedence, rightmost top-level operator, outside literals and brackets.
 /// A leading sign, a non-index operand, an overflow, an underflow, a
-/// division by zero, or a result beyond `ARITHMETIC_LIMIT` fails closed.
+/// division by zero, or a result at or beyond `ARITHMETIC_LIMIT` (below `i32::MAX`) fails closed.
 /// `None` means the text has no top-level binary operator and is some other
 /// shape.
 fn eval_arithmetic(
@@ -293,7 +293,7 @@ fn eval_arithmetic(
         ))));
     }
     let mut operand = |operand: &str| match eval_expression(operand, inputs, steps) {
-        Ok(TypedValue::Index(value)) if value <= ARITHMETIC_LIMIT => Ok(value),
+        Ok(TypedValue::Index(value)) if value < ARITHMETIC_LIMIT => Ok(value),
         Ok(other) => Err(unsupported(&format!(
             "operand `{operand}` is {} where integer arithmetic needs an exact bounded integer",
             other.render()
@@ -316,7 +316,7 @@ fn eval_arithmetic(
         '%' => left.checked_rem(right),
         _ => None,
     };
-    let Some(result) = result.filter(|value| *value <= ARITHMETIC_LIMIT) else {
+    let Some(result) = result.filter(|value| *value < ARITHMETIC_LIMIT) else {
         return Some(Err(unsupported(&format!(
             "`{left} {operator} {right}` overflows, underflows or divides by zero"
         ))));
@@ -946,8 +946,13 @@ mod tests {
             "-1 + n",
             "n + -1",
             "2147483648 + 1",
+            "2147483647 + 1",
+            "2147483649 - 2147483649",
+            "46341 * 46341",
             "input + 1",
             "2u8 + 2",
+            "200u8 * 2",
+            "200 + 100u8",
             "n + missing",
             "n *",
         ] {

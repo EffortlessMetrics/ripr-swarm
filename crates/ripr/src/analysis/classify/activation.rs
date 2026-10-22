@@ -400,6 +400,7 @@ fn observed_discriminator_values(
         &parameters,
         index,
         workspace_complete,
+        ordering_predicate(&probe.expression),
     );
     let right_resolved = resolve_boundary_operand(
         owner,
@@ -408,6 +409,7 @@ fn observed_discriminator_values(
         &parameters,
         index,
         workspace_complete,
+        ordering_predicate(&probe.expression),
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -601,9 +603,8 @@ pub(crate) enum ResolvedOperand {
 }
 
 /// Integer scalar type names an expression operand may read.
-const INTEGER_TYPES: [&str; 12] = [
-    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
-];
+const WIDE_INTEGER_TYPES: [&str; 8] =
+    ["u32", "u64", "u128", "usize", "i32", "i64", "i128", "isize"];
 
 /// The declared type of a parameter when it is a plain integer or a plain
 /// text reference/owner (`&str`, `String`, `&String`). Generic owners,
@@ -652,7 +653,9 @@ fn exact_scalar_parameter(owner: &FunctionSummary, name: &str) -> bool {
             .chars()
             .filter(|ch| !ch.is_whitespace())
             .collect();
-        INTEGER_TYPES.contains(&text.as_str())
+        // Only types wide enough to hold every bounded arithmetic result:
+        // `u8`/`i8`/`u16`/`i16` could overflow where the evaluator is exact.
+        WIDE_INTEGER_TYPES.contains(&text.as_str())
             || matches!(text.as_str(), "&str" | "String" | "&String")
     })
 }
@@ -675,7 +678,7 @@ fn closed_form_operand(
 }
 
 /// Whether every method the text calls is one the value evaluator models
-/// for the closed-form operand shapes (`.len()`, `.as_bytes()`,
+/// for the closed-form operand shapes (`.len()`,
 /// `.split_whitespace()`, `.chars()`, `.count()`), so an unmodelled method
 /// (`count_ones`, `abs`) never renames a pre-existing unknown operand.
 fn methods_are_evaluated(text: &str) -> bool {
@@ -792,6 +795,7 @@ fn resolve_boundary_operand(
     parameters: &[String],
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
+    allow_closed_form: bool,
 ) -> Option<ResolvedOperand> {
     if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
         // #3296 scanner/helper remainder: a local whose initializer is
@@ -816,6 +820,23 @@ fn resolve_boundary_operand(
         {
             return None;
         }
+        // The evaluator binds a parameter name in any initializer to the
+        // test row's literal; an owner that rebinds the parameter first
+        // (`let x = x + 10;`, `let s = s.trim();`) reads a different value.
+        // The local's own declaration may shadow the parameter it reads
+        // (`let input = input.strip_prefix(..)`); only an earlier rebinding
+        // changes what the initializer's parameter name means.
+        let declared_line = owner.start_line
+            + owner
+                .body
+                .rfind(initializer.trim())
+                .map_or(0, |at| owner.body[..at].matches('\n').count());
+        if free_identifiers(&initializer).iter().any(|name| {
+            parameters.contains(name)
+                && owner_declares_local(owner, name, declared_line.saturating_sub(1))
+        }) {
+            return None;
+        }
         let constants = initializer_constants(owner, &initializer, parameters, index);
         return Some(ResolvedOperand::Local(
             operand.to_string(),
@@ -829,8 +850,24 @@ fn resolve_boundary_operand(
     {
         return Some(ResolvedOperand::Parameter(parameter.clone()));
     }
-    resolve_direct_call(operand, index, workspace_complete)
-        .or_else(|| closed_form_operand(owner, operand, parameters, predicate_line, index))
+    resolve_direct_call(operand, index, workspace_complete).or_else(|| {
+        allow_closed_form
+            .then(|| closed_form_operand(owner, operand, parameters, predicate_line, index))
+            .flatten()
+    })
+}
+
+/// Whether the predicate compares with `<`, `<=`, `>` or `>=`. A closed-form
+/// operand (`text.len()`) credits only an ordering boundary: an `==` or `!=`
+/// guard has neighbours (`len() < 2` survives an `== 0` test) that one
+/// on-boundary row does not discriminate.
+fn ordering_predicate(expression: &str) -> bool {
+    for operator in [">=", "<=", "==", "!=", ">", "<"] {
+        if expression.contains(operator) {
+            return !matches!(operator, "==" | "!=");
+        }
+    }
+    false
 }
 
 /// The same-file constants a local's initializer names, as name and plain
@@ -1653,6 +1690,7 @@ fn missing_boundary_discriminator(
         &parameters,
         index,
         workspace_complete,
+        ordering_predicate(&probe.expression),
     );
     let right_resolved = resolve_boundary_operand(
         owner,
@@ -1661,6 +1699,7 @@ fn missing_boundary_discriminator(
         &parameters,
         index,
         workspace_complete,
+        ordering_predicate(&probe.expression),
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -6189,14 +6228,16 @@ mod tests {
     }
 
     #[test]
-    fn literal_text_length_modulo_on_the_boundary_is_an_observed_equality() {
+    fn literal_text_length_modulo_equality_guard_is_not_credited() {
+        // An `==` guard over a closed form is never credited (one row does
+        // not discriminate its neighbours).
         let gathered = expression_boundary_input(
             "pub fn score(s: &str) -> u32",
             "s.len() % 2 == 1",
             "score(\"abc\");",
         );
 
-        assert!(has_observed_boundary_equality(&gathered.activation));
+        assert!(!has_observed_boundary_equality(&gathered.activation));
     }
 
     #[test]
@@ -8608,6 +8649,137 @@ assert_eq!(input.amount, 100);"#
             reason.contains("boundary operand `s.len()`"),
             "got {reason:?}"
         );
+    }
+
+    #[test]
+    fn given_narrow_integer_parameter_arithmetic_then_boundary_stays_unresolved() {
+        // `n * 1000` with n = 200 is exact 200000 here but overflows u8 at
+        // runtime, so a narrow parameter never resolves a closed form.
+        for (ty, expr, arg) in [("u8", "n * 1000", "200"), ("u8", "n + 100", "200")] {
+            let source = format!("pub fn f(n: {ty}) -> bool {{\n    {expr} < 5\n}}");
+            let owner = function(&source);
+            let call = format!("assert!(f({arg}));");
+            let t = test_with_body_calls(&call, &[(10, &call)]);
+            let gathered = boundary_input(
+                &owner,
+                &probe(ProbeFamily::Predicate, &format!("{expr} < 5")),
+                &[&t],
+            );
+            assert!(!has_observed_boundary_equality(&gathered.activation));
+            assert!(gathered.activation.missing_discriminators.is_empty());
+        }
+    }
+
+    #[test]
+    fn given_rebound_parameter_in_local_initializer_then_boundary_is_not_credited() {
+        for (source, predicate, call) in [
+            (
+                "pub fn score(x: usize) -> u32 {\n    let x = x + 10;\n    let y = x * 2;\n    if y == 40 {\n        return 0;\n    }\n    1\n}",
+                "y == 40",
+                "score(20)",
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let s = s.replace(\" \", \"\");\n    let n = s.chars().count();\n    if n == 5 {\n        return 0;\n    }\n    1\n}",
+                "n == 5",
+                "score(\"a b c d e\")",
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let s = s.trim();\n    let n = s.len();\n    if n == 3 {\n        return 0;\n    }\n    1\n}",
+                "n == 3",
+                "score(\"  abc \")",
+            ),
+        ] {
+            let mut owner = function(source);
+            owner.end_line = 8;
+            let mut predicate = probe(ProbeFamily::Predicate, predicate);
+            predicate.location.line = 4;
+            let body = format!("assert_eq!({call}, 0);");
+            let test = test_with_body_calls(&body, &[(10, &body)]);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn given_literal_row_and_computed_row_then_expression_boundary_is_not_credited() {
+        // The `all` guard: one on-boundary literal row plus one computed
+        // argument row must stay unresolved (the computed row may sit on
+        // the other side).
+        let owner = function("pub fn score(s: &str) -> bool {\n    s.len() < 4\n}");
+        let test = test_with_body_calls(
+            "let word = make();\nassert!(score(\"123\"));\nassert!(score(&word));",
+            &[
+                (11, "assert!(score(\"123\"));"),
+                (12, "assert!(score(&word));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() < 4"),
+            &[&test],
+        );
+        // The literal row is off the boundary; the computed row may sit on
+        // it, so no missing input is named and the boundary stays unresolved.
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(gathered.unresolved_boundary.is_some());
+    }
+
+    #[test]
+    fn given_equality_guard_on_expression_operand_then_boundary_is_not_credited() {
+        // `text.len() == 0` tested only with "": the `< 2` neighbour survives
+        // (idiom-result-empty-guard), so an equality guard never credits.
+        let owner = function("pub fn score(s: &str) -> bool {\n    s.len() == 0\n}");
+        let test = test_with_body_calls("assert!(score(\"\"));", &[(10, "assert!(score(\"\"));")]);
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() == 0"),
+            &[&test],
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn given_reversed_expression_operands_then_boundary_is_credited() {
+        let owner = function("pub fn score(s: &str) -> bool {\n    2 + 2 > s.len()\n}");
+        let test = test_with_body_calls(
+            "assert!(!score(\"1234\"));\nassert!(score(\"123\"));",
+            &[
+                (10, "assert!(!score(\"1234\"));"),
+                (11, "assert!(score(\"123\"));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "2 + 2 > s.len()"),
+            &[&test],
+        );
+        assert!(has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn given_empty_input_for_counted_local_then_zero_boundary_is_observed() {
+        let mut owner = function(
+            "pub fn initials(name: &str) -> String {\n    let letters = name.split_whitespace().count();\n    if letters == 0 {\n        return String::new();\n    }\n    name.to_string()\n}",
+        );
+        owner.end_line = 7;
+        owner.name = "initials".to_string();
+        let mut predicate = probe(ProbeFamily::Predicate, "letters == 0");
+        predicate.location.line = 3;
+        let mut test = test_with_body_calls(
+            "assert_eq!(initials(\"\"), \"\");\nassert_eq!(initials(\"Ada Lovelace\"), \"AL\");",
+            &[
+                (10, "assert_eq!(initials(\"\"), \"\");"),
+                (11, "assert_eq!(initials(\"Ada Lovelace\"), \"AL\");"),
+            ],
+        );
+        for call in &mut test.calls {
+            call.name = "initials".to_string();
+        }
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(has_observed_boundary_equality(&gathered.activation));
     }
 
     #[test]
