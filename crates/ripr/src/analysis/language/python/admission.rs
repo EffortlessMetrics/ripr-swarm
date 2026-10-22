@@ -1703,21 +1703,39 @@ impl BodyScan<'_> {
 }
 
 /// Whether code outside any test function can run at the owner implicitly in
-/// this module (#5491 `missing_input`): an autouse fixture, any `pytestmark`,
-/// `pytest_plugins`, a runtest hook, any setup or teardown hook or class-body
-/// statement, or a module-level statement containing a call. Decided by
-/// existence so the row pass fails closed without reading what that code calls.
-pub(super) fn module_implicit_reach(source: &str, statements: &[Stmt]) -> bool {
-    let mut context = PythonAdmissionContext::default();
+/// this module, from evidence RIPR can see (#5491 `missing_input`): an autouse
+/// fixture, any `pytestmark`, `pytest_plugins`, a runtest hook, any setup or
+/// teardown hook or class-body statement, a class with a base other than
+/// `object`/`unittest.TestCase`/none or with a decorator (it can inherit or
+/// install hooks), or a module-level effect. Decided by existence so the row
+/// pass fails closed without reading what that code calls. Autouse fixtures
+/// imported by name, import side effects, plugins from ini/addopts and
+/// `sitecustomize` stay invisible.
+pub(super) fn module_implicit_reach(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> bool {
+    let mut context = PythonAdmissionContext {
+        safe_bases: safe_base_spellings(imports),
+        ..PythonAdmissionContext::default()
+    };
     let mut lifecycle = Vec::new();
     context.collect(statements, &mut lifecycle);
-    if context.has_implicit_fixture
+    context.has_implicit_fixture
         || context.has_plugins
         || context.has_runtest_hook
+        || !context.opaque_classes.is_empty()
         || !lifecycle.is_empty()
-    {
-        return true;
-    }
+        || module_level_effects(source, statements)
+}
+
+/// A module-level statement that can run code or rewrite another module at
+/// import: any `pytestmark`, a statement whose source holds a call, or an
+/// attribute or subscript assignment (`s.can_reserve = fake`). Imports,
+/// definitions, docstrings and plain constants do not count.
+pub(super) fn module_level_effects(source: &str, statements: &[Stmt]) -> bool {
+    let writes_through = |target: &Expr| matches!(target, Expr::Attribute(_) | Expr::Subscript(_));
     statements.iter().any(|statement| match statement {
         Stmt::FunctionDef(_)
         | Stmt::AsyncFunctionDef(_)
@@ -1727,12 +1745,15 @@ pub(super) fn module_implicit_reach(source: &str, statements: &[Stmt]) -> bool {
         | Stmt::Pass(_) => false,
         Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => false,
         Stmt::Assign(assign)
-            if assign.targets.iter().any(
-                |target| matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark"),
-            ) =>
+            if assign.targets.iter().any(|target| {
+                writes_through(target)
+                    || matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark")
+            }) =>
         {
             true
         }
+        Stmt::AugAssign(assign) if writes_through(&assign.target) => true,
+        Stmt::AnnAssign(assign) if writes_through(&assign.target) => true,
         other => {
             let range = other.range();
             source

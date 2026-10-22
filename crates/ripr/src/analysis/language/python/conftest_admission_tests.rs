@@ -634,6 +634,23 @@ mod row_reach {
                 "{label}"
             );
         }
+        // Top-level code that rewrites or calls project code counts; a
+        // constant-only conftest (above) does not.
+        for (label, source) in [
+            (
+                "attribute assignment",
+                "import src.subject as s\n\ns.can_reserve = lambda a, b: True\n",
+            ),
+            (
+                "top-level call",
+                "import src.subject as s\n\ns.can_reserve(4, 4)\n",
+            ),
+        ] {
+            assert!(
+                !omission_with(&[("tests/conftest.py", source)], &[])?,
+                "{label}"
+            );
+        }
         // A conftest further up the chain counts too, and so does one that
         // exists but could not be read.
         assert!(!omission_with(

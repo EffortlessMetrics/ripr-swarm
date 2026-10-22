@@ -154,12 +154,17 @@ static limit, one row at a time, in `python/row_miss.rs`:
   operand or an unreadable call is unknown, and another row's input never
   counts. The row must reach the owner only through direct calls: a helper,
   alias, `map`/`partial` reference, fixture, dynamic construct or any other
-  callee the reader cannot vouch for keeps no miss, as does any code outside
-  the test function that may run at the owner implicitly, decided by existence
-  and never by reading it: an autouse fixture, `pytestmark`, a setup or
-  teardown hook, a module-level call, a test-module definition or rebinding of
-  the owner's name, a decorated owner, or a `conftest.py` on the directory
-  chain that declares any fixture or hook (or could not be read). A method call counts
+  callee the reader cannot vouch for keeps no miss, as does implicit setup RIPR can see, decided by existence and never by reading
+  it: an autouse fixture, `pytestmark`, a setup or teardown hook, a test class
+  with a base other than none, `object` or `unittest.TestCase` or with a
+  decorator, a module-level call or attribute/subscript assignment, a
+  test-module definition or rebinding of the owner's name, a decorated owner,
+  or a `conftest.py` on the directory chain that declares any fixture or hook,
+  has such top-level code, or could not be read. This reads visible evidence
+  only. Known limits that stay invisible: an autouse fixture imported by name
+  from another module, import side effects of a sidecar module, `from conftest
+  import helper`, and plugins loaded by `-p`, ini/`addopts` or `sitecustomize`.
+  A method call counts
   only on a receiver provably the owner class. Compared parameters must be
   ones the owner body never rebinds; a relational change must keep the same
   operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,

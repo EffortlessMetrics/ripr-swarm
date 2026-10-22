@@ -788,6 +788,10 @@ mod direct {
                 "def test_a(cart):\n    assert cart.can_reserve(5, 3) == True\n",
             ),
             (
+                "variable receiver (binding is not read)",
+                "def test_a():\n    c = Cart()\n    assert c.can_reserve(5, 3) == True\n",
+            ),
+            (
                 "reassigned receiver",
                 "def test_a():\n    c = Cart()\n    c = Other()\n    assert c.can_reserve(5, 3) == True\n",
             ),
@@ -883,6 +887,39 @@ mod direct {
         };
         assert_no_missing_input(&build("@always_true\n")?, "decorated owner");
         assert!(omission(&build("")?, 0), "undecorated control");
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_or_decorated_test_class_is_not_an_omission() -> Result<(), String> {
+        for (label, tests) in [
+            (
+                "base from another module",
+                "from helpers import Base\n\nclass TestReserve(Base):\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "mixin base",
+                "class Mixin:\n    def setup_method(self, method):\n        can_reserve(4, 4)\n\nclass TestReserve(Mixin):\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "decorated test class",
+                "from helpers import some_deco\n\n@some_deco\nclass TestReserve:\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n",
+            ),
+            (
+                "module attribute assignment",
+                "import src.subject as s\n\ns.can_reserve = lambda a, b: True\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n",
+            ),
+        ] {
+            assert_no_missing_input(&reserve(tests)?, label);
+        }
+        // Controls: a plain class and a unittest.TestCase subclass without
+        // hooks are not implicit reach.
+        assert!(omission(
+            &reserve(
+                "class TestReserve:\n    def test_a(self):\n        assert can_reserve(5, 3) == True\n"
+            )?,
+            0
+        ));
         Ok(())
     }
 

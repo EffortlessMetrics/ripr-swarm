@@ -227,8 +227,7 @@ fn receiver_is_owner_class(code: &str, name_start: usize, class_name: &str) -> b
     }
 }
 
-/// `Class(...).owner(` or `v.owner(` where `v` is assigned exactly once, from
-/// `Class(...)`.
+/// `Class(...).owner(` only.
 fn receiver_is_owner_instance(code: &str, name_start: usize, class_name: &str) -> bool {
     if class_name.is_empty() {
         return false;
@@ -254,29 +253,8 @@ fn receiver_is_owner_instance(code: &str, name_start: usize, class_name: &str) -
         }
         return false;
     }
-    let variable = receiver;
-    if variable.is_empty()
-        || !variable
-            .chars()
-            .all(|c| c == '_' || c.is_ascii_alphanumeric())
-    {
-        return false;
-    }
-    let mut assignments = 0usize;
-    let mut from_owner_class = 0usize;
-    for line in code.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix(variable)
-            && let Some(rhs) = rest.trim_start().strip_prefix('=')
-            && !rhs.starts_with('=')
-        {
-            assignments += 1;
-            if rhs.trim_start().starts_with(&format!("{class_name}(")) {
-                from_owner_class += 1;
-            }
-        }
-    }
-    assignments == 1 && from_owner_class == 1
+    // A variable receiver is never accepted: its binding is not read here.
+    false
 }
 
 fn contains_word(text: &str, word: &str) -> bool {

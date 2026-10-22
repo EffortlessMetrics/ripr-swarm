@@ -7,5 +7,5 @@
   follows separately. `no_assertion`,
   `assertion_not_observing`, `assertion_not_credited` and
   `missing_exact_assertion` stay unset for Python until their evidence is
-  row-owned. The miss is explanation only: class, stages, confidence, ordering
+  row-owned. `missing_input` reads visible evidence only: an autouse fixture imported by name, import side effects, and plugins from ini, `addopts` or `sitecustomize` stay invisible. The miss is explanation only: class, stages, confidence, ordering
   and repair guidance are unchanged (#5491).

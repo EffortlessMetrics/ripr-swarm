@@ -707,6 +707,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
         || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
             && (!snapshot.fixtures.is_empty()
+                || super::admission::module_level_effects(source, &module.body)
                 || module.body.iter().any(|statement| match statement {
                     Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
                     Stmt::AsyncFunctionDef(function) => {
@@ -715,6 +716,10 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
                     _ => false,
                 })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
+    for test in &mut snapshot.tests {
+        test.constant_rebinding.implicit_reach |= implicit_reach;
+    }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,

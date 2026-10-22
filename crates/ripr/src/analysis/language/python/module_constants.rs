@@ -197,10 +197,8 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     } else {
         assigned_attributes(source)
     };
-    let implicit_reach = super::admission::module_implicit_reach(source, statements);
     for test in tests {
         let rebinding = &mut test.constant_rebinding;
-        rebinding.implicit_reach |= implicit_reach;
         rebinding.opaque |= module.opaque || dynamic;
         rebinding
             .names
