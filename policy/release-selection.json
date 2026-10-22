@@ -693,12 +693,17 @@
       "claim_id": "upgrade-route",
       "owner_issue": 7454,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "No consolidated 0.10 to 0.11 upgrade route exists yet.",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "One 0.10 to 0.11 upgrade route exists in docs/INSTALL_CHANNELS.md, is linked from the packaged README and the release notes, and the release checklists require a non-empty published Release body that names it (#7474 backfill of v0.9.0 and v0.10.0 bodies is not part of the cut).",
       "related_issues": [
         7474
       ],
-      "next": "Land the upgrade guide with the release-notes pass; #7474 empty release bodies are prevented at source. Owner: project release-docs thread."
+      "implementation_refs": [
+        "pr:9474"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/7454#issuecomment-6333310786"
+      ]
     },
     {
       "claim_id": "hard-cut-admission",
@@ -733,12 +738,21 @@
       "claim_id": "candidate-harness",
       "owner_issue": 4510,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "The exact-candidate harness accepted a capture slice; shared harness and child consumers are open.",
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "The termination harness is on main with exact-binary snapshot and hash, deadline and process-group custody, per-row cleanup and the instrument, repeat and removal controls (#9411, #9425); it runs on the cut binary at the candidate.",
       "related_issues": [
         4522
       ],
-      "next": "Finish the shared harness and child-consumer acceptance, and bind successor packets (#4522). Owner: #4510 owner."
+      "implementation_refs": [
+        "pr:9411",
+        "pr:9425"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/4510#issuecomment-6333565475",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/1609",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9480"
+      ],
+      "non_claim": "The release does not claim the #1609 manifest binding, the ambient or stale-binary and decoy-CWD execution controls, or blind rows for the harness, and nothing has run on the cut binary until repairs-disabled builds exist for all four families; gaps are tracked in #9480 and #4510 stays open."
     }
   ],
   "outside_selection": [

@@ -34,9 +34,9 @@ use related_tests::{
 };
 
 use super::classify::{
-    assertion_observes_direct_collection_for_probe, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, mutexed_assertion_observes_collection_argument,
-    owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
+    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
+    reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
@@ -61,7 +61,6 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -259,8 +258,14 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// calls, so a caller that evaluates seams in stages builds the test
 /// context once. Its caches are keyed memoization, so a seam's evidence
 /// does not depend on which seams the pass evaluated before it.
+/// Fewest seams in a stage for which the whole-index tables are built up
+/// front.
+const WARM_MIN_SEAMS: usize = 1_000;
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
+    /// The whole-index tables are paid once per pass, not per stage.
+    shared_tables_warmed: std::sync::Once,
 }
 
 impl<'index> EvidencePass<'index> {
@@ -276,7 +281,10 @@ impl<'index> EvidencePass<'index> {
             ),
             context_started.elapsed(),
         );
-        Self { context }
+        Self {
+            context,
+            shared_tables_warmed: std::sync::Once::new(),
+        }
     }
 
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
@@ -294,6 +302,10 @@ impl<'index> EvidencePass<'index> {
         let Some(context) = self.context.as_ref() else {
             return Vec::new();
         };
+        if seams.is_empty() {
+            // An empty stage must not pay the whole-index warm below.
+            return Vec::new();
+        }
         let evidence_started = Instant::now();
         // Seams are independent and the context's memos are keyed, so the
         // pass runs on the rayon pool. Workers inherit this thread's
@@ -302,6 +314,14 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        // #9211: a stage large enough to need the whole-index tables pays
+        // for them here, before any seam is queued, instead of the first
+        // worker to ask building one in line while its siblings wait. A first
+        // review stage of a few dozen seams reads none of them, and the warm
+        // costs tens of seconds on a workspace the size of ripr-swarm.
+        if seams.len() >= WARM_MIN_SEAMS {
+            self.warm_shared_tables(context, token.as_ref(), &overlay);
+        }
         let processed = AtomicUsize::new(0);
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
@@ -327,6 +347,43 @@ impl<'index> EvidencePass<'index> {
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
+    }
+
+    /// Pay the macro-site scan, the unseen-reach names and the type-mention
+    /// index once per pass, on the caller, where the scans fan out over the
+    /// pool.
+    fn warm_shared_tables(
+        &self,
+        context: &CompactGripContext<'_>,
+        token: Option<&cancellation::AnalysisCancellationToken>,
+        overlay: &Option<std::sync::Arc<crate::analysis::committed_source::CommittedSourceOverlay>>,
+    ) {
+        self.shared_tables_warmed.call_once(|| {
+            cancellation::with_optional_token(token, || {
+                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                    // A cancelled pass returns no evidence, so it stops paying
+                    // for tables nobody will read.
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
+                    let started = Instant::now();
+                    context.prime_pin_syntax_scan();
+                    trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
+                    let started = Instant::now();
+                    context.unseen_reach_names();
+                    trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
+                    let started = Instant::now();
+                    context.type_mentions();
+                    trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+                });
+            });
+        });
     }
 }
 
@@ -359,7 +416,7 @@ fn evidence_for_seam_with_context(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = context.pin_syntax_mutex();
+    let pin_syntax = context.pin_syntax();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
@@ -451,7 +508,7 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let pin_syntax = context.pin_syntax_mutex();
+    let pin_syntax = context.pin_syntax();
     let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
@@ -930,7 +987,7 @@ fn observed_value_facts_for_test(
     // separately because they don't fit the per-arg shape. These only
     // count when method names align with seam tokens; the env enforces
     // that filter.
-    observed.extend(env.builder_facts());
+    observed.extend(env.builder_facts(&indexed.test.body));
     for fact in &mut observed {
         fact.file = Some(indexed.test.file.clone());
     }
@@ -1916,7 +1973,7 @@ fn propagate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -1950,7 +2007,7 @@ fn oracles_match_sink(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
     test.assertions
         .iter()
@@ -2014,7 +2071,7 @@ fn discriminate_evidence(
     related: &[&TestSummary],
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -2141,7 +2198,7 @@ fn oracle_discriminates_seam_in_test(
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
     // #8121: a snapshot admitted by kind for a return-value seam must also
     // observe the owner's own result, not an unrelated value in the test.
@@ -2157,7 +2214,7 @@ fn oracle_discriminates_seam_in_test(
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && mutexed_assertion_observes_collection_argument(
+                    && assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
             })
@@ -2930,7 +2987,7 @@ fn best_oracle(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
-    pin_syntax: &Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;

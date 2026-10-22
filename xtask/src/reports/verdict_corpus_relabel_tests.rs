@@ -953,6 +953,7 @@ fn toy_case(case_id: &str, state: TruthState, toolchain: &str) -> Case {
             excerpt_parity: "matched".to_string(),
         },
         spec_examples: Vec::new(),
+        axes: Vec::new(),
         perl_facts: None,
         expected_oracle: None,
     }

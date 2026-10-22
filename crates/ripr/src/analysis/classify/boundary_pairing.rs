@@ -347,6 +347,7 @@ fn loan_pairs_boundary_call(
         }
         activation.observed_values.iter().any(|fact| {
             fact.line == *line
+                && fact.file.as_ref().is_none_or(|file| *file == test.file)
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
                 && fact.text.contains(&*helper_call.text)
@@ -2676,6 +2677,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -3114,6 +3116,18 @@ mod tests {
             ),
             "a line at the budget may have dropped another owner call"
         );
+    }
+
+    #[test]
+    fn a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line() {
+        let (test, assertion, loan, mut activation) = loan_case(CHECK, "check(10, true);", 2);
+        // A fact that names its source file pairs only inside that file: a
+        // second file's call on the same line with the same text is a
+        // different call (#9509 review).
+        activation.observed_values[0].file = Some(test.file.clone());
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+        activation.observed_values[0].file = Some(std::path::PathBuf::from("tests/other.rs"));
+        assert!(!loan_pairs(&test, &assertion, &loan, &activation));
     }
 
     #[test]

@@ -8378,6 +8378,63 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 }
 
 #[test]
+fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let digest = format!("{:x}", Sha256::digest(manifest));
+    let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
+    assert!(source.contains(&format!(
+        "{{ generation: \"1.2.3\", manifestSha256: \"{digest}\" }}"
+    )));
+
+    let wrong = "0".repeat(64);
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &wrong) else {
+        return Err("a tampered manifest must be refused".to_string());
+    };
+    assert!(err.contains("does not match the receipted digest"), "{err}");
+    let Err(err) = super::bound_descriptor_source("1.2.4", manifest, &digest) else {
+        return Err("a generation mismatch must be refused".to_string());
+    };
+    assert!(err.contains("does not match generation"), "{err}");
+    for bad in [
+        "ABC".to_string(),
+        digest.to_uppercase(),
+        format!("{digest}\n"),
+    ] {
+        let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &bad) else {
+            return Err(format!("digest `{bad:?}` must be refused"));
+        };
+        assert!(err.contains("64 lowercase hex"), "{err}");
+    }
+    for generation in ["1.2.3-rc.1", "1.2", "a.b.c"] {
+        if super::bound_descriptor_source(generation, manifest, &digest).is_ok() {
+            return Err(format!("generation `{generation}` must be refused"));
+        }
+    }
+    for body in [
+        &b"not json"[..],
+        br#"{"version":"1.2.3","assets":{}}"#,
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+    ] {
+        let body_digest = format!("{:x}", Sha256::digest(body));
+        if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
+            return Err("a malformed manifest must be refused".to_string());
+        }
+    }
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, "ABC") else {
+        return Err("a malformed digest must be refused".to_string());
+    };
+    assert!(err.contains("64 lowercase hex"), "{err}");
+    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let http_digest = format!("{:x}", Sha256::digest(http));
+    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
+        return Err("a non-https asset url must be refused".to_string());
+    };
+    assert!(err.contains("non-https"), "{err}");
+    Ok(())
+}
+
+#[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
     // The editor descriptor admits a distribution generation
     // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
@@ -9520,6 +9577,105 @@ fn allow_attribute_detection_flags_guarded_lint_suppressions() {
     );
 }
 
+/// #9501 negative experiment: a guarded suppression wrapped in `cfg_attr`
+/// used to bypass the count ledger because only `allow`/`expect` directly
+/// after `#[` were recognized.
+#[test]
+fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
+    let text = format!(
+        "{}\nfn a() {{}}\n{}\n{}\n{}\n{}\n",
+        concat!("#", "[cfg_attr(test, allow(clippy::unwrap_used))]"),
+        concat!(
+            "#",
+            "![cfg_attr(not(test), expect(dead_code, reason = \"a, (b)\"), inline(never))]"
+        ),
+        concat!(
+            "#",
+            "[cfg_attr(all(unix, test), cfg_attr(test, allow(warnings)))]"
+        ),
+        concat!("#", "[ cfg_attr ( test , allow ( unused_imports ) ) ]"),
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(clippy::module_name_repetitions))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (3, "expect(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (5, "allow(unused_imports)".to_string()),
+        ]
+    );
+}
+
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
+    for text in [
+        concat!("#", "[cfg_attr(test, derive(Debug))]"),
+        concat!("#", "[cfg_attr(test, allow)]"),
+        // The predicate position is not an attribute, even if it names a lint.
+        concat!("#", "[cfg_attr(allow(dead_code), derive(Debug))]"),
+        concat!("#", "[cfg_attr(test)]"),
+        concat!("#", "[cfg_attr(test, allow(dead_code)"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cfg_attr_suppression_spends_the_same_budget_as_the_plain_attribute() {
+    let guarded = guarded_allow_attribute_lints();
+    let text = concat!("#", "[cfg_attr(test, allow(dead_code))]");
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+    for (line, attribute) in guarded_allow_attributes_in_text(text, &guarded) {
+        counts
+            .entry(("src/lib.rs".to_string(), attribute))
+            .or_default()
+            .push(line);
+    }
+
+    let unbudgeted = allow_attribute_budget_violations(&BTreeMap::new(), &counts, &guarded);
+    assert_eq!(unbudgeted.len(), 1, "{unbudgeted:?}");
+    assert!(unbudgeted[0].contains("allow(dead_code)"), "{unbudgeted:?}");
+
+    let budget = BTreeMap::from([(
+        ("src/lib.rs".to_string(), "allow(dead_code)".to_string()),
+        1,
+    )]);
+    assert!(allow_attribute_budget_violations(&budget, &counts, &guarded).is_empty());
+}
+
 #[test]
 fn allow_attribute_detection_ignores_untracked_lints() {
     let text = format!(
@@ -9934,7 +10090,7 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
     if !extension.contains("true/false | false/true) ;;") {
         return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
     }
-    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+    for job in ["package", "verify-server-assets", "attach-release-asset"] {
         let needs = extension
             .split_once(&format!("\n  {job}:\n"))
             .map(|(_, rest)| {
@@ -9949,8 +10105,14 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
                     .to_string()
             })
             .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
-        if !needs.contains("admit-dispatch") {
-            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        // `package` is admitted transitively through `verify-server-assets`.
+        let admitted_by = if job == "package" {
+            "verify-server-assets"
+        } else {
+            "admit-dispatch"
+        };
+        if !needs.contains(admitted_by) {
+            return Err(format!("{job} must need {admitted_by}, found `{needs}`"));
         }
     }
     if extension
