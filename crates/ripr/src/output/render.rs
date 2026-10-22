@@ -158,9 +158,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
@@ -199,9 +200,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
                     &report.classified,
