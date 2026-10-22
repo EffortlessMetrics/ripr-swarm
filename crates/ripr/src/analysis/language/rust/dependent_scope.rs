@@ -173,6 +173,7 @@ std::thread_local! {
     static OBSERVED_REACH_FILES: std::cell::RefCell<Vec<PathBuf>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static OBSERVED_REACH_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static OBSERVED_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static OBSERVED_MAIN_FILES: std::cell::RefCell<Option<Vec<PathBuf>>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -183,6 +184,7 @@ pub(super) fn with_forced_mode<T>(mode: DependentScopeMode, work: impl FnOnce() 
     FORCED_MODE.with(|forced| forced.set(Some(mode)));
     OBSERVED_REACH_FILES.with(|files| files.borrow_mut().clear());
     OBSERVED_REACH_PARSES.with(|parses| parses.set(0));
+    OBSERVED_REACH_BUILDS.with(|builds| builds.set(0));
     OBSERVED_MAIN_FILES.with(|files| *files.borrow_mut() = None);
     let result = work();
     FORCED_MODE.with(|forced| forced.set(None));
@@ -211,6 +213,13 @@ pub(super) fn observed_main_files() -> Option<Vec<PathBuf>> {
 #[cfg(test)]
 pub(super) fn observed_reach_parses() -> usize {
     OBSERVED_REACH_PARSES.with(std::cell::Cell::get)
+}
+
+/// How many reach indexes (closure-specific or full-selection) this thread
+/// built since the last forced-mode run began.
+#[cfg(test)]
+pub(super) fn observed_reach_builds() -> usize {
+    OBSERVED_REACH_BUILDS.with(std::cell::Cell::get)
 }
 
 /// The withheld files the last reach widening on this thread admitted.
@@ -524,7 +533,7 @@ pub(super) struct NarrowedScope {
     /// pass the cache capacity and then shared by all remaining owners.
     /// It holds a superset of each closure, and the witness walks are
     /// bounded by the closure, so verdicts match the per-closure index.
-    full_reach: Option<RustIndex>,
+    full_reach: Option<std::sync::Arc<RustIndex>>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -840,6 +849,10 @@ pub(super) enum ReachIndex<'a> {
     Main,
     /// A wider index holding the owner's caller closure.
     Widened(&'a RustIndex),
+    /// The scope's one full-selection index ([`NarrowedScope::shared_reach`]).
+    /// It carries no borrow so the caller can derive per-index lookups from
+    /// it once and reuse them for every finding.
+    Shared,
     /// The caller closure would exceed the index file limit; the witness
     /// search cannot run over every file that can take part in it.
     OverLimit { files: usize, limit: usize },
@@ -928,6 +941,8 @@ impl NarrowedScope {
                 .collect::<Vec<_>>();
             let everything =
                 crate::analysis::workspace::with_module_context_files(&self.all_files, selected);
+            #[cfg(test)]
+            OBSERVED_REACH_BUILDS.with(|builds| builds.set(builds.get() + 1));
             let index = build_index(
                 &self.root,
                 &everything,
@@ -936,10 +951,10 @@ impl NarrowedScope {
             )?
             .index;
             self.reach_index.clear();
-            self.full_reach = Some(index);
+            self.full_reach = Some(std::sync::Arc::new(index));
         }
-        if let Some(index) = &self.full_reach {
-            return Ok(ReachIndex::Widened(index));
+        if self.full_reach.is_some() {
+            return Ok(ReachIndex::Shared);
         }
         let consumed = &mut self.consumed;
         let builds = &mut self.widened_builds;
@@ -950,10 +965,17 @@ impl NarrowedScope {
             files,
             |files| {
                 *builds += 1;
+                #[cfg(test)]
+                OBSERVED_REACH_BUILDS.with(|count| count.set(count.get() + 1));
                 build_index(root, files, harnesses, consumed).map(|cached| cached.index)
             },
         )?;
         Ok(ReachIndex::Widened(index))
+    }
+
+    /// The full-selection index once the run switched to it, else `None`.
+    pub(super) fn shared_reach(&self) -> Option<std::sync::Arc<RustIndex>> {
+        self.full_reach.clone()
     }
 
     /// The bytes the reach widening read.
@@ -1462,6 +1484,8 @@ mod tests {
             tokens: WithheldTokens::default(),
             closures: std::collections::BTreeMap::new(),
             reach_index: Vec::new(),
+            widened_builds: 0,
+            full_reach: None,
             test_harnesses: Vec::new(),
             consumed: ConsumedRustSources::default(),
             widen: true,
