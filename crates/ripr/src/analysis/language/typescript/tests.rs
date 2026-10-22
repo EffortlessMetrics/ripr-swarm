@@ -17414,6 +17414,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 }
 
 mod boolean_pin_tests;
+mod changed_field_tests;
 mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod custom_matcher_tests;
