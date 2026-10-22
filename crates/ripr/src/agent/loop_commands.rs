@@ -524,8 +524,9 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   does PowerShell — pasting `"$(...)"` into either executes the embedded
 ///   expression (#8152 review, security), while single quotes stay literal
 ///   in both. cmd.exe does not treat `'` as a quote: the quotes arrive as
-///   literal characters, and a `>`, `<`, `&`, `|` or `^` inside the value
-///   still acts as a cmd.exe operator, so those values paste in Git Bash or
+///   literal characters, a space inside the value still splits it, and a
+///   `>`, `<`, `&`, `|` or `^` inside it still acts as a cmd.exe operator,
+///   so those values paste in Git Bash or
 ///   PowerShell, not cmd.exe (#9738; the editor refuses such a span on
 ///   Windows). No form is literal in all three shells for a value holding
 ///   both `$` and a cmd.exe operator, so PowerShell, the VS Code and Windows
@@ -539,8 +540,9 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   that on an interactive cmd.exe line, so a value carrying `%` or `!`
 ///   pastes literally in PowerShell and Git Bash but not in cmd.exe. An
 ///   interactive Git Bash likewise rewrites a `!` event designator inside
-///   double quotes (`"!!"`, `"a!-1"`), and Windows PowerShell 5.1 (not 7.3+)
-///   re-splits a value holding `""` when it passes it to a native program;
+///   double quotes (`"!!"`, `"a!-1"`), and Windows PowerShell 5.1 (and 7.3+
+///   when the target is a `.bat`/`.cmd` file) re-splits a value holding `"`
+///   (printed as `""`) when it passes it to a native program;
 ///   both alter the argument without starting another command, so they are
 ///   accepted limits too (#9738). The VS Code terminal and Windows Terminal
 ///   default to PowerShell.
