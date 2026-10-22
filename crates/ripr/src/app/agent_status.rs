@@ -1628,7 +1628,7 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly) -> String {
     };
     // No trailing pilot command: rerunning unchanged declines them again.
     format!(
-        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams were never analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`"
+        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`"
     )
 }
 
