@@ -79,7 +79,9 @@
           "line": 5,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert proc.validate(\"card1234 \") == True"
+          "oracle": "assert proc.validate(\"card1234 \") == True",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "repair_placement": {

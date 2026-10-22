@@ -58,8 +58,9 @@ impl Expect {
 pub(crate) enum Route {
     /// `ripr check --diff` with JSON output.
     Check,
-    /// `ripr pilot` whole-repository analysis (the only route that reads
-    /// every Rust file and discloses `rust_nesting_budget`).
+    /// `ripr pilot` whole-repository analysis (reads every Rust file; the
+    /// decline is `declined_rust_files` in the summary and a limited
+    /// `run_status` in the repo-exposure artifact).
     Pilot,
 }
 
@@ -219,7 +220,11 @@ pub(crate) fn rust_cases() -> Vec<Case> {
     let mut push = |id: String, role: Role, shape: &'static str, hostile: String| {
         for route in [Route::Check, Route::Pilot] {
             let expect = match (role, route) {
-                (Role::Discriminator, _) => Expect::TypedLimitation {
+                (Role::Discriminator, Route::Check) => Expect::TypedLimitation {
+                    token: "rust_nesting_budget",
+                    language_class: Some("producer_failure"),
+                },
+                (Role::Discriminator, Route::Pilot) => Expect::TypedLimitation {
                     token: "rust_nesting_budget",
                     language_class: None,
                 },

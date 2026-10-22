@@ -702,6 +702,7 @@ case "$url" in
       error) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;;
       size_error) if [ "$jq_arg" = ".size" ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; else echo raw >> "$CONTROL_TMP/raw_reads"; printf 'a\nb\n'; fi ;;
       contents_error) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi ;;
+      slow) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; exec sleep 60; fi ;;
       binary) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; printf '\377\376\000binary\n'; fi ;;
       huge) if [ "$jq_arg" = ".size" ]; then echo 5000000; else echo raw >> "$CONTROL_TMP/raw_reads"; echo "downloaded an oversized blob" >&2; exit 1; fi ;;
       *) if [ "$jq_arg" = ".size" ]; then echo 120; else echo raw >> "$CONTROL_TMP/raw_reads"; printf 'a\nb\nc\nd\ne\n'; fi ;;
@@ -817,6 +818,8 @@ fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<()
         ("size_error", "ok"),
         ("contents_error", "ok"),
         ("binary", "ok"),
+        // Blocks past the 30 s read bound; the others return at once.
+        ("slow", "ok"),
         ("huge", "ok"),
         ("ok", "error"),
     ] {

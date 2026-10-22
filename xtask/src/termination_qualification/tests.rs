@@ -19,11 +19,10 @@ fn case_named(id: &str) -> Result<Case, String> {
         .ok_or_else(|| format!("no corpus case named {id}"))
 }
 
-fn observe<'a>(stdout: &'a str, stderr: &'a str, artifact: Option<&'a str>) -> Observed<'a> {
+fn observe<'a>(stdout: &'a str, _stderr: &'a str, artifact: Option<&'a str>) -> Observed<'a> {
     Observed {
         exit_code: Some(0),
         stdout,
-        stderr,
         artifact,
     }
 }
@@ -208,13 +207,18 @@ fn supported_rows_reject_a_limitation_that_names_the_input() -> TestResult {
     Ok(())
 }
 
+const DECLINED_SUMMARY: &str = "{\"status\":\"complete\",\"declined_rust_files\":{\"file_count\":1,\"files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}}";
+const DECLINED_ARTIFACT: &str = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}],\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
+const COMPLETE_ARTIFACT: &str = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
+
 #[test]
-fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestResult {
+fn rust_pilot_requires_the_declined_field_the_limited_status_and_the_unaffected_seam() -> TestResult
+{
     let case = case_named("rust-parentheses-over-budget.pilot")?;
-    let summary = "{\"status\":\"complete\"}";
-    let artifact = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
-    let disclosure = "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget";
-    let good = assess(&case, &observe(summary, disclosure, Some(artifact)));
+    let good = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
     if good.result != RowResult::PassedTypedLimitation {
         return Err(format!("good pilot classified {:?}", good.result));
     }
@@ -222,24 +226,240 @@ fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestRe
         return Err("pilot must project its artifact deterministically".to_string());
     }
 
-    let silent = assess(&case, &observe(summary, "", Some(artifact)));
+    // The old stderr-only shape is exactly the false-complete defect.
+    let stderr_only =
+        "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001";
+    let silent = assess(
+        &case,
+        &observe(
+            "{\"status\":\"complete\"}",
+            stderr_only,
+            Some(COMPLETE_ARTIFACT),
+        ),
+    );
     if silent.result != RowResult::MissingOrFalseCleanLimitation {
-        return Err(format!("silent pilot classified {:?}", silent.result));
+        return Err(format!("stderr-only pilot classified {:?}", silent.result));
     }
 
-    let no_seams = "{\"run_status\":\"complete\",\"seams\":[]}";
-    let lost = assess(&case, &observe(summary, disclosure, Some(no_seams)));
+    let status_complete = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(COMPLETE_ARTIFACT)),
+    );
+    if status_complete.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "complete run_status with a declined file classified {:?}",
+            status_complete.result
+        ));
+    }
+
+    let no_seams = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}],\"seams\":[]}";
+    let lost = assess(&case, &observe(DECLINED_SUMMARY, "", Some(no_seams)));
     if lost.result != RowResult::WrongSubject {
         return Err(format!("lost seam classified {:?}", lost.result));
     }
 
+    // The summary names the hostile file but the artifact only another one.
+    let wrong_artifact = DECLINED_ARTIFACT.replace("src/deep.rs", "src/other.rs");
+    let mismatched = assess(&case, &observe(DECLINED_SUMMARY, "", Some(&wrong_artifact)));
+    if mismatched.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "an artifact naming another file classified {:?}",
+            mismatched.result
+        ));
+    }
+
     let control = case_named("rust-supported-control.pilot")?;
-    let false_limit = assess(&control, &observe(summary, disclosure, Some(artifact)));
+    // Any declined file, whichever path, fails a supported row.
+    let other_summary = DECLINED_SUMMARY.replace("src/deep.rs", "src/other.rs");
+    let other_decline = assess(
+        &control,
+        &observe(&other_summary, "", Some(COMPLETE_ARTIFACT)),
+    );
+    if other_decline.result != RowResult::SemanticFailure {
+        return Err(format!(
+            "a decline of another file on a supported row classified {:?}",
+            other_decline.result
+        ));
+    }
+    let false_limit = assess(
+        &control,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
     if false_limit.result != RowResult::SemanticFailure {
         return Err(format!(
-            "false disclosure on a supported file classified {:?}",
+            "declined entry on a supported file classified {:?}",
             false_limit.result
         ));
+    }
+    let clean = assess(
+        &control,
+        &observe("{\"status\":\"complete\"}", "", Some(COMPLETE_ARTIFACT)),
+    );
+    if clean.result != RowResult::PassedSupportedAnalysis {
+        return Err(format!(
+            "clean supported pilot classified {:?}",
+            clean.result
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_pilot_rejects_a_decline_the_two_surfaces_do_not_agree_on() -> TestResult {
+    let case = case_named("rust-parentheses-over-budget.pilot")?;
+    let reason = "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget";
+    let cases = [
+        (
+            "the wrong token in the artifact reason",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("rust_nesting_budget", "some_other_limit"),
+        ),
+        (
+            "the wrong token in both reasons",
+            DECLINED_SUMMARY.replace("rust_nesting_budget", "some_other_limit"),
+            DECLINED_ARTIFACT.replace("rust_nesting_budget", "some_other_limit"),
+        ),
+        (
+            "different reasons on the two surfaces",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("exceeds the 256-level", "exceeds the 128-level"),
+        ),
+        (
+            "an artifact count that disagrees with its list",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("\"declined_file_count\":1", "\"declined_file_count\":2"),
+        ),
+        (
+            "a summary count that disagrees with its list",
+            DECLINED_SUMMARY.replace("\"file_count\":1", "\"file_count\":2"),
+            DECLINED_ARTIFACT.to_string(),
+        ),
+        (
+            "an artifact with no count",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("\"declined_file_count\":1,", ""),
+        ),
+        (
+            "a limited status with no rust_files_declined limitation",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("rust_files_declined", "generated_rust_source_skipped"),
+        ),
+        (
+            "the decline reported twice in the artifact",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace(
+                "\"limitations\":[",
+                &format!(
+                    "\"limitations\":[{{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{{\"path\":\"src/deep.rs\",\"reason\":\"{reason}\"}}]}},"
+                ),
+            ),
+        ),
+    ];
+    for (name, summary, artifact) in &cases {
+        let verdict = assess(&case, &observe(summary, "", Some(artifact)));
+        if verdict.result != RowResult::MissingOrFalseCleanLimitation {
+            return Err(format!("{name} classified {:?}", verdict.result));
+        }
+    }
+
+    // Stderr cannot stand in for the structured decline.
+    let loud = assess(
+        &case,
+        &observe(
+            "{\"status\":\"complete\"}",
+            "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001",
+            Some(DECLINED_ARTIFACT),
+        ),
+    );
+    if loud.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "stderr over a bare summary classified {:?}",
+            loud.result
+        ));
+    }
+
+    // The count the row reports is the validated one, and the projection
+    // carries the decline identity, reason and count from both surfaces.
+    let good = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
+    if good.declined_files != 1 {
+        return Err(format!("declined count {}", good.declined_files));
+    }
+    let projection = good.artifact_projection.unwrap_or_default();
+    for needle in [
+        "decline.summary=Some(1):src/deep.rs|",
+        "decline.artifact=Some(1):src/deep.rs|",
+        "rust_nesting_budget",
+    ] {
+        if !projection.contains(needle) {
+            return Err(format!("projection lacks {needle}:\n{projection}"));
+        }
+    }
+    let other_reason = DECLINED_ARTIFACT.replace(
+        "estimated nesting depth 10001",
+        "estimated nesting depth 20000",
+    );
+    let changed = assess(&case, &observe(DECLINED_SUMMARY, "", Some(&other_reason)));
+    if changed.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err("a changed artifact reason must not pass".to_string());
+    }
+
+    // A supported row rejects the structured decline even with silent stderr.
+    let control = case_named("rust-supported-control.pilot")?;
+    let summary_only = assess(
+        &control,
+        &observe(DECLINED_SUMMARY, "", Some(COMPLETE_ARTIFACT)),
+    );
+    let artifact_only = assess(
+        &control,
+        &observe("{\"status\":\"complete\"}", "", Some(DECLINED_ARTIFACT)),
+    );
+    for (name, verdict) in [("summary", summary_only), ("artifact", artifact_only)] {
+        if verdict.result != RowResult::SemanticFailure {
+            return Err(format!(
+                "{name}-only decline on a supported row classified {:?}",
+                verdict.result
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_check_requires_the_producer_failure_limitation_naming_the_declined_file() -> TestResult {
+    let case = case_named("rust-parentheses-over-budget.check")?;
+    let limitation = python_limitation(
+        "",
+        "1 Rust file(s) declined: src/deep.rs (rust_nesting_budget)",
+        "producer_failure",
+    );
+    let good = check_json(&["src/lib.rs"], &limitation, false);
+    let result = assess(&case, &observe(&good, "", None));
+    if result.result != RowResult::PassedTypedLimitation {
+        return Err(format!("good check classified {:?}", result.result));
+    }
+
+    // Before #9308 the decline was stderr-only and the run read complete.
+    let clean = check_json(&["src/lib.rs"], "", true);
+    let silent = assess(&case, &observe(&clean, "", None));
+    if silent.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "false-complete check classified {:?}",
+            silent.result
+        ));
+    }
+
+    let other_file = python_limitation(
+        "",
+        "1 Rust file(s) declined: src/other.rs (rust_nesting_budget)",
+        "producer_failure",
+    );
+    let wrong = check_json(&["src/lib.rs"], &other_file, false);
+    if assess(&case, &observe(&wrong, "", None)).result != RowResult::MissingOrFalseCleanLimitation
+    {
+        return Err("a limitation naming another file must not pass".to_string());
     }
     Ok(())
 }
@@ -394,17 +614,13 @@ fn a_nonzero_exit_distrusts_otherwise_correct_output() -> TestResult {
 }
 
 #[test]
-fn pilot_disclosure_must_name_the_hostile_file() -> TestResult {
+fn pilot_declined_entry_must_name_the_hostile_file() -> TestResult {
     let case = case_named("rust-parentheses-over-budget.pilot")?;
-    let artifact = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"g\"}]}";
-    let other = "ripr: src/other.rs: static limit rust_nesting_budget: depth";
-    let result = assess(
-        &case,
-        &observe("{\"status\":\"complete\"}", other, Some(artifact)),
-    );
+    let other = DECLINED_SUMMARY.replace("src/deep.rs", "src/other.rs");
+    let result = assess(&case, &observe(&other, "", Some(DECLINED_ARTIFACT)));
     if result.result != RowResult::MissingOrFalseCleanLimitation {
         return Err(format!(
-            "disclosure for another file classified {:?}",
+            "declined entry for another file classified {:?}",
             result.result
         ));
     }

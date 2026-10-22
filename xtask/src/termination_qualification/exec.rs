@@ -146,7 +146,6 @@ pub(crate) fn run_case(
                     &Observed {
                         exit_code: launched.exit_code,
                         stdout: &stdout_text,
-                        stderr: &stderr_text,
                         artifact: artifact_text.as_deref(),
                     },
                 )

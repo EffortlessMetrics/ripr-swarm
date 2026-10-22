@@ -1,0 +1,12 @@
+diff --git a/src/asyncs.rs b/src/asyncs.rs
+--- a/src/asyncs.rs
++++ b/src/asyncs.rs
+@@ -17,7 +17,7 @@
+ }
+ 
+ pub fn lazy_square(n: u32) -> impl Future<Output = u32> {
+-    async move { n * n }
++    async move { n.pow(2) }
+ }
+ 
+ #[cfg(test)]

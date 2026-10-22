@@ -39,10 +39,13 @@ and bounded drains.
 | `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
-and a changed file whose finding must stay visible. `check` carries the
-`rust_nesting_budget` limitation in its JSON; `pilot` reads every Rust file and
-discloses it on stderr, so the pilot row reads stderr plus the
-`repo-exposure.json` seam list.
+and a changed file whose finding must stay visible. `pilot` is the only route
+that reads every Rust file. A declined Rust file is a typed limitation on both
+routes (#9308): `check` reports `analysis_complete=false` with a
+`producer_failure` limitation naming the file and `rust_nesting_budget`; the
+pilot row requires the summary's `declined_rust_files` entry, a
+`limited_declined_files` `run_status` and a `rust_files_declined` limitation in
+`repo-exposure.json`, plus the unaffected seam.
 
 ## Result taxonomy
 
@@ -103,8 +106,6 @@ reports in `--version`, not the build that produced it. It does not exercise LSP
 
 Known gaps against the child issues, each deliberate for this first harness:
 
-- Rust `check` rows now require the `rust_nesting_budget` limitation, as
-  `pilot` rows do. Human/JSON parity of that limitation is not checked (#9308).
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
 - #4510 controls not built: simulated cleanup failure (a root user ignores
   directory mode bits, so there is no portable way to deny deletion), a decoy

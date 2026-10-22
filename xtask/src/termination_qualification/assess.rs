@@ -43,7 +43,6 @@ impl Assessment {
 pub(crate) struct Observed<'a> {
     pub(crate) exit_code: Option<i32>,
     pub(crate) stdout: &'a str,
-    pub(crate) stderr: &'a str,
     pub(crate) artifact: Option<&'a str>,
 }
 
@@ -495,11 +494,35 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         .collect();
     projection.sort();
     let projection = format!(
-        "run_status={}\n{}",
+        "run_status={}\n{}\n{}\n{}",
         exposure
             .get("run_status")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        decline_projection(
+            "summary",
+            summary.get("declined_rust_files"),
+            "file_count",
+            "files"
+        ),
+        exposure
+            .get("limitations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|limitation| {
+                limitation.get("category").and_then(Value::as_str) == Some("rust_files_declined")
+            })
+            .map(|limitation| {
+                decline_projection(
+                    "artifact",
+                    Some(limitation),
+                    "declined_file_count",
+                    "declined_files",
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         projection.join("\n")
     );
     let attach = |mut assessment: Assessment| {
@@ -507,27 +530,48 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         assessment
     };
     let run_status = exposure.get("run_status").and_then(Value::as_str);
-    if !matches!(run_status, Some("complete" | "limited_declined_files")) {
-        return attach(Assessment::fail(
-            RowResult::SemanticFailure,
-            format!("pilot inventory is not whole: run_status {run_status:?}"),
-        ));
-    }
     let hostile = case.hostile.as_deref().unwrap_or_default();
-    let disclosure = observed
-        .stderr
-        .lines()
-        .find(|line| line.contains(hostile) && line.contains("static limit rust_nesting_budget"));
+    // The decline is carried by the summary's `declined_rust_files` field and
+    // by the artifact's `run_status` and `rust_files_declined` limitation
+    // (#9308); stderr is no longer the evidence.
+    let declined_limitations: Vec<&Value> = exposure
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map(|limitations| {
+            limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.get("category").and_then(Value::as_str)
+                        == Some("rust_files_declined")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // A supported row is a whole run: any declined file, whichever path it
+    // names, in either surface, fails it.
+    let any_decline_reported = summary
+        .get("declined_rust_files")
+        .is_some_and(|field| !field.is_null())
+        || !declined_limitations.is_empty();
     match &case.expect {
         Expect::TypedLimitation { token, .. } => {
-            let Some(line) = disclosure.filter(|line| line.contains(token)) else {
-                return attach(Assessment::fail(
-                    RowResult::MissingOrFalseCleanLimitation,
-                    format!(
-                        "pilot completed (status complete) with no `{token}` disclosure naming {hostile}"
-                    ),
-                )
-                .with_counts(unaffected, 0, 0));
+            let decline = match validated_decline(
+                &summary,
+                &declined_limitations,
+                run_status,
+                hostile,
+                token,
+            ) {
+                Ok(decline) => decline,
+                Err(why) => {
+                    return attach(
+                        Assessment::fail(
+                            RowResult::MissingOrFalseCleanLimitation,
+                            format!("pilot decline of {hostile} is not structured evidence: {why}"),
+                        )
+                        .with_counts(unaffected, 0, 0),
+                    );
+                }
             };
             if unaffected == 0 {
                 return attach(
@@ -535,28 +579,32 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
                         RowResult::WrongSubject,
                         format!("hostile file declined but no seam for {}", case.changed),
                     )
-                    .with_counts(0, 0, 1),
+                    .with_counts(0, 0, decline.count),
                 );
             }
             attach(
                 Assessment {
                     result: RowResult::PassedTypedLimitation,
-                    detail: "declined with a stderr static-limit disclosure".to_string(),
-                    limitation: Some(line.trim_start_matches("ripr: ").to_string()),
+                    detail:
+                        "declined with a typed limited run_status and declined_rust_files entry"
+                            .to_string(),
+                    limitation: Some(decline.reason),
                     findings_reported: 0,
                     findings_suppressed: 0,
                     declined_files: 0,
                     artifact_projection: None,
                 }
-                .with_counts(unaffected, 0, 1),
+                .with_counts(unaffected, 0, decline.count),
             )
         }
         _ => {
-            if disclosure.is_some() {
+            if any_decline_reported || run_status != Some("complete") {
                 return attach(
                     Assessment::fail(
                         RowResult::SemanticFailure,
-                        "a supported input received a rust_nesting_budget disclosure".to_string(),
+                        format!(
+                            "a supported input was not a whole run: run_status {run_status:?}, decline reported: {any_decline_reported}"
+                        ),
                     )
                     .with_counts(unaffected, 0, 1),
                 );
@@ -581,4 +629,119 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
             )
         }
     }
+}
+
+struct ValidatedDecline {
+    reason: String,
+    count: usize,
+}
+
+/// One decline, seen the same way by the pilot summary and the artifact.
+/// Everything the row reports is read back from these fields, so a surface
+/// that disagrees with the other cannot be averaged into a pass.
+fn validated_decline(
+    summary: &Value,
+    artifact_limitations: &[&Value],
+    run_status: Option<&str>,
+    hostile: &str,
+    token: &str,
+) -> Result<ValidatedDecline, String> {
+    if run_status != Some("limited_declined_files") {
+        return Err(format!("artifact run_status is {run_status:?}"));
+    }
+    let from_summary = decline_entry(
+        summary.get("declined_rust_files"),
+        "file_count",
+        "files",
+        hostile,
+        token,
+    )
+    .map_err(|why| format!("summary declined_rust_files: {why}"))?;
+    let [limitation] = artifact_limitations else {
+        return Err(format!(
+            "artifact carries {} rust_files_declined limitations, not one",
+            artifact_limitations.len()
+        ));
+    };
+    let from_artifact = decline_entry(
+        Some(limitation),
+        "declined_file_count",
+        "declined_files",
+        hostile,
+        token,
+    )
+    .map_err(|why| format!("artifact rust_files_declined: {why}"))?;
+    if from_summary.reason != from_artifact.reason {
+        return Err(format!(
+            "summary reason {:?} and artifact reason {:?} disagree",
+            from_summary.reason, from_artifact.reason
+        ));
+    }
+    Ok(from_summary)
+}
+
+fn decline_entry(
+    field: Option<&Value>,
+    count_key: &str,
+    files_key: &str,
+    hostile: &str,
+    token: &str,
+) -> Result<ValidatedDecline, String> {
+    let field = field.ok_or_else(|| "missing".to_string())?;
+    let count = field
+        .get(count_key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("no numeric {count_key}"))?;
+    let files = field
+        .get(files_key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("no {files_key} list"))?;
+    if count != 1 || files.len() != 1 {
+        return Err(format!(
+            "{count_key} {count} with {} listed files, expected exactly the hostile file",
+            files.len()
+        ));
+    }
+    let path = files[0].get("path").and_then(Value::as_str);
+    if path != Some(hostile) {
+        return Err(format!("names {path:?}, not {hostile}"));
+    }
+    let reason = files[0]
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| reason.contains(token))
+        .ok_or_else(|| format!("reason does not carry `{token}`"))?;
+    Ok(ValidatedDecline {
+        reason: reason.to_string(),
+        count: usize::try_from(count).map_err(|err| format!("{count_key} {count}: {err}"))?,
+    })
+}
+
+fn decline_projection(
+    surface: &str,
+    field: Option<&Value>,
+    count_key: &str,
+    files_key: &str,
+) -> String {
+    let Some(field) = field.filter(|field| !field.is_null()) else {
+        return format!("decline.{surface}=none");
+    };
+    let count = field.get(count_key).and_then(Value::as_u64);
+    let mut files: Vec<String> = field
+        .get(files_key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|file| {
+            format!(
+                "{}|{}",
+                file.get("path").and_then(Value::as_str).unwrap_or_default(),
+                file.get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    files.sort();
+    format!("decline.{surface}={count:?}:{}", files.join(";"))
 }
