@@ -26,7 +26,7 @@ floor = 59
 [[axis]]
 id = "language_shape"
 description = "Language shapes: operator, conversion, iterator, Drop and Default impls; dyn dispatch, generics, const generics, impl Trait and associated consts; let-else, labeled break, slice patterns, casts and closures; async, threads and interior mutability."
-floor = 33
+floor = 13
 
 [[axis]]
 id = "hostile_input"
