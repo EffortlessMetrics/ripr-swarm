@@ -64,6 +64,15 @@ pub(crate) fn render_check_with_config_and_progress(
                 &output.root,
             ))
         }
+        OutputFormat::CheckFindingsJson => {
+            let context = crate::agent::artifact::RepoExposureArtifactContext::for_check_findings(
+                output.root.clone(),
+                output.mode.as_str().to_string(),
+                output.base.clone(),
+                config,
+            )?;
+            super::check_findings::render_check_findings_json_with_context(output, config, &context)
+        }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
         OutputFormat::Sarif => {
             let suppressions = load_suppressions(output, config)?;
