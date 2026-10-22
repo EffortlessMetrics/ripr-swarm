@@ -5,7 +5,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 17 | 555 |
+| Rust | 16 | 555 |
 | TypeScript | 39 | 309 |
 | Python | 21 | 170 |
 | Perl | 1 | 60 |
@@ -21,7 +21,6 @@ spec or the analyzer. Never exclude or reclassify it.
 
 | Case | Outcome | Root cause | Fix, in | Owner | Pinned by |
 | --- | --- | --- | --- | --- | --- |
-| `mined-allowlist-listed-row-ftp` (Rust) | false actionable | A conditional `continue` on a const skip-list is treated as an unresolved bypass of every table row. | Analyzer: evaluate `CONST.contains(&key)` per literal row | #9409 | Row, with `mined-allowlisted-row-gopher` as the paired negative |
 | `regex-syntax-max-scalar-two-byte` (Rust) | false actionable | The match-arm selector domain through a bounded caller loop is not derived. | Analyzer | #5503 | Row, with `regex-syntax-word-byte` as the negative |
 | `jest-mined-private-impl-dispatcher` (TS) | false actionable | A module-private impl behind an exported dispatcher reads as a gap and the repair names a private symbol. | Analyzer: follow the exported caller | #6655 | Row |
 | `perl-testmore-tier-far-from-boundary` (Perl) | false exposed | No row-owned predicate discriminator fact, so inputs far from the changed threshold look aligned. | Producer fact, then consumer | #8979 (perl-lsp-swarm#17237, #5562) | Row |

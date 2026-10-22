@@ -851,10 +851,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 
-[[known_false]]
-case = "mined-allowlist-listed-row-ftp"
-issue = 9409
-reason = "Conditional continue on a const skip-list is not evaluated per table row; analyzer fix tracked in #9409."
 
 [[known_false]]
 case = "regex-syntax-max-scalar-two-byte"
