@@ -706,3 +706,43 @@ reason = "pytest.approx credited as an exact-value oracle for a within-tolerance
 case = "py-idioms-unittest-setup-sign"
 issue = 9412
 reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
+
+[[known_false]]
+case = "py-grid-boundary-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-grid-equality-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-grid-logical-exact"
+issue = 9542
+reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."
+
+[[known_false]]
+case = "py-hostile-builtin-name-shadow"
+issue = 9426
+reason = "False actionable: boundary check fires on a reversing comparison flip (#9426)."
+
+[[known_false]]
+case = "py-hostile-crlf-test-helper-assert"
+issue = 9419
+reason = "False actionable: an assertion inside a helper function in another file reads as reach-only (#9419)."
+
+[[known_false]]
+case = "py-hostile-live-version-branch"
+issue = 9423
+reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
+
+[[known_false]]
+case = "py-hostile-module-constant-pinned"
+issue = 9423
+reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."
+
+[[known_false]]
+case = "py-hostile-star-import-exported"
+issue = 9415
+reason = "False actionable: `from m import *` is not resolved to public names (#9415)."

@@ -731,3 +731,113 @@ reason = "test.fixme credited as a live test (#9436)."
 case = "hostile-minified-line-pinned"
 issue = 9435
 reason = "Exact oracle ignored on a minified line (#9435)."
+
+[[known_false]]
+case = "mocha-before-hook-trimmed-name"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "mocha-done-callback-value"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "mocha-nested-describe-boundary"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "mocha-throw-class-changed"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "mocha-throw-message-reworded"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "node-match-anchored-slug"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "node-mock-method-call-removed"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "node-retry-last-error"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "node-t-mock-attempt-bound"
+issue = 9496
+reason = "False actionable: mocha or node:test discriminator reported as a gap (#9496)."
+
+[[known_false]]
+case = "mocha-clamp-unexercised-lower-arm"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
+
+[[known_false]]
+case = "mocha-it-skip-sole-pin"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
+
+[[known_false]]
+case = "node-first-attempt-nonnegative-bound"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
+
+[[known_false]]
+case = "node-t-skip-inside-test"
+issue = 9497
+reason = "False exposed: skipped or unexercised test credited as a pin (#9497)."
+
+[[known_false]]
+case = "ts-grid-boundary-exact"
+issue = 9532
+reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
+
+[[known_false]]
+case = "ts-grid-equality-exact"
+issue = 9532
+reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
+
+[[known_false]]
+case = "ts-grid-logical-exact"
+issue = 9532
+reason = "False actionable: bare boolean assert on a predicate owner reads as smoke-only (#9532)."
+
+[[known_false]]
+case = "ts-grid-boundary-table"
+issue = 9533
+reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."
+
+[[known_false]]
+case = "ts-grid-delete-exact"
+issue = 9515
+reason = "False actionable: delete-operator edit with an exact assertion reads as a gap (#9515)."
+
+[[known_false]]
+case = "ts-grid-delete-helper"
+issue = 9534
+reason = "False actionable: field update read through a same-file helper is not credited (#9534)."
+
+[[known_false]]
+case = "ts-grid-delete-table"
+issue = 9534
+reason = "False actionable: field update read through a literal table is not credited (#9534)."
+
+[[known_false]]
+case = "ts-grid-arithmetic-property"
+issue = 9515
+reason = "False exposed: property assertion credited as exact for an arithmetic edit (#9515)."
+
+[[known_false]]
+case = "ts-grid-returns-property"
+issue = 9515
+reason = "False exposed: property assertion credited as exact for a returns edit (#9515)."

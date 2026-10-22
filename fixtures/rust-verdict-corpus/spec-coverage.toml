@@ -861,10 +861,6 @@ case = "regex-syntax-max-scalar-two-byte"
 issue = 5503
 reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
 
-[[known_false]]
-case = "shape-hostile-attribute-noise-test"
-issue = 9439
-reason = "Attribute noise around a test hides it; fix in #9451, entry leaves with that PR."
 
 [[known_false]]
 case = "shape-thread-join-result"
@@ -901,10 +897,6 @@ case = "shape-hostile-macro-defined-owner"
 issue = 9442
 reason = "Macro-defined owner is not resolved (#9442)."
 
-[[known_false]]
-case = "shape-const-generic-empty-only"
-issue = 9444
-reason = "Const-generic empty-array case (#9444)."
 
 [[known_false]]
 case = "shape-cast-truncation-mask"
