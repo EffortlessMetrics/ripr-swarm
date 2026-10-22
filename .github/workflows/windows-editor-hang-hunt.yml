@@ -23,17 +23,26 @@ permissions:
 
 jobs:
   hunt:
-    name: trusted editor journey shard ${{ matrix.shard }}
+    name: trusted editor journey shard ${{ matrix.shard }} (${{ matrix.mode }}, ${{ matrix.profile }})
     runs-on: windows-latest
     timeout-minutes: 150
     strategy:
       fail-fast: false
+      # The packaged rehearsal pipes `npm run test:e2e 2>&1 | Tee-Object` and runs a release
+      # server; plain file redirection with a debug server did not hang in 24 iterations, so
+      # the matrix covers each of those two differences.
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          - { shard: 1, mode: redirect, profile: debug }
+          - { shard: 2, mode: pipe, profile: debug }
+          - { shard: 3, mode: redirect, profile: release }
+          - { shard: 4, mode: pipe, profile: release }
     env:
       CARGO_TERM_COLOR: always
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       ITERATIONS: ${{ inputs.iterations }}
+      PROFILE_NAME: ${{ matrix.profile }}
+      RUN_MODE: ${{ matrix.mode }}
 
     steps:
       - name: Initialize roots before checkout
@@ -86,9 +95,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # The repository cargo config points compiler/linker temporaries at the checkout's
           # relative target directory, so build into it rather than an external target-dir.
-          cargo build --locked -p ripr
+          $profileArgs = if ($env:PROFILE_NAME -eq 'release') { @('--release') } else { @() }
+          cargo build --locked -p ripr @profileArgs
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit $LASTEXITCODE" }
-          $server = Join-Path (Get-Location) 'target\debug\ripr.exe'
+          $server = Join-Path (Get-Location) "target\$($env:PROFILE_NAME)\ripr.exe"
           if (-not (Test-Path $server)) { throw "server binary missing: $server" }
           "RIPR_SERVER=$server" >> $env:GITHUB_ENV
           Push-Location editors/vscode
@@ -153,7 +163,13 @@ jobs:
             $out = Join-Path $rawDir "shard$($env:SHARD)-iter$i.log"
             $err = Join-Path $rawDir "shard$($env:SHARD)-iter$i.err.log"
             $started = Get-Date
-            $p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'test:e2e' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+            if ($env:RUN_MODE -eq 'pipe') {
+              $inner = Join-Path $rawDir "pipe-iter$i.ps1"
+              "npm run test:e2e 2>&1 | Tee-Object -FilePath '$out.tee'; exit `$LASTEXITCODE" | Set-Content -Encoding utf8 $inner
+              $p = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-File', $inner -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+            } else {
+              $p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'test:e2e' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+            }
             $finished = $p.WaitForExit(900000)
             if ($finished) { $p.WaitForExit() }
             $hung = -not $finished
