@@ -49,9 +49,8 @@ on hand adjudication per commit. None of that fits the current #2768 contract.
 
 `cargo xtask release-ledger --input <ledger.json>` reads one normalized ledger
 and writes `target/ripr/reports/release-ledger.{json,md}` from that one DTO.
-It exits nonzero when any reason is found. This piece validates a captured
-ledger offline; Git capture, effect derivation and disposition rules are
-separate pieces of #2768.
+It exits nonzero when any reason is found. Validation is offline; capture is
+described below and the disposition rule is a separate piece of #2768.
 
 The ledger states `adjudication_basis: rule_derived`. It never claims
 per-commit semantic review.
@@ -109,6 +108,33 @@ must match it, and a final ledger needs the roster captured at the cut commit.
 `history_reachable_no_final_blob_effect` requires no alive touched path (an
 empty diff has none).
 
+## Git capture and tree effect
+
+`cargo xtask release-ledger capture --base <sha> [--cut <rev>] [--main <rev>]
+[--repo <dir>] [--repository <owner/name>] --output <facts.json>` reads only
+local Git and writes a `release_ledger_git_facts` document: the exact
+`base..cut` first-parent sequence, the reachable set, one fact per reachable
+commit (parents, tree, subject, changed paths, `final_tree_effect`,
+`effect_basis`), and the merged-PR rows taken from trailing `(#N)` subject refs
+of first-parent commits. Other `#N` mentions are kept as `issue_refs` because
+Git cannot tell an issue from a PR.
+
+Final tree effect is derived exactly and cheaply first:
+
+1. Paths are the changes against each commit's first parent, without rename
+   detection (a rename is a delete plus an add).
+2. The last first-parent toucher of a path alive at the cut owns that path's
+   final blob (`last_toucher_paths`).
+3. `git blame` at the cut runs, in parallel, only for alive paths with more
+   than one toucher where some toucher is not yet known to own something. A
+   commit owning a surviving line gets `blamed_lines`.
+4. A commit that owns a path or line is `present_effective`; otherwise one with
+   an alive touched path is `present_but_superseded`; otherwise
+   `history_reachable_no_final_blob_effect`.
+
+A blame failure, a timeout or a non-UTF-8 path fails the capture; an unknown
+effect is never defaulted.
+
 ## Required Evidence
 
 One negative control per rule above, each starting from a valid ledger, plus a
@@ -116,7 +142,7 @@ valid-ledger control that yields no reasons.
 
 ## Non-Goals
 
-- Capturing Git facts or deriving tree effects and dispositions (later pieces).
+- Deriving dispositions (the rule layer, a later piece).
 - Selecting, qualifying, merging, tagging or publishing a candidate.
 - Replacing `release-denominator` or editing SPEC-0146.
 
@@ -131,6 +157,10 @@ valid-ledger control that yields no reasons.
 
 ## Test Mapping
 
+- `xtask/src/reports/release_ledger/capture_tests.rs`:
+  `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
+  deleted path, non-squash merge with a second-parent commit) and
+  `split_refs_takes_only_the_trailing_pull_request`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
@@ -157,6 +187,7 @@ valid-ledger control that yields no reasons.
 - `xtask/src/reports/release_ledger.rs`: command, arguments, JSON and Markdown.
 - `xtask/src/reports/release_ledger/dto.rs`: DTO and closed vocabularies.
 - `xtask/src/reports/release_ledger/validate.rs`: validator and digest recipes.
+- `xtask/src/reports/release_ledger/capture.rs`: Git capture and tree effect.
 
 ## Metrics
 
