@@ -831,6 +831,17 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
+18. **Field updates a test reads (2026-10-22, #9515).** Adopted: a changed
+    `this.f += e` / `this.f = this.f + e` in a class method is a
+    return-value change when the method has one write to `this.f`, the
+    statement sits at the top level of the method body, and a strong,
+    pinned, exact-value assertion reads `recv.f` from a `const recv = new
+    Class(..)` the test called the method on before the read, with only
+    counting loops between the test callback and the call. Rejected:
+    reads before the call, calls inside a branch or callback, rebound or
+    factory-made receivers, and tables or helpers as the expected side
+    (`ts-grid-delete-table`, `ts-grid-delete-helper` stay gaps until the
+    adapter resolves literal tables and same-file helper assertions).
 
 ## Required Evidence
 
