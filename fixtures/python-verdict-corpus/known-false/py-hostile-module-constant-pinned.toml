@@ -1,3 +1,0 @@
-case = "py-hostile-module-constant-pinned"
-issue = 9423
-reason = "False actionable: module-level edit related only by a same-stem heuristic (#9423)."

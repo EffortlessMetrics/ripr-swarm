@@ -623,6 +623,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "release-ledger --input <ledger.json> [--packet <selection-packet.json>] [--markdown <ledger.md>] [--manifest <manifest.json>] [--expected-base <sha>] [--final]",
         "release-ledger capture --base <sha> [--cut <rev>] [--main <rev>] [--repo <dir>] [--repository <owner/name>] --output <facts.json>",
         "release-ledger derive --facts <facts.json> --packet <release-selection.json> [--overrides <overrides.json>] [--audit <file>] [--stage <dry_run|final>] --output <ledger.json>",
+        "release-ledger finalize --cut <full-sha> --packet <release-selection.json> --audit <file> [--overrides <overrides.json>] [--base <sha>] [--manifest <manifest.json>] [--repo <dir>] [--repository <owner/name>] [--outdir <dir>]",
         "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> --release-receipt <path> --policy-before <path> --policy-exception <path> --policy-after <path> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "release-scope --input <scope.json>",
@@ -1633,6 +1634,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Applies the published rule v1 (final tree effect and path class) to captured Git facts and the #2766 packet, applies reviewed overrides, then validates the ledger; dispositions are rule_derived and never claim per-commit review.",
+        ),
+        command_entry(
+            "release-ledger finalize --cut <full-sha> --packet <release-selection.json> --audit <file> [--overrides <overrides.json>] [--base <sha>] [--manifest <manifest.json>] [--repo <dir>] [--repository <owner/name>] [--outdir <dir>]",
+            "report_only",
+            "<outdir>/{facts,ledger}.json, <outdir>/ledger.md, target/ripr/reports/release-ledger.{json,md}",
+            false,
+            false,
+            "Produces and validates the final direct-main release ledger at the frozen cut in one run (capture, derive at stage final, render Markdown, validate --final); it reads local Git and the named files only and never freezes, selects, qualifies, tags or publishes a candidate.",
         ),
         command_entry(
             "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",

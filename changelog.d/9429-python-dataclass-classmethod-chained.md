@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python findings no longer read `exposed` for a `@dataclass` classmethod edit (`return cls(0, 0.0)` -> `cls(0, 0.2)`) that every strong assertion observes only through a further method call, such as `Invoice.free().total() == 0`, when that method does not return the edited field directly: the finding now reads `weakly_exposed`. A plain getter of the edited field, an attribute read, a mixed set of assertions, a class without a bare `@dataclass`, or any unreadable shape keeps the existing verdict (#9429).

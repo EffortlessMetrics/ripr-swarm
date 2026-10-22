@@ -864,6 +864,15 @@ impl FixtureRun {
         self.comparisons.iter().all(|comparison| comparison.matches)
     }
 
+    // Test-only detail accessor so nested-child assertions (fixture_cache)
+    // can print WHICH golden drifted and the first differing line instead of
+    // a bare bool; the parent's captured child output is the only artifact
+    // available when a CI flake reproduces on a hosted runner.
+    #[cfg(test)]
+    pub(crate) fn comparison_violations_for_tests(&self) -> Vec<String> {
+        self.comparison_violations()
+    }
+
     fn comparison_violations(&self) -> Vec<String> {
         self.comparisons
             .iter()

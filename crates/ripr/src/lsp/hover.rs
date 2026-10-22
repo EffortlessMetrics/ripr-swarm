@@ -1136,7 +1136,8 @@ fn push_static_limits(lines: &mut Vec<String>) {
 }
 
 fn display_hover_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    // Display-only (not an identity key): lossy, `\` rewritten only on Windows.
+    crate::output::path::path_display_lossy(path)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1271,12 +1272,7 @@ fn root_matches_report(root: &Path, report_root: Option<&str>) -> bool {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if crate::output::path::host_paths_case_insensitive() {
-        normalized.to_lowercase()
-    } else {
-        normalized
-    }
+    crate::output::path::path_identity_key(path)
 }
 
 fn seam_stage_line(name: &str, stage: &StageEvidence) -> String {
@@ -2237,5 +2233,20 @@ mod seam_hover_tests {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod root_identity_tests {
+    use super::root_matches_report;
+    use std::path::Path;
+
+    /// A Windows-produced report root spelled with `\` fails closed on Unix
+    /// instead of aliasing `<root>/sub/proj`.
+    #[test]
+    fn backslash_report_root_does_not_alias_slash_root_on_unix() {
+        let root = Path::new("/w/sub/proj");
+        assert!(root_matches_report(root, Some("/w/sub/proj")));
+        assert!(!root_matches_report(root, Some("/w\\sub\\proj")));
     }
 }
