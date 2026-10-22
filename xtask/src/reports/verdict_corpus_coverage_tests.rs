@@ -11,6 +11,7 @@ fn bare_corpus() -> Result<Corpus, String> {
     let mut corpus = load_corpus(&repo_path(CORPUS_DIR))?;
     for case in &mut corpus.cases {
         case.spec_examples.clear();
+        case.axes.clear();
     }
     Ok(corpus)
 }
@@ -59,6 +60,76 @@ fn fixture_specs() -> SpecExamples {
         ("RIPR-SPEC-0901", &[1, 2]),
         ("RIPR-SPEC-0902", &[]),
     ])
+}
+
+const AXIS_LEDGER: &str = r#"
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+
+[[axis]]
+id = "language_shape"
+description = "shapes"
+floor = 2
+
+[[axis]]
+id = "hostile_input"
+description = "hostile"
+floor = 1
+"#;
+
+fn tag(corpus: &mut Corpus, index: usize, axes: &[&str]) {
+    if let Some(case) = corpus.cases.get_mut(index) {
+        case.axes = axes.iter().map(|axis| axis.to_string()).collect();
+    }
+}
+
+#[test]
+fn axes_pass_at_their_floor_and_fail_below_it() -> Result<(), String> {
+    let ledger = ledger(AXIS_LEDGER)?;
+    let mut corpus = bare_corpus()?;
+    tag(&mut corpus, 0, &["language_shape"]);
+    tag(&mut corpus, 1, &["language_shape", "hostile_input"]);
+    assert_eq!(axis_violations(&corpus, &ledger), Vec::<String>::new());
+    assert_eq!(
+        axis_counts(&corpus, &ledger),
+        vec![
+            ("language_shape".to_string(), 2, 2),
+            ("hostile_input".to_string(), 1, 1)
+        ]
+    );
+    tag(&mut corpus, 1, &["hostile_input"]);
+    let violations = axis_violations(&corpus, &ledger);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].contains("axis `language_shape` holds 1 cases, below its")
+            && violations[0].contains("floor 2"),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn undeclared_duplicate_and_repeated_axes_are_rejected() -> Result<(), String> {
+    let doubled = format!(
+        "{AXIS_LEDGER}\n[[axis]]\nid = \"hostile_input\"\ndescription = \" \"\nfloor = 0\n"
+    );
+    let mut corpus = bare_corpus()?;
+    tag(
+        &mut corpus,
+        0,
+        &["language_shape", "language_shape", "made_up"],
+    );
+    tag(&mut corpus, 1, &["language_shape"]);
+    let text = axis_violations(&corpus, &ledger(&doubled)?).join("\n");
+    for expected in [
+        "declares axis `hostile_input` twice",
+        "axis `hostile_input` without a description",
+        "carries axis `language_shape` twice",
+        "carries axis `made_up`, which spec-coverage.toml does not declare",
+    ] {
+        assert!(text.contains(expected), "missing `{expected}` in:\n{text}");
+    }
+    Ok(())
 }
 
 #[test]

@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-hostile-comment-only-test",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-comment-only-test.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "assert_in_line_comment_only",
+  "hard_case": "The only mention of the owner in a test position is inside a `//` comment on the line above the function.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if x < 6 { 5 } else { x }",
+        "mutated_line": "if x < 6 { 5 } else { x }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if x <= 5 { 5 } else { x }` becomes `if x < 6 { 5 } else { x }`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if x < 5 { 6 } else { x }",
+        "mutated_line": "if x < 5 { 6 } else { x }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if x <= 5 { 5 } else { x }` becomes `if x < 5 { 6 } else { x }`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test calls clamp_low; `// assert_eq!(clamp_low(5), 5);` is a comment, so nothing observes either mutant. Hostile input: assertion syntax inside a comment.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}
