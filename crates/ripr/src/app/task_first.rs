@@ -838,6 +838,16 @@ pub(crate) fn check_repair_route(
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
+    // #9102: the seam inventory `ripr repair` binds from is built from the
+    // Rust index only. A finding in another routed language therefore has no
+    // seam to bind, whatever its gap, test node and verify command say; name
+    // that terminal state instead of the misleading "no seam binds" refusal.
+    if let Some(language) = non_rust_language(Path::new(&gap.file)) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoSeamInventory {
+            language: language.to_string(),
+            file: gap.file.clone(),
+        });
+    }
     let Ok(config) = load_for_root(root) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
     };
@@ -918,7 +928,58 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
     )
 }
 
+/// Display name of the routed non-Rust language a file belongs to, or
+/// `None` for Rust and for files no adapter routes. Reads the language
+/// router, the same authority the pipeline dispatches on.
+fn non_rust_language(file: &Path) -> Option<&'static str> {
+    match crate::analysis::route(file)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// Display name of the non-Rust language a repair item names, or `None` for
+/// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
+/// preview-adapter finding id `ripr check` prints
+/// (`probe:<file>:<language>_preview:<hash>`). Reads only the typed language
+/// wire strings, never a file name.
+pub(crate) fn non_rust_item_language(item: &str) -> Option<&'static str> {
+    let wire = if let Some(rest) = item.strip_prefix("gap:") {
+        rest.split(':').next()?
+    } else {
+        let parts: Vec<&str> = item.split(':').collect();
+        match parts.as_slice() {
+            ["probe" | "repo-probe", _file, tagged, _hash] => tagged.strip_suffix("_preview")?,
+            _ => return None,
+        }
+    };
+    match crate::domain::LanguageId::from_wire(wire)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// The precise terminal reason a finding or gap in a non-Rust language gets
+/// no repair start (#9102). `file` is the finding's file, or empty when only
+/// the gap id names the language.
+pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
+    let subject = if file.is_empty() {
+        format!("this {language} gap")
+    } else {
+        format!("this {language} finding in `{file}`")
+    };
+    format!(
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command"
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
+    if let Some(language) = non_rust_item_language(item) {
+        return format!(
+            "repair item `{item}` names no seam in the selected root: {}",
+            no_seam_inventory_reason(language, "")
+        );
+    }
     let list = format!(
         "`ripr pilot --root {}` to list current seam IDs",
         shell_arg(&bound_root(&root.to_string_lossy()))
@@ -1583,6 +1644,66 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// #9102: a canonical gap id or preview finding id of a routed non-Rust
+    /// language is a terminal state of the delegated loop, named by the
+    /// typed language wire string.
+    #[test]
+    fn non_rust_item_language_names_gap_and_preview_probe_ids() {
+        let cases = [
+            (
+                "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+                Some("Python"),
+            ),
+            (
+                "probe:pricing_core.py:python_preview:6705c5d5",
+                Some("Python"),
+            ),
+            (
+                "repo-probe:src_discount.ts:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            (
+                "gap:typescript:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            // Discriminating negatives: Rust ids, stale-looking ids, an
+            // unknown language wire and malformed shapes stay un-named so
+            // they keep the generic stale-id guidance.
+            ("gap:rust:src/lib.rs:add:call_deletion:x", None),
+            ("probe:src_lib.rs:12:predicate", None),
+            ("probe:src_lib.rs:rust_preview:abcd1234", None),
+            ("gap:cobol:legacy.cbl:run:x", None),
+            ("probe:a_py:python_preview", None),
+            ("probe:a.py:python_preview:abcd:extra", None),
+            ("python_preview", None),
+            ("seam-discount-boundary-equality", None),
+        ];
+        for (item, expected) in cases {
+            assert_eq!(non_rust_item_language(item), expected, "item `{item}`");
+        }
+    }
+
+    /// #9102: the unknown-item message for a non-Rust gap names the
+    /// terminal reason and the manual route; a Rust-shaped stale id keeps
+    /// the stale-id guidance and never claims the terminal reason.
+    #[test]
+    fn unknown_repair_item_names_terminal_reason_only_for_non_rust_items() {
+        let root = Path::new("repo");
+        let python = unknown_repair_item(root, "probe:pricing_core.py:python_preview:6705c5d5");
+        assert!(
+            python.contains("covers Rust files only")
+                && python.contains("Python")
+                && python.contains("not a stale id"),
+            "{python}"
+        );
+        let rust = unknown_repair_item(root, "probe:src_lib.rs:12:predicate");
+        assert!(
+            rust.contains("stale or maps to no current seam")
+                && !rust.contains("covers Rust files only"),
+            "{rust}"
+        );
+    }
+
     #[test]
     fn reuse_refuses_a_python_trust_bound_attempt() -> Result<(), String> {
         let mut bound = awaiting('a', "seam1", "head1", 10)?;
@@ -1717,6 +1838,194 @@ pub(crate) mod tests {
             RepairStartDecision::NoEligible { .. } => {
                 Err("one eligible seam is not a zero outcome".to_string())
             }
+        }
+    }
+
+    /// Several eligible seams never start: the shared selector binds a
+    /// bounded choice, and the offered command is ignored for a list.
+    #[test]
+    fn decide_several_candidates_select_instead_of_starting() -> Result<(), String> {
+        let eligible = vec!["seam:a".to_string(), "seam:b".to_string()];
+        let spec = repair_start_command_spec(".", "seam:a");
+        match decide_repair_start(&facts(&eligible, 2, &[], 0, Some(&spec)))? {
+            RepairStartDecision::Action(action) => {
+                if action.action_class() != NextActionClass::ChooseItem {
+                    return Err("several candidates must choose, not run".to_string());
+                }
+                if action.is_executable() {
+                    return Err("a candidate list must not be executable".to_string());
+                }
+                Ok(())
+            }
+            RepairStartDecision::Start { .. } => {
+                Err("several eligible seams must not start implicitly".to_string())
+            }
+            RepairStartDecision::NoEligible { .. } => {
+                Err("eligible seams are not a zero outcome".to_string())
+            }
+        }
+    }
+
+    /// One candidate with its offered command and a readable HEAD starts
+    /// exactly that seam; an unreadable HEAD must not start.
+    #[test]
+    fn decide_single_candidate_starts_only_with_spec_and_head() -> Result<(), String> {
+        let eligible = vec!["seam:demo".to_string()];
+        let spec = repair_start_command_spec(".", "seam:demo");
+        match decide_repair_start(&facts(&eligible, 1, &[], 0, Some(&spec)))? {
+            RepairStartDecision::Start { seam_id } if seam_id == "seam:demo" => {}
+            _ => return Err("one offered candidate at a fresh HEAD must start".to_string()),
+        }
+        let mut headless = facts(&eligible, 1, &[], 0, Some(&spec));
+        headless.head = None;
+        if matches!(
+            decide_repair_start(&headless)?,
+            RepairStartDecision::Start { .. }
+        ) {
+            return Err("an unreadable HEAD must not start a repair".to_string());
+        }
+        Ok(())
+    }
+
+    /// Every ineligibility reason keeps its own distinct, human label.
+    #[test]
+    fn ineligibility_labels_are_distinct_and_exact() -> Result<(), String> {
+        let labels = [
+            (
+                RepairPacketIneligibility::ClassNotHeadlineEligible,
+                "not a headline repair target",
+            ),
+            (
+                RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
+                "cross-language oracle visibility unresolved",
+            ),
+            (
+                RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
+                "cross-language test target unresolved",
+            ),
+            (
+                RepairPacketIneligibility::RouteNotReady,
+                "repair route not ready",
+            ),
+        ];
+        for (reason, expected) in labels {
+            if ineligibility_label(reason) != expected {
+                return Err(format!("{reason:?} must read {expected:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// An ambiguous item lists at most eight seams, sorted, and counts the
+    /// rest; the retry names the explicit seam form, never a pick.
+    #[test]
+    fn ambiguous_gap_item_sorts_and_bounds_the_listing() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        let few = ambiguous_gap_item(root, "gap:x", &["seam:b", "seam:a"]);
+        if !few.contains("names 2 seams; select one explicitly: seam:a, seam:b.")
+            || few.contains("more)")
+        {
+            return Err(format!(
+                "two matches must list sorted without a tail:\n{few}"
+            ));
+        }
+        let ids: Vec<String> = (0..10).map(|n| format!("seam:{n}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let many = ambiguous_gap_item(root, "gap:x", &refs);
+        for expected in [
+            "names 10 seams",
+            "seam:0, seam:1, seam:2, seam:3, seam:4, seam:5, seam:6, seam:7 (and 2 more).",
+            "ripr repair <seam-id> --root",
+        ] {
+            if !many.contains(expected) {
+                return Err(format!("bounded listing must carry {expected:?}:\n{many}"));
+            }
+        }
+        if many.contains("seam:8") || many.contains("seam:9") {
+            return Err(format!("listing must stop at eight seams:\n{many}"));
+        }
+        Ok(())
+    }
+
+    /// The bound keeps the first eight matches in the order the caller supplied
+    /// (analysis order), then sorts only that window for display: it is not the
+    /// eight lowest IDs overall.
+    #[test]
+    fn ambiguous_gap_item_bounds_before_sorting() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        let ids: Vec<String> = (0..10).rev().map(|n| format!("seam:{n}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let many = ambiguous_gap_item(root, "gap:x", &refs);
+        let expected =
+            "seam:2, seam:3, seam:4, seam:5, seam:6, seam:7, seam:8, seam:9 (and 2 more).";
+        if !many.contains(expected) {
+            return Err(format!(
+                "the first eight supplied matches must list sorted:\n{many}"
+            ));
+        }
+        if many.contains("seam:0") || many.contains("seam:1,") {
+            return Err(format!(
+                "the two omitted matches must not be listed:\n{many}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A stale check-printed finding ID is named as stale; any other
+    /// unknown item gets the plain no-seam message. Both route to pilot.
+    #[test]
+    fn unknown_repair_item_distinguishes_stale_finding_ids() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        for item in ["probe:abc", "repo-probe:abc"] {
+            let message = unknown_repair_item(root, item);
+            if !message.contains("finding ID is stale or maps to no current seam")
+                || !message.contains("ripr pilot --root")
+            {
+                return Err(format!("{item} must be named stale:\n{message}"));
+            }
+        }
+        let plain = unknown_repair_item(root, "seam:ghost");
+        if plain.contains("stale")
+            || !plain.contains("repair item `seam:ghost` names no seam in the selected root")
+            || !plain.contains("ripr pilot --root")
+        {
+            return Err(format!("plain unknown item message drifted:\n{plain}"));
+        }
+        Ok(())
+    }
+
+    /// An ineligible subject names item, seam and reason, states that no
+    /// attempt started, and points at the seam listing.
+    #[test]
+    fn ineligible_repair_item_names_reason_and_no_attempt() -> Result<(), String> {
+        let message = ineligible_repair_item(
+            Path::new("/ripr-task-first-root"),
+            "gap:x",
+            "seam:y",
+            "configured off",
+        );
+        for expected in [
+            "repair item `gap:x` names seam `seam:y`",
+            "not repair-eligible: configured off",
+            "no repair attempt was started",
+            "ripr pilot --root",
+        ] {
+            if !message.contains(expected) {
+                return Err(format!("refusal must carry {expected:?}:\n{message}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// An explicit attempt ID that is not a valid ID refuses before any
+    /// store read, naming the flag; it never falls through to selection.
+    #[test]
+    fn explicit_invalid_attempt_id_is_refused_by_flag() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root-missing");
+        match select_continue_attempt(root, Some("../escape")) {
+            Err(error) if error.starts_with("continue --attempt: ") => Ok(()),
+            Err(error) => Err(format!("refusal must name the flag, got: {error}")),
+            Ok(_) => Err("a path-shaped attempt ID must be refused".to_string()),
         }
     }
 

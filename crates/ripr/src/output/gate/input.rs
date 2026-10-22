@@ -531,7 +531,25 @@ pub(super) fn baseline_index_from_value(value: &Value) -> BaselineIndex {
         collect_identity(&mut index.identities, item.pointer("/identity/source_id"));
         collect_identity(&mut index.identities, item.pointer("/identity/id"));
         collect_identity(&mut index.identities, item.pointer("/identity/dedupe_key"));
-        collect_identity(&mut index.identities, item.pointer("/identity/fallback"));
+        // Same lookup and precedence as `ripr baseline diff` (issue #1964).
+        let entry_canonical = crate::output::baseline_delta::canonical_gap_id_from_value(item);
+        match (
+            item.pointer("/identity/fallback")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty()),
+            entry_canonical.as_deref(),
+        ) {
+            // Canonical-bearing entry: the fallback is compatibility
+            // evidence only and cannot join on its own (issue #1964).
+            (Some(fallback), Some(canonical)) => {
+                index
+                    .fallback_canonical
+                    .entry(fallback.to_string())
+                    .or_default()
+                    .insert(canonical.to_string());
+            }
+            _ => collect_identity(&mut index.identities, item.pointer("/identity/fallback")),
+        }
         collect_identity(
             &mut index.identities,
             item.pointer("/evidence_record/canonical_gap_id"),

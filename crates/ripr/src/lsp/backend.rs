@@ -689,9 +689,9 @@ impl Backend {
                 if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(
                         request,
-                        err,
+                        err.message,
                         started.elapsed(),
-                        AnalysisFailureKind::AnalysisError,
+                        err.kind,
                     )
                     .await;
                     return RefreshAttemptOutcome::Failed;
@@ -2447,9 +2447,9 @@ impl Backend {
     /// [`INITIALIZE_FAILURE_DISCLOSURE_BUDGET`] (#3802). The owning failure
     /// is already committed when this runs, so a wedged or undriven peer can
     /// never delay the state transition through these awaits: an expired
-    /// window is recorded on the backend instead of being dropped silently,
-    /// and the committed failure is re-disclosed by the next status
-    /// publication.
+    /// window sets a flag that only tests read, so the committed failure
+    /// itself, re-disclosed by the next status publication, is what keeps
+    /// the outcome from being silent (#9324).
     ///
     /// `shown` is the `window/showMessage` warning for clients without the
     /// `riprEditor` integration (#4532): they render neither the log nor

@@ -1,0 +1,22 @@
+{
+  "case_id": "py-shapes-dataclass-default-rate",
+  "subject_id": "authored-py-pytest-shapes",
+  "origin": "authored",
+  "anchor": "shapes/models.py:9",
+  "behavior_family": "default_value",
+  "test_shape": "pytest_dataclass_default_field_pinned",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
