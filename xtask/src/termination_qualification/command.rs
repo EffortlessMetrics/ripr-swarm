@@ -488,9 +488,9 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
 
 /// Controls named on the command line plus those a build manifest vouches for.
 /// A family may take only one source of control.
-fn supplied_controls(
-    options: &Options,
-) -> Result<(Vec<(Family, PathBuf)>, Vec<controls::Binding>), String> {
+type SuppliedControls = (Vec<(Family, PathBuf)>, Vec<controls::Binding>);
+
+fn supplied_controls(options: &Options) -> Result<SuppliedControls, String> {
     let mut supplied = options.removal_controls.clone();
     let mut bindings = Vec::new();
     if let Some(path) = &options.removal_manifest {

@@ -13,7 +13,7 @@ use super::controls::reported_version;
 use super::model::Family;
 
 const DEFAULT_OUT: &str = "target/ripr/termination-qualification/removal-builds";
-const BUILD_DEADLINE: Duration = Duration::from_secs(60 * 60);
+const BUILD_DEADLINE: Duration = Duration::from_hours(1);
 pub(super) const MANIFEST_SCHEMA: &str = "ripr.termination_removal_builds.v1";
 
 struct Edit {
