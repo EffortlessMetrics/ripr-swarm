@@ -79,7 +79,9 @@
           "line": 4,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "assert is_priority(100)"
+          "oracle": "assert is_priority(100)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {
