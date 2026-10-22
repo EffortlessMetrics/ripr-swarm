@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return f"NO:{code}" (line 2)
-  - related test tests/test_status.py:4 test_len uses strong exact value oracle: assert len(status_label(7)) == 4
+  - related test tests/test_status.py:4 test_len uses strong exact value oracle: assert len(status_label(7)) == 4; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python oracle reaches `status_label`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

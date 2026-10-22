@@ -1390,12 +1390,159 @@ pub(crate) fn ts_field_update_witnessed(
                 .find('\n')
                 .map_or(masked.len(), |at| line_start + at);
             let observed = observed.trim();
+            // A pinned zero or empty value matches the field's initial state, so the
+            // update could be deleted without failing the assertion.
+            if assertion
+                .expected_value_or_variant
+                .as_deref()
+                .is_some_and(|expected| {
+                    matches!(
+                        expected.trim(),
+                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+                    )
+                })
+            {
+                return false;
+            }
             masked[line_start..line_end]
                 .match_indices(observed)
                 .any(|(at, _)| {
+                    // The assertion observes the field itself, not a derived
+                    // value (`stats.hits - stats.hits`).
                     ts_field_update_precedes_read(change, &owner.name, &masked, line_start + at)
-                        .is_some()
+                        .is_some_and(|receiver| observed == format!("{receiver}.{}", change.field))
                 })
+        })
+    })
+}
+
+/// RIPR-SPEC-0243 rule 15: whether some strong, pinned, exact-value assertion
+/// of an oracle relation calls the owner with a literal argument that
+/// provably selects the edited arm of the returned conditional.
+pub(crate) fn ts_arm_change_witnessed(
+    change: &TernaryArmChange,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        // A test body that declares its own owner executes that, not the owner.
+        if !candidate.relation.uses_oracle()
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        // A test that rebinds the enum root compares its own constants, not
+        // the owner module's.
+        if change
+            .member_root()
+            .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
+        {
+            return false;
+        }
+        let receivers =
+            unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        test.assertions.iter().any(|assertion| {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
+                || !assertion_expected_side_is_pinned(assertion)
+            {
+                return false;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            if assertion_is_self_comparing(assertion, observed)
+                || assertion
+                    .expected_value_or_variant
+                    .as_deref()
+                    .is_some_and(|expected| change.expected_is_dead(expected))
+            {
+                return false;
+            }
+            // The assertion observes the owner's whole result, not a wrapper
+            // (`price(150) > 0`) that hides the changed value.
+            let Some(arguments) =
+                ts_observed_owner_call_arguments(test, assertion, &names, owner, &receivers)
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            arguments
+                .get(change.param_index)
+                .is_some_and(|argument| change.selects_changed_arm(argument))
+        })
+    })
+}
+
+/// RIPR-SPEC-0243 rule 15: whether some strong, pinned, exact-value assertion
+/// of an oracle relation drains the owner's whole sequence
+/// (`[...owner(3)]` or `Array.from(owner(3))`) from a call whose counter
+/// reaches the changed loop bound.
+pub(crate) fn ts_loop_bound_witnessed(
+    change: &LoopBoundChange,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let compact = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        if !candidate.relation.uses_oracle()
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        let receivers =
+            unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        test.assertions.iter().any(|assertion| {
+            // A sequence is compared with an array, which the extractor reads
+            // as a dynamic expected side; it only has to not be the owner's
+            // own call, which would pass on both versions.
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
+            {
+                return false;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            if assertion_is_self_comparing(assertion, observed)
+                || names
+                    .iter()
+                    .any(|name| expected_side_calls_owner(&test.body_text, observed, name))
+            {
+                return false;
+            }
+            let observed = compact(observed);
+            // The whole drained call: `[...owner(3)]` or `Array.from(owner(3))`.
+            // The spread's dots would read as a member access to the call
+            // finder, so it sees the inner call.
+            let Some(call) = observed
+                .strip_prefix("[...")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .or_else(|| {
+                    observed
+                        .strip_prefix("Array.from(")
+                        .and_then(|rest| rest.strip_suffix(')'))
+                })
+            else {
+                return false;
+            };
+            // The call must be the whole drained expression.
+            let Some(arguments) = ts_whole_owner_call_arguments(call, &names, owner, &receivers)
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            change.reaches_bound(&arguments)
         })
     })
 }
@@ -4968,19 +5115,67 @@ pub(crate) fn classify_change_with_alias_state(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
+    // RIPR-SPEC-0243 rule 15: a declared concise arrow is the owner's return
+    // only when it declares the owner itself; a local arrow nested in the
+    // owner binds another name and returns nothing.
+    let probe_shape = if probe_shape.family == ProbeFamily::ReturnValue
+        && declared_arrow_value_name(line_text).is_some_and(|name| name != owner.name)
+    {
+        TypeScriptProbeShape::ambiguous_fallback()
+    } else {
+        probe_shape
+    };
     // RIPR-SPEC-0254 rule 1: a changed entry of a lookup table the owner
     // returns from is a return-value change, credited only under rule 2.
     let lookup_change = (!probe_shape.specific)
         .then(|| ts_lookup_table_change(owner, line_text, old_line_text))
         .flatten();
+    // RIPR-SPEC-0243 rule 15: a compound assignment to the state the owner
+    // returns is a return-value change.
+    let returns_changed_state = !probe_shape.specific
+        && lookup_change.is_none()
+        && ts_returned_state_change(owner, line_text, old_line_text);
+    // RIPR-SPEC-0243 rule 15: an edited arm of an unchanged returned
+    // conditional is a return-value change when a strong exact assertion
+    // calls the owner with an argument that selects the edited arm.
+    let arm_change_witnessed = probe_shape.family == ProbeFamily::Predicate
+        && ts_ternary_arm_change(owner, line_text, old_line_text).is_some_and(|change| {
+            ts_arm_change_witnessed(
+                &change,
+                owner,
+                &related_candidates,
+                alias_map,
+                workspace_root,
+            )
+        });
+    // RIPR-SPEC-0243 rule 15: a `<`/`<=` flip in a generator loop that yields
+    // on every iteration adds or drops the final element; an exact assertion
+    // on the whole drained sequence, from a call whose counter reaches the
+    // bound, observes it.
+    let loop_bound_witnessed = probe_shape.family == ProbeFamily::Predicate
+        && ts_loop_bound_change(owner, line_text, old_line_text).is_some_and(|change| {
+            ts_loop_bound_witnessed(
+                &change,
+                owner,
+                &related_candidates,
+                alias_map,
+                workspace_root,
+            )
+        });
     // RIPR-SPEC-0243 decision 18: an update of a field the owner method writes
     // is a return-value change when a strong exact assertion reads that
     // field from an instance the test called the method on.
     let field_update_witnessed = !probe_shape.specific
         && lookup_change.is_none()
+        && !returns_changed_state
         && ts_field_update_change(owner, line_text, old_line_text)
             .is_some_and(|change| ts_field_update_witnessed(&change, owner, &related_candidates));
-    let probe_shape = if lookup_change.is_some() || field_update_witnessed {
+    let probe_shape = if lookup_change.is_some()
+        || returns_changed_state
+        || arm_change_witnessed
+        || loop_bound_witnessed
+        || field_update_witnessed
+    {
         TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value)
     } else {
         probe_shape

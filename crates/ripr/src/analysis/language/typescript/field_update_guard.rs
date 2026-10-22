@@ -65,6 +65,14 @@ pub(crate) fn ts_field_update_change(
     {
         return None;
     }
+    // `this` used as anything but `this.name` (`this['f'] = 0`, `Object.assign(this, ..)`)
+    // can write the field where the text search below cannot see it.
+    if identifier_offsets(&body, "this")
+        .iter()
+        .any(|at| !body[at + 4..].starts_with('.'))
+    {
+        return None;
+    }
     // A single write: another update of the field could hide this one.
     let target = format!("this.{field}");
     let writes = body
@@ -214,6 +222,15 @@ pub(crate) fn ts_field_update_precedes_read(
     // Nothing else may write the field through the receiver, and the owner
     // call must not be a no-op by argument (`bump(0)`, `bump("")`).
     for at in identifier_offsets(body, receiver) {
+        let after = body[at + receiver.len()..].trim_start();
+        if at != *declaration + body[*declaration..].find(receiver).unwrap_or(0)
+            && (after.starts_with("++")
+                || after.starts_with("--")
+                || COMPOUND_OPERATORS.iter().any(|op| after.starts_with(op))
+                || (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")))
+        {
+            return None;
+        }
         let Some(member) = body[at + receiver.len()..].strip_prefix('.') else {
             continue;
         };
@@ -244,15 +261,15 @@ pub(crate) fn ts_field_update_precedes_read(
     let ran = body.match_indices(&call).any(|(at, _)| {
         at > *declaration
             && at < read_offset
+            // The call begins its own statement: a braceless `if (c) call();`,
+            // `c && call();` or `else call();` opens no scope but can skip it.
+            && body[..at]
+                .trim_end()
+                .ends_with([';', '{', '}'])
+            // The call is in the read's own scope, so it runs whenever the
+            // read does. A loop around only the call may run zero times.
             && open_scopes(body, at).is_some_and(|scopes| {
-                // The test callback is the outermost scope; every scope the
-                // call is in beyond the read's own must be a loop.
-                scopes.len() >= read_scopes.len()
-                    && scopes[..read_scopes.len()] == read_scopes[..]
-                    && scopes[read_scopes.len()..]
-                        .iter()
-                        .all(|s| *s == Scope::Loop)
-                    && scopes.iter().skip(1).all(|s| *s == Scope::Loop)
+                scopes == read_scopes && scopes.iter().skip(1).all(|s| *s == Scope::Loop)
             })
     });
     ran.then(|| receiver.to_string())
@@ -319,6 +336,10 @@ mod tests {
         assert_eq!(changed(early_throw, new, old), None);
         let callback = "recordHit() {\n  this.hits += 1;\n  items.forEach((i) => i);\n}";
         assert_eq!(changed(callback, new, old), None);
+        let computed = "recordHit() {\n  this.hits += 1;\n  this['hits'] = 0;\n}";
+        assert_eq!(changed(computed, new, old), None);
+        let escaped = "recordHit() {\n  this.hits += 1;\n  Object.assign(this, { hits: 0 });\n}";
+        assert_eq!(changed(escaped, new, old), None);
         assert_eq!(changed(plain, new, "this.misses = this.misses + 1;"), None);
         assert_eq!(changed(plain, "this.hits = other;", old), None);
     }
@@ -340,8 +361,14 @@ mod tests {
     fn read_after_an_unconditional_call_on_a_fresh_instance_is_witnessed() {
         let body = "{ const stats = new Stats(); stats.recordHit(); expect(stats.hits).toBe(1); }";
         assert_eq!(precedes(body).as_deref(), Some("stats"));
-        let looped = "{ const stats = new Stats(); for (let i = 0; i < 3; i++) { stats.recordHit(); } expect(stats.hits).toBe(3); }";
+        let looped = "{ const stats = new Stats(); for (let i = 0; i < 3; i++) { stats.recordHit(); expect(stats.hits).toBe(i + 1); } }";
         assert_eq!(precedes(looped).as_deref(), Some("stats"));
+        let skipped = "{ const stats = new Stats(); for (let i = 0; i < 0; i++) { stats.recordHit(); } expect(stats.hits).toBe(1); }";
+        assert_eq!(precedes(skipped), None);
+        let braceless = "{ const stats = new Stats(); if (ready) stats.recordHit(); expect(stats.hits).toBe(1); }";
+        assert_eq!(precedes(braceless), None);
+        let reassigned = "{ let stats = new Stats(); stats.recordHit(); stats = new Stats(); expect(stats.hits).toBe(1); }";
+        assert_eq!(precedes(reassigned), None);
     }
 
     #[test]
