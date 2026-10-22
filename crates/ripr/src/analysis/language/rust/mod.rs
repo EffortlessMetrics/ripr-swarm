@@ -1349,6 +1349,10 @@ fn apply_probe_and_oracle_limits(
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
     classify::withhold_framework_oracle_gap(finding, index);
+    // RIPR-SPEC-0240: a trait-impl method no test names (an operator, drop
+    // glue, iteration, a trait object) is reached by proximity only, which
+    // cannot support a gap.
+    classify::withhold_implicit_trait_call_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

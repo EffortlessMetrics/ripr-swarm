@@ -475,7 +475,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.90`: an assertion in `tokio::spawn(async { .. })` joined by
 /// `.await.unwrap()` or `.expect(..)` pins the owner (RIPR-SPEC-0197). Old
 /// entries keep the async-block refusal.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.90";
+/// `1.91`: a weak gap on a trait-impl method no test names is withheld under
+/// `rust_implicit_trait_call_unresolved` (RIPR-SPEC-0240). Old entries keep it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.91";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -4708,7 +4710,8 @@ mod tests {
         // 1.87 -> 1.88: the `debug_assert_eq!` profile limit (#8051).
         // 1.88 -> 1.89: mock call counts observe a guard's side flip (RIPR-SPEC-0305).
         // 1.89 -> 1.90: joined `tokio::spawn` assertions pin the owner (RIPR-SPEC-0197).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.90");
+        // 1.90 -> 1.91: trait-impl methods no test names withhold the gap (RIPR-SPEC-0240).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.91");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.

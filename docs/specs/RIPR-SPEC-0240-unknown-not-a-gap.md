@@ -380,6 +380,34 @@ and writes the finding the same way. Nothing is credited. Corpus effect:
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
 `abstained`, which their cases accept.
 
+### Trait-impl methods no test names (#9441)
+
+A method of `impl Trait for Type` runs through an operator, drop glue,
+iteration or a trait object without its name appearing in a test. The reach
+stage reports `weak` ("No test is seen calling `add`; tests share only its
+file or a name token"), and that proximity-only reading cannot support a
+claim that an assertion is too weak.
+`implicit_call::withhold_implicit_trait_call_gap` withholds a
+`weakly_exposed` or `reachable_unrevealed` finding with no
+`static_limit_kind` under `rust_implicit_trait_call_unresolved` when the
+owner is a trait-impl method, the reach summary is the proximity-only
+reading, no related test is a `direct_owner_call`, and some test tied to the
+owner by name (`owner_named_test` or `weak_token_substring`) pins a strong
+exact value, and no related test calls the method name except through a
+`dyn <Trait>` object of the implemented trait. A call by name on a concrete
+type is an ordinary call the reach stage already reads, so same-named methods
+on other types keep their gap (`rust_trait_impl_shadow`,
+`rust_adversarial_same_method_other_type`). A smoke test or relational check as the only name-tied test
+keeps the gap (`shape-op-neg-smoke`, `shape-partialord-swapped-fields`,
+`shape-fromstr-boundary-unpinned`). Nothing is credited.
+
+Cost: `config-default-host` and `shape-dyn-trait-method-twin-input` are true
+gaps on a trait-impl method whose name-tied test pins an exact value of a
+different input. Telling them from `shape-dyn-trait-method-exact` needs
+input-to-impl evaluation, so they read `limited`, which their cases accept.
+Corpus effect: `shape-op-add-impl`, `shape-drop-impl-side-effect` and
+`shape-dyn-trait-method-exact` move from `false_actionable` to `abstained`.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
@@ -466,6 +494,15 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 
+Tests in `crates/ripr/tests/implicit_trait_call_limit.rs`:
+
+- `an_operator_impl_reached_by_its_operator_is_withheld`
+- `a_drop_impl_reached_by_scope_end_is_withheld`
+- `a_trait_object_call_with_a_second_impl_is_withheld`
+- `a_trait_impl_method_called_by_name_keeps_the_gap`
+- `an_operator_impl_with_only_a_relational_check_keeps_the_gap`
+- `an_inherent_method_is_never_withheld_by_this_limit`
+
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 
 - `analyzer_limit_refusals_are_limits_of_ripr_reading`
@@ -502,6 +539,8 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/implicit_call.rs` owns the trait-impl
+  reach limit.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`
