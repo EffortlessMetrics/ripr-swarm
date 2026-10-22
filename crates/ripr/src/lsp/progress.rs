@@ -193,6 +193,13 @@ struct TokenNotifications {
     /// Consecutive duplicate stage events are suppressed so repeated
     /// equivalent events stay within the declared record ceiling.
     last_stage: Option<AnalysisProgressStage>,
+    /// Stage reports that arrived while the detached `create`/`Begin` was
+    /// still in flight (#9362). The producer's first stage fires immediately,
+    /// well before a client answers `create`, so dropping it made the journey
+    /// depend on client latency. They flush in producer order right after
+    /// `Begin`; the closed stage vocabulary and consecutive-duplicate
+    /// suppression keep this at most a few entries.
+    pending_stages: Vec<AnalysisProgressStage>,
 }
 
 fn progress_token(generation: u64) -> String {
@@ -381,6 +388,18 @@ impl AnalysisProgressTracker {
         // sending. Cleanup must observe this completed Begin and send End
         // after acquiring the same token lock.
         notifications.started = true;
+        let pending = std::mem::take(&mut notifications.pending_stages);
+        for stage in pending {
+            if let Some(message) = stage_report_message(stage) {
+                sink.notify(
+                    token.clone(),
+                    ProgressNotificationValue::Report {
+                        message: message.to_string(),
+                    },
+                )
+                .await;
+            }
+        }
     }
 
     fn notification_state(
@@ -477,9 +496,10 @@ impl AnalysisProgressTracker {
     /// honesty and can never publish a fake completed stage.
     ///
     /// Reports are message-only: no percentage is ever attached, so unknown
-    /// totals stay unknown. No-ops (never an error, never analysis-relevant):
-    /// unsupported clients, unknown generations, unstarted tokens, tokens
-    /// still queued, terminal stages, and consecutive duplicate stages.
+    /// totals stay unknown. A stage that arrives before `Begin` has been sent
+    /// is held and flushed right after it (#9362). No-ops (never an error,
+    /// never analysis-relevant): unsupported clients, unknown generations,
+    /// tokens still queued, terminal stages, and consecutive duplicates.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
         let Some(notifications) = self.notification_state(generation) else {
             return;
@@ -498,13 +518,17 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if record.terminal.is_some()
-                || !notifications.started
-                || record.phase != AnalysisProgressPhase::Analyzing
-            {
+            if record.terminal.is_some() || record.phase != AnalysisProgressPhase::Analyzing {
                 return;
             }
             if notifications.last_stage == Some(stage) {
+                return;
+            }
+            if !notifications.started {
+                // Begin has not been sent: no report may precede it, so hold
+                // the stage until the announcement flushes it (#9362).
+                notifications.last_stage = Some(stage);
+                notifications.pending_stages.push(stage);
                 return;
             }
             notifications.last_stage = Some(stage);
@@ -1603,6 +1627,77 @@ mod tests {
             ];
             if events != expected {
                 return Err(format!("stage-mapped reports drifted: {events:?}"));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stages_reported_before_begin_flush_in_order_after_it() -> Result<(), String> {
+        // #9362: the producer's first stage fires before a client answers
+        // `create`. It must neither be dropped nor precede Begin, and a
+        // terminal end before Begin must still leave the token silent.
+        runtime()?.block_on(async {
+            let (tracker, sink) = tracker_with_recorder();
+            let request = test_request(1);
+            if !tracker.register(&request, AnalysisProgressPhase::Analyzing) {
+                return Err("token registration was refused".to_string());
+            }
+            for stage in [
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressStage::BuildingOutput,
+            ] {
+                tracker.report_stage(1, stage).await;
+            }
+            if !sink.events().is_empty() {
+                return Err(format!("no event may precede Begin: {:?}", sink.events()));
+            }
+            tracker.announce(&request).await;
+            tracker.end(1, AnalysisProgressEnd::Complete).await;
+
+            let token = "ripr-analysis-1".to_string();
+            let expected = vec![
+                ProgressEvent::Create {
+                    token: token.clone(),
+                },
+                ProgressEvent::Begin {
+                    token: token.clone(),
+                    title: "ripr analysis".to_string(),
+                    message: "analyzing workspace (did_save)".to_string(),
+                },
+                ProgressEvent::Report {
+                    token: token.clone(),
+                    message: "loading input".to_string(),
+                },
+                ProgressEvent::Report {
+                    token: token.clone(),
+                    message: "building output".to_string(),
+                },
+                ProgressEvent::End {
+                    token,
+                    message: "analysis complete".to_string(),
+                },
+            ];
+            if sink.events() != expected {
+                return Err(format!("held stages drifted: {:?}", sink.events()));
+            }
+
+            let early_end = test_request(2);
+            if !tracker.register(&early_end, AnalysisProgressPhase::Analyzing) {
+                return Err("second registration was refused".to_string());
+            }
+            tracker
+                .report_stage(2, AnalysisProgressStage::LoadingInput)
+                .await;
+            let before = sink.events().len();
+            tracker.end(2, AnalysisProgressEnd::Complete).await;
+            tracker.announce(&early_end).await;
+            if sink.events().len() != before {
+                return Err(format!(
+                    "a token ended before Begin must stay silent: {:?}",
+                    sink.events()
+                ));
             }
             Ok(())
         })
