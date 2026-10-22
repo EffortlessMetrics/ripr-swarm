@@ -103,13 +103,34 @@ pub(crate) fn extract_tests_with_expansion(
     // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
     // replaced by its assertion, on the same line, before extraction. One pass
     // only, so self-referential or mutually recursive helpers cannot loop.
+    // A wrapper that only rethrows its callback's failure is unwrapped the
+    // same way (decision 20), first, so a helper call inside the callback is
+    // still seen by the helper pass.
     if source.contains("function ")
         && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
             let ret = Parser::new(allocator, source, source_type_for(file)).parse();
             if !ret.errors.is_empty() {
                 return None;
             }
-            super::assertion_helper::expand_assertion_helpers(&ret.program.body, source)
+            let unwrapped =
+                super::rethrow_wrapper::expand_rethrow_wrappers(&ret.program.body, source);
+            let Some(unwrapped) = unwrapped else {
+                return super::assertion_helper::expand_assertion_helpers(
+                    &ret.program.body,
+                    source,
+                );
+            };
+            let reparsed = Parser::new(allocator, &unwrapped, source_type_for(file)).parse();
+            if !reparsed.errors.is_empty() {
+                return Some(unwrapped);
+            }
+            Some(
+                super::assertion_helper::expand_assertion_helpers(
+                    &reparsed.program.body,
+                    &unwrapped,
+                )
+                .unwrap_or(unwrapped),
+            )
         })
         && expanded != source
     {
