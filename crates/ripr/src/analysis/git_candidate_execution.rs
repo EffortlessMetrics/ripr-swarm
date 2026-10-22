@@ -224,6 +224,9 @@ fn derive_diff(
             // collapses onto one U+FFFD path.
             "-c",
             "core.quotePath=true",
+            // No `--ignore-submodules=none` here: verified that `diff-tree`
+            // ignores `diff.ignoreSubmodules` (a gitlink change stays in its
+            // output under `all`), so the pin would be a no-op.
             "diff-tree",
             "--unified=0",
             "--no-ext-diff",

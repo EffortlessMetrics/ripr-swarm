@@ -573,6 +573,9 @@ fn committed_changes(
             "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
+            // Ambient `diff.ignoreSubmodules=all` would hide a committed
+            // gitlink change from the attempt's changed-path set.
+            "--ignore-submodules=none",
             "--name-status",
             "-z",
             baseline_head,
@@ -4428,6 +4431,34 @@ mod tests {
             !inline_target_is_uncommitted(&fixture.root, "f[AB].rs"),
             "a committed, unchanged target was judged uncommitted via a glob sibling"
         );
+        Ok(())
+    }
+
+    /// `diff.ignoreSubmodules=all` must not hide a committed gitlink change
+    /// from the changed-path set.
+    #[test]
+    fn committed_changes_keep_a_gitlink_bump_under_ignore_submodules_all() -> Result<(), String> {
+        let fixture = git_fixture("gitlink-committed")?;
+        git_ok(&fixture.root, &["config", "diff.ignoreSubmodules", "all"])?;
+        let baseline = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        git_ok(
+            &fixture.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,2222222222222222222222222222222222222222,vendor/lib",
+            ],
+        )?;
+        git_ok(&fixture.root, &["commit", "-qm", "gitlink"])?;
+        let current = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        let changes = committed_changes(&fixture.root, &baseline, &current)?;
+        let paths: Vec<_> = changes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
     }
 }
