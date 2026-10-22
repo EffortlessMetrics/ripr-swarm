@@ -1,0 +1,49 @@
+{
+  "case_id": "spec-b-0158-strip-prefix-absent",
+  "subject_id": "authored-spec-b-value",
+  "diff": "cases/spec-b-0158-strip-prefix-absent.diff",
+  "anchor": {
+    "file": "src/v_strip.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "computed_local_boundary_strip_prefix_none_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n < 3",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "v_strip::tests::an_unprefixed_argument_is_not",
+        "equivalence_review": "the edit itself: n < 3 accepts the zero length an unprefixed argument yields"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Only the unprefixed row (ab) reaches the None default of the strip_prefix chain, and it alone fails when the comparison widens to < 3. Spec cells: RIPR-SPEC-0158#2.",
+  "labeling_observation": {
+    "ripr_commit": "840e0cf2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#2"
+  ]
+}

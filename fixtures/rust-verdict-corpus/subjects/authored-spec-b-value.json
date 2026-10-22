@@ -1,0 +1,69 @@
+{
+  "subject_id": "authored-spec-b-value",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for the RIPR-SPEC-0158 and RIPR-SPEC-0159 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "98eb4bb10efecad53435013307f6d8c1b2c2e8806caa0e8c1e51efa13ae0fd66"
+    },
+    {
+      "path": "src/h_binding_tail.rs",
+      "sha256": "45e1354794a2a75c56313fc32f88adc8a6d94239a5ba4a525e275e84cca9a36b"
+    },
+    {
+      "path": "src/h_callers.rs",
+      "sha256": "6ca611f4a6fed52da59ef1c0f7a983177693703d57cc391a378020182f16f060"
+    },
+    {
+      "path": "src/h_computed.rs",
+      "sha256": "51c039d6ec2f91c3a557903a5bddb76b2a3063e475e3ea096b513820302deb90"
+    },
+    {
+      "path": "src/h_method.rs",
+      "sha256": "a37039a9cbefbdce45d4348fdf8bb6ad8a8bcb9006a89a618b5d210a60acfbf4"
+    },
+    {
+      "path": "src/h_nonunique.rs",
+      "sha256": "894fe5e05f5a307a84de4351807a15f72a0df53b80c07f819f4d6cf763119a7c"
+    },
+    {
+      "path": "src/h_path.rs",
+      "sha256": "786ef055de850a502e27eb9f87ad66d393aae9b9ffbd09dc3241dcb61f7feff2"
+    },
+    {
+      "path": "src/h_recursion.rs",
+      "sha256": "e98dbd511ea915c430d2730ecc1c674377129d21f94c5a71fa1d6185cfe40251"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "00ee206c612428bcbfe38a810f75573a8164a22f18f39888b3436e6d5cb3c3c8"
+    },
+    {
+      "path": "src/v_closure.rs",
+      "sha256": "0df3de9ca84dd77ca19ca2055841221a79f2e67219f50e2a06303d8cb827e667"
+    },
+    {
+      "path": "src/v_dynamic.rs",
+      "sha256": "f9bddc65e837d3d50cc145bc1c4a1d4b90a7691e68964511f155feadda88a5cd"
+    },
+    {
+      "path": "src/v_method.rs",
+      "sha256": "52ffef178f796c06e29ee8c1f3cb2cdac1a9069b3f31d13f693ea17680bc3105"
+    },
+    {
+      "path": "src/v_rfind.rs",
+      "sha256": "ffb87a9d89eab3a94934284a4bb5f9e93314410f6da0ccaae8125764adce0122"
+    },
+    {
+      "path": "src/v_shadow.rs",
+      "sha256": "80604a7a8b0d90a98fdbb8cb3980fc5c6934c813a2645c9cfdf3085e318abbd2"
+    },
+    {
+      "path": "src/v_strip.rs",
+      "sha256": "0d7388faccbe7f3ca88b234482621908fb01e8efbf2f900c1127f57a9a068d9f"
+    }
+  ]
+}

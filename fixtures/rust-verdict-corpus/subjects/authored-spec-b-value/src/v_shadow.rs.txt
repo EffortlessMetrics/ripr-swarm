@@ -1,0 +1,24 @@
+//! The compared name is rebound between the chain and the comparison.
+
+pub fn shadowed_boundary_hit(input: &str, delim: char) -> bool {
+    let end = input.rfind(delim).map_or(1, |idx| idx);
+    let start = delim.len_utf8();
+    let end = end + start - start;
+    end == start
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_delimiter_lands_on_the_boundary() {
+        assert!(shadowed_boundary_hit("ab", 'x'));
+    }
+
+    #[test]
+    fn present_delimiter_misses_the_boundary() {
+        assert!(!shadowed_boundary_hit("xab", 'x'));
+        assert!(!shadowed_boundary_hit("abx", 'x'));
+    }
+}

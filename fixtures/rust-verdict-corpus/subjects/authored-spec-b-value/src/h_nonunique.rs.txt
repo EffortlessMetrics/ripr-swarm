@@ -1,0 +1,36 @@
+//! The helper's name is not unique in the workspace.
+
+fn is_wide(input: &str) -> bool {
+    input.len() > 3
+}
+
+pub mod other {
+    pub fn is_wide(input: &str) -> bool {
+        input.len() > 4
+    }
+}
+
+pub fn classify_ambiguous(input: &str) -> &'static str {
+    if is_wide(input) {
+        "wide"
+    } else {
+        "narrow"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_straddle_four_nonunique() {
+        assert_eq!(classify_ambiguous("abcd"), "wide");
+        assert_eq!(classify_ambiguous("abc"), "narrow");
+    }
+
+    #[test]
+    fn the_other_module_needs_five_bytes() {
+        assert!(other::is_wide("abcde"));
+        assert!(!other::is_wide("abcd"));
+    }
+}

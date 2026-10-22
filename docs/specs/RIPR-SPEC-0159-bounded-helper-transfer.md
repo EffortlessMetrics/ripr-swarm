@@ -349,16 +349,21 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 
 ## Acceptance Examples
 
-- Accept: `test -> classify(" x") -> is_word_start(input, 0)` — the
-  helper-owned probe relates to the test, its oracles connect, and its
-  operands evaluate with `input = " x"`.
-- Accept: a comparison operand that is a unique helper call evaluates
-  through a simple binding-tail return.
-- Reject: relating through a non-unique callee, a method or
-  path-qualified call site, a partial index, recursion, or multiple
-  callers. A computed argument stops the value/row transfer (named
-  edge) while the reach relation may still hold — the call chain is
-  genuinely reachable; only the exact values stop.
+1. Accept: `test -> classify(" x") -> is_word_start(input, 0)` — the
+   helper-owned probe relates to the test, its oracles connect, and its
+   operands evaluate with `input = " x"`.
+2. Accept: a comparison operand that is a unique helper call evaluates
+   through a simple binding-tail return.
+3. Reject: relating through a non-unique callee.
+4. Reject: relating through a method call site (`gauge.span_of(input)`).
+5. Reject: relating through a path-qualified call site
+   (`meter::reach_of(input)`).
+6. Reject: relating through a partial index.
+7. Reject: relating through recursion.
+8. Reject: relating through multiple callers.
+9. A computed argument stops the value/row transfer (named edge) while
+   the reach relation may still hold — the call chain is genuinely
+   reachable; only the exact values stop.
 
 ## Test Mapping
 

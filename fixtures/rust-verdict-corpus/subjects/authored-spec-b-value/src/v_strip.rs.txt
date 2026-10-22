@@ -1,0 +1,22 @@
+//! A length computed through strip_prefix, where only the absent row tells
+//! the None default from a long flag.
+
+pub fn flag_long_enough(arg: &str) -> bool {
+    let n = arg.strip_prefix("--").map_or("", |rest| rest).len();
+    n == 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_two_letter_flag_is_long_enough() {
+        assert!(flag_long_enough("--ab"));
+    }
+
+    #[test]
+    fn an_unprefixed_argument_is_not() {
+        assert!(!flag_long_enough("ab"));
+    }
+}

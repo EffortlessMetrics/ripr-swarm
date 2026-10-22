@@ -1,0 +1,56 @@
+{
+  "case_id": "spec-b-0159-multiple-callers",
+  "subject_id": "authored-spec-b-value",
+  "diff": "cases/spec-b-0159-multiple-callers.diff",
+  "anchor": {
+    "file": "src/h_callers.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_chain_multiple_callers",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3 <= input.len()",
+        "mutated_line": "3 <= input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_callers::tests::rows_straddle_four_callers",
+        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers fails on it"
+      },
+      {
+        "replacement": "4 < input.len()",
+        "mutated_line": "4 < input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_callers::tests::rows_straddle_four_callers",
+        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is_wide has two callers, classify_shared and label_shared. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#8.",
+  "labeling_observation": {
+    "ripr_commit": "840e0cf2",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#8"
+  ]
+}

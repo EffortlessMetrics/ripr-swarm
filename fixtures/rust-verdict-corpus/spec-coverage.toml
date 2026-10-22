@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 144
+floor = 169
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -728,14 +728,22 @@ id = "RIPR-SPEC-0157"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Bounded value transfer from exact test inputs
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0158"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 18
+reason = "receiver-reader shapes (non-parameter receiver, other-typed parameter, two call sites, non-unique method, overflow, duplicated constants, struct layouts) are pinned by unit tests on the reader; no corpus case builds each one, and the three corpus shapes above cover the end-to-end refusal"
 
 # Bounded helper-call transfer
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0159"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 6
+reason = "a partially indexed workspace; an authored crate is stored whole, so no case can present an incomplete index to ripr"
 
 # Bounded scanner-state transitions
 [[unmeasured]]

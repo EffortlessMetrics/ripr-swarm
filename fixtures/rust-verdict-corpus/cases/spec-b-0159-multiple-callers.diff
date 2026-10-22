@@ -1,0 +1,12 @@
+diff --git a/src/h_callers.rs b/src/h_callers.rs
+--- a/src/h_callers.rs
++++ b/src/h_callers.rs
+@@ -1,7 +1,7 @@
+ //! The helper has two callers.
+ 
+ fn is_wide(input: &str) -> bool {
+-    input.len() > 3
++    3 < input.len()
+ }
+ 
+ pub fn classify_shared(input: &str) -> &'static str {
