@@ -1564,7 +1564,7 @@ fn timeout_summary_after_default_extension_names_the_default_and_caps_retry() {
     let json = render_pilot_timeout_summary_json(context);
     assert!(
         json.contains("\"timeout_ms\": 270000"),
-        "JSON keeps the spent budget; schema 0.3 is unchanged:\n{json}"
+        "JSON keeps the spent budget; the schema version is unchanged:\n{json}"
     );
     assert!(
         json.contains("--timeout-ms 300000"),

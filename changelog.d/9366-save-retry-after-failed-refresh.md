@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The language server's didSave de-duplication no longer swallows the retry save after a refresh that ended without publishing (failed, cancelled, deadline-exceeded or never started): only the save digests not yet covered by a published snapshot are dropped, so re-saving unchanged bytes once the environment recovers schedules a refresh instead of leaving the document without evidence until it is edited or `ripr.refresh` runs. Unchanged saves of files a published snapshot already covered still de-duplicate (#9366).
