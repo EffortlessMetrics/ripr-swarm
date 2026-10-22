@@ -170,6 +170,8 @@ std::thread_local! {
     // Thread-owned so parallel tests never see each other's mode or files.
     static FORCED_MODE: std::cell::Cell<Option<DependentScopeMode>> =
         const { std::cell::Cell::new(None) };
+    static FORCED_HARD_LIMIT: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
     static FORCED_REACH_LIMIT: std::cell::Cell<Option<usize>> =
         const { std::cell::Cell::new(None) };
     static OBSERVED_REACH_FILES: std::cell::RefCell<Vec<PathBuf>> =
@@ -200,6 +202,16 @@ pub(super) fn with_forced_reach_limit<T>(limit: usize, work: impl FnOnce() -> T)
     FORCED_REACH_LIMIT.with(|forced| forced.set(Some(limit)));
     let result = work();
     FORCED_REACH_LIMIT.with(|forced| forced.set(None));
+    result
+}
+
+/// Run `work` with the hard index limit forced to `limit` on this thread,
+/// so a small fixture can exercise the oversized shared-index path.
+#[cfg(test)]
+pub(super) fn with_forced_hard_limit<T>(limit: usize, work: impl FnOnce() -> T) -> T {
+    FORCED_HARD_LIMIT.with(|forced| forced.set(Some(limit)));
+    let result = work();
+    FORCED_HARD_LIMIT.with(|forced| forced.set(None));
     result
 }
 
@@ -526,11 +538,14 @@ pub(super) struct NarrowedScope {
     /// Owners alternate between a few closures, so a single slot rebuilt
     /// the same index repeatedly (#5363).
     reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
-    /// Closure-specific indexes built so far. Past
-    /// [`REACH_INDEX_CAPACITY`] distinct closures the run is alternating
-    /// among more owners than the cache holds, and narrowing costs more
-    /// than it saves (#9278).
+    /// Closure-specific index builds so far (cache misses). Past
+    /// [`REACH_INDEX_CAPACITY`] builds the run is alternating among more
+    /// owners than the cache holds, and narrowing costs more than it saves
+    /// (#9278).
     widened_builds: usize,
+    /// The full selection exceeded the hard index limit, so the run keeps
+    /// the bounded per-closure cache instead of indexing everything.
+    full_declined: bool,
     /// One index over every selected file, built once the widened builds
     /// pass the cache capacity and then shared by all remaining owners.
     /// It holds a superset of each closure, and the witness walks are
@@ -821,6 +836,7 @@ pub(super) fn admit_dependents(
             closures: std::collections::BTreeMap::new(),
             reach_index: Vec::new(),
             widened_builds: 0,
+            full_declined: false,
             full_reach: None,
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
@@ -877,10 +893,15 @@ impl NarrowedScope {
         owner: &str,
         main_index: &RustIndex,
         limit: usize,
+        hard_limit: usize,
     ) -> Result<ReachIndex<'_>, String> {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
+        #[cfg(test)]
+        let hard_limit = FORCED_HARD_LIMIT
+            .with(std::cell::Cell::get)
+            .unwrap_or(hard_limit);
         #[cfg(test)]
         let limit = FORCED_REACH_LIMIT
             .with(std::cell::Cell::get)
@@ -932,28 +953,30 @@ impl NarrowedScope {
             });
         }
         let cached = self.reach_index.iter().any(|(held, _)| *held == files);
-        if self.full_reach.is_none() && !cached && self.widened_builds >= REACH_INDEX_CAPACITY {
-            // The pre-#5320 selection: the main files and every withheld
-            // dependent, which is what `RIPR_DIFF_DEPENDENT_SCOPE=full` indexes.
-            let selected = self
-                .main_files
-                .iter()
-                .chain(&self.withheld)
-                .cloned()
-                .collect::<Vec<_>>();
-            let everything =
-                crate::analysis::workspace::with_module_context_files(&self.all_files, selected);
-            #[cfg(test)]
-            OBSERVED_REACH_BUILDS.with(|builds| builds.set(builds.get() + 1));
-            let index = build_index(
-                &self.root,
-                &everything,
-                &self.test_harnesses,
-                &mut self.consumed,
-            )?
-            .index;
-            self.reach_index.clear();
-            self.full_reach = Some(std::sync::Arc::new(index));
+        if self.full_reach.is_none()
+            && !self.full_declined
+            && !cached
+            && self.widened_builds >= REACH_INDEX_CAPACITY
+        {
+            let everything = self.full_selection_files();
+            // The main index refuses a selection past the hard limit before
+            // building it; narrowing may have admitted it only because it
+            // shrank that selection, so the shared index must not exceed it.
+            if everything.len() > hard_limit {
+                self.full_declined = true;
+            } else {
+                #[cfg(test)]
+                OBSERVED_REACH_BUILDS.with(|builds| builds.set(builds.get() + 1));
+                let index = build_index(
+                    &self.root,
+                    &everything,
+                    &self.test_harnesses,
+                    &mut self.consumed,
+                )?
+                .index;
+                self.reach_index.clear();
+                self.full_reach = Some(std::sync::Arc::new(index));
+            }
         }
         if self.full_reach.is_some() {
             return Ok(ReachIndex::Shared);
@@ -973,6 +996,18 @@ impl NarrowedScope {
             },
         )?;
         Ok(ReachIndex::Widened(index))
+    }
+
+    /// The pre-#5320 selection: the main files and every withheld dependent,
+    /// which is what `RIPR_DIFF_DEPENDENT_SCOPE=full` indexes.
+    fn full_selection_files(&self) -> Vec<PathBuf> {
+        let selected = self
+            .main_files
+            .iter()
+            .chain(&self.withheld)
+            .cloned()
+            .collect::<Vec<_>>();
+        crate::analysis::workspace::with_module_context_files(&self.all_files, selected)
     }
 
     /// The full-selection index once the run switched to it, else `None`.
@@ -1487,6 +1522,7 @@ mod tests {
             closures: std::collections::BTreeMap::new(),
             reach_index: Vec::new(),
             widened_builds: 0,
+            full_declined: false,
             full_reach: None,
             test_harnesses: Vec::new(),
             consumed: ConsumedRustSources::default(),

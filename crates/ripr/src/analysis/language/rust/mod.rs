@@ -2458,7 +2458,9 @@ impl RustAdapter {
                             || needs_mixed_macro_reach_limit(&finding) =>
                     {
                         match owner_name_from_id(&probe.owner, &probe.location.file) {
-                            Some(owner) => scope.reach_index(&owner, &index, narrow_limit)?,
+                            Some(owner) => {
+                                scope.reach_index(&owner, &index, narrow_limit, scope_limit)?
+                            }
                             None => dependent_scope::ReachIndex::Main,
                         }
                     }
@@ -3948,6 +3950,18 @@ mod tests {
             })
         };
         let (full, _) = run(DependentScopeMode::Full)?;
+        // A full selection past the hard index limit keeps the bounded
+        // per-closure cache: four closure builds, no shared index.
+        let (capped, capped_builds) =
+            dependent_scope::with_forced_hard_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(
+            capped, full,
+            "the hard-limit fallback must not change a finding"
+        );
+        assert_eq!(
+            capped_builds, 4,
+            "an oversized selection must not be indexed whole"
+        );
         let (named, builds) = run(DependentScopeMode::NameAdmitted)?;
         assert_eq!(named, full, "the shared index must not change a finding");
         assert_eq!(
