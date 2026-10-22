@@ -1915,6 +1915,77 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #9346: the issue's diff shape end to end — the actual two-probe
+/// shape from the live witness. The signature line of the production
+/// function changes (seeding a whole-function `static_unknown` probe at
+/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// reaches a decisive `exposed` verdict for the same function, and the
+/// discriminating test is added in `tests/` in the same working tree.
+/// Both production probes cover `discounted_total`, so Start here must
+/// lead with the decisive line-2 finding, not the limitation state.
+#[test]
+fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Result<(), String> {
+    let root = unique_temp_workspace("start-here-production");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create fixture root: {err}"))?;
+    let result = (|| {
+        init_producer_fixture_repo(&root).map_err(|err| format!("init producer fixture: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&lib).map_err(|err| format!("read lib: {err}"))?;
+        let changed = source
+            .replacen(
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
+                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                1,
+            )
+            .replacen(">= discount_threshold", "> discount_threshold", 1);
+        if changed == source || !changed.contains("> discount_threshold") {
+            return Err("fixture boundary must be present".to_string());
+        }
+        std::fs::write(&lib, changed).map_err(|err| format!("write lib: {err}"))?;
+        let tests = root.join("tests/pricing.rs");
+        let mut test_source =
+            std::fs::read_to_string(&tests).map_err(|err| format!("read tests: {err}"))?;
+        test_source.push_str(
+            "\n#[test]\nfn discount_at_threshold_keeps_full_amount() {\n    assert_eq!(discounted_total(100, 100), 100);\n}\n",
+        );
+        std::fs::write(&tests, test_source).map_err(|err| format!("write tests: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&["check", "--root", &root_arg]);
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    let stdout = result?;
+    let start_here = stdout
+        .split("Start here:")
+        .nth(1)
+        .ok_or_else(|| format!("check output omitted the Start-here block:\n{stdout}"))?;
+    let block = start_here
+        .split("\nHidden:")
+        .next()
+        .unwrap_or(start_here)
+        .split("\nMore:")
+        .next()
+        .unwrap_or(start_here);
+    assert!(
+        stdout.contains("1 unknown"),
+        "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
+    );
+    assert!(
+        !block.contains("limited by static analysis"),
+        "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
+    );
+    assert!(
+        block.contains("State: no gap selected for repair"),
+        "Start here must name the production finding's state:\n{block}"
+    );
+    assert!(
+        block.contains("src/lib.rs:2"),
+        "Start here must name the decisive line-2 production finding, not the fn-level unknown at line 1:\n{block}"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() -> sample_output::TestResult {
     // #4946(a): keep the real CLI and both recall notes on a small owned root.
@@ -3393,6 +3464,151 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         stderr.contains("diff_scope_oversized"),
         "stderr should still report failed analysis: {stderr}"
     );
+    Ok(())
+}
+
+/// #9277: a diff with one real edit and one file that alone trips the line cap,
+/// run from a throwaway workspace so no git history is involved.
+fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        dir.join("src/lib.rs"),
+        "pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    let big: String = (0..12)
+        .map(|index| format!("pub fn big_{index}() -> u32 {{ {index} }}\n"))
+        .collect();
+    std::fs::write(dir.join("src/big.rs"), &big).map_err(|err| format!("write big: {err}"))?;
+    let mut diff = String::from(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n\
+         -pub fn gate(a: i32) -> bool { a > 3 }\n+pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    );
+    diff.push_str(
+        "diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,12 @@\n",
+    );
+    for line in big.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    let diff_path = dir.join("change.diff");
+    std::fs::write(&diff_path, diff).map_err(|err| format!("write diff: {err}"))?;
+    Ok((dir, diff_path))
+}
+
+#[test]
+fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
+{
+    let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
+    let root = dir.display().to_string();
+    let diff = diff.display().to_string();
+    let cap = [("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")];
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ];
+        args.extend_from_slice(extra);
+        run_ripr_with_env(&args, &cap)
+    };
+
+    // The cap still fires with its own text, and now names the way out.
+    let refused = run(&[]);
+    assert_failure(&refused);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
+    assert!(stderr.contains("--path <glob>"), "{stderr}");
+
+    for flags in [
+        vec!["--exclude", "src/big.rs"],
+        vec!["--path", "src/lib.rs"],
+    ] {
+        let output = run(&flags);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let value: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
+        let outcome = &value["analysis_outcome"];
+        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        assert_eq!(
+            outcome["outcome"]["kind"], "partial_with_limitations",
+            "{flags:?}"
+        );
+        let limitations = outcome["outcome"]["limitations"]
+            .as_array()
+            .ok_or("limitations array")?;
+        assert!(
+            limitations.iter().any(|limitation| {
+                limitation["kind"] == "language_scope_unsupported"
+                    && limitation["bounded_detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("src/big.rs"))
+            }),
+            "{flags:?}: skipped file must be named: {outcome}"
+        );
+        let findings = value["findings"].as_array().ok_or("findings array")?;
+        assert!(!findings.is_empty(), "{flags:?}: the lib.rs finding stays");
+        assert!(
+            findings
+                .iter()
+                .all(|finding| !finding.to_string().contains("src/big.rs")),
+            "{flags:?}: a skipped file must never carry a finding"
+        );
+    }
+
+    // A scope that matches nothing is an error, not a clean result.
+    let nothing = run(&["--path", "nowhere/**"]);
+    assert_eq!(nothing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&nothing.stderr).contains("scope_filter_matched_nothing"),
+        "{}",
+        String::from_utf8_lossy(&nothing.stderr)
+    );
+
+    // A scope that keeps the oversized file still trips the guard.
+    let still_big = run(&["--path", "src/big.rs"]);
+    assert_failure(&still_big);
+    assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
+
+    // Reusable whole-diff outputs cannot carry a scoped result.
+    let artifact = dir.join("scoped-artifact.json").display().to_string();
+    let saved = run(&["--path", "src/lib.rs", "--write-artifact", &artifact]);
+    assert_eq!(saved.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&saved.stderr).contains("--write-artifact"),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    assert!(!std::path::Path::new(&artifact).exists());
+
+    // Malformed patterns and repo-scoped formats are refused up front.
+    let bad = run(&["--path", "../escape"]);
+    assert_eq!(bad.status.code(), Some(2));
+    let repo_format = run_ripr_with_env(
+        &[
+            "check",
+            "--root",
+            &root,
+            "--format",
+            "repo-exposure-json",
+            "--path",
+            "src/lib.rs",
+        ],
+        &cap,
+    );
+    assert_eq!(repo_format.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&repo_format.stderr).contains("repo-scoped"),
+        "{}",
+        String::from_utf8_lossy(&repo_format.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -31362,5 +31578,91 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
         "status must report no repair in progress:\n{status_out}\n{status_err}"
     );
     std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #9308: a Rust file over the nesting budget and outside the diff must show
+/// as a typed limitation in `check` JSON and in the pilot artifacts, on a cold
+/// and a warm run, instead of reading complete.
+#[test]
+fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), String> {
+    let root = unique_temp_workspace("declined-rust-file");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"declined_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub mod deep;\npub fn add(a: i32, b: i32) -> i32 {\n    if a > b { a } else { b }\n}\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    std::fs::write(
+        root.join("src/deep.rs"),
+        format!(
+            "pub fn deep() -> i32 {{ {}1{} }}\n",
+            "(".repeat(10_000),
+            ")".repeat(10_000)
+        ),
+    )
+    .map_err(|err| format!("write deep: {err}"))?;
+    let diff = root.join("change.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub mod deep;\n pub fn add(a: i32, b: i32) -> i32 {\n-    if a >= b { a } else { b }\n+    if a > b { a } else { b }\n }\n",
+    )
+    .map_err(|err| format!("write diff: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let diff_str = diff.to_string_lossy().into_owned();
+
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &diff_str, "--format", "json",
+    ]);
+    let check: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|err| format!("check JSON: {err}"))?;
+    assert_eq!(
+        check["analysis_outcome"]["analysis_complete"], false,
+        "{check}"
+    );
+    let detail = check["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        detail.contains("src/deep.rs (rust_nesting_budget)"),
+        "{detail}"
+    );
+
+    for run in ["cold", "warm"] {
+        let output = run_ripr(&["pilot", "--root", &root_str, "--format", "json"]);
+        let summary: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("pilot {run} JSON: {err}"))?;
+        assert_eq!(
+            summary["declined_rust_files"]["file_count"], 1,
+            "{run}: {summary}"
+        );
+        let exposure: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|err| format!("read exposure {run}: {err}"))?,
+        )
+        .map_err(|err| format!("exposure {run} JSON: {err}"))?;
+        assert_eq!(exposure["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(
+            exposure["limitations"][0]["category"],
+            "rust_files_declined"
+        );
+        assert_eq!(
+            summary["actionable_seams_total_is_lower_bound"], true,
+            "{run}: {summary}"
+        );
+        let packets: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))
+                .map_err(|err| format!("read packets {run}: {err}"))?,
+        )
+        .map_err(|err| format!("packets {run} JSON: {err}"))?;
+        assert_eq!(packets["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(packets["limitations"][0]["category"], "rust_files_declined");
+    }
+    ignore_remove_dir_all(&root);
     Ok(())
 }

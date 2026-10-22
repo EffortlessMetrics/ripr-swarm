@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 const EDIT_MARKER: &str = "\n// ripr dx-scoreboard editor-refresh edit\n";
 
 /// Terminal `ripr/analysisStatus` states; every other state is in flight.
-const TERMINAL_STATES: [&str; 4] = ["succeeded", "failed", "cancelled", "superseded"];
+const TERMINAL_STATES: [&str; 5] = ["succeeded", "failed", "cancelled", "superseded", "stopped"];
 
 /// How long to wait for the opening refresh to start before concluding the
 /// server already held analysis state and scheduled none.
@@ -96,7 +96,7 @@ pub(super) fn measure_editor_refresh(
     )?;
     // A didOpen the server already holds state for schedules no refresh, so
     // only wait for the opening refresh when one starts.
-    match session.wait_attempt(deadline, "did_open", Some(OPENING_GRACE)) {
+    match session.wait_attempt(deadline, None, Some(OPENING_GRACE)) {
         Wait::Terminal(state) if state != "succeeded" => {
             return Err(format!("opening refresh ended `{state}`"));
         }
@@ -122,7 +122,7 @@ pub(super) fn measure_editor_refresh(
     )?;
     // From here a stall or a crash is the product's behavior, not the
     // instrument's: report the elapsed time with a non-succeeded state.
-    let state = match session.wait_attempt(deadline, "did_save", None) {
+    let state = match session.wait_attempt(deadline, Some("did_save"), None) {
         Wait::Terminal(state) => state,
         Wait::NoAttempt | Wait::Deadline => "no_terminal_status".to_string(),
         Wait::Closed => "lsp_closed".to_string(),
@@ -162,7 +162,9 @@ fn changed_rust_file(checkout: &Path, base: &str) -> Result<Option<PathBuf>, Str
 /// A drive-absolute Windows path becomes `file:///C:/dir`, the form the
 /// server's URI parser reads.
 fn file_uri(path: &Path) -> String {
-    let text = path.display().to_string().replace('\\', "/");
+    let native = path.display().to_string().replace('\\', "/");
+    // `canonicalize` on Windows prefixes the drive path with `\\?\`; the server reads it without.
+    let text = native.strip_prefix("//?/").unwrap_or(&native);
     let drive = text.as_bytes();
     let drive_absolute = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     let mut uri = String::from("file://");
@@ -181,6 +183,101 @@ fn file_uri(path: &Path) -> String {
         }
     }
     uri
+}
+
+/// Follows one refresh through its statuses. Only an attempt started by this
+/// phase's own event counts (`reason`; `None` takes any), so an earlier request
+/// still in flight cannot stand in for it, and only a terminal status naming
+/// the adopted attempt ends the wait. An attempt that ends `superseded` hands
+/// over to the attempt that started after it, whatever started that one.
+struct AttemptTracker<'a> {
+    reason: Option<&'a str>,
+    current: Option<String>,
+    handed_over: bool,
+    seen_status: bool,
+    /// Every attempt id seen so far: a handover takes only an attempt first
+    /// seen after the adopted one, so a stale status re-published for an
+    /// older attempt cannot stand in.
+    seen_attempts: Vec<String>,
+    /// Attempts that started while another was adopted, with their terminal
+    /// state if it already arrived: the replacement can start before the
+    /// superseded attempt reports.
+    successors: Vec<(String, Option<String>)>,
+}
+
+impl<'a> AttemptTracker<'a> {
+    fn new(reason: Option<&'a str>) -> Self {
+        Self {
+            reason,
+            current: None,
+            handed_over: false,
+            seen_status: false,
+            seen_attempts: Vec::new(),
+            successors: Vec::new(),
+        }
+    }
+
+    fn seen_status(&self) -> bool {
+        self.seen_status
+    }
+
+    /// The terminal state once the adopted attempt ends.
+    fn observe(&mut self, status: AnalysisStatus) -> Option<String> {
+        let AnalysisStatus {
+            state,
+            attempt,
+            reason,
+        } = status;
+        if !TERMINAL_STATES.contains(&state.as_str()) {
+            // A started attempt ends the start grace; a terminal status
+            // re-published for an attempt never seen starting does not.
+            self.seen_status = true;
+            let is_new = attempt
+                .as_ref()
+                .is_some_and(|id| !self.seen_attempts.contains(id));
+            let adopt = if self.handed_over {
+                is_new && self.current.is_none()
+            } else {
+                self.reason.is_none() || reason.as_deref() == self.reason
+            };
+            if let (true, Some(id)) = (is_new, &attempt) {
+                self.seen_attempts.push(id.clone());
+                if !adopt && self.current.is_some() {
+                    self.successors.push((id.clone(), None));
+                }
+            }
+            if adopt {
+                self.current = attempt;
+            }
+            return None;
+        }
+        let id = attempt?;
+        if Some(&id) != self.current.as_ref() {
+            if let Some(entry) = self.successors.iter_mut().find(|(seen, _)| *seen == id) {
+                entry.1 = Some(state);
+            }
+            return None;
+        }
+        if state != "superseded" {
+            return Some(state);
+        }
+        self.current = None;
+        self.handed_over = true;
+        let mut pending = std::mem::take(&mut self.successors).into_iter();
+        while let Some((successor, ended)) = pending.next() {
+            match ended {
+                Some(state) if state == "superseded" => {}
+                Some(state) => return Some(state),
+                None => {
+                    self.current = Some(successor);
+                    // Later successors wait for this one to end in turn.
+                    self.successors = pending.collect();
+                    break;
+                }
+            }
+        }
+        None
+    }
 }
 
 struct RestoreFile {
@@ -299,19 +396,21 @@ impl Session {
     fn wait_attempt(
         &mut self,
         deadline: Instant,
-        reason: &str,
+        reason: Option<&str>,
         start_grace: Option<Duration>,
     ) -> Wait {
         let start_by = start_grace.map(|grace| Instant::now() + grace);
-        let mut current: Option<String> = None;
+        let mut tracker = AttemptTracker::new(reason);
         loop {
-            let limit = match (&current, start_by) {
-                (None, Some(start_by)) => start_by.min(deadline),
+            // The grace covers only the silence before the first status of
+            // any kind; once the server is busy the attempt may queue behind it.
+            let limit = match start_by {
+                Some(start_by) if !tracker.seen_status() => start_by.min(deadline),
                 _ => deadline,
             };
             let message = match self.next_message_until(limit) {
                 Ok(Some(message)) => message,
-                Ok(None) if current.is_none() && start_by.is_some_and(|by| by <= deadline) => {
+                Ok(None) if !tracker.seen_status() && start_by.is_some_and(|by| by <= deadline) => {
                     return Wait::NoAttempt;
                 }
                 Ok(None) => return Wait::Deadline,
@@ -320,24 +419,7 @@ impl Session {
             let Some(status) = analysis_status(&message) else {
                 continue;
             };
-            let AnalysisStatus {
-                state,
-                attempt,
-                reason: attempt_reason,
-            } = status;
-            if !TERMINAL_STATES.contains(&state.as_str()) {
-                // Only an attempt started by this phase's own event counts:
-                // an earlier request still in flight must not stand in for it.
-                if attempt_reason.as_deref() == Some(reason) {
-                    current = attempt;
-                }
-                continue;
-            }
-            if attempt.is_some() && attempt == current {
-                if state == "superseded" {
-                    current = None;
-                    continue;
-                }
+            if let Some(state) = tracker.observe(status) {
                 return Wait::Terminal(state);
             }
         }
@@ -470,6 +552,154 @@ mod tests {
 
     fn framed(body: &str) -> Vec<u8> {
         format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+    }
+
+    fn status(state: &str, attempt: &str, reason: &str) -> AnalysisStatus {
+        AnalysisStatus {
+            state: state.to_string(),
+            attempt: Some(attempt.to_string()),
+            reason: Some(reason.to_string()),
+        }
+    }
+
+    #[test]
+    fn file_uri_drops_the_windows_verbatim_prefix() {
+        let verbatim = ["\\\\?", "C:", "work", "x"].join("\\");
+        assert_eq!(file_uri(Path::new(&verbatim)), "file:///C:/work/x");
+    }
+
+    #[test]
+    fn a_stale_attempt_of_another_reason_does_not_stand_in_for_the_save() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("succeeded", "2", "did_save")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_superseded_save_hands_over_to_the_next_attempt_of_any_reason() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "config_reload")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_stopped_attempt_ends_the_wait_but_an_earlier_stopped_one_does_not() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("stopped", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("queued", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("stopped", "2", "did_save")),
+            Some("stopped".to_string())
+        );
+    }
+
+    #[test]
+    fn a_stale_older_attempt_after_handover_is_not_adopted() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(tracker.observe(status("running", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "watched_input")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "watched_input")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_republished_terminal_does_not_end_the_start_grace() {
+        let mut tracker = AttemptTracker::new(None);
+        assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
+        assert!(!tracker.seen_status());
+    }
+
+    #[test]
+    fn a_replacement_started_before_the_save_reports_superseded_is_adopted() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "config_reload")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_replacement_that_ended_before_the_supersession_report_counts() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("superseded", "2", "did_save")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_second_replacement_survives_the_first_handover() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("running", "4", "watched_input")),
+            None
+        );
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("superseded", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "4", "watched_input")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn the_opening_wait_takes_an_attempt_of_any_reason() {
+        let mut tracker = AttemptTracker::new(None);
+        assert!(!tracker.seen_status());
+        assert_eq!(
+            tracker.observe(status("running", "1", "config_reload")),
+            None
+        );
+        assert!(tracker.seen_status());
+        assert_eq!(
+            tracker.observe(status("succeeded", "1", "config_reload")),
+            Some("succeeded".to_string())
+        );
     }
 
     #[test]
