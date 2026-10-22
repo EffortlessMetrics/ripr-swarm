@@ -331,6 +331,18 @@ rejected alternative. Any can be reversed later without touching the rest.
    the direct path's owner-identity gates: every owner mention a readable
    call, no owner result bound with `let`, and no local shadow of the
    owner. Rejected: keep loop bindings unresolved.
+   One opening skip guard is read (cluster 12b, #6578): the loop body's first
+   statement `if SKIPPED.contains(&key) { continue; }`, with no `else` and no
+   label, where `key` is a name the loop pattern binds and `SKIPPED` is a
+   `const` slice of plain string literals declared exactly once in the test
+   file, with no attribute and named by no `use`. The assertion then runs only
+   for the rows the guard lets through, so a row whose key cell is listed
+   never selects an arm, and an unlisted row keeps the same standing as in a
+   loop without the guard. A key cell that is not a plain string literal
+   (no escape, no raw form), any other early exit, and any other shape of
+   guard leave the table unread, as before. Rejected: read every `continue`
+   as skipping nothing, which credits the listed row the harness never runs
+   (`mined-allowlisted-row-gopher`).
 
 ### Implementation Status
 
