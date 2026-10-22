@@ -17573,6 +17573,7 @@ tests = [
   "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_on_a_field_or_parameter_is_not_an_item_span",
   "xtask/src/reports/release_ledger/capture_tests.rs::editor_rust_is_scanned_and_same_line_product_edits_stay_product",
   "xtask/src/reports/release_ledger/capture_tests.rs::changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit",
+  "xtask/src/reports/release_ledger/capture_tests.rs::blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit",
   "xtask/src/reports/release_ledger/rule_tests.rs::inline_test_only_product_paths_count_as_evidence",
   "xtask/src/reports/release_ledger/capture_tests.rs::inline_test_edits_are_detected_per_hunk_from_real_git",
   "xtask/src/reports/release_ledger/rule_tests.rs::short_commit_ids_do_not_panic_the_override_reference",
