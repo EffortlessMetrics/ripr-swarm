@@ -245,8 +245,18 @@ fn item_end(code: &[char], start: usize) -> Option<usize> {
     while index < code.len() {
         match code[index] {
             '(' | '[' => nesting += 1,
-            ')' | ']' => nesting -= 1,
+            ')' | ']' => {
+                // An unmatched closer means the attribute sits inside an
+                // enclosing construct (a parameter or tuple field), not on an item.
+                if nesting == 0 {
+                    return None;
+                }
+                nesting -= 1;
+            }
             ';' if nesting == 0 => return Some(index),
+            // Likewise a field, variant or struct-literal entry: the item has no end
+            // of its own, and running on would swallow the next item.
+            '}' if nesting == 0 => return None,
             '{' if nesting == 0 => {
                 let mut depth = 0i64;
                 for (offset, ch) in code[index..].iter().enumerate() {

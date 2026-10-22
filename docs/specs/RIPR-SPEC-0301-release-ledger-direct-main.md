@@ -143,7 +143,8 @@ has lines. It is read from `git diff -U0` hunks against the first parent and the
 item spans of the file at the parent and at the commit. Spans come from a lexer
 that ignores braces in comments, strings, raw strings and char literals; an item
 it cannot close, a whole-file add or delete, a hunk-less change and a quoted path
-give no span and stay product. A span whose first or last line also holds other code
+give no span and stay product, as does an attribute on a field, variant or
+parameter (no item of its own ends before an enclosing closer). A span whose first or last line also holds other code
 gives no span either, because hunks are whole lines. A hunk that touches a span's
 attribute or closing line is a product change unless it is exactly the whole span, so a hunk that also adds a blank separator line
 around a new test module stays product (a conservative miss).
@@ -239,7 +240,8 @@ valid-ledger control that yields no reasons.
   `only_product_rust_files_are_candidates`,
   `a_span_sharing_a_line_with_other_code_is_not_a_span`,
   `touching_a_span_boundary_line_is_a_product_change`,
-  `an_escaped_quote_char_literal_is_blanked_whole`.
+  `an_escaped_quote_char_literal_is_blanked_whole`,
+  `cfg_test_on_a_field_or_parameter_is_not_an_item_span`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,

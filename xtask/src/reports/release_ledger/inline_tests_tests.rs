@@ -273,3 +273,23 @@ fn after() {}
         &format!("{:?}", test_spans(source)),
     )
 }
+
+#[test]
+fn cfg_test_on_a_field_or_parameter_is_not_an_item_span() -> Result<(), String> {
+    let field = "struct S {\n    #[cfg(test)]\n    field: u8,\n    other: u8,\n}\nfn product() {\n    let _ = 1;\n}\n";
+    let variant = "enum E {\n    #[cfg(test)]\n    A,\n    B,\n}\nfn product() {\n}\n";
+    let parameter = "fn f(\n    #[cfg(test)] x: u8,\n    y: u8,\n) {\n}\n";
+    let tuple = "struct T(#[cfg(test)] u8, u8);\nfn product() {\n}\n";
+    for (name, source) in [
+        ("field", field),
+        ("variant", variant),
+        ("parameter", parameter),
+        ("tuple field", tuple),
+    ] {
+        require(
+            test_spans(source).is_empty(),
+            &format!("{name}: {:?}", test_spans(source)),
+        )?;
+    }
+    Ok(())
+}
