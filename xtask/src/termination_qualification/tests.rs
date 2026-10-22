@@ -525,6 +525,27 @@ fn the_commit_in_a_version_line_binds_a_build_manifest() -> TestResult {
 }
 
 #[test]
+fn the_candidate_manifest_reader_takes_only_a_full_commit() -> TestResult {
+    use super::candidate_manifest::parse_candidate_sha;
+    let sha = "c7d6b397c5ea11d121800e32af890856f252d097";
+    let good = format!("{{\"schema\":\"x\",\"candidate\":{{\"sha\":\"{sha}\",\"tree\":\"t\"}}}}");
+    if parse_candidate_sha(&good)? != sha {
+        return Err("a full commit must be read back".to_string());
+    }
+    for bad in [
+        "{}",
+        "{\"candidate\":{\"sha\":\"c7d6b397\"}}",
+        "{\"candidate\":{\"sha\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}}",
+        "not json",
+    ] {
+        if parse_candidate_sha(bad).is_ok() {
+            return Err(format!("`{bad}` must be refused"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_family_takes_one_removal_control_only() -> TestResult {
     let args: Vec<String> = [
         "--binary",
@@ -1123,6 +1144,7 @@ mod unix_stubs {
                 "execution-owned-cwd",
                 "execution-stale-artifact",
                 "execution-snapshot-isolation",
+                "execution-cleanup-failure",
             ]
         {
             return Err(format!("unexpected execution controls: {ids:?}"));
