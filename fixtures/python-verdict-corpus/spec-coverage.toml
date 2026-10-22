@@ -26,7 +26,7 @@ floor = 51
 [grid]
 cell_floor = 21
 trap_floor = 17
-false_credit_ceiling = 4
+false_credit_ceiling = 0
 
 # LSP Repair Packet Command
 [[spec]]
