@@ -31364,3 +31364,89 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
     std::fs::remove_dir_all(&root)?;
     Ok(())
 }
+
+/// #9308: a Rust file over the nesting budget and outside the diff must show
+/// as a typed limitation in `check` JSON and in the pilot artifacts, on a cold
+/// and a warm run, instead of reading complete.
+#[test]
+fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), String> {
+    let root = unique_temp_workspace("declined-rust-file");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"declined_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub mod deep;\npub fn add(a: i32, b: i32) -> i32 {\n    if a > b { a } else { b }\n}\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    std::fs::write(
+        root.join("src/deep.rs"),
+        format!(
+            "pub fn deep() -> i32 {{ {}1{} }}\n",
+            "(".repeat(10_000),
+            ")".repeat(10_000)
+        ),
+    )
+    .map_err(|err| format!("write deep: {err}"))?;
+    let diff = root.join("change.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub mod deep;\n pub fn add(a: i32, b: i32) -> i32 {\n-    if a >= b { a } else { b }\n+    if a > b { a } else { b }\n }\n",
+    )
+    .map_err(|err| format!("write diff: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let diff_str = diff.to_string_lossy().into_owned();
+
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &diff_str, "--format", "json",
+    ]);
+    let check: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|err| format!("check JSON: {err}"))?;
+    assert_eq!(
+        check["analysis_outcome"]["analysis_complete"], false,
+        "{check}"
+    );
+    let detail = check["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        detail.contains("src/deep.rs (rust_nesting_budget)"),
+        "{detail}"
+    );
+
+    for run in ["cold", "warm"] {
+        let output = run_ripr(&["pilot", "--root", &root_str, "--format", "json"]);
+        let summary: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|err| format!("pilot {run} JSON: {err}"))?;
+        assert_eq!(
+            summary["declined_rust_files"]["file_count"], 1,
+            "{run}: {summary}"
+        );
+        let exposure: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|err| format!("read exposure {run}: {err}"))?,
+        )
+        .map_err(|err| format!("exposure {run} JSON: {err}"))?;
+        assert_eq!(exposure["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(
+            exposure["limitations"][0]["category"],
+            "rust_files_declined"
+        );
+        assert_eq!(
+            summary["actionable_seams_total_is_lower_bound"], true,
+            "{run}: {summary}"
+        );
+        let packets: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))
+                .map_err(|err| format!("read packets {run}: {err}"))?,
+        )
+        .map_err(|err| format!("packets {run} JSON: {err}"))?;
+        assert_eq!(packets["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(packets["limitations"][0]["category"], "rust_files_declined");
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}

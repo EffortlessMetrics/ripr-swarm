@@ -1,6 +1,6 @@
 mod attempt_inventory;
 mod framing;
-mod gaps;
+pub(crate) mod gaps;
 mod protocol;
 mod repair;
 mod repair_admission;

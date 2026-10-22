@@ -1,5 +1,5 @@
 <!-- section: Fixed -->
-- LSP: a stage report that arrives before the client has answered the
-  work-done progress create is now held and sent right after the begin, in
-  order, instead of being dropped, so the "loading input" stage no longer goes
-  missing from a fast refresh (#9362).
+- LSP: the stage reports held behind a work-done progress begin (#9362) are
+  now sent within the client request liveness bound, so an editor that stops
+  reading right after the begin can no longer keep the progress token from
+  ending.
