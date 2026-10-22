@@ -1349,6 +1349,10 @@ fn apply_probe_and_oracle_limits(
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
     classify::withhold_framework_oracle_gap(finding, index);
+    // RIPR-SPEC-0240 / #9440: an exact pin on a direct call whose changed
+    // tail is a closure, a returned-receiver effect or a let-else exit is a
+    // shape the owner pin does not read, not a missing assertion.
+    classify::withhold_pinned_shape_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

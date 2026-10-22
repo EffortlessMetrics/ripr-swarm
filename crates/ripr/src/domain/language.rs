@@ -454,6 +454,12 @@ pub enum StaticLimitKind {
     /// snapshot of a field no redaction names. The gap is withheld and the
     /// class is `static_unknown`. See RIPR-SPEC-0240.
     RustFrameworkOracleUnresolved,
+    /// A related direct-call test pins the owner's whole result with an exact
+    /// `assert_eq!`, but the changed code sits in a closure the call runs, a
+    /// statement acting on the returned value, or the `else` exit of a
+    /// `let ... else`: a shape the owner-return pin does not read. The gap is
+    /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #9440.
+    RustPinnedShapeUnresolved,
 }
 
 impl StaticLimitKind {
@@ -516,6 +522,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustCallFactBudget => "rust_call_fact_budget",
             StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
+            StaticLimitKind::RustPinnedShapeUnresolved => "rust_pinned_shape_unresolved",
         }
     }
 
@@ -658,6 +665,13 @@ impl StaticLimitKind {
                  insta snapshot kept outside the source), so ripr cannot say whether the check \
                  notices the change. ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustPinnedShapeUnresolved => {
+                "A related Rust test calls this code and pins its whole result with an exact \
+                 `assert_eq!`, but the change sits in a closure the call runs, a statement \
+                 acting on the returned value, or the `else` exit of a `let ... else`, and ripr \
+                 does not follow the pinned value through that shape. ripr does not claim a gap; \
+                 this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1002,6 +1016,10 @@ mod tests {
             StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
             "rust_framework_oracle_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustPinnedShapeUnresolved.as_str(),
+            "rust_pinned_shape_unresolved"
+        );
     }
 
     #[test]
@@ -1033,6 +1051,7 @@ mod tests {
             StaticLimitKind::RustDebugAssertionProfileUnresolved,
             StaticLimitKind::RustCallFactBudget,
             StaticLimitKind::RustFrameworkOracleUnresolved,
+            StaticLimitKind::RustPinnedShapeUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
