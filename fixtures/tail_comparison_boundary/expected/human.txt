@@ -19,7 +19,7 @@ Start here:
   Related test (1 of 4 matched rows): tests/orders.rs:4 big_order_ships_free (no test input reaches `items == 10`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
-    - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping, five_items_earn_a_gift
+    - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 16 more detail line(s) in --format human-full
 

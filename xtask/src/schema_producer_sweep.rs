@@ -90,19 +90,19 @@ const BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // Retained captures of past `ripr check` runs inside real-repo eval
+            // fixtures. They validate against the schema, but they are not
+            // bytes the candidate's build produced, so they stay edge fixtures.
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-corrected.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-original.json",
+            "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-weak.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
+            "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
         ],
         excluded: &[
             (
                 "fixtures/evidence-promotion-honesty-corpus/reports/",
                 "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
-            ),
-            (
-                "fixtures/evidence-quality-benchmark/",
-                "frozen captures of an earlier `ripr` build (schema_version 0.2) retained as benchmark evidence, not current producer output",
-            ),
-            (
-                "fixtures/python-real-repo-evals/",
-                "frozen captures of an earlier `ripr` build (schema_version 0.2) retained as eval evidence, not current producer output",
             ),
         ],
     },
@@ -166,7 +166,7 @@ const BINDINGS: &[Binding] = &[
         edge_fixtures: &[],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",
-            "hand-written `source_report` stimulus (null `command_specs` entries) read by check-evidence-promotion-honesty, not producer output",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
         )],
     },
     Binding {
@@ -176,7 +176,7 @@ const BINDINGS: &[Binding] = &[
         edge_fixtures: &[],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",
-            "hand-written `source_report` stimulus (null `command_specs` entries) read by check-evidence-promotion-honesty, not producer output",
+            "hand-written `source_report` stimulus (some carry `command_specs` with null roles) read by check-evidence-promotion-honesty, not producer output",
         )],
     },
     Binding {
@@ -1300,6 +1300,15 @@ mod tests {
             .and_then(|rest| rest.split("\n      - name:").next())
             .ok_or("rust-gates.yml has no `Schema producer sweep` step")?;
         assert!(step.contains("cargo xtask schema-producer-sweep"));
+        let guard = step
+            .find("\"$EVENT_NAME\" = \"pull_request\"")
+            .ok_or("pr-evidence and review-comments feeds are not guarded to pull_request")?;
+        for schema in ["pr-evidence", "review-comments"] {
+            let feed = step
+                .find(&format!("--artifact schemas/ripr/{schema}.schema.json="))
+                .ok_or_else(|| format!("sweep step does not feed {schema}"))?;
+            assert!(feed > guard, "{schema} feed sits outside the pull_request guard");
+        }
         for schema in ["doctor", "pr-evidence", "review-comments"] {
             assert!(
                 step.contains(&format!("--artifact schemas/ripr/{schema}.schema.json=")),

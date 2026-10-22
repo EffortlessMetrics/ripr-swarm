@@ -23,6 +23,7 @@ export type RiprStatusKind =
   | 'analysisRunning'
   | 'analysisReady'
   | 'analysisLimited'
+  | 'languageNotEnabled'
   | 'gapActionable'
   | 'gapNoAction'
   | 'gapArtifactWarning'
@@ -167,6 +168,8 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
       return '$(check) ripr: diagnostics';
     case 'analysisLimited':
       return '$(warning) ripr: limited';
+    case 'languageNotEnabled':
+      return '$(warning) ripr: language off';
     case 'gapActionable':
       return '$(lightbulb) ripr: gap ready';
     case 'gapNoAction':
@@ -205,6 +208,7 @@ export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefin
       };
     case 'stale':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'workspaceAmbiguous':
     case 'workspaceUntrusted':
     case 'gapArtifactWarning':

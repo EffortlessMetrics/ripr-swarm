@@ -298,3 +298,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (26)
+
+Reason:
+RIPR-SPEC-0197: a returned bare comparison (-> bool tail) now reads its resolved missing equality boundary (#9094), so the wrapper-reached ships_free return_value finding names items == 10 as a missing input (infection weak, same class)
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — tail_comparison_boundary (27)
+
+Reason:
+RIPR-SPEC-0001: diff-check reach evidence names only tests whose relation establishes reach (#9033)
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -516,6 +516,24 @@ covered_by = [
 ]
 
 [[allow]]
+glob = ".github/ovsx/package-lock.json"
+kind = "editor_extension_lockfile"
+owner = "lsp/editor"
+surface = "release"
+classification = "metadata"
+reason = "Pinned npm graph for the ovsx publisher used only by publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
+glob = ".github/ovsx/package.json"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "release"
+classification = "config"
+reason = "Manifest pinning ovsx for publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
 glob = "editors/vscode/package-lock.json"
 kind = "editor_extension_lockfile"
 owner = "lsp/editor"
@@ -815,6 +833,15 @@ reason = "Stdlib Python decision logic extracted from the pre-allocation admissi
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
 
 [[allow]]
+glob = "policy/release-ledger-overrides.json"
+kind = "release_ledger_overrides"
+owner = "release/control"
+surface = "release"
+classification = "config"
+reason = "Reviewed per-commit disposition overrides for the rows disposition rule v1 cannot judge (two-parent first-parent merges, empty diffs, unclassified paths); read by `cargo xtask release-ledger derive` (#2768)."
+covered_by = ["cargo test -p xtask release_ledger", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "policy/release-hard-cut-admission.json"
 kind = "release_hard_cut_packet"
 owner = "release/control"
@@ -822,6 +849,15 @@ surface = "ci"
 classification = "config"
 reason = "Base-owned 0.11 hard-cut admission packet read by the pre-allocation admission action; inactive by default, changed only by packet-only control PRs (#5391, #5114)."
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/release-selection.json"
+kind = "release_selection_packet"
+owner = "release/control"
+surface = "ci"
+classification = "config"
+reason = "Selected-claim packet for the 0.11 hard cut: one resolution per claim, the open release-check issue census and the open-PR roster at the cut (#2766)."
+covered_by = ["cargo xtask check-release-targets", "cargo test -p xtask --bin xtask release_selection"]
 
 # ---------------------------------------------------------------------------
 # Brand / assets

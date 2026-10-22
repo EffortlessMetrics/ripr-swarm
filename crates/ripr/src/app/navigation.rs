@@ -64,6 +64,11 @@ pub(crate) struct RepairRoute {
 pub(crate) enum RepairRouteRefusal {
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// The finding's file belongs to a language adapter whose findings the
+    /// seam inventory behind `ripr repair` cannot bind (#9102). The
+    /// inventory is built from the Rust index only, so no seam exists for
+    /// this file; a terminal state, not a stale id.
+    NoSeamInventory { language: String, file: String },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -92,6 +97,10 @@ impl RepairRouteRefusal {
             Self::NoCanonicalGap => format!(
                 "no repair start offered: the finding carries no canonical gap to bind a seam; {}",
                 gate()
+            ),
+            Self::NoSeamInventory { language, file } => format!(
+                "no repair start offered: {}",
+                super::task_first::no_seam_inventory_reason(language, file)
             ),
             Self::ConfigUnreadable => format!(
                 "no repair start offered: the root's config could not be read; {}",
@@ -280,13 +289,7 @@ pub(crate) fn finding_navigation_with_worktree(
     let args = navigation_args(input, artifact_path, mode_explicit, worktree);
     // `ripr check` has no `--from`: the listing always re-runs the original
     // scope, even when the drill-in commands replay a written artifact.
-    let mut list_args = navigation_args(input, None, mode_explicit, worktree);
-    // Unlike explain/context, check defaults to the worktree when it is dirty.
-    // Pin the committed listing so recovery cannot silently change its subject.
-    // Supplied patches and explicit worktree input already bind their source.
-    if !worktree && input.diff_file.is_none() && input.git_candidate.is_none() {
-        list_args.push_str(" --committed");
-    }
+    let list_args = navigation_args(input, None, mode_explicit, worktree);
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
         context_prefix: format!("ripr context {args}"),
@@ -346,6 +349,10 @@ fn navigation_args(
         }
         if worktree {
             args.push("--worktree".to_string());
+        } else if input.git_candidate.is_none() {
+            // All live CLI siblings default to the dirty worktree. A command
+            // for committed input must therefore carry its explicit source.
+            args.push("--committed".to_string());
         }
     }
 
@@ -558,6 +565,22 @@ mod tests {
                 "advisory must name the full-gate recovery: {advisory}"
             );
         }
+        // #9102: a non-Rust finding has no seam to bind, so the full gate
+        // would repeat the refusal; the advisory names the language, file
+        // and manual route instead of routing back to it.
+        let terminal = RepairRouteRefusal::NoSeamInventory {
+            language: "Python".to_string(),
+            file: "pricing/core.py".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            terminal.starts_with("no repair start offered: ")
+                && terminal.contains("covers Rust files only")
+                && terminal.contains("Python finding in `pricing/core.py`")
+                && terminal.contains("manual route")
+                && !terminal.contains("ripr repair probe:one"),
+            "terminal reason must name language, file and manual route: {terminal}"
+        );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
             budget.contains("seam budget") && budget.contains("wider seam budget"),
@@ -582,7 +605,7 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             format!(
-                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                "ripr explain --root {} --base origin/main --committed --mode draft probe:id",
                 bound(".")
             )
         );

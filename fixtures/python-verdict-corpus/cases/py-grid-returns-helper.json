@@ -1,0 +1,52 @@
+{
+  "case_id": "py-grid-returns-helper",
+  "subject_id": "authored-py-grid-returns",
+  "diff": "cases/py-grid-returns-helper.diff",
+  "anchor": {
+    "file": "grid_returns/core.py",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"\"",
+        "mutated_line": "return \"\"",
+        "outcome": "tests_failed",
+        "failing_test": "test_shout",
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      },
+      {
+        "replacement": "return \"xyzzy\"",
+        "mutated_line": "return \"xyzzy\"",
+        "outcome": "tests_failed",
+        "failing_test": "test_shout",
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: return value x helper-wrapped assert pinning HEY.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -93,7 +93,20 @@ Updated:
 ## Pending — rust_adversarial_shared_error_variant_proximity (8)
 
 Reason:
-RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down; printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
+
+Command:
+`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_adversarial_shared_error_variant_proximity (9)
+
+Reason:
+RIPR-SPEC-0001: diff-check reach evidence names only tests whose relation establishes reach (#9033)
 
 Command:
 `cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
