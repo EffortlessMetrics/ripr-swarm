@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-boundary",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "adfcd23eae3bc857271225d70c63b9e58d08db26685bcb336f4397403e6ad75c"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/boundary.ts",
+      "sha256": "34272b2c6b59675611f314b5c6319a9167d21ba3ae8c1a4d830b0ae4175bcb46"
+    },
+    {
+      "path": "test/boundary.test.ts",
+      "sha256": "278e3b1470c460cd9fe0ed334655df4c6b2b80a00225c41bf0eba6f8eec14742"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}
