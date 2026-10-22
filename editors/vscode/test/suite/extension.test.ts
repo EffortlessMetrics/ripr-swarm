@@ -115,6 +115,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -292,6 +295,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -5781,6 +5787,23 @@ function firstPrReadFile(
     }
     return value;
   };
+}
+
+/**
+ * In the untrusted host the repair actions must stay refused: the clipboard keeps
+ * its previous text for each diagnostic-scoped copy. Returns true when that was asserted, so the caller skips the
+ * copy expectations that only hold for a trusted workspace (#2769).
+ */
+async function repairPacketRefusedInUntrustedHost(): Promise<boolean> {
+  if (!shouldSkipTrustedTestHost(process.env.RIPR_TEST_WORKSPACE_TRUST)) {
+    return false;
+  }
+  await writeClipboardText('untrusted-repair-sentinel');
+  for (const command of ['ripr.copyFirstPrRepairPacket', 'ripr.copyFirstPrVerifyCommand', 'ripr.copyFirstPrReceiptCommand']) {
+    await vscode.commands.executeCommand(command);
+    assert.strictEqual(await currentClipboardText(), 'untrusted-repair-sentinel', command);
+  }
+  return true;
 }
 
 async function withCurrentFirstPrDiagnostic(
