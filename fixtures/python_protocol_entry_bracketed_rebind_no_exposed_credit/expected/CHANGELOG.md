@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_protocol_entry_bracketed_rebind_no_exposed_credit (2)
+
+Reason:
+RIPR-SPEC-0028: pin #9531 non-adjacent bracket-target controls while retaining weakly_exposed
+
+Command:
+`cargo xtask goldens bless python_protocol_entry_bracketed_rebind_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

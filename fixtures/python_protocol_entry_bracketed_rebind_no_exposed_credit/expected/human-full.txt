@@ -31,12 +31,14 @@ Static exposure
   weakly_exposed (warning, confidence 0.40)
 
 Evidence
-  - reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain
+  - reach weak: 3 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain
   - infection yes: Changed Python predicate can alter branch selection: `if not self.stop:`
   - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
   - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
   - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape
   - local flow reaches unknown sink: if not self.stop: (line 6) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_nr.py:16 test_reversed_after_nonadjacent_list_rebind uses no oracle
+  - related test tests/test_nr.py:10 test_reversed_after_nonadjacent_tuple_rebind uses no oracle
   - related test tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver uses no oracle
 
 Weakness

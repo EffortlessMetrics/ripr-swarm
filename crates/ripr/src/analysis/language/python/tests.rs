@@ -7349,6 +7349,9 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
 fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() -> Result<(), String>
 {
     for test_src in [
+        // A bracketed RHS or subscript target reads the bound receiver.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    other = (0, (r))\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    values = {}\n    (x, values[(r)]) = 1, 0\n    assert list(reversed(r)) == []\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
@@ -7369,6 +7372,11 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
 #[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
+        // Non-adjacent bracket targets replace the constructed receiver (#9531).
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_tuple():\n    r = numeric_range(0)\n    (x, (r)) = 2, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_list():\n    r = numeric_range(0)\n    [a, [r]] = [2, [[1]]]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nonadjacent_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)):\n        pass\n    assert list(reversed(r)) == [1]\n",
         // Another dunder's entry point does not reach `__reversed__`.
         "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
         // An unrelated receiver.

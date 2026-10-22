@@ -1343,7 +1343,7 @@ fn try_binds_stand_in(
         || suite_binds_stand_in(finalbody, name, test, owner)
 }
 
-fn target_binds_name(target: &Expr, name: &str) -> bool {
+pub(super) fn target_binds_name(target: &Expr, name: &str) -> bool {
     match target {
         Expr::Name(bound) => bound.id.as_str() == name,
         Expr::Tuple(tuple) => tuple

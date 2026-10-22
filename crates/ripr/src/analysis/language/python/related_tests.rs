@@ -741,7 +741,54 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || before.ends_with(',')
                     || before.ends_with('*')
                     || chained_or_bracketed_target(body, idx, before, after)
+                    || enclosing_bracketed_target_binds(body, idx, var)
             }
+    })
+}
+
+/// A complete single-line target can enclose the name without every bracket
+/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
+/// than treating every surrounding bracket as a binding: `values[(r)]` still
+/// reads `r`, including when it occurs inside a tuple assignment target.
+fn enclosing_bracketed_target_binds(body: &str, idx: usize, var: &str) -> bool {
+    use rustpython_parser::ast::{Mod, Stmt};
+
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let line = body[line_start..].lines().next().unwrap_or_default().trim();
+    let compound = ["for ", "async for ", "with ", "async with "]
+        .iter()
+        .any(|prefix| line.starts_with(prefix));
+    if !compound && !line.starts_with(['(', '[']) {
+        return false;
+    }
+    // Loop/with headers need a suite to parse. The common parser retains its
+    // nesting budget; this synthesized pass never executes user code.
+    let source = if compound {
+        format!("{line}\n    pass\n")
+    } else {
+        line.to_string()
+    };
+    let Ok(Mod::Module(module)) =
+        super::source_facts::parse_module_result(Path::new("<protocol-entry-target>"), &source)
+    else {
+        return false;
+    };
+    let binds = |target: &rustpython_parser::ast::Expr| {
+        super::sink_alignment::target_binds_name(target, var)
+    };
+    module.body.first().is_some_and(|stmt| match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(binds),
+        Stmt::For(loop_) => binds(&loop_.target),
+        Stmt::AsyncFor(loop_) => binds(&loop_.target),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        Stmt::AsyncWith(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        _ => false,
     })
 }
 
