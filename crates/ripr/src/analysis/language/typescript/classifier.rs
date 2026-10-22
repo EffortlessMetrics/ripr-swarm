@@ -6303,6 +6303,19 @@ fn ts_apply_post_ladder_rules(
         )];
         return;
     }
+    // A module scalar constant a test compares to the very literal the edit
+    // wrote: the test passes on the edited value, so no assertion notices it.
+    if let Some(literal) = super::probe_shape::module_scalar_constant_literal(context.line_text)
+        && ts_candidates_expect_literal(context.candidates, &context.owner.name, literal)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change sets `{}` to `{literal}`, and a related test already expects that value, so it passes on the edit. Assert a value the edit changes, or pin the previous value.",
+            context.owner.name
+        )];
+        return;
+    }
     if let Some(callee) = ts_rule8_mocked_changed_callee(
         context.probe_shape,
         context.line_text,
@@ -7473,6 +7486,40 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
     } else {
         (is_identifier(&new) && copied(&old)? == new).then_some(new)
     }
+}
+
+/// A string literal without its quotes, so `'x'` and `"x"` compare equal.
+fn ts_unquoted(text: &str) -> &str {
+    ['\'', '"', '`']
+        .iter()
+        .find_map(|quote| text.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(text)
+}
+
+/// Two literal texts denote one value. Quotes only drop when both sides are
+/// quoted strings, so `11` and `'11'` (number vs string) stay different.
+fn ts_same_literal(a: &str, b: &str) -> bool {
+    let quoted = |text: &str| ts_unquoted(text).len() != text.len();
+    quoted(a) == quoted(b) && ts_unquoted(a) == ts_unquoted(b)
+}
+
+/// `true` when an oracle-bearing related test asserts the bare `owner` against
+/// exactly `literal` (`expect(LIMIT).toBe(11)`).
+fn ts_candidates_expect_literal(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &str,
+    literal: &str,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate.test.assertions.iter().any(|assertion| {
+                assertion.observed_expression.as_deref().map(str::trim) == Some(owner)
+                    && assertion
+                        .expected_value_or_variant
+                        .as_deref()
+                        .is_some_and(|expected| ts_same_literal(expected.trim(), literal))
+            })
+    })
 }
 
 /// `true` when a related test that grants oracle credit pins identity. A
