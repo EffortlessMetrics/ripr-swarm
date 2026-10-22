@@ -118,3 +118,20 @@ fn a_same_named_function_from_another_module_is_not_a_pin() -> Result<(), String
     assert_eq!(boolean_pin_credits("bool-pin-foreign", ADULT, &test)?.1, 0);
     Ok(())
 }
+
+#[test]
+fn renamed_and_namespace_imports_of_the_owner_are_pins() -> Result<(), String> {
+    let renamed =
+        node_test("  assert.ok(adult(18));").replace("{ isAdult }", "{ isAdult as adult }");
+    assert_eq!(
+        boolean_pin_credits("bool-pin-renamed", ADULT, &renamed)?,
+        (1, 1)
+    );
+    let namespace =
+        node_test("  assert.ok(!adults.isAdult(17));").replace("{ isAdult }", "* as adults");
+    assert_eq!(
+        boolean_pin_credits("bool-pin-namespace", ADULT, &namespace)?,
+        (1, 1)
+    );
+    Ok(())
+}
