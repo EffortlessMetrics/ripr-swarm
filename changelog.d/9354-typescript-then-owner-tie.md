@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript test that asserts inside a `.then` with a rejection handler (or an async `forEach`) now ties to the changed owner when the chain is laid out across lines, or the owner is a member call (`this.owner(x)`, `ns.owner(x)`) or a generic call (`owner<T>(x)`), so those shapes read `static_unknown` instead of an actionable `weakly_exposed`. A chain started by another call, or an earlier statement, keeps the old verdict (#9354).
