@@ -5137,9 +5137,13 @@ mod harness_limitation_assertion_tests {
         assert!(evidence_promotion_case_is_diff_sourced(Some(
             "does-not-need-to-exist.patch"
         )));
-        assert!(!evidence_promotion_case_is_diff_sourced(Some(
-            "does-not-need-to-exist"
-        )));
+        // An absolute path keeps the negative control independent of the cwd:
+        // a relative name could resolve to a `diff.patch` under the ambient cwd.
+        let missing_dir = std::env::temp_dir().join("ripr-8657-no-such-plain-dir");
+        assert!(!missing_dir.exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            missing_dir.to_str()
+        ));
         assert!(!evidence_promotion_case_is_diff_sourced(None));
         // Absolute paths: the check reads the filesystem, and other xtask
         // tests move the process cwd to the repo root. A relative
