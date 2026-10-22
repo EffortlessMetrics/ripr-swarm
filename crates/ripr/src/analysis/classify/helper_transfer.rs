@@ -34,6 +34,8 @@ pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 mod field_projection;
 #[cfg(test)]
 mod method_hop_tests;
+#[cfg(test)]
+mod multi_caller_tests;
 mod receiver_value;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
@@ -798,12 +800,90 @@ pub(crate) fn resolve_chain(
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
     if callers.len() > 1 {
-        return stopped(format!(
-            "callee `{callee_name}` has {} callers; multi-caller binding is not transferred at this bound",
-            callers.len()
-        ));
+        return resolve_multi_caller(callee_name, &callers, index, workspace_complete, visited);
     }
-    let caller = callers[0];
+    chain_through_caller(callers[0], callee_name, index, workspace_complete, visited)
+}
+
+/// The most callers [`resolve_multi_caller`] binds one by one (#9329). A
+/// callee with more direct callers declines as before.
+const MAX_MULTI_CALLER_BINDINGS: usize = 8;
+
+/// A callee with more than one direct caller (#9329). The chain binds per
+/// resolvable caller: each caller is resolved on its own, and the chain is
+/// the one caller a test actually reaches. A caller no test reaches
+/// contributes nothing, so `Display::fmt` calling the same formatter as
+/// `to_string_as` neither binds nor blocks.
+///
+/// Fail closed: the chain declines, with the multi-caller edge named, when
+/// no caller is reached, when two callers are both reached (the tests'
+/// call path to the callee is ambiguous), or when the callee has more than
+/// [`MAX_MULTI_CALLER_BINDINGS`] callers. A reached caller whose hop does
+/// not bind carries its own stop edge instead of a chain.
+fn resolve_multi_caller(
+    callee_name: &str,
+    callers: &[&FunctionSummary],
+    index: &RustIndex,
+    workspace_complete: bool,
+    visited: &[String],
+) -> HelperChain {
+    let declined = |detail: &str| HelperChain {
+        hops: Vec::new(),
+        stop_above: Some(format!(
+            "callee `{callee_name}` has {} callers; multi-caller binding is not transferred at this bound{detail}",
+            callers.len()
+        )),
+    };
+    if callers.len() > MAX_MULTI_CALLER_BINDINGS {
+        return declined("");
+    }
+    let mut reached: Vec<HelperChain> = Vec::new();
+    for caller in callers {
+        let chain = chain_through_caller(caller, callee_name, index, workspace_complete, visited);
+        let mut entries: Vec<String> = vec![caller.name.clone()];
+        let above = if chain.hops.is_empty() {
+            let mut next_visited = visited.to_vec();
+            next_visited.push(callee_name.to_string());
+            resolve_chain(&caller.name, index, workspace_complete, &next_visited).hops
+        } else {
+            chain.hops.clone()
+        };
+        entries.extend(above.iter().map(|hop| hop.caller.name.clone()));
+        // A test that calls the callee itself reaches it by a path of its
+        // own, so it counts as reached (a test is never a hop).
+        if caller.source_role.registers_executable_test() || tests_call_any(index, &entries) {
+            reached.push(chain);
+        }
+    }
+    match reached.len() {
+        0 => declined("; no related test reaches any of them"),
+        1 => reached.remove(0),
+        _ => declined("; related tests reach more than one of them"),
+    }
+}
+
+/// Whether any test in the index calls one of `names` (by call-fact name; a
+/// same-named method call counts, which only makes the caller look reached).
+fn tests_call_any(index: &RustIndex, names: &[String]) -> bool {
+    index
+        .tests()
+        .iter()
+        .any(|test| test.calls.iter().any(|call| names.contains(&call.name)))
+}
+
+/// The chain through one `caller` of `callee_name`: a direct free call, or
+/// the method hop, then whatever resolves above `caller`.
+fn chain_through_caller(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+    workspace_complete: bool,
+    visited: &[String],
+) -> HelperChain {
+    let stopped = |edge: String| HelperChain {
+        hops: Vec::new(),
+        stop_above: Some(edge),
+    };
     let Some(sites) = call_sites(caller, callee_name) else {
         // #9329: not a direct free call. A receiver call of a unique
         // inherent method on the caller's own typed parameter is the one
