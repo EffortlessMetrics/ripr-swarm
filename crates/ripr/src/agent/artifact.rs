@@ -689,6 +689,7 @@ fn validate_artifact_identity(
     identity: ArtifactIdentity,
     spec: &ArtifactIdentitySpec,
 ) -> Result<ValidatedArtifact, String> {
+    let subject = format!("agent verify {label} artifact");
     if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
@@ -716,7 +717,7 @@ fn validate_artifact_identity(
     if identity.producer.version != env!("CARGO_PKG_VERSION") {
         return Err(foreign_producer_refusal(
             root,
-            &format!("agent verify {label} artifact"),
+            &subject,
             &identity.producer.version,
         ));
     }
