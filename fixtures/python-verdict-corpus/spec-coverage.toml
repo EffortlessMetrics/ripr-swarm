@@ -643,11 +643,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # spec or the analyzer, never in an exclusion.
 
 [[known_false]]
-case = "py-shapes-async-default"
-issue = 9412
-reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
-
-[[known_false]]
 case = "py-shapes-context-exit-record"
 issue = 9412
 reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
