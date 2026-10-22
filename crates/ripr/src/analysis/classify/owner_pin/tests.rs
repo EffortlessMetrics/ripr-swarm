@@ -12197,6 +12197,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // A plain import that binds the root name, by path or by `{self}`,
+        // takes it over for the module.
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {

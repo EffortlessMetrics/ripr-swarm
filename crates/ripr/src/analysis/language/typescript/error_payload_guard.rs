@@ -708,6 +708,16 @@ pub(crate) fn error_payload_credits(
             };
             facts.separates(|candidate| candidate == message)
         }
+        Kind::ThrowsRegex | Kind::RejectsThrowRegex => {
+            if !facts.message_only {
+                return true;
+            }
+            let Some(literal) = plain_anchored_regex_text(&payload.expected) else {
+                return false;
+            };
+            // Jest and Vitest test the regex against `error.message`.
+            facts.separates(|candidate| candidate == literal)
+        }
         Kind::AssertThrowsRegex | Kind::AssertRejectsRegex => {
             if !facts.message_only {
                 return true;

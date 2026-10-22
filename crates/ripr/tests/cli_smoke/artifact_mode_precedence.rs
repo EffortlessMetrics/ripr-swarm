@@ -116,7 +116,7 @@ fn context_artifact_navigation_preserves_mode_precedence() -> Result<(), String>
             .pointer("/witness/explain_command")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| format!("context must provide explain command: {packet}"))?;
-        let words = shell_words::posix_words(command)?;
+        let words = shell_words::printed_words(command)?;
         let actual_mode = words
             .windows(2)
             .find(|pair| pair[0] == "--mode")

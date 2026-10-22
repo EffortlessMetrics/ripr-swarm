@@ -575,7 +575,7 @@ fn matching_close_brace(body: &str, open: usize) -> Option<usize> {
 
 /// Comma-separated items of `text` at bracket depth zero, trimmed and
 /// non-empty.
-fn top_level_items(text: &str) -> Vec<&str> {
+pub(super) fn top_level_items(text: &str) -> Vec<&str> {
     let mut items = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -643,7 +643,7 @@ fn literal_value(text: &str) -> Option<String> {
 
 /// Occurrences of `word` in `text` not joined to an identifier character on
 /// either side.
-fn whole_word_count(text: &str, word: &str) -> usize {
+pub(super) fn whole_word_count(text: &str, word: &str) -> usize {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     text.match_indices(word)
         .filter(|(at, _)| {
@@ -788,7 +788,7 @@ fn is_bare_owner_call(value: &str, owner_name: &str) -> bool {
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
-fn matching_paren(text: &str, open: usize) -> Option<usize> {
+pub(super) fn matching_paren(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0usize;
     for (at, ch) in text[open..].char_indices() {
         match ch {
@@ -809,7 +809,7 @@ fn matching_paren(text: &str, open: usize) -> Option<usize> {
 /// a condition, a match, a loop, a closure, an early exit, `?` or a
 /// short-circuit `&&`/`||`. Comments and strings count too, which only
 /// refuses more.
-fn has_control_flow(body: &str) -> bool {
+pub(super) fn has_control_flow(body: &str) -> bool {
     [
         "if", "match", "for", "while", "loop", "return", "break", "continue",
     ]
@@ -819,7 +819,7 @@ fn has_control_flow(body: &str) -> bool {
         || body.contains("&&")
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()

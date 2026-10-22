@@ -286,6 +286,23 @@ pub(crate) fn build_baseline_update_remove_resolved(
                         disclosed_analyzer_version(current_analyzer_version.as_deref()),
                     ));
                     kept_entries.push(entry.clone());
+                } else if input.remove_resolved
+                    && let Some(reason) =
+                        crate::output::baseline_delta::absence_not_evaluated_reason(
+                            current.get("analysis_scope"),
+                            string_field(entry.get("path"))
+                                .or_else(|| string_field(entry.pointer("/placement/path")))
+                                .as_deref(),
+                        )
+                {
+                    // ISSUE #9301 F2: delta buckets this absence as
+                    // not_evaluated, so update must keep the live debt.
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence but not evaluated: {reason}",
+                        identity.sort_key()
+                    ));
+                    kept_entries.push(entry.clone());
                 } else if input.remove_resolved {
                     removed_resolved += 1;
                 } else {
@@ -784,6 +801,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/gone.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": [
             {"decision": "advisory", "seam_id": "same", "static_class": "weakly_gripped", "placement": {"path": "src/same.rs", "line": 1}, "evidence": {}},
             {"decision": "blocking", "seam_id": "new", "static_class": "weakly_gripped", "placement": {"path": "src/new.rs", "line": 9}, "evidence": {}}
@@ -1014,6 +1032,7 @@ mod tests {
         let current = r#"{
           "schema_version": "0.1",
           "root": ".",
+          "analysis_scope": {"scope": "diff_scoped_changed_files", "changed_production_files": ["src/gone.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0},
           "decisions": [
             {
               "decision": "advisory",
@@ -1383,6 +1402,7 @@ mod tests {
             r#"{{
           "schema_version": "0.1",
           "subject": {{ "analyzer_version": {version} }},
+          "analysis_scope": {{"scope": "diff_scoped_changed_files", "changed_production_files": ["src/pricing.rs"], "cap_omitted_seams": 0, "omitted_by_policy": 0}},
           "decisions": []
         }}"#
         )
