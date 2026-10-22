@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "tokio_spawn_await_unwrap",
-  "hard_case": "ripr reads the spawned-and-joined test as smoke_only (from `.await.unwrap()`) and misses the assert_eq inside the spawned block.",
+  "hard_case": "The assert_eq sits inside a spawned async block whose JoinHandle is awaited and unwrapped; ripr used to read the test as smoke_only (from `.await.unwrap()`) and miss that assertion (RIPR-SPEC-0197 now credits a joined `tokio::spawn` block that holds no `return` or `?`).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
