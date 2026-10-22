@@ -1,2 +1,0 @@
-<!-- section: Docs -->
-- The 0.11 release notes open their upgrade section with a link to the 0.10 to 0.11 upgrade guide, and the cut checklist and release copy checklist now require the published GitHub Release body to be read back non-empty and to point to that guide, because the v0.9.0 and v0.10.0 bodies were published empty and the notes now cover `ripr check --path` / `--exclude`, declined Rust files reading as limited, and the unresolved-boundary message (#7454, #7474, #9277, #9308, #9276).

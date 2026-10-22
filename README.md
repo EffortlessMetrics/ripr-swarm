@@ -60,6 +60,10 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
+> This section uses the published 0.10 release. The output at the top of this
+> page, `--worktree`, and the repair flow come from the 0.11 development
+> build, installed further down this page.
+
 Install the published CLI, then run it in a Rust repository on a branch with
 committed changes. The 0.10 release resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
@@ -82,6 +86,11 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ripr check
 ```
+
+The `export PATH` change lasts only for the current shell. To keep `ripr`
+available in future sessions, move the extracted binary onto your permanent
+PATH (for example `mv ripr ~/.local/bin/`, adding `~/.local/bin` to PATH in
+your shell profile if it is not already there).
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -107,7 +116,8 @@ base branch itself there are no changed files, and ripr says so. A result with
 no findings or limited evidence is not a clean bill of health.
 
 Use `ripr doctor` to diagnose setup when a check cannot complete; it is not a
-required step before analysis. For whole-repository exploration when there is
+required step before analysis. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) For whole-repository exploration when there is
 no active diff, use `ripr pilot --root .` with the development build below.
 
 Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
