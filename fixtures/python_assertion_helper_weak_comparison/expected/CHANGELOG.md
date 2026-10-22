@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_weak_comparison (5)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 bounded Evidence legend on new current-main fixture; preserve current JSON, human-full and discriminator facts
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_weak_comparison --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
