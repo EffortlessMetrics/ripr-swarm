@@ -87,7 +87,9 @@ jobs:
     name: windows-advisory
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
-    timeout-minutes: 90
+    # Above the sum of the step deadlines below (15+30+15+30+30), so even when
+    # every cargo step times out the summarizer still runs and reports it.
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v6
@@ -231,11 +233,11 @@ jobs:
           { echo "head=$(git rev-parse HEAD)"; rustc -Vv; cargo -V; printf 'command='; printf '%q ' "${command[@]}"; printf '\n'; } | tee target/nested-alias-isolated-env.log
           for run in 1 2 3; do
             set +e
-            "${command[@]}" 2>&1 | tee "target/nested-alias-isolated-$run.log"
-            statuses=("${PIPESTATUS[@]}")
+            "${command[@]}" > "target/nested-alias-isolated-$run.log" 2>&1
+            status=$?
             set -e
-            printf '%s\n' "${statuses[0]}" > "target/nested-alias-isolated-$run.status"
-            test "${statuses[1]}" -eq 0 || { echo "run $run: log capture failed" >&2; exit 1; }
+            printf '%s\n' "$status" > "target/nested-alias-isolated-$run.status"
+            cat "target/nested-alias-isolated-$run.log"
           done
 
       - name: Summarize isolated nested-alias repeats (#4377)
