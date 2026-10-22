@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Adds a dispatch-only `windows-editor-hang-hunt.yml` that repeats only the trusted packaged editor journey in four parallel Windows shards against a locally built server, capping each iteration at 15 minutes and keeping redacted VS Code host logs and a process snapshot for every iteration, so the intermittent trusted-journey hang can be reproduced and diagnosed (#9526, #2769).

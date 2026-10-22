@@ -446,6 +446,17 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **Logs are redirected, not piped.** Each cargo step writes its log with a
+  file redirect and replays it with `cat`. A `| tee` pipe stays open until
+  every process holding its write end exits, so one test leaking a child kept
+  the step alive after cargo finished until the 90-minute job limit cancelled
+  the whole lane (#9272, run 39549631529). Each cargo step also carries its
+  own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
+  no status file, which the summarizer reports as missing evidence. The job
+  deadline (150 minutes) exceeds the sum of the cargo step deadlines, so
+  those steps alone cannot exhaust it (setup, summary compilation and the
+  manual isolation repeats have no separate deadline). The manual nested-alias
+  isolation repeats use the same redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -460,7 +471,9 @@ and single-platform CI was the root cause enabling both.
   pull requests labeled `windows-ci` or `full-ci`.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, the VS Code managed-server install lock suite under
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
+  the Windows process-ownership (`process_owner::tests`), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, the VS Code managed-server install lock suite under
   plain mocha on Node (#9498), and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
