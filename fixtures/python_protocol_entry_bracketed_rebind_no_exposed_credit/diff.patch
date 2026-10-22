@@ -1,0 +1,12 @@
+diff --git a/src/nr.py b/src/nr.py
+--- a/src/nr.py
++++ b/src/nr.py
+@@ -3,7 +3,7 @@ class numeric_range:
+         self.stop = stop
+ 
+     def __reversed__(self):
+-        if self.stop:
++        if not self.stop:
+             return iter(())
+         return iter(range(self.stop - 1, -1, -1))
+ 

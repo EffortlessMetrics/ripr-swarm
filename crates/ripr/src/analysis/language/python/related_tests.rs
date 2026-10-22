@@ -784,8 +784,16 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     plain_assign(rest)
         || (rest.starts_with(',')
             && opener_is_target_position(head.get(line_start.min(head.len())..).unwrap_or("")))
-        || rest.starts_with("in ")
+        // `in` binds only as a loop target (`for (r) in items`); a membership
+        // test such as `assert ((r)) in items` rebinds nothing.
+        || (rest.starts_with("in ") && ends_with_word(head.trim_end(), "for"))
         || head.trim_end().ends_with(" as")
+}
+
+/// Whether `text` ends with the whole word `word`.
+fn ends_with_word(text: &str, word: &str) -> bool {
+    text.strip_suffix(word)
+        .is_some_and(|rest| !rest.ends_with(is_python_identifier_char))
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position

@@ -7352,6 +7352,8 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
         "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        // A membership test is not a binding, however many brackets wrap the name.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    assert ((r)) in items\n    assert list(reversed(r)) == []\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
         assert_eq!(

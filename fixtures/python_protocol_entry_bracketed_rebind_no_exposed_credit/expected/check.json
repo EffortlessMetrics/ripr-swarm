@@ -1,0 +1,101 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:85f2563a25addd6f60c47008b336373d2bf3b262312b6e2f011ad5cc28ed512e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_nr.py:python_preview:852b3ff0",
+      "canonical_gap_id": "gap:python:src/nr.py:numeric_range.__reversed__:predicate_boundary:predicate:not_self.stop",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/nr.py:numeric_range.__reversed__:predicate_boundary:predicate:not_self.stop",
+        "language": "python",
+        "file": "src/nr.py",
+        "owner": "numeric_range.__reversed__",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "not_self.stop"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_nr.py:python_preview:852b3ff0",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/nr.py",
+        "line": 6,
+        "expression": "        if not self.stop:",
+        "owner": "python:src/nr.py::numeric_range.__reversed__"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if not self.stop:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
+       },
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain", "infection yes: Changed Python predicate can alter branch selection: `if not self.stop:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if not self.stop: (line 6)", "related test tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver uses no oracle"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if not self.stop:","line":6}
+      ],
+      "evidence": ["owner: numeric_range.__reversed__", "owner_kind: method", "test_framework: pytest (test_reversed_after_rebinding_the_receiver)", "test_verify_command: python -m pytest tests/test_nr.py::test_reversed_after_rebinding_the_receiver (test_reversed_after_rebinding_the_receiver)", "related_test_relation: dunder_protocol (test_reversed_after_rebinding_the_receiver)", "related_test_uncertain: dunder_protocol (test_reversed_after_rebinding_the_receiver)"],
+      "missing": ["Only heuristic Python test links were found for `__reversed__`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_reversed_after_rebinding_the_receiver",
+          "file": "tests/test_nr.py",
+          "line": 4,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "changed_sink": "stop",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/nr.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/nr.py","digest":"sha256:339600afb56e419d27d7a1eb73adbf51d1961471c9fee8a225566e65c3d69b53"}]}
+}
