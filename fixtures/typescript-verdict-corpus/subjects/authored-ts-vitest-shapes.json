@@ -1,0 +1,153 @@
+{
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "version_label": "authored@2026-10-22",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "4f7e4cc38dfa245440a5fb6a9a4777874cdd8c141710d5a3a1558491875645db"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/account.ts",
+      "sha256": "08c1b93977049fd897893eb14036d6d73cc8e1ee65534bc7b8bbb921ad021268"
+    },
+    {
+      "path": "src/barrel/index.ts",
+      "sha256": "ec970014c26a1145c1616cd9b1b705f10d4f364c42414d3f579adebbe5e35fcc"
+    },
+    {
+      "path": "src/barrel/pricing.ts",
+      "sha256": "404f09686da670f6bce568528f5c9c49fde7a6922d30cea83e9cbd18a7b4511c"
+    },
+    {
+      "path": "src/barrel/rates.ts",
+      "sha256": "d21c6e0b038fc915e7ff3038813ce6ac70d3a99b40fd1a4e50a67e853fc2a11c"
+    },
+    {
+      "path": "src/barrel/units.ts",
+      "sha256": "7503a61c2cef3be372b1a2714bc1855f66661dfdbc08a7acce85df980a5c2fb2"
+    },
+    {
+      "path": "src/counter.ts",
+      "sha256": "766d462582da3d1fe19feffad77012b704e40791ff4ab1e27a4bee0082fca42d"
+    },
+    {
+      "path": "src/displayName.ts",
+      "sha256": "a71f38a90add4f98de1cddd7628008d8a55c3e4a578ffec37f0076b5b896648e"
+    },
+    {
+      "path": "src/firstOr.ts",
+      "sha256": "2d5e540767eeb677b1bec0f61bbaaef80f234d49c3928ffa1951cfbaa73ba66f"
+    },
+    {
+      "path": "src/level.ts",
+      "sha256": "406c30f021aa4a40c6be9d13974332c8716e716384f62bd4e5e4eef70cbdf5b3"
+    },
+    {
+      "path": "src/loadOrDefault.ts",
+      "sha256": "d47b41dc2144ded82310c70735f6da4842c94328ebf71422199be7e1e41513c0"
+    },
+    {
+      "path": "src/mathx.ts",
+      "sha256": "ff3a193e449a548c59acbffde012d4cbf4c2d2bcda7b9ed37d0bb1488689d4cd"
+    },
+    {
+      "path": "src/pad.ts",
+      "sha256": "be273428345ac86e2485a99187a642524a4a73fd093c25884cf8fef4fc528a78"
+    },
+    {
+      "path": "src/parsePort.ts",
+      "sha256": "e0fe0976d1f560f20a6c42b09bafb85016c0efe336a2c40c0344c0c91060722a"
+    },
+    {
+      "path": "src/plural.ts",
+      "sha256": "e5c698666e87d7f214159be5f80d3d515d4a81bfa5bbdbe76db1d86df9d25314"
+    },
+    {
+      "path": "src/range.ts",
+      "sha256": "3c7c4c5d76a78da29fcc6bcaa864d6cde94d7c7066c3a13e194738b9b2491a4a"
+    },
+    {
+      "path": "src/shapes.ts",
+      "sha256": "ab4365d51dc96780c328aad6ad6fac7defd79e3ecc457a3129a6d1a05affc11b"
+    },
+    {
+      "path": "src/tax.ts",
+      "sha256": "fc0c690c3585da04e2f957b39d7d52932f30841b3710e43b176cdd5c383e536b"
+    },
+    {
+      "path": "src/temperature.ts",
+      "sha256": "93826ed3b8505024e2b5c97a685857d5ef31ff8fd50f10588581e1395f65a1fc"
+    },
+    {
+      "path": "test/account.test.ts",
+      "sha256": "a77ae9a471ac47db3af4133224e3d73bf20388f00a3bd37feacb5ba5214917b6"
+    },
+    {
+      "path": "test/barrel.test.ts",
+      "sha256": "4b3b3f497f54f67a655ccc1842a1b235cbc7d7233b519d2f07a321bfed6fd8e4"
+    },
+    {
+      "path": "test/counter.test.ts",
+      "sha256": "f20ce02a18acff781c058333cae5ee56d2f28200cd7c68ed64ae9dbd76bd693c"
+    },
+    {
+      "path": "test/displayName.test.ts",
+      "sha256": "507ebdc6cd6bb31f01a003bd6b0977f878c8931f9296f67a43f93005df57f0e3"
+    },
+    {
+      "path": "test/firstOr.test.ts",
+      "sha256": "b9db6ada630b5a4281864b7f33ae415847b0717d1e38224c4dd6fd8e9d8deb92"
+    },
+    {
+      "path": "test/level.test.ts",
+      "sha256": "79a54e3e5eecf90a060687dbb758e2134ccbc68cfe7ae3b39da9fcd2715830a6"
+    },
+    {
+      "path": "test/loadOrDefault.test.ts",
+      "sha256": "7355949a3be2c1d6f87d521fb4c739487f02e42ef8ea6e032d870c11bb6a1565"
+    },
+    {
+      "path": "test/mathx.test.ts",
+      "sha256": "368d700822d3005040c904b4fc66060be4baef832dd3158918dadcb011c74e70"
+    },
+    {
+      "path": "test/pad.test.ts",
+      "sha256": "0742fbd5d9a7aecde7a54a863a9075e55a76b87ae94adc77ddfd52bf5253bddb"
+    },
+    {
+      "path": "test/parsePort.test.ts",
+      "sha256": "1db23b96907f90e3b70465d10d26b76eb1eba480239c184765030bd32646ba85"
+    },
+    {
+      "path": "test/plural.test.ts",
+      "sha256": "f656fd6c7db0f23d6438a8301c62bfec72cf05c5899036021233b5cedd19eade"
+    },
+    {
+      "path": "test/range.test.ts",
+      "sha256": "c555331155689be76b1e5dafc722e0350430fefffaccb0f20d69fedcdbe524e6"
+    },
+    {
+      "path": "test/shapes.test.ts",
+      "sha256": "fdd282710d2f013676373eba97162daeede87ba2835d2923670591c8fd54f0cc"
+    },
+    {
+      "path": "test/tax.test.ts",
+      "sha256": "3e3a52b0bab8543abdf651da2d121101cf062b80e12b850114be2448b85522b8"
+    },
+    {
+      "path": "test/temperature.test.ts",
+      "sha256": "13a99b16eda511ca8d99e9911a90280b3db519189e4f8c21da618c124325d89e"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "09bdf63ee5798e8387796d3a50b6c9ce249e67c25e23e9878cb36205877819cc"
+    }
+  ]
+}

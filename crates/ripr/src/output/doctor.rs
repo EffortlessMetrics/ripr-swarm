@@ -780,6 +780,10 @@ pub(crate) enum DoctorPerlExporterState {
     Incompatible,
     /// No candidate answered `--version`.
     NotFound,
+    /// A PATH hit resolved inside the analyzed checkout and was not run
+    /// (#5349): doctor does not execute code from the checkout it diagnoses
+    /// unless the user sets the repo-Perl opt-in.
+    Refused,
 }
 
 /// The Perl fact exporter doctor probed for.
@@ -2474,7 +2478,9 @@ fn join_doctor_pipe_reader(
 }
 
 /// Translate the report's overall status into the doctor command's exit
-/// result.
+/// result. The CLI adapter maps the failure onto
+/// `CommandError::Decision` (exit 3, #5102): the report was rendered, so
+/// failed checks are a completed typed answer, not could-not-complete.
 pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> {
     match report.status {
         DoctorStatus::Pass => Ok(()),

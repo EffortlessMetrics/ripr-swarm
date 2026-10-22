@@ -17,6 +17,7 @@ use super::owner_pin::closure_adaptor::{
     AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
 };
 use super::reveal::assertion_comparison_operands;
+use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
@@ -1100,10 +1101,21 @@ fn owner_call_arguments_admit_activation_fallback(
     } else {
         compared
     };
+    // A `slice.len()` operand over a parameter reads the cardinality of a
+    // literal `&[..]` argument. Other literal slices in the call carry no
+    // scalar for activation to mistake for the boundary, so they stay
+    // admissible; the witness row itself is keyed to the receiver's position.
+    let slice_len_operand = [left.as_str(), right.as_str()].into_iter().any(|operand| {
+        operand
+            .strip_suffix(".len()")
+            .is_some_and(|receiver| parameter_index(&parameters, receiver).is_some())
+    });
     indices.iter().all(|&idx| {
-        arguments
-            .get(idx)
-            .is_some_and(|argument| argument_is_activation_fallback_shape(argument.trim()))
+        arguments.get(idx).is_some_and(|argument| {
+            let argument = argument.trim();
+            argument_is_activation_fallback_shape(argument)
+                || (slice_len_operand && literal_slice_length(argument).is_some())
+        })
     })
 }
 

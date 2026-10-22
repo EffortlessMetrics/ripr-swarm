@@ -111,6 +111,7 @@ fn check_typescript(label: &str, tests: &[(&str, &str)]) -> Result<TypeScriptChe
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;
