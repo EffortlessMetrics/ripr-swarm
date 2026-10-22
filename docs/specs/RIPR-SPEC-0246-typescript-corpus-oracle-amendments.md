@@ -208,8 +208,8 @@ actionable gap and credits nothing.
 The receiver is the call chain the `.then(` hangs from. When the `.then(`
 leads its own line (the prettier layout) the receiver runs back through the
 lines that continue the chain (they begin with `.`) and the one line that
-opens it, and stops at a `;` or a blank line, so an earlier statement is
-never read as the receiver. The owner call may be a bare call, a member call
+opens it, and stops at a line holding a `;` (which is not read) or a blank
+line, so an earlier statement is never read as the receiver. The owner call may be a bare call, a member call
 whose receiver is an identifier chain (`this.owner(x)`, `ns.owner(x)`,
 `a?.owner(x)`), or a generic call (`owner<T>(x)`); the member of a call or
 index result (`f().owner(x)`, `a[0].owner(x)`) is some other receiver and

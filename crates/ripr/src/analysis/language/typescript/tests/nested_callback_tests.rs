@@ -898,7 +898,11 @@ fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
             "  ready(cfg);\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
         (
-            "earlier-statement-without-semicolon",
+            "adjacent-earlier-line-without-semicolon",
+            "  const a = ready(cfg)\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "earlier-statement-after-a-blank-line",
             "  const a = ready(cfg)\n\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
         (
@@ -912,6 +916,10 @@ fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
         (
             "longer-name",
             "  return readyNow(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "unspaced-comparison-not-generic",
+            "  return ready<cfg.max && check(x).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
         (
             "comparison-not-generic",
