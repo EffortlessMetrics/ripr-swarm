@@ -1912,6 +1912,54 @@ mod tests {
         Ok(())
     }
 
+    /// The production path (`running_executable` into the regeneration
+    /// guidance) under the real Linux stimulus: a process whose executable was
+    /// unlinked reports `current_exe()` as `/path (deleted)` (#9665 item 1).
+    /// The test re-runs itself as a copied, self-unlinking child so the parent
+    /// binary stays intact; the child writes the guidance it rendered.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_running_executable_renders_bare_ripr_through_production_path() -> Result<(), String>
+    {
+        const CHILD_OUT: &str = "RIPR_TEST_UNLINKED_EXE_OUT";
+        if let Ok(out) = std::env::var(CHILD_OUT) {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
+            let guidance = repo_exposure_regeneration_guidance(Path::new("."));
+            return std::fs::write(out, guidance).map_err(|e| e.to_string());
+        }
+        let dir = std::env::temp_dir().join(format!("ripr-unlinked-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let copy = dir.join("ripr-lib-test-copy");
+        let out = dir.join("guidance.txt");
+        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &copy)
+            .map_err(|e| e.to_string())?;
+        let status = std::process::Command::new(&copy)
+            .args([
+                "--exact",
+                "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
+                "--test-threads=1",
+            ])
+            .env(CHILD_OUT, &out)
+            .status()
+            .map_err(|e| e.to_string())?;
+        let guidance = std::fs::read_to_string(&out).map_err(|e| format!("no child output: {e}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        if !status.success() {
+            return Err(format!("child test run failed: {status}"));
+        }
+        let guidance = guidance?;
+        if guidance.contains("(deleted)") {
+            return Err(format!("recovery names a deleted executable: {guidance}"));
+        }
+        if !guidance.contains("`ripr check --root") || !guidance.contains("`ripr --version`") {
+            return Err(format!(
+                "no bare-ripr fallback with version check: {guidance}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn legacy_recovery_binds_relative_root_and_does_not_invent_label_flags() -> Result<(), String> {
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
