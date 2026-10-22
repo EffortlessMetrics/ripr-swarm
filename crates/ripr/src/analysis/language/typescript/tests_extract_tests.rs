@@ -913,3 +913,40 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};"), vec!["wrap".to_string()]);
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
+
+/// A skipped suite registers nothing and its callback never runs, so a
+/// registration inside it is not a dropped one. The active-but-unwalked
+/// registration beside it is still disclosed.
+#[test]
+fn skipped_describe_registrations_are_not_a_partial_extraction() {
+    let file = Path::new("test/rank.test.ts");
+    for header in [
+        "describe.skip(\"medal\", () => {",
+        "describe.only.skip(\"medal\", () => {",
+        "describe.todo(\"medal\", () => {",
+        "describe(\"medal\", { skip: true }, () => {",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\n{header}\n  it(\"awards bronze\", () => {{ expect(medal(50)).toBe(\"bronze\"); }});\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{header}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{header}"
+        );
+    }
+    // Control: the same registration under an active describe-shaped
+    // helper callback stays disclosed, and so does one under an active
+    // `describe` that is unwalked because it sits in a helper function.
+    for source in [
+        "import { medal } from \"../src/rank\";\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+        "import { medal } from \"../src/rank\";\ndescribe.skip(\"medal\", () => {});\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_some(),
+            "{source}"
+        );
+    }
+}
