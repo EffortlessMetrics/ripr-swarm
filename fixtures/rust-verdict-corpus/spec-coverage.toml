@@ -859,21 +859,6 @@ reason = "Match-arm selector domain through a bounded caller loop is not derived
 
 
 [[known_false]]
-case = "shape-thread-join-result"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-sort-direction-truncate"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-let-else-branch-pinned"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
 case = "shape-hostile-owner-as-path-value"
 issue = 9442
 reason = "Owner referenced as a path value is not followed (#9442)."
@@ -898,36 +883,6 @@ reason = "Macro-defined owner is not resolved (#9442)."
 case = "shape-cast-truncation-mask"
 issue = 9444
 reason = "Cast truncation mask case (#9444)."
-
-[[known_false]]
-case = "shape-closure-returned-adder"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-collect-result-short-circuit"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-impl-trait-return-filter"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
-
-[[known_false]]
-case = "shape-op-add-impl"
-issue = 9441
-reason = "Implicit-call impl is not followed (#9441)."
-
-[[known_false]]
-case = "shape-drop-impl-side-effect"
-issue = 9441
-reason = "Implicit-call Drop impl is not followed (#9441)."
-
-[[known_false]]
-case = "shape-dyn-trait-method-exact"
-issue = 9441
-reason = "Dyn-trait method call is not followed (#9441)."
 
 [[known_false]]
 case = "shape-async-fn-block-on"
