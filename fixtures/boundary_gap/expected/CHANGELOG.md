@@ -1069,8 +1069,14 @@ same-file assertion-wrapper limit (RIPR-SPEC-0120, #7089), with the same
 scope: generation, content commitment, dependent verify commitments and
 receipt byte hashes only.
 
-### one-line else-if ladder classified-cache generation parity
+### pinned-shape limit classified-cache generation parity
 
 The same snapshots follow corpus cache generation 1.95 to 1.96 for the
+pinned-shape limit (RIPR-SPEC-0240, #9440), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### one-line else-if ladder classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.96 to 1.97 for the
 one-line `else if` ladder tail (#9630), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.

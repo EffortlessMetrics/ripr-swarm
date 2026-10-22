@@ -2053,3 +2053,52 @@ fn a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder() -> Result<(), String>
     );
     Ok(())
 }
+
+const ROUTE_OWNER: &str = "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/b\")\ndef f():\n    return 1\n";
+
+#[test]
+fn a_route_decorator_edit_needs_a_client_call_to_the_route() -> Result<(), String> {
+    let direct = "from src.shop import f\n\n\ndef test_f():\n    assert f() == 1\n";
+    assert_eq!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", direct)?,
+        ExposureClass::StaticUnknown
+    );
+    // A body edit on the same handler keeps its ordinary reading.
+    assert_eq!(
+        classify(ROUTE_OWNER, 8, "    return 2", direct)?,
+        ExposureClass::Exposed
+    );
+    let client = "def test_f(client):\n    assert client.get(\"/b\").json == 1\n";
+    assert_ne!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", client)?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), String> {
+    // Stacked and multi-line decorators route to the decorated function, so
+    // its decorator-indirection limit applies (#9756).
+    let test = "from src.shop import flaky\n\n\ndef test_flaky():\n    assert flaky() == 1\n";
+    for (owner, line, old) in [
+        ("@retry(2)\ndef flaky():\n    return 1\n", 1, "@retry(3)"),
+        (
+            "@cache\n@retry(2)\ndef flaky():\n    return 1\n",
+            2,
+            "@retry(3)",
+        ),
+        (
+            "@retry(\n    2,\n)\ndef flaky():\n    return 1\n",
+            2,
+            "    3,",
+        ),
+    ] {
+        assert_eq!(
+            classify(owner, line, old, test)?,
+            ExposureClass::StaticUnknown,
+            "{owner}"
+        );
+    }
+    Ok(())
+}

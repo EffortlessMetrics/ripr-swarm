@@ -492,9 +492,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.95`: a same-file assertion wrapper beside a proximity-only oracle names
 /// `rust_macro_wrapped_assertion_unresolved` (RIPR-SPEC-0120, #7089). Old
 /// entries keep the weak gap.
-/// `1.96`: a one-line `else if` ladder tail flows its first arm to the
+/// `1.96`: an exact pin on a closure tail, returned-receiver effect or
+/// let-else exit withholds the gap under `rust_pinned_shape_unresolved`
+/// (#9440). Old entries keep it weakly exposed.
+/// `1.97`: a one-line `else if` ladder tail flows its first arm to the
 /// returned value (#9630). Old entries keep the unknown propagation.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.96";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -636,8 +639,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.96";
 /// `0.100`: same Display string pin as full `1.93`.
 /// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
-/// `0.103`: same one-line ladder tail as full `1.96`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.103";
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same one-line ladder tail as full `1.97`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -781,8 +785,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.103";
 /// `0.100`: same Display string pin as full `1.93`.
 /// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
-/// `0.103`: same one-line ladder tail as full `1.96`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.103";
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same one-line ladder tail as full `1.97`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4744,8 +4749,9 @@ mod tests {
         // 1.92 -> 1.93: write-only `Display::fmt` pinned by `to_string()` (RIPR-SPEC-0297, #9608).
         // 1.93 -> 1.94: fixture-receiver and recording-double limits (RIPR-SPEC-0240, #9609, #9610).
         // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
-        // 1.95 -> 1.96: one-line `else if` ladder tail (#9630).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.96");
+        // 1.95 -> 1.96: pinned-shape limit (RIPR-SPEC-0240, #9440).
+        // 1.96 -> 1.97: one-line `else if` ladder tail (#9630).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.97");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4829,9 +4835,10 @@ mod tests {
         // 0.99 -> 0.100: same Display string pin as full 1.93.
         // 0.100 -> 0.101: same fixture-receiver and recording-double limits as full 1.94.
         // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
-        // 0.102 -> 0.103: same one-line ladder tail as full 1.96.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.103");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.103");
+        // 0.102 -> 0.103: same pinned-shape limit as full 1.96.
+        // 0.103 -> 0.104: same one-line ladder tail as full 1.97.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
     }
 
     #[test]
