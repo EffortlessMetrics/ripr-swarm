@@ -112,6 +112,12 @@ and points to one next focused test action; it does not run mutation testing,
 edit source files, or configure CI policy. If analysis exceeds the timeout,
 pilot-summary.json and pilot-summary.md are written with status=partial and an
 explicit retry command.
+
+Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
+not the exit code, is the verdict, and a stderr line discloses this at the
+time it happens. CI must gate on pilot-summary.json's top-level `status`
+field (`complete` vs `partial`), never on the exit code alone, or a timed-out
+run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
