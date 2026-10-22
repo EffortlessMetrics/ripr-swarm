@@ -931,6 +931,11 @@ mod tests {
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
+        // #9807: help names the volatile timing fields, the byte-stable
+        // default, and the opt-in that restores them.
+        assert!(DOCTOR_HELP.contains("--timings"));
+        assert!(DOCTOR_HELP.contains("byte-stable"));
+        assert!(DOCTOR_HELP.contains("elapsed_ms"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
