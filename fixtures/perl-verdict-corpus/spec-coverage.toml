@@ -560,8 +560,3 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
-
-[[known_false]]
-case = "perl-testmore-tier-far-from-boundary"
-issue = 8979
-reason = "False exposed: test inputs far from the changed threshold; needs the row-owned discriminator fact from perl-lsp-swarm#17237, consumed by #5562."
