@@ -801,6 +801,25 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
+      # Native proof for the Windows process-ownership and LSP-terminality
+      # controls (#3803, #3802, #3807): the only place these Windows-gated tests
+      # run without the 90-minute full suite. Outcomes stay advisory; a missing
+      # log/status or a filter that executes no test fails the job below.
+      - name: Run process-ownership subset (advisory, #3803)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib process_owner::tests 2>&1 | tee target/subset-process-owner.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-process-owner.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-process-owner.log" >&2; exit 1; fi; exit 0
+
+      - name: Run xtask timed-capture subset (advisory, #3803)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p xtask capture_output_with 2>&1 | tee target/subset-xtask-capture.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-xtask-capture.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-xtask-capture.log" >&2; exit 1; fi; exit 0
+
+      - name: Run LSP initialize-failure subset (advisory, #3802)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib initialize_surfaces_poisoned 2>&1 | tee target/subset-lsp-initialize.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-lsp-initialize.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-lsp-initialize.log" >&2; exit 1; fi; exit 0
+
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1275,7 +1294,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
+            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1297,11 +1316,11 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-process-owner subset-xtask-capture subset-lsp-initialize; do
             if [ "$(cat "target/${label}.status")" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
@@ -1369,6 +1388,12 @@ jobs:
             target/subset-cache-warning.status
             target/subset-clippy.log
             target/subset-clippy.status
+            target/subset-process-owner.log
+            target/subset-process-owner.status
+            target/subset-xtask-capture.log
+            target/subset-xtask-capture.status
+            target/subset-lsp-initialize.log
+            target/subset-lsp-initialize.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status
