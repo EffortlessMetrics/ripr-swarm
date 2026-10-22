@@ -57,6 +57,30 @@ fn file_findings(
     test: &str,
     items: &str,
 ) -> Result<(Value, Value), String> {
+    let json = check_json(signature, new, old, test, items)?;
+    let family = |name: &str| family_finding(&json, name);
+    Ok((family("return_value")?, family("predicate")?))
+}
+
+fn family_finding(json: &Value, name: &str) -> Result<Value, String> {
+    json["findings"]
+        .as_array()
+        .and_then(|findings| {
+            findings
+                .iter()
+                .find(|finding| finding["probe"]["family"] == name)
+                .cloned()
+        })
+        .ok_or_else(|| format!("no {name} finding: {json}"))
+}
+
+fn check_json(
+    signature: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+    items: &str,
+) -> Result<Value, String> {
     let source = format!(
         "pub fn {signature} {{\n    {new}\n}}\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn owner_is_checked() {{\n        {test}\n    }}\n}}\n"
     );
@@ -76,20 +100,8 @@ fn file_findings(
         include_unchanged_tests: true,
         ..CheckInput::default()
     })?;
-    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
-        .map_err(|error| error.to_string())?;
-    let family = |name: &str| {
-        json["findings"]
-            .as_array()
-            .and_then(|findings| {
-                findings
-                    .iter()
-                    .find(|finding| finding["probe"]["family"] == name)
-                    .cloned()
-            })
-            .ok_or_else(|| format!("no {name} finding: {json}"))
-    };
-    Ok((family("return_value")?, family("predicate")?))
+    serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())
 }
 
 fn propagate(finding: &Value) -> &str {
@@ -231,5 +243,44 @@ fn hex_boundary_is_not_read_from_its_leading_digit() -> Result<(), String> {
         "assert_eq!(count_positive(&[0, 200]), 1);",
     )?;
     assert_ne!(predicate["classification"], "exposed", "{predicate}");
+    Ok(())
+}
+
+/// #9490: a `map` over the slice parameter collected into `Result<Vec<..>, ..>`
+/// keeps every closure value on the `Ok` path and returns the first `Err`
+/// otherwise, so an exact pin of the whole result credits the change like the
+/// `Vec` collect.
+#[test]
+fn map_collect_into_result_vec_is_credited() -> Result<(), String> {
+    let signature = "parse_all(xs: &[&str]) -> Result<Vec<u32>, std::num::ParseIntError>";
+    let new = "xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()";
+    let old = "xs.iter().map(|s| s.parse::<u32>()).collect()";
+    let test = "assert_eq!(parse_all(&[\"1\", \"2\"]), Ok(vec![1, 2]));";
+    let json = check_json(signature, new, old, test, "")?;
+    let returned = family_finding(&json, "return_value")?;
+    assert_eq!(returned["classification"], "exposed", "{returned}");
+    Ok(())
+}
+
+/// #9490 controls: an empty input never runs the closure, and a `Result` the
+/// owner's file rebinds is not the standard one, so neither credits.
+#[test]
+fn map_collect_into_result_vec_keeps_its_controls() -> Result<(), String> {
+    let signature = "parse_all(xs: &[&str]) -> Result<Vec<u32>, std::num::ParseIntError>";
+    let new = "xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()";
+    let old = "xs.iter().map(|s| s.parse::<u32>()).collect()";
+    let pinned = "assert_eq!(parse_all(&[\"1\", \"2\"]), Ok(vec![1, 2]));";
+    let empty = "assert_eq!(parse_all(&[]), Ok(vec![]));";
+    let json = check_json(signature, new, old, empty, "")?;
+    let returned = family_finding(&json, "return_value")?;
+    assert_ne!(returned["classification"], "exposed", "empty: {returned}");
+    for items in [
+        "\ntype Result<T, E> = std::result::Result<Option<T>, E>;\n",
+        "\nuse std::result::Result as Outcome;\nenum Result<T, E> { Ok(T), Err(E) }\n",
+    ] {
+        let json = check_json(signature, new, old, pinned, items)?;
+        let returned = family_finding(&json, "return_value")?;
+        assert_ne!(returned["classification"], "exposed", "{items}: {returned}");
+    }
     Ok(())
 }
