@@ -195,6 +195,9 @@ struct AttemptTracker<'a> {
     current: Option<String>,
     handed_over: bool,
     seen_status: bool,
+    /// Every attempt id seen so far: a handover takes only a new attempt, so
+    /// a stale status re-published for an older one cannot stand in.
+    seen_attempts: Vec<String>,
 }
 
 impl<'a> AttemptTracker<'a> {
@@ -204,6 +207,7 @@ impl<'a> AttemptTracker<'a> {
             current: None,
             handed_over: false,
             seen_status: false,
+            seen_attempts: Vec::new(),
         }
     }
 
@@ -213,15 +217,26 @@ impl<'a> AttemptTracker<'a> {
 
     /// The terminal state once the adopted attempt ends.
     fn observe(&mut self, status: AnalysisStatus) -> Option<String> {
-        self.seen_status = true;
         let AnalysisStatus {
             state,
             attempt,
             reason,
         } = status;
         if !TERMINAL_STATES.contains(&state.as_str()) {
-            let wanted =
-                self.handed_over || self.reason.is_none() || reason.as_deref() == self.reason;
+            // A started attempt ends the start grace; a terminal status
+            // re-published for an attempt never seen starting does not.
+            self.seen_status = true;
+            let is_new = attempt
+                .as_ref()
+                .is_some_and(|id| !self.seen_attempts.contains(id));
+            let wanted = if self.handed_over {
+                is_new
+            } else {
+                self.reason.is_none() || reason.as_deref() == self.reason
+            };
+            if let (true, Some(id)) = (is_new, &attempt) {
+                self.seen_attempts.push(id.clone());
+            }
             if wanted {
                 self.current = attempt;
             }
@@ -563,6 +578,31 @@ mod tests {
             tracker.observe(status("stopped", "2", "did_save")),
             Some("stopped".to_string())
         );
+    }
+
+    #[test]
+    fn a_stale_older_attempt_after_handover_is_not_adopted() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(tracker.observe(status("running", "1", "did_open")), None);
+        assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "watched_input")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "3", "watched_input")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_republished_terminal_does_not_end_the_start_grace() {
+        let mut tracker = AttemptTracker::new(None);
+        assert_eq!(tracker.observe(status("succeeded", "1", "did_open")), None);
+        assert!(!tracker.seen_status());
     }
 
     #[test]
