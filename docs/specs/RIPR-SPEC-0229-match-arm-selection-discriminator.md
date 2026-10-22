@@ -343,7 +343,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    statement `if SKIPPED.contains(&key) { continue; }`, with no `else` and no
    label, where `key` is a name the loop pattern binds and `SKIPPED` is a
    `const` slice of plain string literals declared exactly once in the test
-   file, with no attribute and named by no `use`. The assertion then runs only
+   file, with no attribute, named by no `use`, and with no glob import in the
+   file (except `super::*` inside an inline `mod`) that could bring in another
+   `SKIPPED`. The guard is read in its rustfmt spelling (`contains(&key)`);
+   any other spacing leaves the table unread. The assertion then runs only
    for the rows the guard lets through, so a row whose key cell is listed
    never selects an arm, and an unlisted row keeps the same standing as in a
    loop without the guard. A key cell that is not a plain string literal

@@ -4387,7 +4387,31 @@ fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
         .filter_map(ast::AnyHasName::cast)
         .filter(|named| named.name().is_some_and(|bound| bound.text() == name));
     let declaration = ast::Const::cast(declarations.next()?.syntax().clone())?;
-    if declarations.next().is_some()
+    // A glob import may bring in another module's `name`, and this reads the
+    // file's only declaration, so any glob but `super::*` inside an inline
+    // `mod` (which re-exports this file's own names) leaves the binding open.
+    let globbed = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let inline_super = item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && item.use_tree().is_some_and(|tree| {
+                tree.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "super::*"
+            });
+            !inline_super
+                && item.syntax().descendants().any(|node| {
+                    ast::UseTree::cast(node).is_some_and(|inner| inner.star_token().is_some())
+                })
+        });
+    if globbed
+        || declarations.next().is_some()
         || declaration
             .syntax()
             .children()
@@ -5143,6 +5167,20 @@ mod skipping_table_tests {
     }
 
     const GUARD: &str = "if SKIPPED.contains(&scheme) { continue; }";
+
+    /// A glob import may bring a different `SKIPPED` into scope than the
+    /// file's own declaration, so the list is not read.
+    #[test]
+    fn a_glob_import_leaves_the_list_unestablished() {
+        let globbed = format!("use external_lists::*;\n{SOURCE}");
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "scheme", &globbed),
+            None
+        );
+        // `super::*` inside an inline module only re-exports this file's names.
+        let inner = format!("mod tests {{\n    use super::*;\n}}\n{SOURCE}");
+        assert!(skipping_table_column(&inline(GUARD), "scheme", &inner).is_some());
+    }
 
     #[test]
     fn a_listed_row_is_dropped_from_every_column() {

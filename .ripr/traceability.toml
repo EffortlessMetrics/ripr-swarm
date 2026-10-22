@@ -15782,6 +15782,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_listed_row_is_dropped_from_every_column",
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::the_plain_column_reader_still_refuses_a_guarded_loop",
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_loop_without_the_guard_is_not_a_skipping_table",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_glob_import_leaves_the_list_unestablished",
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::only_the_exact_guard_shape_is_read",
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::the_skip_list_must_be_one_plain_literal_const",
   "crates/ripr/src/analysis/syntax/owner_pin.rs::skipping_table_tests::a_key_cell_that_is_not_a_plain_string_cannot_be_compared",
