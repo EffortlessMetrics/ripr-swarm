@@ -7,7 +7,7 @@
 //! non-ASCII character, then run the built binary from a foreign working
 //! directory holding a decoy repository, following only product-emitted
 //! routes. They pin what first use actually does today, including the
-//! points where the delegated repair loop ends in a manual route, so a
+//! points where the delegated repair loop ends in a named terminal reason, so a
 //! change in either direction is a visible decision.
 //!
 //! Project verification (pytest, vitest) is not executed here: it needs the
@@ -138,8 +138,8 @@ fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String>
 
 #[cfg(feature = "lang-python")]
 #[test]
-fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() -> Result<(), String>
-{
+fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason()
+-> Result<(), String> {
     let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
     let root_arg = root.to_string_lossy().into_owned();
 
@@ -163,12 +163,27 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
         "Verify command: python -m pytest tests/test_pricing.py::",
         "module-form verify",
     )?;
-    // Observed first-use break: no delegatable repair start for this shape.
+    // #9102: the seam inventory behind `repair` is Rust-only, so a Python
+    // gap has no seam to bind. The product states that precise terminal
+    // reason (not the generic "no seam binds") beside the complete manual
+    // route (gap, test node, verify command) printed above.
     need(
         &check,
-        "no repair start offered",
-        "check offers no repair start",
+        "no repair start offered: the seam inventory behind `ripr repair`",
+        "check names the terminal reason",
     )?;
+    need(
+        &check,
+        "covers Rust files only, so this Python finding in `pricing/core.py` has no seam",
+        "terminal reason names the language and file",
+    )?;
+    if check.contains("no seam in the finding's file binds") {
+        return Err(format!("check kept the generic refusal:\n{check}"));
+    }
+    // No runnable repair start is offered for the unbindable finding.
+    if check.contains("ripr repair probe:") && check.contains("ripr agent repair") {
+        return Err(format!("check offered a repair start:\n{check}"));
+    }
 
     // Feed `repair` the exact finding id that `check` printed, not a literal.
     let probe = check
@@ -176,12 +191,73 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
         .find(|token| token.starts_with("probe:"))
         .ok_or_else(|| format!("check printed no probe id:\n{check}"))?;
     let (repair_ok, repair) = ripr(&decoy, &["repair", probe, "--root", &root_arg])?;
-    expect_exit(repair_ok, false, "repair of an unbound finding id")?;
+    expect_exit(repair_ok, false, "repair of an unbindable finding id")?;
     need(
         &repair,
-        "names no seam in the selected root",
-        "repair refuses stale or unbound id",
+        "covers Rust files only, so this Python gap has no seam",
+        "repair states the terminal reason for the Python finding id",
     )?;
+    if repair.contains("is stale") || repair.contains("stale or maps to no current seam") {
+        return Err(format!("repair called the Python id stale:\n{repair}"));
+    }
+
+    // The canonical gap id `check` prints is refused the same way by both
+    // repair entry points, with the language-specific terminal reason.
+    let gap = check
+        .split_whitespace()
+        .find(|token| token.starts_with("gap:python:"))
+        .ok_or_else(|| format!("check printed no python gap id:\n{check}"))?;
+    let (gap_ok, gap_repair) = ripr(&decoy, &["repair", gap, "--root", &root_arg])?;
+    expect_exit(gap_ok, false, "repair of the python gap id")?;
+    need(
+        &gap_repair,
+        "covers Rust files only",
+        "repair of the gap id states the terminal reason",
+    )?;
+    let (agent_ok, agent_repair) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--seam-id",
+            gap,
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(
+        agent_ok,
+        false,
+        "agent repair --phase before of the python gap id",
+    )?;
+    need(
+        &agent_repair,
+        "covers Rust files only",
+        "agent repair states the terminal reason",
+    )?;
+
+    // Alternate: an id that is not a Python gap or preview finding keeps the
+    // generic stale-id guidance and never claims the Python terminal reason.
+    let (stale_ok, stale) = ripr(
+        &decoy,
+        &[
+            "repair",
+            "probe:src_lib.rs:12:predicate",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    expect_exit(stale_ok, false, "repair of an unrelated stale id")?;
+    need(
+        &stale,
+        "stale or maps to no current seam",
+        "unrelated id keeps stale-id guidance",
+    )?;
+    if stale.contains("covers Rust files only") {
+        return Err(format!("unrelated id got the Python reason:\n{stale}"));
+    }
 
     let (pilot_ok, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
     expect_exit(pilot_ok, true, "pilot")?;

@@ -838,6 +838,16 @@ pub(crate) fn check_repair_route(
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
+    // #9102: the seam inventory `ripr repair` binds from is built from the
+    // Rust index only. A finding in another routed language therefore has no
+    // seam to bind, whatever its gap, test node and verify command say; name
+    // that terminal state instead of the misleading "no seam binds" refusal.
+    if let Some(language) = non_rust_language(Path::new(&gap.file)) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoSeamInventory {
+            language: language.to_string(),
+            file: gap.file.clone(),
+        });
+    }
     let Ok(config) = load_for_root(root) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
     };
@@ -918,7 +928,58 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
     )
 }
 
+/// Display name of the routed non-Rust language a file belongs to, or
+/// `None` for Rust and for files no adapter routes. Reads the language
+/// router, the same authority the pipeline dispatches on.
+fn non_rust_language(file: &Path) -> Option<&'static str> {
+    match crate::analysis::route(file)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// Display name of the non-Rust language a repair item names, or `None` for
+/// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
+/// preview-adapter finding id `ripr check` prints
+/// (`probe:<file>:<language>_preview:<hash>`). Reads only the typed language
+/// wire strings, never a file name.
+pub(crate) fn non_rust_item_language(item: &str) -> Option<&'static str> {
+    let wire = if let Some(rest) = item.strip_prefix("gap:") {
+        rest.split(':').next()?
+    } else {
+        let parts: Vec<&str> = item.split(':').collect();
+        match parts.as_slice() {
+            ["probe" | "repo-probe", _file, tagged, _hash] => tagged.strip_suffix("_preview")?,
+            _ => return None,
+        }
+    };
+    match crate::domain::LanguageId::from_wire(wire)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// The precise terminal reason a finding or gap in a non-Rust language gets
+/// no repair start (#9102). `file` is the finding's file, or empty when only
+/// the gap id names the language.
+pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
+    let subject = if file.is_empty() {
+        format!("this {language} gap")
+    } else {
+        format!("this {language} finding in `{file}`")
+    };
+    format!(
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command"
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
+    if let Some(language) = non_rust_item_language(item) {
+        return format!(
+            "repair item `{item}` names no seam in the selected root: {}",
+            no_seam_inventory_reason(language, "")
+        );
+    }
     let list = format!(
         "`ripr pilot --root {}` to list current seam IDs",
         shell_arg(&bound_root(&root.to_string_lossy()))
@@ -1581,6 +1642,66 @@ pub(crate) mod tests {
             Some(within.repair_attempt_id.as_str().to_string())
         );
         Ok(())
+    }
+
+    /// #9102: a canonical gap id or preview finding id of a routed non-Rust
+    /// language is a terminal state of the delegated loop, named by the
+    /// typed language wire string.
+    #[test]
+    fn non_rust_item_language_names_gap_and_preview_probe_ids() {
+        let cases = [
+            (
+                "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+                Some("Python"),
+            ),
+            (
+                "probe:pricing_core.py:python_preview:6705c5d5",
+                Some("Python"),
+            ),
+            (
+                "repo-probe:src_discount.ts:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            (
+                "gap:typescript:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            // Discriminating negatives: Rust ids, stale-looking ids, an
+            // unknown language wire and malformed shapes stay un-named so
+            // they keep the generic stale-id guidance.
+            ("gap:rust:src/lib.rs:add:call_deletion:x", None),
+            ("probe:src_lib.rs:12:predicate", None),
+            ("probe:src_lib.rs:rust_preview:abcd1234", None),
+            ("gap:cobol:legacy.cbl:run:x", None),
+            ("probe:a_py:python_preview", None),
+            ("probe:a.py:python_preview:abcd:extra", None),
+            ("python_preview", None),
+            ("seam-discount-boundary-equality", None),
+        ];
+        for (item, expected) in cases {
+            assert_eq!(non_rust_item_language(item), expected, "item `{item}`");
+        }
+    }
+
+    /// #9102: the unknown-item message for a non-Rust gap names the
+    /// terminal reason and the manual route; a Rust-shaped stale id keeps
+    /// the stale-id guidance and never claims the terminal reason.
+    #[test]
+    fn unknown_repair_item_names_terminal_reason_only_for_non_rust_items() {
+        let root = Path::new("repo");
+        let python = unknown_repair_item(root, "probe:pricing_core.py:python_preview:6705c5d5");
+        assert!(
+            python.contains("covers Rust files only")
+                && python.contains("Python")
+                && python.contains("not a stale id"),
+            "{python}"
+        );
+        let rust = unknown_repair_item(root, "probe:src_lib.rs:12:predicate");
+        assert!(
+            rust.contains("stale or maps to no current seam")
+                && !rust.contains("covers Rust files only"),
+            "{rust}"
+        );
     }
 
     #[test]
