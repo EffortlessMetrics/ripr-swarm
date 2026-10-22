@@ -15,26 +15,20 @@ use super::*;
 pub(crate) struct NeutralOperandChange {
     /// The owner parameter the right operand reads.
     pub(crate) parameter: String,
-    /// `"1"` for `*` and `/`, `"0"` for `+` and `-`.
+    /// `"1"`, the identity of `*` and `/`.
     pub(crate) neutral: &'static str,
     /// The operator as written.
     pub(crate) operator: char,
 }
 
-/// `return <operand> <op> <param>;` with `op` one of `* / + -`, a plain
+/// `return <operand> <op> <param>;` with `op` one of `*` or `/`, a plain
 /// identifier or number on the left and an identifier on the right. Anything
 /// else (a longer expression, a compound operator, a literal right operand)
 /// is `None`, so the rule never reads a shape it cannot bound.
 pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperandChange> {
     let masked = ts_mask_literals_and_comments(line_text.trim());
-    let expression = masked
-        .trim()
-        .strip_prefix("return")
-        .filter(|rest| rest.starts_with(char::is_whitespace))?
-        .trim()
-        .strip_suffix(';')?
-        .trim();
-    let operator_at = expression.find(['*', '/', '+', '-'])?;
+    let expression = return_expression(&masked)?;
+    let operator_at = expression.find(['*', '/'])?;
     let operator = expression[operator_at..].chars().next()?;
     let (left, right) = (
         expression[..operator_at].trim(),
@@ -48,11 +42,7 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
     }
     Some(NeutralOperandChange {
         parameter: right.to_string(),
-        neutral: if matches!(operator, '*' | '/') {
-            "1"
-        } else {
-            "0"
-        },
+        neutral: "1",
         operator,
     })
 }
@@ -60,10 +50,10 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
 /// `true` when the identity input for the new line's right operand also
 /// hides the edit from `old`, so the edit changes the value only where that
 /// operand is not the identity:
-/// - the same commutative operator (`*` or `+`) over the same two operands,
+/// - the same commutative operator (`*`) over the same two operands,
 ///   in either order;
 /// - the inverse operator over the same operands in the same order
-///   (`a / b` against `a * b`, `a - b` against `a + b`);
+///   (`a / b` against `a * b`);
 /// - the old line is the new line's left operand alone (`return a;` against
 ///   `return a * b;`), an added factor or term.
 /// Any other edit (a changed operand, a dropped term, an unrelated operator)
@@ -75,14 +65,9 @@ pub(crate) fn ts_identity_hides_edit(old: &str, new: &str) -> bool {
     if let Some((old_ops, old_op)) = operands(old) {
         let mut swapped = old_ops.clone();
         swapped.reverse();
-        let commutative = old_op == new_op
-            && matches!(new_op, '*' | '+')
-            && (new_ops == old_ops || new_ops == swapped);
-        let inverse = new_ops == old_ops
-            && matches!(
-                (old_op, new_op),
-                ('/', '*') | ('*', '/') | ('-', '+') | ('+', '-')
-            );
+        let commutative =
+            old_op == new_op && new_op == '*' && (new_ops == old_ops || new_ops == swapped);
+        let inverse = new_ops == old_ops && matches!((old_op, new_op), ('/', '*') | ('*', '/'));
         return commutative || inverse;
     }
     single_operand(old).is_some_and(|operand| new_ops.first() == Some(&operand))
@@ -91,26 +76,25 @@ pub(crate) fn ts_identity_hides_edit(old: &str, new: &str) -> bool {
 /// `return <operand>;` with a plain identifier or number.
 fn single_operand(line: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(line.trim());
-    let operand = masked
-        .trim()
-        .strip_prefix("return")
-        .filter(|rest| rest.starts_with(char::is_whitespace))?
-        .trim()
-        .strip_suffix(';')?
-        .trim();
+    let operand = return_expression(&masked)?;
     (is_plain_identifier(operand) || numeric_literal_value(operand).is_some())
         .then(|| operand.to_string())
 }
 
-fn operands(line: &str) -> Option<(Vec<String>, char)> {
-    let masked = ts_mask_literals_and_comments(line.trim());
-    let expression = masked
+/// The expression of `return <expression>[;]`, whether or not the statement
+/// ends in a semicolon.
+fn return_expression(masked: &str) -> Option<&str> {
+    let rest = masked
         .trim()
         .strip_prefix("return")
         .filter(|rest| rest.starts_with(char::is_whitespace))?
-        .trim()
-        .strip_suffix(';')?
         .trim();
+    Some(rest.strip_suffix(';').unwrap_or(rest).trim())
+}
+
+fn operands(line: &str) -> Option<(Vec<String>, char)> {
+    let masked = ts_mask_literals_and_comments(line.trim());
+    let expression = return_expression(&masked)?;
     let at = expression.find(['*', '/', '+', '-'])?;
     let operator = expression[at..].chars().next()?;
     let (left, right) = (expression[..at].trim(), expression[at + 1..].trim());

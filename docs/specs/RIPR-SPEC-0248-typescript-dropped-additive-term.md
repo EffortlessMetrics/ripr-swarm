@@ -195,19 +195,21 @@ return value apart.
 **Rule 2. An operator whose right operand is its identity in every tested
 call is not pinned.** The rule applies on a `return_value` probe when the
 identity input also hides the edit itself, which holds for three edits:
-the operands of a commutative operator rewritten in place (`return qty *
-unit;` against `return unit * qty;`, or `+` likewise); the inverse operator
-over the same operands in the same order (`a / b` against `a * b`, `a - b`
-against `a + b`); and an added factor or term (`return a;` against `return a
-* b;`). Any other edit, such as a changed operand or a dropped term, keeps the
-credit, because the identity input can still pin it. The new line reads `return <operand> <op>
+the operands of `*` rewritten in place (`return qty * unit;` against `return
+unit * qty;`); the inverse operator over the same operands in the same order
+(`a / b` against `a * b`); and an added factor (`return a;` against `return a
+* b;`). Only `*` and `/` are read: `+` also concatenates strings, so neither its
+operand order nor a zero operand shows that a test cannot tell the edit apart.
+Any other edit, such as a changed operand or a dropped term, keeps the credit,
+because the identity input can still pin it. The new line reads `return
+<operand> <op>
 <param>;`, with a plain identifier or number on the left and an owner
 parameter on the right that the body never rebinds. An `exposed` result then
 reads `weakly_exposed` when every owner call whose whole result a strong value
-assertion observes passes the identity for that parameter: `1` for `*` and
-`/`, `0` for `+` and `-`. `return unit * qty` tested only through
+assertion observes passes `1` for that parameter. `return unit * qty` tested only through
 `scaled(1, u)` against `u` returns the same number as `unit / qty`. One tested
-call with another value, an argument the reader cannot read as a number, a
+call with another value, a nested owner call in the observed expression
+(`scaled(1, scaled(3, 4))`), an argument the reader cannot read as a number, a
 related test that does not call the owner directly, an owner call outside a
 value assertion on its whole result (setup, a local, a weak matcher), or any
 other assertion naming the owner keeps the credit. Only the right operand
