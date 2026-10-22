@@ -157,15 +157,27 @@ fn cache_dir_for_explicit_root(
     let explicit_cache_dir = matches!(&env_value, Ok(value) if !value.trim().is_empty());
     // A --root that is not a directory is an error whether or not
     // RIPR_CACHE_DIR governs the cache location.
-    let canonical = std::fs::canonicalize(root)
-        .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?;
-    if !canonical.is_dir() {
-        return Err(format!("cache root {} is not a directory", root.display()));
+    if !std::fs::metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err(format!(
+            "cache root {} is not an existing directory",
+            root.display()
+        ));
     }
+    // Keep the caller's spelling (made absolute, lexically) so a symlinked
+    // root reaches the same alias refusal `check --root` and `clear` already
+    // own; only a `..` spelling is resolved, since the clear boundary rejects
+    // parent-directory components.
     let workspace_root = if explicit_cache_dir {
         root.to_path_buf()
+    } else if root
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        std::fs::canonicalize(root)
+            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
     } else {
-        canonical
+        std::path::absolute(root)
+            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
     };
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
@@ -667,7 +679,13 @@ fn run_status(args: &[String]) -> Result<(), String> {
 /// carries the actual refusal reason instead of recommending a command that
 /// fails.
 fn cleanup_hint(cache_dir: &Path, root: Option<&Path>, env_governs: bool) -> String {
-    if let Err(reason) = classify_cache_root(cache_dir) {
+    // The nonmutating dry-run of the real clear path owns every refusal
+    // (root shape, symlinks, unowned-only roots, impostor layers).
+    let dry_run = ClearOptions {
+        dry_run: true,
+        force: false,
+    };
+    if let Err(reason) = clear_cache_dir(cache_dir, dry_run) {
         return format!(
             "The cache is disposable; ripr rebuilds it on the next run. `ripr cache clear` \
              would refuse to clear it: {}.",
@@ -677,25 +695,16 @@ fn cleanup_hint(cache_dir: &Path, root: Option<&Path>, env_governs: bool) -> Str
     // RIPR_CACHE_DIR governs the location regardless of --root, so the printed
     // commands carry --root only when it actually selects the directory.
     let root_flag = match root {
-        Some(root) if !env_governs => format!(" --root {}", shell_quote(&root.to_string_lossy())),
+        Some(root) if !env_governs => format!(
+            " --root {}",
+            crate::agent::loop_commands::shell_arg(&root.to_string_lossy())
+        ),
         _ => String::new(),
     };
     format!(
         "The cache is disposable; ripr rebuilds it on the next run. To clear it, run \
          `ripr cache clear{root_flag} --dry-run` to preview, then `ripr cache clear{root_flag} --force`."
     )
-}
-
-/// Quote a path in a suggested command only when it needs quoting.
-fn shell_quote(text: &str) -> String {
-    if text
-        .chars()
-        .all(|ch| ch.is_alphanumeric() || "/._-:+@%".contains(ch))
-    {
-        text.to_string()
-    } else {
-        format!("\"{}\"", text.replace('"', "\\\""))
-    }
 }
 
 fn run_clear(args: &[String]) -> Result<(), String> {
@@ -1302,8 +1311,27 @@ mod tests {
         if governed.contains("--root") {
             return Err(format!("env-governed hint echoed --root: {governed}"));
         }
-        if shell_quote("/tmp/a b") != "\"/tmp/a b\"" || shell_quote("/tmp/ab") != "/tmp/ab" {
-            return Err("shell_quote drifted".to_string());
+        // A root with spaces is quoted by the shared shell-argument renderer.
+        let spaced = cleanup_hint(&expected, Some(Path::new("/tmp/a b")), false);
+        if !spaced.contains("--root '/tmp/a b'") && !spaced.contains("--root \"/tmp/a b\"") {
+            return Err(format!("spaced root not quoted: {spaced}"));
+        }
+        // Refusals the dry-run clear owns beyond the root shape: an absolute
+        // root holding only unowned files, and a layer that is a regular file.
+        let unowned = temp_dir("hint-unowned");
+        fs::create_dir_all(&unowned).map_err(|error| error.to_string())?;
+        fs::write(unowned.join("unowned.txt"), b"x").map_err(|error| error.to_string())?;
+        let unowned_hint = cleanup_hint(&unowned, None, false);
+        let impostor = temp_dir("hint-impostor");
+        fs::create_dir_all(&impostor).map_err(|error| error.to_string())?;
+        fs::write(impostor.join("repo-file-facts"), b"x").map_err(|error| error.to_string())?;
+        let impostor_hint = cleanup_hint(&impostor, None, false);
+        remove_base(&unowned)?;
+        remove_base(&impostor)?;
+        for (label, hint) in [("unowned", &unowned_hint), ("impostor", &impostor_hint)] {
+            if !hint.contains("would refuse to clear it") || hint.contains("cache clear --force`") {
+                return Err(format!("{label} root hint must carry the refusal: {hint}"));
+            }
         }
         let refused = cleanup_hint(Path::new("relative/cache"), None, false);
         if !refused.contains("would refuse to clear it")

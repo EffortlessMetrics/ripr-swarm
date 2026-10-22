@@ -998,6 +998,43 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn cache_root_flag_keeps_symlink_spelling_so_clear_refuses_alias_roots() -> Result<(), String> {
+    // #9503 review: canonicalizing --root erased the alias refusal that
+    // `check --root alias` / RIPR_CACHE_DIR through an alias already get.
+    let real = root_flag_fixture("alias-real")?;
+    let holder = temp_dir("alias-holder");
+    fs::create_dir_all(&holder).map_err(|error| error.to_string())?;
+    let leaf = holder.join("leaf-alias");
+    std::os::unix::fs::symlink(&real, &leaf).map_err(|error| error.to_string())?;
+    let parent_link = holder.join("ancestor-alias");
+    std::os::unix::fs::symlink(&holder, &parent_link).map_err(|error| error.to_string())?;
+    let ancestor = parent_link.join("leaf-alias");
+    let layer = real.join("target/ripr/cache/repo-file-facts");
+    fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+    fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+    for alias in [&leaf, &ancestor] {
+        let alias_arg = alias.to_str().ok_or("utf-8 alias")?;
+        let output = run_ripr_default_cache(
+            &holder,
+            &["cache", "clear", "--root", alias_arg, "--force"],
+            &[],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success()
+            || !stderr.contains("symlink")
+            || !layer.join("entry.json").is_file()
+        {
+            return Err(format!(
+                "alias root {alias:?} must be refused intact: {stderr}"
+            ));
+        }
+    }
+    remove_base(&holder)?;
+    remove_base(&real)
+}
+
 #[cfg(target_os = "linux")]
 fn directory_swap_cache_snapshot(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut snapshots = Vec::new();
