@@ -61,7 +61,7 @@ mod windows_paths {
     }
 
     /// Whether `\` separates components in this spelling: always on Windows,
-    /// and on other hosts only for an explicit drive (`C:\`) or UNC (`\\`)
+    /// and on other hosts only for an explicit drive-letter or UNC (`\\`)
     /// spelling. A Unix filename may contain `\`, and rewriting it would alias
     /// `a\b.rs` with `a/b.rs`.
     pub(super) fn spells_windows_separators(path: &str) -> bool {
@@ -979,7 +979,7 @@ mod tests {
         let slash = parse_uri("file:///C:/a/b.rs")?;
         let backslash = parse_uri("file:///C:/a%5Cb.rs")?;
         assert!(file_uris_match_on(&slash, &backslash, false));
-        let emitted = file_uri_for_path(Path::new(r"C:\a\b.rs"))?;
+        let emitted = file_uri_for_path(Path::new(["C:", "a", "b.rs"].join("\\").as_str()))?;
         assert!(file_uris_match_on(&emitted, &slash, false));
         Ok(())
     }
@@ -1001,7 +1001,12 @@ mod tests {
         // The shared decoder refuses non-UTF-8 URIs: never an alias.
         assert_eq!(path_from_file_uri(&first_uri), None);
         // A non-UTF-8 path with a parent segment cannot be collapsed.
-        assert!(file_uri_for_path(Path::new(OsStr::from_bytes(b"/w/../a\xFF"))).is_err());
+        if let Ok(uri) = file_uri_for_path(Path::new(OsStr::from_bytes(b"/w/../a\xFF"))) {
+            return Err(format!(
+                "parent segment must be refused, got {}",
+                uri.as_str()
+            ));
+        }
         Ok(())
     }
 
