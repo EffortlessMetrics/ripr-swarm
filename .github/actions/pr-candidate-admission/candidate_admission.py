@@ -72,6 +72,12 @@ GENERATED_DECLARATION_ALLOWED = (
     # in the counted cases/ files.
     re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/\*\*$"),
 )
+# Families narrower than the global data extensions: only these file types in
+# the family are ever exempt, so a note or log dropped beside the packets stays
+# counted.
+GENERATED_FAMILY_EXTENSIONS = (
+    (re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/"), {".json"}),
+)
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
 BLOB_READ_TIMEOUT_SECONDS = 30
@@ -292,6 +298,9 @@ def is_generated(path: str, rules: list[tuple[re.Pattern[str], bool]]) -> bool:
     suffix = ("." + name.rsplit(".", 1)[-1]).lower() if "." in name else ""
     if name in GENERATED_EXEMPT_NEVER or suffix not in GENERATED_DATA_EXTENSIONS:
         return False
+    for family, extensions in GENERATED_FAMILY_EXTENSIONS:
+        if family.match(path) and suffix not in extensions:
+            return False
     declared = False
     for pattern, generated in rules:
         if pattern.match(path):
@@ -869,7 +878,15 @@ def self_test() -> None:
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
     assert is_generated("fixtures/perl-verdict-corpus/packets/a.json", corpus_rules)
+    # A data file of another type beside the packets stays counted in the totals.
+    beside = [
+        {"filename": "fixtures/perl-verdict-corpus/packets/a.json", "status": "added", "additions": 900, "deletions": 0},
+        {"filename": "fixtures/perl-verdict-corpus/packets/notes.md", "status": "added", "additions": 3500, "deletions": 0},
+        {"filename": "fixtures/perl-verdict-corpus/packets/run.stdout", "status": "added", "additions": 10, "deletions": 0},
+    ]
+    assert generated_totals(beside, corpus_rules, 3) == (1, 900)
     for kept in (
+        "fixtures/perl-verdict-corpus/packets/notes.md", "fixtures/perl-verdict-corpus/packets/a.jsonl",
         "fixtures/perl-verdict-corpus/cases/a.json", "fixtures/perl-verdict-corpus/packets/a.pm",
         "fixtures/perl-verdict-corpus/subjects/s/lib/A.pm", "fixtures/python-verdict-corpus/packets/a.json",
     ):

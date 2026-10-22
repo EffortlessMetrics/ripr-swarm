@@ -2279,7 +2279,7 @@ label from hiding hand-written code: only declarable shapes count (lockfiles,
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
-exempt, and a file must change at least one line; and the exempt lines have their
+exempt (corpus packets: `.json` only), and a file must change at least one line; and the exempt lines have their
 own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
 from the hand-written change. A truncated file listing exempts nothing.
 
