@@ -2723,11 +2723,42 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// The type head a `let` binding names for `binding`, from its annotation or
+/// its initializer head, as [`let_binding_mentions_type`] reads it.
+pub(in crate::analysis) fn let_binding_type_head<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
+    last_let_statement(body, binding).and_then(let_statement_type_head)
+}
+
+/// Whether the operand expression ending just before byte `end` of `code`
+/// (comments and strings masked) has type `ty`: a unit value, a bound
+/// identifier, or a constructor call or struct literal whose head is `ty`.
+/// Method chains, fields and anything unbalanced fail closed.
+pub(in crate::analysis) fn expr_ending_at_has_type(code: &str, end: usize, ty: &str) -> bool {
+    let Some(before) = code.get(..end) else {
+        return false;
+    };
+    let lets = before.rfind(';').map_or("", |at| &before[..=at]);
+    let end = before.trim_end().len();
+    match code.as_bytes().get(end.wrapping_sub(1)) {
+        Some(b')' | b'}') => bracketed_expr_has_type(code, end, ty, lets, false),
+        Some(_) => ident_ending_at(code, end)
+            .is_some_and(|ident| ident == ty || let_binding_mentions_type(lets, ident, ty)),
+        None => false,
+    }
+}
+
 /// Whether the binding's own type is `type_name`: its annotation
 /// (`let x: Site = ..`) or its initializer head (`Site::new(..)`,
 /// `Site { .. }`, `&mut Site::default()`). A type named only inside nested
 /// arguments (`Cache::new(Site::default())`) is not the binding's type.
-fn let_binding_mentions_type(body: &str, binding: &str, type_name: &str) -> bool {
+pub(in crate::analysis) fn let_binding_mentions_type(
+    body: &str,
+    binding: &str,
+    type_name: &str,
+) -> bool {
     last_let_statement(body, binding)
         .and_then(let_statement_type_head)
         .is_some_and(|head| head == type_name)

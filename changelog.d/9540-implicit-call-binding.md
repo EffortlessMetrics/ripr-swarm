@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A weak gap on an implicitly called trait-impl method now stays a gap unless the test binds the operator, drop or call to a value of the impl's type and a strong assertion observes the result. A test that names the type but applies the operator to integers or a field, discards the result, or calls the method on a binding of another type no longer withholds a true gap as `rust_implicit_call_unresolved` (RIPR-SPEC-0240, #9540).
