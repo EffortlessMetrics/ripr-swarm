@@ -1068,3 +1068,103 @@ pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
         }
     }
 }
+
+/// The one field of a single-line returned object literal whose value
+/// changed (RIPR-SPEC-0243 rule 17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptChangedField {
+    pub(crate) key: String,
+    /// The new value's source text.
+    pub(crate) value: String,
+}
+
+/// The changed field of `return { a: 1, b: 2 }` against the old line: both
+/// lines return a literal of simple `key: value` fields with the same keys
+/// in the same order, and exactly one value differs. A shorthand or spread
+/// member, a computed key, a different key list or two changed values read
+/// `None`, so the caller keeps the first-field reading.
+pub(crate) fn ts_changed_object_field(
+    old_line: Option<&str>,
+    new_line: &str,
+) -> Option<TypeScriptChangedField> {
+    let old = returned_object_fields(old_line?)?;
+    let new = returned_object_fields(new_line)?;
+    if old.len() != new.len() || old.len() < 2 {
+        return None;
+    }
+    let mut changed = None;
+    for ((old_key, old_value), (new_key, new_value)) in old.iter().zip(&new) {
+        if old_key != new_key {
+            return None;
+        }
+        if old_value != new_value {
+            if changed.is_some() {
+                return None;
+            }
+            changed = Some(TypeScriptChangedField {
+                key: new_key.clone(),
+                value: new_value.clone(),
+            });
+        }
+    }
+    changed
+}
+
+/// `(key, value)` per field of the object literal a `return` line returns,
+/// split at top-level commas; `None` when the line is not exactly one
+/// literal of simple `key: value` fields.
+fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+    let text = line.trim().trim_end_matches(';').trim();
+    let expression = text.strip_prefix("return ")?.trim();
+    let expression = expression
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(expression)
+        .trim();
+    let body = expression.strip_prefix('{')?.strip_suffix('}')?;
+    let mut fields = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0usize;
+    let mut pieces = Vec::new();
+    for (index, ch) in body.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                pieces.push(&body[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() || depth != 0 {
+        return None;
+    }
+    pieces.push(&body[start..]);
+    for piece in pieces {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        let (key, value) = piece.split_once(':')?;
+        let key = key.trim();
+        if !is_simple_typescript_object_key(key) || value.trim().is_empty() {
+            return None;
+        }
+        fields.push((key.to_string(), value.trim().to_string()));
+    }
+    Some(fields)
+}
