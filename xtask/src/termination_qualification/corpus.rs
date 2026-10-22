@@ -1,4 +1,4 @@
-//! The deterministic adversarial corpus (#4511, #4512). Every input is
+//! The deterministic adversarial corpus (#4511, #4512, #4513). Every input is
 //! generated from constants below, so the per-case digests are stable across
 //! hosts and runs.
 
@@ -11,6 +11,7 @@ use super::model::{Family, Role};
 pub(crate) const ROW_DEADLINE: Duration = Duration::from_mins(1);
 
 pub(crate) const DIFF_FILE: &str = "change.diff";
+pub(crate) const SUPPRESSION_POLICY_FILE: &str = "policy/suppressions.toml";
 
 /// What the exact binary must show for a case.
 #[derive(Clone, Debug)]
@@ -27,6 +28,17 @@ pub(crate) enum Expect {
         token: &'static str,
         language_class: Option<&'static str>,
     },
+    /// The pattern does not match the changed path: the finding stays visible.
+    GlobNonmatch,
+    /// The pattern matches the changed path: the finding is suppressed.
+    GlobMatch,
+    /// `generated_file_patterns` does not match: the file is analyzed.
+    GeneratedNotExcluded,
+    /// `generated_file_patterns` matches: the file is excluded as generated.
+    GeneratedExcluded,
+    /// A malformed selector is a policy error (exit 2, typed limitation), not
+    /// a matcher result and not a clean run.
+    PolicyRefused,
 }
 
 impl Expect {
@@ -38,6 +50,13 @@ impl Expect {
                     .to_string()
             }
             Self::TypedLimitation { token, .. } => format!("typed limitation `{token}`"),
+            Self::GlobNonmatch => "pattern does not match; finding stays visible".to_string(),
+            Self::GlobMatch => "pattern matches; finding suppressed".to_string(),
+            Self::GeneratedNotExcluded => "pattern does not match; file analyzed".to_string(),
+            Self::GeneratedExcluded => "pattern matches; file excluded as generated".to_string(),
+            Self::PolicyRefused => {
+                "policy refused (exit 2, suppression_policy_invalid), no findings".to_string()
+            }
         }
     }
 }
@@ -425,5 +444,299 @@ fn python_case(id: &str, role: Role, shape: &'static str, hostile: &str, expect:
 pub(crate) fn all_cases() -> Vec<Case> {
     let mut cases = rust_cases();
     cases.extend(python_cases());
+    cases.extend(glob_cases());
+    cases
+}
+
+// --------------------------------------------------------------- globs ----
+
+const PRICE_SOURCE: &[u8] = b"pub fn price(amount: i32) -> i32 {\n    amount - 1\n}\n";
+
+fn glob_files(changed: &str, extra: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)> {
+    let diff = format!(
+        "diff --git a/{changed} b/{changed}\nindex 0000000..1111111 100644\n--- a/{changed}\n+++ b/{changed}\n@@ -1,3 +1,3 @@\n pub fn price(amount: i32) -> i32 {{\n-    amount\n+    amount - 1\n }}\n"
+    );
+    let mut files = vec![
+        (
+            "Cargo.toml".to_string(),
+            b"[package]\nname = \"termination_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                .to_vec(),
+        ),
+        (changed.to_string(), PRICE_SOURCE.to_vec()),
+        (DIFF_FILE.to_string(), diff.into_bytes()),
+    ];
+    files.extend(extra);
+    files
+}
+
+/// `*a*a...*a*b` is the classic backtracking trap: no `b` anywhere in the
+/// path, so a recursive matcher explores every split of the `a` run.
+fn many_star_pattern(prefix: &str, stars: usize, tail: &str) -> String {
+    format!("{prefix}{}{tail}", "*a".repeat(stars))
+}
+
+fn long_a_file() -> String {
+    format!("src/{}.rs", "a".repeat(40))
+}
+
+fn deep_segment_file() -> String {
+    format!("src/{}x.rs", "a/".repeat(40))
+}
+
+fn many_segment_pattern() -> String {
+    format!("src/{}zzz.rs", "**/a/".repeat(16))
+}
+
+fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let policy = format!(
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{pattern}\"\nreason = \"termination qualification selector\"\nowner = \"qualification\"\n"
+    );
+    Case {
+        id: format!("glob-suppression-{id}"),
+        route: Route::Check,
+        artifact: None,
+        family: Family::PathGlobSuppression,
+        role,
+        shape: "suppression_path_selector",
+        files: glob_files(
+            changed,
+            vec![(SUPPRESSION_POLICY_FILE.to_string(), policy.into_bytes())],
+        ),
+        args: check_args(&["--suppression-policy", SUPPRESSION_POLICY_FILE]),
+        expect,
+        changed: changed.to_string(),
+        hostile: None,
+    }
+}
+
+fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let config = format!(
+        "[languages]\nenabled = [\"rust\"]\n\n[languages.rust]\ngenerated_file_patterns = [\"{pattern}\"]\n"
+    );
+    Case {
+        id: format!("glob-generated-{id}"),
+        route: Route::Check,
+        artifact: None,
+        family: Family::PathGlobGeneratedFile,
+        role,
+        shape: "generated_file_pattern",
+        files: glob_files(
+            changed,
+            vec![("ripr.toml".to_string(), config.into_bytes())],
+        ),
+        args: check_args(&[]),
+        expect,
+        changed: changed.to_string(),
+        hostile: None,
+    }
+}
+
+pub(crate) fn glob_cases() -> Vec<Case> {
+    use Expect::{GeneratedExcluded, GeneratedNotExcluded, GlobMatch, GlobNonmatch};
+    let lib = "src/lib.rs";
+    let accented = "src/h\u{e9}llo.rs";
+    let long_a = long_a_file();
+    let deep = deep_segment_file();
+    let mut cases = vec![
+        suppression_case(
+            "double-star-prefix",
+            Role::Control,
+            "src/**",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "ordinary-negative",
+            Role::Control,
+            "tests/**",
+            lib,
+            GlobNonmatch,
+        ),
+        suppression_case("star-in-segment", Role::Control, "src/*.rs", lib, GlobMatch),
+        suppression_case(
+            "star-stays-in-segment",
+            Role::Control,
+            "*.rs",
+            lib,
+            GlobNonmatch,
+        ),
+        suppression_case(
+            "question-one-char",
+            Role::Control,
+            "src/li?.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "question-wrong-length",
+            Role::Control,
+            "src/l?.rs",
+            lib,
+            GlobNonmatch,
+        ),
+        suppression_case(
+            "zero-segment-double-star",
+            Role::Control,
+            "src/**/lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "leading-double-star",
+            Role::Control,
+            "**/lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "adjacent-double-star",
+            Role::Control,
+            "src/**/**/lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "leading-dot-segment",
+            Role::Control,
+            "./src/lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "inner-dot-segment",
+            Role::Control,
+            "src/./lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "empty-segment",
+            Role::Control,
+            "src//lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "double-star-inside-segment-is-char-level",
+            Role::Control,
+            "src/**lib.rs",
+            lib,
+            GlobMatch,
+        ),
+        suppression_case(
+            "empty-pattern-is-a-policy-error",
+            Role::Control,
+            "",
+            lib,
+            Expect::PolicyRefused,
+        ),
+        suppression_case(
+            "unicode-question-one-scalar",
+            Role::Control,
+            "src/h?llo.rs",
+            accented,
+            GlobMatch,
+        ),
+        suppression_case(
+            "unicode-question-not-per-byte",
+            Role::Control,
+            "src/h??llo.rs",
+            accented,
+            GlobNonmatch,
+        ),
+        suppression_case(
+            "many-star-nonmatch",
+            Role::Discriminator,
+            &many_star_pattern("src/", 16, "*b"),
+            &long_a,
+            GlobNonmatch,
+        ),
+        suppression_case(
+            "many-star-match",
+            Role::Discriminator,
+            &many_star_pattern("src/", 16, "*.rs"),
+            &long_a,
+            GlobMatch,
+        ),
+        suppression_case(
+            "many-segment-nonmatch",
+            Role::Discriminator,
+            &many_segment_pattern(),
+            &deep,
+            GlobNonmatch,
+        ),
+    ];
+    cases.extend([
+        generated_case(
+            "star-in-segment",
+            Role::Control,
+            "src/api_*.rs",
+            "src/api_v2.rs",
+            GeneratedExcluded,
+        ),
+        generated_case(
+            "slashless-matches-any-filename",
+            Role::Control,
+            "api_*.rs",
+            "src/api_v2.rs",
+            GeneratedExcluded,
+        ),
+        generated_case(
+            "ordinary-negative",
+            Role::Control,
+            "lib/**/*.rs",
+            "src/api_v2.rs",
+            GeneratedNotExcluded,
+        ),
+        generated_case(
+            "zero-segment-double-star",
+            Role::Control,
+            "src/**/api_v2.rs",
+            "src/api_v2.rs",
+            GeneratedExcluded,
+        ),
+        generated_case(
+            "question-one-char",
+            Role::Control,
+            "src/api_v?.rs",
+            "src/api_v2.rs",
+            GeneratedExcluded,
+        ),
+        generated_case(
+            "question-wrong-length",
+            Role::Control,
+            "src/api_v??.rs",
+            "src/api_v2.rs",
+            GeneratedNotExcluded,
+        ),
+        generated_case(
+            "unicode-question-one-scalar",
+            Role::Control,
+            "src/h?llo.rs",
+            accented,
+            GeneratedExcluded,
+        ),
+        generated_case(
+            "unicode-question-not-per-byte",
+            Role::Control,
+            "src/h??llo.rs",
+            accented,
+            GeneratedNotExcluded,
+        ),
+        generated_case(
+            "many-star-nonmatch",
+            Role::Discriminator,
+            &many_star_pattern("src/", 16, "*b"),
+            &long_a,
+            GeneratedNotExcluded,
+        ),
+        generated_case(
+            "many-segment-nonmatch",
+            Role::Discriminator,
+            &many_segment_pattern(),
+            &deep,
+            GeneratedNotExcluded,
+        ),
+    ]);
     cases
 }

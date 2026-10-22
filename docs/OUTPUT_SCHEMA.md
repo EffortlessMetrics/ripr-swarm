@@ -14979,6 +14979,15 @@ same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
 `final_tree_effect`, `effect_basis`, `pr_refs` from the trailing `(#N)` of a
 first-parent subject, `issue_refs` for other `#N` mentions).
 
+`release-ledger derive` writes the `release_ledger` DTO that `release-ledger
+--input` validates: `rule_version` `v1`, `adjudication_basis` `rule_derived`,
+`selected_claims` and `open_prs` taken from `policy/release-selection.json`
+(`packet_digest` is the sha256 of the raw file bytes) and recomputed `digests`.
+Rows the rule cannot judge stay `blocking_unresolved` until
+`policy/release-ledger-overrides.json` (`kind: release_ledger_overrides`,
+entries `{commit_sha, disposition, owner, note}`) resolves them; a resolved row
+carries `override_ref`.
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into
