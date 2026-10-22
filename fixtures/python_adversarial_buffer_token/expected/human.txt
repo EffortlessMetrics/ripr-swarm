@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/pack.py:pack:predicate_boundary:predicate:len_buffer<=limit
   Changed behavior: if len(buffer) <= limit:
   Missing discriminator (1 of 2): A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
-  Related test: tests/test_pack.py:4 test_pack_returns_list
+  Related test: tests/test_pack.py:4 test_pack_returns_list (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_pack.py
   Suggested test: test_pack_returns_list
   Test node: tests/test_pack.py::test_pack_returns_list

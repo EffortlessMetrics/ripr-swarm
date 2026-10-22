@@ -2982,6 +2982,49 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
 }
 
 #[test]
+fn inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it() {
+    for attributes in [
+        "#[test]\n#[rustfmt::skip]",
+        "#[rustfmt::skip]\n#[test]",
+        "#[test]\n#[allow(clippy::eq_op)]",
+        "#[allow(clippy::eq_op)]\n#[test]",
+        "#[test]\n#[warn(unused)]\n#[deny(unused_must_use)]",
+        "#[test]\n#[expect(clippy::eq_op)]",
+        "#[test]\n#[doc = \"pins the weight\"]",
+        "#[test]\n#[inline]\n#[must_use]\n#[track_caller]",
+        "#[test]\n#[clippy::cognitive_complexity = \"30\"]",
+        "#[test]\n#[rustfmt::skip]\n#[allow(clippy::eq_op)]\n#[doc = \"stacked\"]",
+        // An import of another name does not rebind a built-in one.
+        "use other::skip;\n#[test]\n#[allow(unused)]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An import or `extern crate .. as` can rebind a bare built-in name
+        // to an attribute macro that rewrites the body.
+        "use my_macros::skip_body as allow;\n#[test]\n#[allow(unused)]",
+        "use my_macros::skip_body as r#doc;\n#[test]\n#[doc = \"x\"]",
+        "extern crate my_macros as inline;\n#[test]\n#[inline]",
+        // Attributes that decide whether or how the test runs stay refused.
+        "#[test]\n#[ignore]",
+        "#[test]\n#[should_panic]",
+        "#[test]\n#[cfg(feature = \"slow\")]",
+        "#[test]\n#[rustfmt::skip]\n#[ignore]",
+        // An unknown path is never read as inert.
+        "#[test]\n#[my_macros::allow]",
+        "#[test]\n#[allow_all]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",
@@ -11567,6 +11610,70 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
             "assert_eq!(2, count_positive(&[5, 6]));".to_string(),
         ]
     );
+}
+
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    for walk in ["iter()", "into_iter()", "iter_mut()"] {
+        let tail = format!("xs.{walk}.count()");
+        let lib = adaptor_lib(
+            &tail,
+            &adaptor_test(
+                "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 2);",
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", &tail);
+        assert!(pin.is_some(), "`{walk}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted_texts(&index, &pin),
+            vec!["assert_eq!(count_positive(&[3, 4]), 2);".to_string()],
+            "{walk}"
+        );
+    }
+}
+
+/// #9444 review: the refusal also reads a call wrapped in a rendered or
+/// indexed comparison, a spaced method call, and leaves a field receiver
+/// or a rebound parameter alone.
+#[test]
+fn walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter() {
+    for (tail, assertion, admitted) in [
+        (
+            "xs.iter().count()",
+            "assert_eq!(format!(\"{}\", count_positive(&[])), \"0\");",
+            false,
+        ),
+        (
+            "xs.iter().count()",
+            "assert_eq!(vec![count_positive(&[])][0], 0);",
+            false,
+        ),
+        (
+            "xs .iter() .count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            false,
+        ),
+        (
+            "row.xs.iter().count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            true,
+        ),
+    ] {
+        let lib = adaptor_lib(tail, &adaptor_test(&format!("        {assertion}")));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", tail);
+        assert!(pin.is_some(), "`{tail}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{tail} {assertion}"
+        );
+    }
 }
 
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a

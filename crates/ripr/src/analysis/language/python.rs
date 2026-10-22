@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod arm_activation;
 mod boundary;
 mod classify;
 mod deleted_lines;
@@ -77,6 +78,7 @@ mod probe_shape;
 mod reexports;
 mod related_tests;
 mod repo;
+mod row_miss;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
@@ -206,6 +208,11 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Whether a `from <owner module> import *` binds this owner: the name is
+    /// public and the module's `__all__` is absent or lists it. `false` until
+    /// the workspace pass fills it, and when the module source is unavailable
+    /// or its `__all__` is unresolved (`reexports.rs`).
+    star_exported: bool,
     /// Src-layout short module names of this owner's file that another
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
@@ -1083,6 +1090,9 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod arm_activation_tests;
+
+#[cfg(test)]
 mod assertion_selection_tests;
 
 #[cfg(test)]
@@ -1108,6 +1118,9 @@ mod reexport_tests;
 
 #[cfg(test)]
 mod replaced_block_tests;
+
+#[cfg(test)]
+mod row_miss_tests;
 
 #[cfg(test)]
 mod tests;

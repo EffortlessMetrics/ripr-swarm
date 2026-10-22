@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Fifteen small authored TypeScript packages under `subjects/`, our own code
+Seventeen small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -29,8 +29,23 @@ under this repository's license, grouped by test runner:
   `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,
   `as const` tables, nullish chains, default parameters, private helpers,
   generators, arrow-function exports and `reduce`).
+- vitest hostile inputs: `authored-ts-vitest-hostile` (a CRLF source, a
+  tab-indented source with no final newline, non-ASCII identifiers and
+  literals, a single minified line, `it.skip` and `describe.skip` pins,
+  assertions that only exist in comments or an uncalled helper, a same-named
+  function in an unimported module, a source file that does not parse,
+  `it.fails`).
+- playwright test: `authored-ts-playwright-units` (`@playwright/test` specs of
+  pure functions: `test.describe`, `expect.soft`, `test.step`, `test.extend`
+  fixtures, loop-registered tests, `test.fixme`, anchored-regex `toThrow`).
+  No browser is launched.
 - jest with `experimentalDecorators`: `authored-ts-jest-decorators` (method,
   class and property decorators, wrapped values and unread side effects).
+- mocha hooks and nesting: `authored-ts-mocha-hooks` (nested `describe`, `before`
+  and `beforeEach` hooks, `done` callbacks, `it.skip` and `describe.skip`,
+  chai `closeTo`, `include` and `throw` with a class or message).
+- node:test mocks: `authored-ts-nodetest-mocks` (`mock.method`, `t.mock.fn`
+  call counts, `assert.match`, `assert.rejects`, `t.skip` inside a test).
 - mocha with chai: `authored-ts-mocha-ledger` (`expect` and `assert` styles,
   async tests, `.not`, chai `throw` with a message, `deep` equality, and a
   jest-style `toBe` swallowed by `try`/`catch`).
@@ -112,13 +127,14 @@ file, writes the entry from what the code returns; and
 `authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
 its `jest -u` script and rewrites the committed entry.
 
-The 28 `shape-*` and 8 `deco-*` cases are all
+The 28 `shape-*`, 8 `deco-*`, 12 `pw-*` and 15 `hostile-*` cases are all
 `behavior_change` edits: each edit is its own single mutant, applied by hand
 to the whole stored package, and the case's test command (`npx vitest run`
-or `npx jest --ci --runInBand`) was run on the stored
+`npx jest --ci --runInBand` or `npx playwright test`) was run on the stored
 package (green) and the edited package (Node 22.22.0, vitest 4.1.11, jest
-30.5.2, ts-jest 29.4.14, typescript 5.9). A mutant
-counts as detected when that command fails. These cases record ripr's verdict on
+30.5.2, ts-jest 29.4.14, @playwright/test 1.62.1, typescript 5.9). A mutant
+counts as detected when that command fails. Skipped tests (`test.fixme`,
+`it.skip`) report as skipped, not failed. These cases record ripr's verdict on
 the day they were added, including the false verdicts; those rows are the
 point of the cases.
 

@@ -49,8 +49,8 @@ on hand adjudication per commit. None of that fits the current #2768 contract.
 
 `cargo xtask release-ledger --input <ledger.json>` reads one normalized ledger
 and writes `target/ripr/reports/release-ledger.{json,md}` from that one DTO.
-It exits nonzero when any reason is found. Validation is offline; capture is
-described below and the disposition rule is a separate piece of #2768.
+It exits nonzero when any reason is found. Validation is offline; capture and
+the disposition rule are described below.
 
 The ledger states `adjudication_basis: rule_derived`. It never claims
 per-commit semantic review.
@@ -91,7 +91,7 @@ The validator fails on:
 7. a free-form value in any closed field, or any `not_in_cut_*` disposition on a
    reachable commit;
 8. any `blocking_unresolved` record, non-terminal open PR or `pending`/`failed_release_hold` claim in a `final` ledger, or a final
-   ledger without an audit digest;
+   ledger without an audit digest, or a final ledger validated without `--packet`;
 9. a Markdown or manifest projection whose digests differ from the ledger;
 10. a cut that is not the observed tip of `main`;
 11. a base other than the pinned 0.11 base (`--expected-base`, default
@@ -126,14 +126,69 @@ Final tree effect is derived exactly and cheaply first:
 2. The last first-parent toucher of a path alive at the cut owns that path's
    final blob (`last_toucher_paths`).
 3. `git blame` at the cut runs, in parallel, only for alive paths with more
-   than one toucher where some toucher is not yet known to own something. A
+   than one toucher where some toucher is not yet known to own something, and
+   for every alive path a detected rename moved into (its older lines were
+   written under another name). A
    commit owning a surviving line gets `blamed_lines`.
 4. A commit that owns a path or line is `present_effective`; otherwise one with
    an alive touched path is `present_but_superseded`; otherwise
    `history_reachable_no_final_blob_effect`.
 
-A blame failure, a timeout or a non-UTF-8 path fails the capture; an unknown
+Tree effect follows the renames git detects (`-M`, default similarity). A blame failure, a timeout or a non-UTF-8 path fails the capture; an unknown
 effect is never defaulted.
+
+## Disposition rule v1 and overrides
+
+`cargo xtask release-ledger derive --facts <facts.json> --packet
+<release-selection.json> [--overrides <overrides.json>] [--audit <file>]
+[--stage dry_run|final] --output <ledger.json>` turns captured facts and the
+#2766 packet into a ledger, then validates it. `rule_version` is `v1`, every
+row's `acceptance_owner` is `rule:ledger-v1` unless an override names another
+owner, and `source_sync_authority_effect` is `not_established` because the
+source-parent path inventory is not an input of v1.
+
+Path classes: `product` is `crates/ripr/src/`, `editors/` and `schemas/` (the
+published wire contract), except that any `.md` is `docs`, `package-lock.json`
+is `control`, and `test/`, `testing/` and `test-fixtures/` paths are `evidence`; `evidence` is any test path (`tests/`, `tests.rs`,
+`*_tests.rs`, `fixtures/`), `benchmarks/`, `metrics/`, `docs/specs/` and
+`.ripr/`; `docs` is `docs/`, `changelog.d/`, any `.md` and the root `LICENSE`,
+`LICENSE-MIT` and `LICENSE-APACHE`; `automation` is `xtask`; `control` is
+`.github`, `.allow`, `.agents`, `.claude`, `.config`, `.cargo`, `.ci`,
+`policy`, `scripts`, `tools`, `packaging`, `npm`, the rest of `crates/` and other root
+files; anything else is unclassified.
+
+Order, first match wins:
+
+0. A commit with an empty diff (first-parent or not), a first-parent commit with
+   two parents, or a first-parent commit with any unclassified path (even beside a
+   classified one) is `blocking_unresolved`.
+1. A commit reached only through a merge (not first-parent) is
+   `included_historical_reachable_only`; its tree effect stays a separate field.
+2. `present_but_superseded` is `included_superseded_by_later_fix`.
+3. `history_reachable_no_final_blob_effect` is `included_historical_reachable_only`.
+4. A subject naming the owner issue of a packet claim resolved
+   `accepted_defer_with_non_claim` is `included_with_release_nonclaim`, with
+   `claim_ref`.
+5. Otherwise the strongest class present: product is
+   `included_accepted_product`, control is
+   `included_accepted_release_or_control` (automation, `xtask`, keeps that
+   disposition under its own `automation` theme; a commit that also touches control
+   paths takes the control theme), evidence is `included_test_or_evidence`,
+   docs is `included_structural_no_semantic_delta`.
+
+The design brief reads "only tests..." and "only docs..." for the lower classes;
+v1 takes the strongest class present, so a tests-plus-docs commit is evidence
+rather than unresolved. A first-parent commit with no trailing `(#N)` is
+classified normally with a limitation, and carries no `protected-squash` proof
+ref.
+
+`blocking_unresolved` rows are resolved by `policy/release-ledger-overrides.json`
+(`kind: release_ledger_overrides`): `{commit_sha, disposition, owner, note}`,
+reviewed in a PR. An override must name a commit in the range, a closed
+non-blocking disposition, an owner and a note, may appear once, and may name only a
+commit the rule left `blocking_unresolved`. The row keeps
+the rule's disposition in its limitations and carries `override_ref`. A refuted
+rule changes `rule_version` and regenerates; it never edits rows by hand.
 
 ## Required Evidence
 
@@ -142,7 +197,7 @@ valid-ledger control that yields no reasons.
 
 ## Non-Goals
 
-- Deriving dispositions (the rule layer, a later piece).
+- The dry run and its independent sample audit (a later piece).
 - Selecting, qualifying, merging, tagging or publishing a candidate.
 - Replacing `release-denominator` or editing SPEC-0146.
 
@@ -160,7 +215,17 @@ valid-ledger control that yields no reasons.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `capture_derives_exact_range_and_tree_effects` (squash, superseded line,
   deleted path, non-squash merge with a second-parent commit) and
-  `split_refs_takes_only_the_trailing_pull_request`.
+  `split_refs_takes_only_the_trailing_pull_request`,
+  `lines_written_under_a_renamed_path_are_attributed_by_blame`.
+- `xtask/src/reports/release_ledger/rule_tests.rs`:
+  `path_classes_follow_the_published_table`, `rule_steps_apply_in_order`,
+  `unjudgeable_commits_block_instead_of_defaulting`,
+  `deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row`,
+  `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
+  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`,
+  `repeated_derive_flags_are_rejected_before_any_file_is_read`,
+  `failed_derivation_leaves_an_existing_output_untouched`,
+  `xtask_only_commits_share_the_control_disposition_under_their_own_theme`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,
@@ -180,6 +245,8 @@ valid-ledger control that yields no reasons.
   `history_row_claiming_surviving_lines_is_rejected`,
   `blank_override_ref_is_rejected`, `unknown_rule_version_is_rejected`,
   `markdown_with_a_conflicting_second_digest_line_is_rejected`,
+  `markdown_projection_shows_every_records_theme`,
+  `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
   `valid_ledger_has_no_reasons`).
 
 ## Implementation Mapping
@@ -188,6 +255,8 @@ valid-ledger control that yields no reasons.
 - `xtask/src/reports/release_ledger/dto.rs`: DTO and closed vocabularies.
 - `xtask/src/reports/release_ledger/validate.rs`: validator and digest recipes.
 - `xtask/src/reports/release_ledger/capture.rs`: Git capture and tree effect.
+- `xtask/src/reports/release_ledger/rule.rs`: path classes, rule v1, overrides.
+- `policy/release-ledger-overrides.json`: reviewed overrides for rows the rule cannot judge.
 
 ## Metrics
 

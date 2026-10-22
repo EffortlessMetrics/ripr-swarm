@@ -77,6 +77,7 @@ mod instance_class_guard;
 mod line_index_tests;
 mod literal_matcher_guard;
 mod lookup_table_guard;
+mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -107,11 +108,13 @@ mod replaced_block_tests;
 mod repo;
 #[cfg(test)]
 mod repo_tests;
+mod returned_state_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
 mod table_rows;
+mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
@@ -149,6 +152,7 @@ pub(crate) use error_payload_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
+pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
@@ -159,10 +163,12 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use returned_state_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
 pub(crate) use table_rows::*;
+pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
@@ -525,6 +531,17 @@ impl TypeScriptAdapter {
                     owner_extraction_gaps.push(gap);
                 }
             }
+            // The gap disclosure above is file-level; a changed enum member
+            // also earns its own limited finding so the edit is not silent
+            // (#9436).
+            let enum_member_lines = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    let changed_lines: Vec<usize> =
+                        changed.added_lines.iter().map(|added| added.line).collect();
+                    changed_enum_member_lines(&changed.path, source, &changed_lines)
+                })
+                .unwrap_or_default();
 
             // Resolve package/workspace discovery facts for this changed file.
             // Evidence lines are injected into every finding generated below
@@ -684,6 +701,11 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    findings.push(finding);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
+                    finding.evidence.extend(discovery_evidence.clone());
                     findings.push(finding);
                 }
             }
