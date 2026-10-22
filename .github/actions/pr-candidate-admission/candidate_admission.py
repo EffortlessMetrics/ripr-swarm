@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import quote
 
 PLACEHOLDERS = {
     "",
@@ -293,6 +296,8 @@ def generated_totals(
     pr_files: list[dict[str, Any]],
     rules: list[tuple[re.Pattern[str], bool]],
     changed_files: int,
+    total_lines: int | None = None,
+    blob_lines: Callable[[str], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines). A truncated file listing cannot
     prove which lines are generated, so it exempts nothing."""
@@ -310,7 +315,46 @@ def generated_totals(
         if changed and all(is_generated(path, rules) for path in paths):
             files += 1
             lines += changed
-    return files, lines
+    return _add_unlisted_stats(pr_files, rules, total_lines, files, lines, blob_lines)
+
+
+def _add_unlisted_stats(
+    pr_files: list[dict[str, Any]],
+    rules: list[tuple[re.Pattern[str], bool]],
+    total_lines: int | None,
+    files: int,
+    lines: int,
+    blob_lines: Callable[[str], int | None] | None = None,
+) -> tuple[int, int]:
+    """GitHub drops per-file line counts for the files past its diff budget
+    (they list as zero-line `modified`), while the PR totals still include
+    them. Their combined lines are the PR total minus the listed ones. The
+    hand-written ones among them are bounded by their own line counts at the
+    base and head (`blob_lines`, None when unreadable), and the rest is
+    generated. Any unreadable file keeps the whole residual counted."""
+    if total_lines is None or blob_lines is None:
+        return files, lines
+    unlisted = [
+        e
+        for e in pr_files
+        if not (int(e.get("additions") or 0) + int(e.get("deletions") or 0))
+        and e.get("status") == "modified"
+    ]
+    residual = total_lines - sum(
+        int(e.get("additions") or 0) + int(e.get("deletions") or 0) for e in pr_files
+    )
+    declared = [e for e in unlisted if is_generated(str(e.get("filename") or ""), rules)]
+    if residual <= 0 or not declared:
+        return files, lines
+    bound = 0
+    for entry in unlisted:
+        if entry in declared:
+            continue
+        counted = blob_lines(str(entry["filename"]))
+        if counted is None:
+            return files, lines
+        bound += counted
+    return files + len(declared), lines + max(0, residual - bound)
 
 
 def identity_detail(fields: dict[str, str]) -> str:
@@ -679,6 +723,24 @@ def self_test() -> None:
     ]
     assert generated_totals(listed, rules, 7) == (3, 1850)
     assert generated_totals(listed, rules, 8) == (0, 0), "a truncated listing exempts nothing"
+    # Past GitHub's diff budget a file lists with no counts; the residual of the
+    # PR total over the counted lines is exempt after the hand-written stat-less
+    # files are bounded by their own base+head line counts.
+    stat_less = [
+        {"filename": "fixtures/a/package-lock.json", "status": "modified", "additions": 900, "deletions": 800},
+        {"filename": "fixtures/b/package-lock.json", "status": "modified"},
+        {"filename": "fixtures/c/package-lock.json", "status": "modified"},
+        {"filename": "crates/ripr/src/lib.rs", "status": "modified", "additions": 3, "deletions": 0},
+        {"filename": "fixtures/b/package.json", "status": "modified"},
+    ]
+    sizes = {"fixtures/b/package.json": 60}
+    bound = sizes.get
+    assert generated_totals(stat_less, rules, 5) == (1, 1700), "no total, no residual"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900) == (1, 1700), "no reader, no residual"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900, bound) == (3, 1700 + 2840)
+    assert generated_totals(stat_less, rules, 5, 1703, bound) == (1, 1700), "no residual lines"
+    assert generated_totals(stat_less, rules, 5, 1703 + 40, bound) == (3, 1700), "a bound above the residual exempts none"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900, {}.get) == (1, 1700), "an unreadable file keeps the residual counted"
     big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
     admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
@@ -778,8 +840,41 @@ def self_test() -> None:
     print("candidate-admission self-test: all controls passed")
 
 
+def gh_blob_lines(repository: str, current: dict[str, Any]) -> Callable[[str], int | None]:
+    """Lines of a path at the PR base plus at its head: an upper bound on what
+    the file changed. A path absent at one end counts 0 there; any other read
+    failure is None so the caller counts the file's lines instead."""
+    refs = [
+        str((current.get("base") or {}).get("sha") or ""),
+        str((current.get("head") or {}).get("sha") or ""),
+    ]
+
+    def count(path: str) -> int | None:
+        total = 0
+        for ref in refs:
+            if not SHA_RE.fullmatch(ref):
+                return None
+            done = subprocess.run(
+                ["gh", "api", "-H", "Accept: application/vnd.github.raw",
+                 f"repos/{repository}/contents/{quote(path)}?ref={ref}"],
+                capture_output=True, text=True, check=False,
+            )
+            if done.returncode != 0:
+                if "HTTP 404" in done.stderr:
+                    continue
+                return None
+            text = done.stdout
+            total += text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+        return total
+
+    return count
+
+
 def generated_from_files(
-    current: dict[str, Any], pr_files: Path | None, attributes: Path | None
+    current: dict[str, Any],
+    pr_files: Path | None,
+    attributes: Path | None,
+    blob_lines: Callable[[str], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines) from the fetched PR file listing and
     the base commit's .gitattributes; (0, 0) unless both were supplied."""
@@ -789,6 +884,8 @@ def generated_from_files(
         load_json(pr_files) or [],
         parse_generated_rules(attributes.read_text(encoding="utf-8")),
         int(current.get("changed_files") or 0),
+        int(current.get("additions") or 0) + int(current.get("deletions") or 0),
+        blob_lines,
     )
 
 
@@ -832,8 +929,12 @@ def main() -> int:
     if args.max_changed_files < 1 or args.max_changed_lines < 1:
         parser.error("qualification limits must be positive")
     current = load_json(args.current)
+    repository = os.environ.get("ADMISSION_REPOSITORY", "")
     generated_files, generated_lines = generated_from_files(
-        current, args.pr_files, args.generated_attributes
+        current,
+        args.pr_files,
+        args.generated_attributes,
+        gh_blob_lines(repository, current) if repository else None,
     )
     result = decide(
         current,
