@@ -39,6 +39,9 @@ pub(super) struct GuardedArmGap {
     pub(super) observed_values: Vec<ValueFact>,
     /// Why every observed input leaves the guard untaken.
     pub(super) reason: String,
+    /// The gap is not an untaken arm: every strong assertion reads the owner
+    /// only through a further method call (`arm_activation.rs`, #9429).
+    pub(super) chained_receiver: bool,
 }
 
 /// Evidence that a changed line sits inside guarding arm(s) no strong
@@ -183,6 +186,7 @@ pub(super) fn python_guarded_arm_gap(
             .join(" and "),
         observed_values,
         reason,
+        chained_receiver: false,
     })
 }
 

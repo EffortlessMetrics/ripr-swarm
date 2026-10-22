@@ -248,6 +248,35 @@ ladder result stands. `||` chains are not read (falsy values differ from
 nullish ones) and keep the ladder result. Rule 5 runs after rule 3 and before
 RIPR-SPEC-0248 rule 1, on the same value seams, and removes credit only.
 
+**Rule 6. A `catch` arm no related test can reach needs a throwing call.**
+(Added 2026-10-22, #9437.) When the changed line is located exactly in the
+owner's source and sits inside a `catch` clause or the body of a function
+passed to `.catch(`, and every related candidate is a direct, aliased or
+imported owner call whose test file has no module mock, imports only the
+owner and test frameworks, and holds no throw-capable text (`reject`,
+`throw`, `error`, `exception`, `fail`, `abort`, `timeout`, `catch`, `boom`,
+compared case-insensitively over the whole file including strings and
+comments), an `exposed` ladder result reads `weakly_exposed`. The missing note
+says the catch arm is never exercised by the related tests. The code the catch guards (the `try` body, or the receiver text before
+`.catch(`) must also be plain: every statement is exactly
+`[return] [await] param(<identifier or literal arguments>)` for an owner
+parameter. Any operator on the call result (`0 in read()`, `read() + 1`,
+`instanceof`, unary), `new`, `throw`, member access (`JSON.parse`, `fs.x`,
+`obj.m()`), indexing or nested call is refused, because it can fail on its own
+without a test saying so. The `catch` keyword must follow a closing `}`
+(a method named `catch(x) {` is not a clause), and a `catch (e) {` header
+line or any changed line starting with `}` is excluded. The throw-capable
+text list also holds `invalid`, `bad`, `malformed`, `corrupt`, `parse`,
+`missing`, `nonexist`, `null`, `undefined`, `empty` and `nan`. Any piece the
+rule cannot read keeps the ladder result.
+
+Known limits (false gap, never false credit): an owner parameter that is
+absent or not callable, a rejection built without throw-capable text
+(`new Promise((_, r) => r(1))`), and destructured `catch ({ message })`
+clauses are not modeled; each can leave a reachable arm read as
+`weakly_exposed`. Rule 6 only removes credit and runs
+after the #8569 unentered-guard rule.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -383,6 +412,12 @@ and the rejected alternative.
     `weakly_exposed`. With an owner that runs `cfg.ok = false` or
     `normalize(cfg)` before the return: the ladder result, `exposed`.
 
+15. `catch { return fallback; }` becomes `catch { return fallback + 1; }`,
+    test `expect(load(async () => 42, 0)).resolves.toBe(42)`:
+    `weakly_exposed`. With a test whose reader throws or rejects
+    (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
+    outside the `catch` arm: the ladder result.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -393,6 +428,9 @@ and the rejected alternative.
   `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
   `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
   and a shadowed-`expect` negative.
+- `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
+  `catch_arm_guard.rs` unit tests pin rule 6 (example 15); corpus case
+  `shape-async-catch-fallback-unexercised` pins the row.
 
 ## Implementation Mapping
 
@@ -411,6 +449,8 @@ and the rejected alternative.
   `ts_owner_call_member_arguments` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
+- `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
+  `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

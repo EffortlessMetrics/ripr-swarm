@@ -62,6 +62,7 @@ mod bounded_read;
 mod bun_bridge;
 #[cfg(test)]
 mod capability_disposition_tests;
+mod catch_arm_guard;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -117,6 +118,7 @@ mod rounding_mode_guard;
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
+mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
 #[cfg(test)]
@@ -176,6 +178,7 @@ pub(crate) use rounding_mode_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
+pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;

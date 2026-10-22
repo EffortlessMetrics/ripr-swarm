@@ -10,7 +10,12 @@
 //! - the fallback argument of `TABLE.get(key, default)` when every observed
 //!   key is one the module-level literal table holds.
 //!
-//! In both, reach plus a strong exact-value oracle does not discriminate the
+//! A third shape hides the edit behind a further method call (#9429): a
+//! classmethod's `return cls(0, 0.0)` -> `cls(0, 0.2)` is observed only through
+//! `Invoice.free().total()`, which prices an amount of 0 to 0 at any rate.
+//! `python_chained_receiver_gap` reads that bounded form.
+//!
+//! In the first two, reach plus a strong exact-value oracle does not discriminate the
 //! change, because the edited expression is never evaluated. Like the guard
 //! rule, this one engages only when static evidence reads everything it
 //! needs and otherwise fails open and keeps the existing verdict: a subject
@@ -19,7 +24,7 @@
 //! that mentions the table, or a strong call no row binds.
 
 use super::PythonOwner;
-use super::assertion_selection::PythonAssertionFocus;
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::boundary::{
     CallRow, literal_value, resolve_operand, strong_owner_call_rows_with_gaps, unrebound_constants,
 };
@@ -29,7 +34,7 @@ use super::guard_activation::{
 };
 use super::module_constants::mentions_identifier;
 use super::related_tests::PythonRelatedCandidate;
-use crate::domain::{ValueContext, ValueFact};
+use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
 
 /// Whether one row reaches the changed expression; `Some(true)` means the row
 /// provably never evaluates it, `None` that static evidence cannot tell.
@@ -164,6 +169,7 @@ pub(super) fn python_unreached_arm_gap(
         discriminator,
         observed_values,
         reason,
+        chained_receiver: false,
     })
 }
 
@@ -728,4 +734,305 @@ fn binds_name(line: &str, name: &str) -> bool {
                         == name
                 })
             })
+}
+
+/// What the one further method a strong assertion calls on the owner's result
+/// does with the edited constructor field.
+enum ChainedMethod {
+    /// `return self.<field>` for the edited field: it observes the edit.
+    ReturnsEditedField,
+    /// Anything else: computed from other state or returning another field.
+    DoesNotReturnEditedField,
+}
+
+/// Evidence that a classmethod's `return cls(...)` edit is observed only
+/// through a further method call that does not return the edited field.
+///
+/// Engages only on a `@dataclass` class without bases, an edit to exactly one
+/// argument of `return cls(...)` / `return Class(...)` that names a declared
+/// field, and strong related tests whose selected assertion calls the owner
+/// only as the receiver of `.method(...)`. A method that is a plain getter of
+/// the edited field, an assertion that reads an attribute or the object itself,
+/// or anything unreadable keeps the existing verdict.
+pub(super) fn python_chained_receiver_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    new_line: &str,
+    old_line: Option<&str>,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<GuardedArmGap> {
+    if !matches!(owner.owner_kind, Some(OwnerKind::ClassMethod))
+        || owner
+            .decorators
+            .iter()
+            .any(|decorator| decorator.ends_with("staticmethod"))
+    {
+        return None;
+    }
+    let receiver = owner.parameters.first()?.name.as_str();
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let changed = lines.get(changed_line.checked_sub(1)?)?;
+    if changed.trim() != new_line.trim() {
+        return None;
+    }
+    let class = DataclassBody::read(owner, &lines)?;
+    let (ctor, new_args) = constructor_arguments(new_line)?;
+    let (old_ctor, old_args) = constructor_arguments(old_line?)?;
+    if ctor != old_ctor
+        || (ctor != receiver && ctor != class.name)
+        || new_args.len() != old_args.len()
+    {
+        return None;
+    }
+    let mut edits =
+        (0..new_args.len()).filter(|index| new_args[*index].trim() != old_args[*index].trim());
+    let index = edits.next()?;
+    if edits.next().is_some() {
+        return None;
+    }
+    let field = match keyword_name(&new_args[index]) {
+        // A keyword edit must name a declared field.
+        Some(name) => class.fields.iter().find(|field| *field == name)?.clone(),
+        // A positional edit: no keyword argument may precede it.
+        None if new_args[..index]
+            .iter()
+            .any(|arg| keyword_name(arg).is_some()) =>
+        {
+            return None;
+        }
+        None => class.fields.get(index)?.clone(),
+    };
+    let mut methods: Vec<String> = Vec::new();
+    for candidate in related_candidates {
+        if !candidate.relation.uses_oracle() {
+            continue;
+        }
+        let selected = select_relevant_assertion(&candidate.test.assertions, Some(focus));
+        let Some(assertion) = selected.assertion() else {
+            continue;
+        };
+        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+            continue;
+        }
+        methods.extend(chained_methods(&assertion.gate_text, &owner.name)?);
+    }
+    methods.sort();
+    methods.dedup();
+    if methods.is_empty() {
+        return None;
+    }
+    for method in &methods {
+        match class.method_reads(method, &field)? {
+            ChainedMethod::ReturnsEditedField => return None,
+            ChainedMethod::DoesNotReturnEditedField => {}
+        }
+    }
+    let called = methods
+        .iter()
+        .map(|method| format!("`.{method}()`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(GuardedArmGap {
+        discriminator: format!("an assertion on the `{field}` state the edit sets"),
+        observed_values: Vec::new(),
+        reason: format!(
+            "every strong related assertion reads `{}` only through {called}, which does not return `{field}` directly, so a different `{field}` can leave the same value",
+            owner.name
+        ),
+        chained_receiver: true,
+    })
+}
+
+/// The name of a `name=value` keyword argument (not a `==` comparison).
+fn keyword_name(arg: &str) -> Option<&str> {
+    let (name, value) = arg.split_once('=')?;
+    (is_identifier(name.trim()) && !value.starts_with('=')).then_some(name.trim())
+}
+
+/// The constructor name and top-level arguments of a `return Ctor(args)` line.
+fn constructor_arguments(line: &str) -> Option<(String, Vec<String>)> {
+    let rest = line.trim().strip_prefix("return ")?.trim();
+    let open = rest.find('(')?;
+    let ctor = rest[..open].trim();
+    if !is_identifier(ctor) || matching_paren(rest, open + 1)? != rest.len() - 1 {
+        return None;
+    }
+    Some((
+        ctor.to_string(),
+        split_top_level(&rest[open + 1..rest.len() - 1]),
+    ))
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// Every method the assertion calls on the result of an owner call. `None`
+/// when any mention of the owner is not exactly `owner(...).method(`: a bare
+/// reference, an attribute read, a property or the object compared directly.
+fn chained_methods(assertion: &str, owner_name: &str) -> Option<Vec<String>> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut methods = Vec::new();
+    for (start, _) in assertion.match_indices(owner_name) {
+        let after = &assertion[start + owner_name.len()..];
+        if assertion[..start].chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+        {
+            continue;
+        }
+        let args = after.strip_prefix('(')?;
+        let close = matching_paren(args, 0)?;
+        let tail = args[close + 1..].strip_prefix('.')?;
+        let name: String = tail.chars().take_while(|ch| is_word(*ch)).collect();
+        if name.is_empty() || !tail[name.len()..].starts_with('(') {
+            return None;
+        }
+        methods.push(name);
+    }
+    (!methods.is_empty()).then_some(methods)
+}
+
+/// The `@dataclass` class around a classmethod owner, read as text.
+struct DataclassBody {
+    name: String,
+    /// Declared fields in constructor order.
+    fields: Vec<String>,
+    /// Non-blank, non-comment lines of the class body.
+    members: Vec<String>,
+    member_indent: usize,
+}
+
+impl DataclassBody {
+    fn read(owner: &PythonOwner, lines: &[&str]) -> Option<Self> {
+        let def_index = (owner.start_line.checked_sub(1)?..lines.len()).find(|index| {
+            let trimmed = lines[*index].trim_start();
+            trimmed.starts_with("def ") || trimmed.starts_with("async def ")
+        })?;
+        let member_indent = leading_whitespace(lines[def_index]);
+        let class_index = (0..def_index).rev().find(|index| {
+            let raw = lines[*index];
+            !raw.trim().is_empty()
+                && !raw.trim_start().starts_with('#')
+                && leading_whitespace(raw) < member_indent
+        })?;
+        let class_indent = leading_whitespace(lines[class_index]);
+        let name = lines[class_index]
+            .trim()
+            .strip_prefix("class ")?
+            .strip_suffix(':')?
+            .trim_end_matches("()")
+            .trim();
+        if !is_identifier(name) {
+            return None;
+        }
+        // Decorators directly above the class: `@dataclass` and nothing that
+        // reorders or hides fields.
+        let mut dataclass = false;
+        let mut index = class_index;
+        while index > 0 && lines[index - 1].trim_start().starts_with('@') {
+            index -= 1;
+            let decorator = lines[index].trim();
+            if decorator.contains("kw_only") || decorator.contains("init=False") {
+                return None;
+            }
+            dataclass |= decorator == "@dataclass"
+                || decorator == "@dataclasses.dataclass"
+                || decorator.starts_with("@dataclass(")
+                || decorator.starts_with("@dataclasses.dataclass(");
+        }
+        if !dataclass {
+            return None;
+        }
+        let mut fields = Vec::new();
+        let mut members = Vec::new();
+        for raw in &lines[class_index + 1..] {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let indent = leading_whitespace(raw);
+            if indent <= class_indent {
+                break;
+            }
+            members.push((*raw).to_string());
+            if indent != member_indent || trimmed.starts_with('@') || trimmed.starts_with("def ") {
+                continue;
+            }
+            if let Some((field, annotation)) = trimmed.split_once(':')
+                && is_identifier(field.trim())
+            {
+                if ["ClassVar", "InitVar", "KW_ONLY", "init=False", "kw_only"]
+                    .iter()
+                    .any(|marker| annotation.contains(marker))
+                {
+                    return None;
+                }
+                fields.push(field.trim().to_string());
+            }
+        }
+        Some(Self {
+            name: name.to_string(),
+            fields,
+            members,
+            member_indent,
+        })
+    }
+
+    /// How the one `def method(self)` of this class relates to `field`.
+    fn method_reads(&self, method: &str, field: &str) -> Option<ChainedMethod> {
+        let prefix = format!("def {method}(");
+        let mut headers = self.members.iter().enumerate().filter(|(_, raw)| {
+            leading_whitespace(raw) == self.member_indent && raw.trim_start().starts_with(&prefix)
+        });
+        let (position, header) = headers.next()?;
+        if headers.next().is_some() {
+            return None;
+        }
+        // Undecorated, so `.method(` is an ordinary bound-method call.
+        if position > 0 && self.members[position - 1].trim_start().starts_with('@') {
+            return None;
+        }
+        let header = header.trim();
+        let receiver = header
+            .strip_prefix(&prefix)?
+            .split([',', ')'])
+            .next()?
+            .trim();
+        if !is_identifier(receiver) || !header.ends_with(':') {
+            return None;
+        }
+        let mut body: Vec<&str> = self.members[position + 1..]
+            .iter()
+            .take_while(|raw| leading_whitespace(raw) > self.member_indent)
+            .map(|raw| raw.trim())
+            .collect();
+        if let Some(first) = body.first().copied()
+            && (first.starts_with("\"\"\"") || first.starts_with("'''"))
+        {
+            // A one-line docstring is skipped; a longer one is unreadable.
+            let quote = &first[..3];
+            if first.len() >= 6 && first.ends_with(quote) {
+                body.remove(0);
+            } else {
+                return None;
+            }
+        }
+        let getter = body
+            .first()
+            .filter(|_| body.len() == 1)
+            .and_then(|line| line.strip_prefix("return "))
+            .and_then(|expression| expression.trim().strip_prefix(receiver))
+            .and_then(|rest| rest.strip_prefix('.'))
+            .filter(|attribute| is_identifier(attribute));
+        Some(match getter {
+            Some(attribute) if attribute == field => ChainedMethod::ReturnsEditedField,
+            _ => ChainedMethod::DoesNotReturnEditedField,
+        })
+    }
 }
