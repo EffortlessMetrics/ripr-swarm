@@ -2262,6 +2262,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustCallFactBudget,
         StaticLimitKind::RustFrameworkOracleUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
+        StaticLimitKind::RustIndirectOwnerCallUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)

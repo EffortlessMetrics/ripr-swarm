@@ -571,6 +571,9 @@ fn tokio_lookalike() {}
 
 #[cfg_attr(test, test)]
 fn conditional_test_attribute() {}
+
+#[cfg_attr(feature = "extra", test)]
+fn unevaluated_conditional_test_attribute() {}
 "#,
     )?;
 
@@ -584,6 +587,9 @@ fn conditional_test_attribute() {}
             "qualified_quickcheck",
             "parameterized_case",
             "wasm_case",
+            "conditional_test_attribute",
+            // `cfg_attr(test, test)` is a test in a test build; a predicate
+            // the evaluator cannot read does not make one.
         ]
     );
     assert!(
@@ -595,7 +601,7 @@ fn conditional_test_attribute() {}
         &[
             "rstest_lookalike",
             "tokio_lookalike",
-            "conditional_test_attribute",
+            "unevaluated_conditional_test_attribute",
         ],
     );
     Ok(())
@@ -752,6 +758,8 @@ mod any_gate {
 
 #[cfg_attr(test, test)]
 fn cfg_attr_lookalike() {}
+#[cfg_attr(feature = "extra", test)]
+fn cfg_attr_unevaluated_lookalike() {}
 
 #[quickcheck]
 fn normalizer_credits_explicit_attribute(value: u8) -> bool { value == value }
@@ -850,8 +858,14 @@ fn integration_test() {
         (
             "src/lib.rs",
             "cfg_attr_lookalike",
+            FunctionSourceRole::TestAttribute,
+            "parser: cfg_attr(test, test) introduces test under a predicate known true",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_attr_unevaluated_lookalike",
             FunctionSourceRole::Production,
-            "parser: cfg_attr introductions never promote",
+            "parser: a cfg_attr predicate the evaluator cannot read never promotes",
         ),
         (
             "src/lib.rs",
