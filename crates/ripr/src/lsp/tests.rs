@@ -9796,6 +9796,7 @@ fn initialize_stores_lsp_analysis_config() -> Result<(), String> {
 fn initialize_with_invalid_languages_config_falls_back_to_rust_defaults() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -9855,6 +9856,7 @@ enabled = ["ruby"]
 fn session_configuration_change_preserves_invalid_repository_config_health() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -10250,6 +10252,7 @@ fn malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsuppor
 fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .start_paused(true)
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
@@ -12607,6 +12610,16 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
         {
             return Err(format!(
                 "the forced failure must reach the status payload: {statuses:?}"
+            ));
+        }
+        // #6740: the wire payload itself, not only the in-process carrier,
+        // names the unresolvable base with the stable kind the editor reads.
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["kind"] == "base_unresolvable")
+        {
+            return Err(format!(
+                "the missing-base failure must carry failure.kind=base_unresolvable on the wire: {statuses:?}"
             ));
         }
         if shown.len() != 1 {

@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime, RiprWorkspaceRootState } from '../../src/client';
 import { RiprConfig } from '../../src/config';
@@ -36,7 +37,7 @@ function harness() {
       root, roots: folders.map(f => f.uri.fsPath)
     }),
     workspaceFolders: () => folders,
-    workspaceFolderForUri: uri => folders.find(f => uri.fsPath.startsWith(`${f.uri.fsPath}/`)),
+    workspaceFolderForUri: uri => folders.find(f => uri.fsPath.startsWith(`${f.uri.fsPath}${path.sep}`)),
     showQuickPick: async () => undefined,
     resolveServer: async () => ({
       command: '/sentinel/binding/ripr', source: 'configured', detail: 'controller-only test',
