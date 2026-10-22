@@ -7,15 +7,21 @@ product behavior, builds or installs nothing, and does not decide
 qualification: #2769 consumes the packet.
 
 ```bash
+# Build the candidate source and one repairs-disabled copy per repair.
+cargo xtask termination-removal-builds --out target/ripr/termination-qualification/removal-builds
+
+# Qualify the exact binary, with controls the manifest vouches for.
 cargo xtask termination-qualification --binary <path-to-ripr> \
-  --removal-control rust_nesting=<repairs-disabled-ripr> \
-  --removal-control python_nesting=<repairs-disabled-ripr> \
-  --removal-control path_glob_suppression=<repairs-disabled-ripr> \
-  --removal-control path_glob_generated_file=<repairs-disabled-ripr>
+  --expected-commit <candidate-sha> \
+  --removal-manifest target/ripr/termination-qualification/removal-builds/manifest.json
 ```
 
+A single control can still be named with `--removal-control <family>=<binary>`;
+a family takes one control only, from either source.
+
+
 Outputs: `target/ripr/reports/termination-qualification.{json,md}`. Other
-flags: `--expected-sha256`, `--expected-version`, `--family`, `--no-repeat`,
+flags: `--expected-sha256`, `--expected-version`, `--expected-commit`, `--family`, `--no-repeat`,
 `--deadline-seconds` (default 60), `--allow-incomplete`, `--work-dir`, `--out`.
 
 ## What runs
@@ -33,10 +39,10 @@ and bounded drains.
 | `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
-and a changed file whose finding must stay visible. `pilot` is the only route
-that reads every Rust file and discloses `rust_nesting_budget`; the disclosure
-is on stderr, so the pilot row reads stderr plus the `repo-exposure.json` seam
-list.
+and a changed file whose finding must stay visible. `check` carries the
+`rust_nesting_budget` limitation in its JSON; `pilot` reads every Rust file and
+discloses it on stderr, so the pilot row reads stderr plus the
+`repo-exposure.json` seam list.
 
 ## Result taxonomy
 
@@ -56,6 +62,11 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
 - **Instrument controls** (Unix) run stub binaries through the same path and
   must reach each failing state, and the hang stub's child must be gone after
   the deadline kill.
+- **Execution controls** (Unix) run stubs through the launch path and check that
+  the harness decided what ran: the child sees only the harness `PATH` and no
+  ambient `ripr`, runs in the owned case root, cannot read an artifact that was
+  in the workspace before launch (the harness removes it first), and runs the
+  admitted bytes after the candidate path is rewritten.
 - **Repeat control** reruns the corpus; every row's semantic content must match.
 - **Removal controls** run a family's discriminator rows against a binary with
   the repair disabled. At least one row must abort, hang, or return a false
@@ -63,10 +74,17 @@ A packet that cannot fail proves nothing, so the aggregate needs these.
   A missing removal control, `--no-repeat` or `--family` exclusion makes the
   aggregate `incomplete`; the command exits nonzero unless `--allow-incomplete`.
 
-A repairs-disabled binary is a build of the candidate source with the guards
-neutralised (`rust_nesting_refusal` returns `None`, the Python tree-depth
-budget is `usize::MAX`, `path_glob_matches` is the recursive matcher kept in
-`analysis/path_glob.rs` tests) and must report the candidate's `--version`.
+`cargo xtask termination-removal-builds` scripts the repairs-disabled builds in
+a scratch worktree of `HEAD`: `rust_nesting_refusal` returns `None`, the Python
+nesting and tree-depth budgets are `usize::MAX`, and both glob entry points use
+a naive recursive matcher. An edit that no longer applies exactly once fails
+the build. Its `manifest.json` records the source commit, the candidate and
+each control's SHA-256 and version, and a digest of the applied edits. With
+`--removal-manifest`, a control counts only if its bytes match the manifest and
+the candidate reports the manifest's commit; a patched build reports that
+commit with `-dirty`, which is compared away. `--expected-commit` takes the
+`CANDIDATE_SHA` from the frozen-candidate manifest (#1609) and refuses a binary
+built from another commit. Every control runs from an owned, re-hashed copy.
 
 ## Packet identity
 
@@ -84,14 +102,20 @@ LSP, prove absence of every crash or hang class, or establish latency.
 
 Known gaps against the child issues, each deliberate for this first harness:
 
-- `check` does not project the Rust `rust_nesting_budget` decline, so those rows
-  assert termination and changed-file evidence only (#9308).
+- Rust `check` rows now require the `rust_nesting_budget` limitation, as
+  `pilot` rows do. Human/JSON parity of that limitation is not checked (#9308).
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
-- #4510 controls not built: planted ambient `ripr`, foreign CWD with a decoy
-  repository, preseeded stale artifact, simulated cleanup failure.
-  `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
-- A removal control is bound to the candidate by `--version` only, not by a
-  source or build identity.
+- #4510 controls not built: simulated cleanup failure (a root user ignores
+  directory mode bits, so there is no portable way to deny deletion), a decoy
+  repository in the caller's directory, and parsing of the #1609 manifest
+  itself (the manifest does not exist yet; `--expected-commit` takes its
+  candidate SHA). `--expected-sha256` is optional. A non-Unix host is refused,
+  not skipped.
+- A control passed with `--removal-control` instead of a manifest is bound to
+  the candidate by `--version` only; the packet says so in the control detail.
+- The candidate in the packet is the shipped binary, not the manifest's own
+  candidate build; the binding between them is the commit in `--version`, not
+  a byte comparison.
 - Glob corpus omits mixed separators, root-relative boundaries and an empty
   path, and the generated-file family omits `.`/empty-segment and
   adjacent-`**` rows.

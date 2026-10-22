@@ -293,6 +293,40 @@ fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
 }
 
 #[test]
+fn the_commit_in_a_version_line_binds_a_build_manifest() -> TestResult {
+    use super::removal_builds::version_commit;
+    if version_commit("ripr 0.11.0 (c7d6b397)") != Some("c7d6b397") {
+        return Err("the commit in parentheses must be extracted".to_string());
+    }
+    if version_commit("ripr 0.11.0").is_some() || version_commit("ripr (").is_some() {
+        return Err("a version without a commit binds nothing".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_family_takes_one_removal_control_only() -> TestResult {
+    let args: Vec<String> = [
+        "--binary",
+        "b",
+        "--removal-control",
+        "rust_nesting=a",
+        "--removal-control",
+        "rust_nesting=c",
+    ]
+    .iter()
+    .map(|arg| arg.to_string())
+    .collect();
+    match super::command::parse_args(&args) {
+        Err(error) if error.contains("given twice") => Ok(()),
+        other => Err(format!(
+            "a duplicate --removal-control must be refused, got {:?}",
+            other.map(|_| "accepted")
+        )),
+    }
+}
+
+#[test]
 fn a_malformed_selector_passes_only_as_a_policy_refusal() -> TestResult {
     let case = case_named("glob-suppression-empty-pattern-is-a-policy-error")?;
     let refused =
@@ -476,8 +510,10 @@ fn options() -> Options {
         work: PathBuf::from("work"),
         expected_sha256: None,
         expected_version: None,
+        expected_commit: None,
         families: Vec::new(),
         removal_controls: Vec::new(),
+        removal_manifest: None,
         repeat: true,
         deadline: Duration::from_mins(1),
         allow_incomplete: false,
@@ -750,8 +786,10 @@ mod unix_stubs {
             work: root.join("work"),
             expected_sha256: None,
             expected_version: None,
+            expected_commit: None,
             families: vec![Family::PythonNesting],
             removal_controls: Vec::new(),
+            removal_manifest: None,
             repeat: false,
             deadline: Duration::from_secs(5),
             allow_incomplete: false,
@@ -857,6 +895,92 @@ mod unix_stubs {
     }
 
     #[test]
+    fn execution_controls_discriminate_on_the_real_launch_path() -> TestResult {
+        let root = scratch("execution")?;
+        let controls =
+            super::super::execution_controls::execution_controls(&root.join("w"), &all_cases());
+        let _ = fs::remove_dir_all(&root);
+        let ids: Vec<&str> = controls.iter().map(|control| control.id.as_str()).collect();
+        if ids
+            != [
+                "execution-scrubbed-path",
+                "execution-owned-cwd",
+                "execution-stale-artifact",
+                "execution-snapshot-isolation",
+            ]
+        {
+            return Err(format!("unexpected execution controls: {ids:?}"));
+        }
+        for control in &controls {
+            if !control.discriminated {
+                return Err(format!(
+                    "{} did not discriminate: {:?} {}",
+                    control.id, control.observed, control.detail
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_manifest_bound_control_needs_the_recorded_bytes_and_commit() -> TestResult {
+        use super::super::controls::Binding;
+        let root = scratch("bound")?;
+        let dir = root.join("abort");
+        fs::create_dir_all(&dir).map_err(|error| format!("mkdir: {error}"))?;
+        let aborting = stub(
+            &dir,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo ripr-test 1 \\(abc123\\); exit 0; }\nkill -ABRT $$\n",
+        )?;
+        let sha = crate::blind_journey::sha256_hex(
+            &fs::read(&aborting).map_err(|error| format!("read: {error}"))?,
+        );
+        let cases: Vec<Case> = all_cases()
+            .into_iter()
+            .filter(|case| case.family == Family::PythonNesting)
+            .collect();
+        let bind = |expected: &str, commit: &str| Binding {
+            family: Family::PythonNesting,
+            id: "python-parse-budget-off".to_string(),
+            expected_sha256: expected.to_string(),
+            edits_sha256: "e".repeat(64),
+            source_commit: commit.to_string(),
+        };
+        let run = |name: &str, binding: Binding| {
+            super::super::controls::removal_controls(
+                &root.join(name),
+                &cases,
+                &[(Family::PythonNesting, aborting.clone())],
+                &[binding],
+                &"c".repeat(64),
+                "ripr-test 1 (abc123)",
+                Duration::from_secs(10),
+            )
+        };
+        let good = run("good", bind(&sha, "abc123"));
+        let wrong_bytes = run("bytes", bind(&"0".repeat(64), "abc123"));
+        let wrong_commit = run("commit", bind(&sha, "def456"));
+        let _ = fs::remove_dir_all(&root);
+        if !good[0].discriminated || !good[0].detail.contains("manifest-bound") {
+            return Err(format!(
+                "a bound abort must discriminate: {:?}",
+                good[0].detail
+            ));
+        }
+        if wrong_bytes[0].discriminated
+            || wrong_bytes[0].observed.as_deref() != Some("manifest_sha_mismatch")
+        {
+            return Err("bytes the manifest did not record must not count".to_string());
+        }
+        if wrong_commit[0].discriminated
+            || wrong_commit[0].observed.as_deref() != Some("source_commit_mismatch")
+        {
+            return Err("a manifest from another commit must not count".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn removal_controls_need_a_failing_and_different_binary() -> TestResult {
         let root = scratch("removal")?;
         let candidate = stub(
@@ -877,6 +1001,7 @@ mod unix_stubs {
             &root.join("w1"),
             &cases,
             &[(Family::PythonNesting, candidate.clone())],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -895,6 +1020,7 @@ mod unix_stubs {
             &root.join("w2"),
             &cases,
             &[(Family::PythonNesting, aborting)],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -904,6 +1030,7 @@ mod unix_stubs {
             &root.join("w4"),
             &cases,
             &[(Family::PythonNesting, unrelated)],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -912,6 +1039,7 @@ mod unix_stubs {
         let none = super::super::controls::removal_controls(
             &root.join("w3"),
             &cases,
+            &[],
             &[],
             &candidate_sha,
             "ripr-test 1",

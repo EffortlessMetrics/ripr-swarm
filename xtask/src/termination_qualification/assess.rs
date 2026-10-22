@@ -175,7 +175,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
         |result: Assessment| result.with_counts(changed_findings, suppressed, declined.len());
 
     match &case.expect {
-        Expect::Supported | Expect::TerminatesWithEvidence => {
+        Expect::Supported => {
             let names_changed = all_limitations
                 .iter()
                 .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
@@ -186,11 +186,10 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                         .to_string(),
                 ));
             }
-            if matches!(case.expect, Expect::Supported)
-                && root
-                    .pointer("/analysis_outcome/analysis_complete")
-                    .and_then(Value::as_bool)
-                    != Some(true)
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(true)
             {
                 return counts(Assessment::fail(
                     RowResult::SemanticFailure,
