@@ -13,7 +13,7 @@
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
     is_python_identifier_char, owner_class_locals, owner_method_bound_locals, owner_module_callees,
-    owner_result_locals, python_text_hides_code,
+    owner_result_locals, python_text_hides_code, with_entry,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -49,8 +49,32 @@ impl ChangedEffect {
         owner: &PythonOwner,
     ) -> Option<Self> {
         let line = line_text.trim();
+        let context_dunder = matches!(owner.name.as_str(), "__enter__" | "__exit__");
+        let direct = owner
+            .class_facts
+            .direct_statements
+            .iter()
+            .any(|statement| statement == line);
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
+            // A context manager's write under a guard may never run (#9421).
+            && (!context_dunder || direct)
+        {
+            return Some(Self::SelfField {
+                attr: attr.to_string(),
+            });
+        }
+        // A context manager records into a collection it holds
+        // (`self.events.append("exit")`): the state a test reads back after
+        // its `with` block (#9421). Other methods keep their call-based
+        // reading.
+        if matches!(owner.owner_kind, Some(OwnerKind::Method))
+            && context_dunder
+            && let Some(attr) = self_attribute_mutation(line)
+            // Only a statement written directly in the method body always
+            // runs; one under an `if`, `try` or loop may never run in the
+            // test, so it reads no effect (unknown facts fail closed).
+            && direct
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -184,6 +208,26 @@ impl EffectReads {
                         .map(|local| format!("{local}.{attr}"))
                         .collect();
                 }
+                // `with Manager() as m:` runs `__enter__` at the statement and
+                // `__exit__` when the block ends; the state is readable from
+                // there on (#9421).
+                if let Some(entry) = with_entry(test, owner) {
+                    reads.operands.push(format!("{}.{attr}", entry.manager));
+                    let offset = if owner.name == "__exit__" {
+                        entry.after_block_offset
+                    } else {
+                        entry.statement_offset
+                    };
+                    // An offset at the end of a body with no final newline is
+                    // the last line itself, so the line after it is one more.
+                    let unterminated =
+                        offset >= test.body_text.len() && !test.body_text.ends_with('\n');
+                    reads.first_call_line = Some(
+                        test.line
+                            + test.body_text[..offset].matches('\n').count()
+                            + usize::from(unterminated),
+                    );
+                }
             }
         }
         reads
@@ -215,6 +259,21 @@ impl EffectReads {
             .iter()
             .any(|mocked| pins_mock_call(assertion, mocked))
     }
+}
+
+/// `self.attr.append(value)` and the like: the collection attribute a method
+/// records into.
+fn self_attribute_mutation(line: &str) -> Option<&str> {
+    let (callee, _) = statement_call(line)?;
+    let rest = callee.strip_prefix("self.")?;
+    let (attr, mutator) = rest.split_once('.')?;
+    (!attr.is_empty()
+        && attr.chars().all(is_python_identifier_char)
+        && matches!(
+            mutator,
+            "append" | "appendleft" | "extend" | "extendleft" | "insert" | "add" | "update"
+        ))
+    .then_some(attr)
 }
 
 /// `self.attr = value` or `self.attr op= value`: the written attribute.
