@@ -119,13 +119,21 @@ fn the_framework_list_is_a_gap_free_ordinal_sequence() {
     assert_eq!(ordinals, (0..FRAMEWORK_COUNT).collect::<Vec<_>>());
 }
 
+/// The TypeScript-family adapter serves both languages, which the table
+/// registers separately, so each is checked.
+const ADAPTER_LANGUAGES: [LanguageId; 2] = [LanguageId::TypeScript, LanguageId::JavaScript];
+
 #[test]
-fn every_typescript_framework_agrees_with_the_capability_table() {
-    assert_eq!(
-        disposition_violations(&current_entries(), CAPABILITY_CELLS, LanguageId::TypeScript),
-        Vec::<String>::new()
-    );
-    assert!(cells_for(LanguageId::TypeScript).next().is_some());
+fn every_framework_agrees_with_the_capability_table_for_both_languages() {
+    for language in ADAPTER_LANGUAGES {
+        assert_eq!(
+            disposition_violations(&current_entries(), CAPABILITY_CELLS, language),
+            Vec::<String>::new(),
+            "{}",
+            language.as_str()
+        );
+        assert!(cells_for(language).next().is_some());
+    }
 }
 
 #[test]
@@ -142,6 +150,24 @@ fn a_framework_specific_cell_makes_a_language_wide_disposition_drift() {
             .any(|v| v.contains("vitest") && v.contains("a cell names it")),
         "{violations:?}"
     );
+}
+
+#[test]
+fn a_javascript_framework_cell_makes_a_language_wide_disposition_drift() {
+    let mut cells = CAPABILITY_CELLS.to_vec();
+    let mut vitest = cells[0];
+    vitest.language = LanguageId::JavaScript;
+    vitest.framework = "vitest";
+    cells.push(vitest);
+    let violations = disposition_violations(&current_entries(), &cells, LanguageId::JavaScript);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("vitest") && v.contains("a cell names it")),
+        "{violations:?}"
+    );
+    let typescript = disposition_violations(&current_entries(), &cells, LanguageId::TypeScript);
+    assert!(typescript.is_empty(), "{typescript:?}");
 }
 
 #[test]
