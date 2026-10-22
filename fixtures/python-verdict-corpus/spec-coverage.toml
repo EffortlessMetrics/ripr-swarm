@@ -688,11 +688,6 @@ issue = 9428
 reason = "pytest.approx credited as an exact-value oracle for a within-tolerance edit (#9428)."
 
 [[known_false]]
-case = "py-idioms-unittest-setup-sign"
-issue = 9412
-reason = "Python idiom false verdict; Python corpus lane fixes these (#9412)."
-
-[[known_false]]
 case = "py-grid-boundary-exact"
 issue = 9542
 reason = "False actionable: bare boolean assert on a predicate owner reads as weak (#9542)."

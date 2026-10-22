@@ -79,6 +79,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
@@ -314,6 +315,9 @@ struct PythonTest {
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
+    /// Receivers the test's class builds once in a setup hook (`self.stock =
+    /// Stock(5)`); empty outside an unambiguous class (#9417).
+    setup_receivers: Vec<setup_receivers::SetupReceiver>,
     /// Definitions the `fixtures` parameters resolve to, in the test's module
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
