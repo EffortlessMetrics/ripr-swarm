@@ -33,6 +33,7 @@ Linked issues:
 - #9496 (chai throw forms, anchored `assert.match`, substring rejection
   regex, counted removed call)
 - #9435 (exact oracle ignored on five changed-line shapes)
+- #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 
 Linked PRs:
 
@@ -114,7 +115,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 11 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 18 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -276,6 +277,10 @@ assertion-only callback with no nested test call. This does not expand aliases.
   an enclosing caught try still withholds those nested assertions. This is
   not general analysis of abrupt completion in finally blocks. Withheld
   assertion-like syntax remains unresolved admission, not established absence.
+- (Amended 2026-10-22, #9685; decision 20.) The one exception to the
+  handler rule: a handler that is exactly `catch (e) { throw e; }` passes the
+  failure through, so its try body keeps collection, for a synchronous
+  assertion and an awaited rejection alike.
 - (Amended 2026-10-17, #8508.) A `finally` that can replace its `try`'s
   completion withholds the try body's and catch handler's assertions: any
   `return` or `throw` outside a nested function, or a `break`/`continue`
@@ -780,9 +785,43 @@ prove its condition costs an abstention or a gap, never a credit.
    credited when a strong, pinned, exact-value assertion of an oracle
    relation calls the owner with a literal argument that provably selects
    the edited arm: numbers compare by value; strings, booleans and
-   `null`/`undefined` by equality; a member path only by the same text, and
-   not when the test body rebinds the path's root (`const Level = ...`) or
-   imports it from a module other than the owner's. The
+   `null`/`undefined` by equality. A member path requires the same canonical
+   runtime enum declaration and member, rather than the same local spelling.
+   Named import aliases, bounded named/star re-exports (including an imported
+   local subsequently exported), and `namespace.Enum.Member` retain that
+   identity. The owner may import its enum from a third module. A different
+   export from the owner's own module is a different binding. Missing,
+   unreadable, ambiguous, cyclic, over-deep or mocked provenance credits
+   nothing. Only ordinary enum declarations with statically named members
+   and literal/implicit initializers supply a terminal identity; ambient or
+   const enums and arbitrary member-bearing objects remain unknown.
+   Owner parameter/body shadows, test callback/enclosing/file bindings,
+   root reassignments, member mutation/deletion and root escapes withhold
+   credit. Known mutation or escape through another imported alias of the
+   same enum declaration also withholds credit; a bare call to an unrelated
+   imported function is not an enum mutation. A namespace enum-object read
+   (`levels.Level`) can escape, while a proven scalar member read
+   (`levels.Level.High`) retains identity. Calls through a grouped enum
+   member, including non-null/optional invocation and a tagged template,
+   are possible receiver escapes; cast
+   and generic-call tails also remain unknown. Grouping a scalar member
+   read alone does not withdraw a separate canonical witness. The test check
+   also rejects grouped member updates, assignments and deletion. Whitespace
+   or comments after an optional-call token do not establish read-only use,
+   and optional generic invocation is still invocation. Scalar unary minus,
+   logical not and ordinary comparisons remain reads. Unmasked Unicode-escaped
+   runtime identifiers make stability unknown; escapes confined to strings or
+   comments do not. The test check
+   covers the whole file, including setup hooks. Distinct source files
+   collapsed by extension
+   stripping (for example `constants.ts` and `constants.mts`) make that
+   module's enum identity unknown, even when an import names its extension.
+   A re-export statement supplies an exported binding, never a local import
+   for the owner's condition; owner roots use only actual module imports or
+   declarations. A same-named local object beside a canonical re-export is
+   still an unknown member root.
+   Supported function type annotations and import/export syntax are not
+   runtime escapes. The
    assertion must observe the owner's whole result (not `price(150) > 0`),
    through the owner's name or an import alias, and an expected value that
    provably equals neither the old nor the new arm is dead and credits
@@ -807,9 +846,9 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
-**Rule 16. Playwright Test specs of pure functions (#9434).** A spec that
-imports `expect` and `test` from `@playwright/test` reads like its plain
-form in four places:
+**Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
+that imports `expect` and `test` from `@playwright/test` reads like its
+plain form in six places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -831,6 +870,56 @@ form in four places:
    the expected value is one of the two arms. An argument outside that
    interval, an expected value equal to neither arm, a wrapped call and
    equal arms keep the old reading.
+5. A message that is one template literal with interpolations (`not a
+   count: ${text}` becoming `not a number: ${text}`, the same expressions
+   in both) is read as fixed text around holes. An anchored `toThrow`
+   pattern separates the versions when its literal text can be the whole
+   message of exactly one version for some filling of the holes, and the
+   same call fills both. The test's literal argument then yields the text
+   the pattern pins on one version and cannot on the other. A pattern that
+   fits neither or both versions, a changed or different interpolated
+   expression, a second throw site, and unanchored, flagged or substring
+   payloads (`toThrow("...")`) keep the old reading.
+6. A changed field of a single-line returned object literal
+   (`return { area: w * h, perimeter: 2 * w + h };`, one `key: value`
+   differing from the removed line) is observed by an assertion on that
+   field of the owner's result: `d.perimeter` for `const d = dims(3, 4)` or
+   `dims(3, 4).perimeter`, including the second term of an `expect.soft`
+   pair. The base must be the owner call or a local alias of it; a field
+   whose value is unchanged, another object's field and another owner keep
+   the old reading.
+
+**Rule 17. `t.skip()` / `t.todo()` inside a test body withdraws the test
+(#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
+`<param>.skip(...)` or `<param>.todo(...)` anywhere in its body is reported
+by the runner as skipped or todo and passes however its later assertions
+would have gone. It registers no running discriminator, exactly like a
+`.skip` registration: the test is not extracted and its assertions earn no
+credit. The check is textual and fail-closed (a conditional `t.skip()` also
+withdraws the test) but ignores comments, string literals and calls inside
+a nested callback that rebinds the same name (a subtest's own context); `skip` / `todo` on any other receiver, or a callback
+without a context parameter, is unaffected.
+
+**Rule 18. A returned expression that agrees on every asserted input is
+unexercised (#9497).** For a changed complete one-line `return <expr>;` in a
+fixed-signature owner, when every strong assertion of every oracle-eligible
+related test observes owner calls whose arguments are all literals, and the
+old and new expressions evaluate to the same value on each of those
+inputs, no assertion can tell the versions apart and the finding reads
+`weakly_exposed` (an untouched clamp arm, the other branch of a ternary, a
+bound whose changed side no input reaches). The evaluator is exact and
+small: number, string and boolean literals, the owner's parameters,
+`+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
+selected arm is evaluated), template literals with literal substitutions
+and `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
+(a free identifier, another call, a non-literal argument, mixed-type
+coercion, a parameter reassigned in the owner, a class pin credit, a lookup
+table change) makes the answer unknown and keeps the existing verdict, so
+the rule only withdraws credit and never adds any. The changed return must
+be at the owner's own function level (no earlier arrow, `function` or
+method head, since a nested parameter can shadow the owner's), the observed
+value may call nothing but the owner directly, and `0` versus `-0` counts
+as different values.
 
 ### Static limits
 
@@ -1010,7 +1099,7 @@ rejected alternative. Any can be reversed later without touching the rest.
     factory-made receivers, `do { } while` bodies, and tables or helpers as
     the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
     gaps until the adapter resolves literal tables and same-file helper
-    assertions, #9534). A getter-backed field is not detected.
+    assertions, #9534). A getter-backed field is refused by decision 20.
 
 19. **Literal tables and same-file assertion helpers (2026-10-22, #9534).**
     Adopted, extending decision 18. (a) A table-driven expected side counts when
@@ -1030,6 +1119,29 @@ rejected alternative. Any can be reversed later without touching the rest.
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
     computed arguments, strings, and calls inside expressions.
+20. **Failures a handler rethrows (2026-10-22, #9685).** Adopted. (a) A
+    `try` whose handler is exactly `catch (e) { throw e; }` (one statement,
+    throwing the very binding it caught, no `finally` that can replace the
+    completion) passes the body's failure through, so the body's assertions
+    count as if the `try` were absent. A bare `catch`, an empty handler, a
+    different thrown value, any other statement in the handler, a destructured
+    catch binding, or a `finally` that returns or throws still withholds them
+    (#8242, #8508). (b) A same-file top-level `function w(fn) { try { fn(); }
+    catch (e) { throw e; } }` (synchronous, one plain parameter, nothing else
+    in the body) is transparent: a call that is its own statement,
+    `w(() => <expression>);` on one line, reads as `<expression>;`, and every
+    mention of `w` must be such a call. A wrapper that swallows, wraps,
+    logs, awaits or adds a statement keeps its calls unread. Rejected:
+    crediting any handler on the strength of its name, and following wrappers
+    across files.
+
+20. **Accessor-backed fields (2026-10-22, #9768).** Adopted, extending decision
+    18. A field update is not credited when the owner's class, in the same
+    file, declares `get <field>` or `set <field>`: reading the field runs the
+    accessor, which need not return what the changed statement wrote, so an
+    exact assertion on it does not observe the update. Rejected: modelling the
+    accessor body (it can compute anything), and `accessor <field>` auto-
+    accessors, which the owner index does not record yet.
 
 ## Required Evidence
 
@@ -1291,7 +1403,38 @@ to `amount - 20`, and `tests/lib.test.ts` has
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
     `break`, stay `weakly_exposed` (rule 11).
-38. `describeRange` throws `new RangeError("lo above hi")` changed to
+38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
+    threw `` `not a count: ${text}` ``, and the Playwright spec runs
+    `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
+    `exact_error_variant` / strong, `exposed` (the pinned text fits only the
+    old pieces for some fill of `${text}`). With `/^something else$/`,
+    `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
+    unchanged.
+39. `src/soft.ts` returns `{ area: w * h, perimeter: 2 * w + h }` where it
+    returned `perimeter: 2 * (w + h)`, and the Playwright spec runs
+    `const d = dims(3, 4); expect.soft(d.area).toBe(12);
+    expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
+    (today `weakly_exposed`: only the unchanged `area` term reached the
+    changed-value check). With only the `d.area` assertion: unchanged.
+40. `src/rank.ts` `return score >= 90 ? "gold" : "silver";` changed to
+    `"bronze"`; the only running test is `it("...", () => {
+    expect(rank(90)).to.equal("gold"); })` and the silver assertion is
+    `it.skip`: `weakly_exposed` (today `exposed`; rule 18 on the active
+    test, the skipped one is already withdrawn). Corpus case
+    `mocha-it-skip-sole-pin`.
+41. `src/clamp.ts` `Math.min(hi, Math.max(lo, n))` changed to `Math.max(lo +
+    1, n)`; tests `clamp(15, 0, 10)` and `clamp(5, 0, 10)`:
+    `weakly_exposed` (today `exposed`; rule 18: both inputs give the same
+    value on both versions). A test `clamp(-3, 0, 10)` keeps `exposed`.
+    Corpus case `mocha-clamp-unexercised-lower-arm`.
+42. `describeAttempt(attempt)` `attempt === 0 ? "first" : ...` with the
+    `"retry"` text changed (or the test relaxed to `attempt <= 0`); one test
+    calls `describeAttempt(0)` and the other starts with `t.skip("not
+    ready")` before asserting: `weakly_exposed` (today `exposed`; rule 17
+    withdraws the second test, rule 18 shows `describeAttempt(0)` agrees on
+    both versions). Corpus cases `node-t-skip-inside-test` and
+    `node-first-attempt-nonnegative-bound`.
+43. `describeRange` throws `new RangeError("lo above hi")` changed to
     `new TypeError("lo above hi")` (corpus case `mocha-throw-class-changed`)
     or to `new RangeError("lo is above hi")` (corpus case
     `mocha-throw-message-reworded`); chai `expect(() => describeRange(4,
@@ -1300,18 +1443,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
     10). With `to.throw(RangeError, "above")` on the reword, or
     `to.throw(Error, "lo above hi")` on the class change: `broad_error` /
     weak by rule 4 (both versions pass).
-39. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
+44. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
     case `node-match-anchored-slug`); `assert.match(slugify("Hello
     World"), /^hello-world$/)`: `exact_value` / strong, `exposed` (today
     `relational_check` / weak). With `/hello-world/`, `/^hello.world$/` or
     `/^HELLO-WORLD$/i`: `relational_check` / weak (unchanged).
-40. `record` changed from `sink.write(line);` to `void line;` (corpus case
+45. `record` changed from `sink.write(line);` to `void line;` (corpus case
     `node-mock-method-call-removed`); the test binds `const write =
     mock.method(sink, "write", ...)` and asserts `write.mock.callCount()`
     equals `1`: `exposed` (rule 19; today `weakly_exposed` with an
     unrecognised-shape discriminator). With a spy on `"flush"` instead, or a
     count of `0`: unchanged.
-41. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
+46. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
     (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
     2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
@@ -1333,6 +1476,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
   `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
   gap to credited.
+- #9624 canonical member provenance:
+  `crates/ripr/src/analysis/language/typescript/tests/enum_member_tests.rs`
+  pins exact/renamed/namespace imports, canonical named/star/imported-local
+  re-exports and a third-module owner import against different bindings,
+  missing declarations, scope shadows, mutations and escapes. Its unchanged
+  arm returns the old changed-arm value, so a wrong-binding test can pass both
+  versions without becoming a dead expected-side control. The shared honesty
+  corpus pins a wrong-export negative and a canonical-alias positive.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture
@@ -1449,8 +1600,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `pw-tothrow-anchored-regex` and `pw-loop-registered-rounding-mode` keep
   their `known_false` entries under #9651, #9652 and #9653.
 
+- #9685 (decision 20): `tests/rethrow_catch_tests.rs` pins the rethrowing
+  handler against nine swallowing or replacing handlers, and
+  `rethrow_wrapper.rs` unit tests pin the wrapper shape and every call form it
+  refuses. Corpus rows `ts-trap-rethrown-assert` and `ts-trap-wrapped-through`
+  move from `gap` to `credited`; `ts-trap-swallowed-assert` and
+  `ts-trap-wrapped-swallow` stay `gap`.
+
 ## Implementation Mapping
 
+- #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
+  the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,
+  run before the assertion-helper expansion in `extract_tests_with_expansion`).
 - #9434 (rule 16): `oracle.rs` (`call_expression_is_expect` for
   `expect.soft`, the `step` arm of `collect_nested_callback_assertions` with
   `TypeScriptAssertionBindings::playwright_tests`, and the `ThrowsRegex` /

@@ -152,7 +152,8 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
     let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)
             .map_err(AgentCardError::operational)?;
-    if let Some(refusal) = truncated_inventory_refusal(&limit_info, &options.seam_id) {
+    if let Some(refusal) = truncated_inventory_refusal(&limit_info, &options.root, &options.seam_id)
+    {
         // #7179 review: a capped candidate inventory can omit a nested
         // same-kind sibling, so most-specific selection could credit this
         // outer seam with an inner seam's finding. The card refuses instead
@@ -203,6 +204,7 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
 /// span. `None` keeps the complete-inventory behavior byte-identical.
 fn truncated_inventory_refusal(
     limit_info: &Option<crate::analysis::SeamLimitInfo>,
+    root: &std::path::Path,
     seam_id: &str,
 ) -> Option<AgentCardError> {
     limit_info.as_ref().map(|limit| {
@@ -211,9 +213,12 @@ fn truncated_inventory_refusal(
             format!(
                 "agent card seam_id {seam_id} was refused: the seam candidate inventory was \
                  truncated by the repo seam limit ({} of {} seams analyzed), so nested same-kind \
-                 siblings may be missing and the card refuses to bind. Raise or clear \
-                 RIPR_REPO_EXPOSURE_SEAM_LIMIT and re-run, or retrieve the full packet.",
-                limit.analyzed, limit.total
+                 siblings may be missing and the card cannot be produced safely. Raise \
+                 RIPR_REPO_EXPOSURE_SEAM_LIMIT (0 removes the cap) and re-run, or retrieve the \
+                 full packet: {}.",
+                limit.analyzed,
+                limit.total,
+                crate::app::repair_card_handoff::bound_packet_command(root, seam_id)
             ),
         )
     })
@@ -515,7 +520,7 @@ mod tests {
     #[test]
     fn truncated_inventory_refuses_and_complete_inventory_does_not() -> Result<(), String> {
         use crate::analysis::{SeamLimitInfo, SeamLimitSource};
-        if truncated_inventory_refusal(&None, "seam-a").is_some() {
+        if truncated_inventory_refusal(&None, std::path::Path::new("/repo"), "seam-a").is_some() {
             return Err("a complete inventory must not refuse the card".to_string());
         }
         let limit = SeamLimitInfo {
@@ -524,7 +529,7 @@ mod tests {
             source: SeamLimitSource::Configured,
         };
         let Some(AgentCardError::Refusal { kind, message }) =
-            truncated_inventory_refusal(&Some(limit), "seam-a")
+            truncated_inventory_refusal(&Some(limit), std::path::Path::new("/repo"), "seam-a")
         else {
             return Err("a truncated inventory must refuse the card".to_string());
         };
@@ -534,9 +539,10 @@ mod tests {
         if !message.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
             || !message.contains("1 of 4")
             || !message.contains("seam-a")
+            || !message.contains("ripr agent packet")
         {
             return Err(format!(
-                "refusal must name the limit and the seam: {message}"
+                "refusal must name the limit, the seam, and the packet route: {message}"
             ));
         }
         Ok(())

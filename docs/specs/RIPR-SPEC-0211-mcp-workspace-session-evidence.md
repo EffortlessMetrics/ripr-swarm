@@ -162,7 +162,7 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v2`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept

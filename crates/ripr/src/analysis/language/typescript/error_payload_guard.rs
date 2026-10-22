@@ -373,6 +373,12 @@ pub(crate) struct ErrorChangeFacts {
     pub(crate) old_builtin_class: Option<String>,
     /// The new side's [`Self::old_builtin_class`].
     pub(crate) new_builtin_class: Option<String>,
+    /// The old message as text around interpolation holes, kept only when a
+    /// hole exists and both sides interpolate the same expressions, so the
+    /// same call fills both versions alike.
+    old_shape: Option<MessageShape>,
+    /// The new side's [`Self::old_shape`].
+    new_shape: Option<MessageShape>,
 }
 
 impl ErrorChangeFacts {
@@ -410,6 +416,19 @@ impl ErrorChangeFacts {
                 new_split.and_then(|(_, throw)| thrown_message(throw)),
                 new_split.and_then(|(_, throw)| thrown_string_form(throw)),
             )
+        };
+        let (old_shape, new_shape) = if old_ambiguous || new_ambiguous {
+            (None, None)
+        } else {
+            let shape = |split: Option<(&[LineToken], &[LineToken])>| {
+                split
+                    .and_then(|(_, throw)| thrown_message_shape(throw))
+                    .filter(|shape| !shape.holes.is_empty())
+            };
+            match (shape(old_split), shape(new_split)) {
+                (Some(old), Some(new)) if old.holes == new.holes => (Some(old), Some(new)),
+                _ => (None, None),
+            }
         };
         let message_only = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
@@ -462,6 +481,8 @@ impl ErrorChangeFacts {
             new_builtin_class: new_split
                 .filter(|_| !new_ambiguous)
                 .and_then(|(_, throw)| builtin_class(throw)),
+            old_shape,
+            new_shape,
         }
     }
 
@@ -533,6 +554,18 @@ impl ErrorChangeFacts {
     fn separates(&self, matches: impl Fn(&str) -> bool) -> bool {
         match (self.old_message.as_deref(), self.new_message.as_deref()) {
             (Some(old), Some(new)) => matches(old) != matches(new),
+            _ => false,
+        }
+    }
+
+    /// [`Self::separates`] for a message with interpolation holes: `text`
+    /// can be the whole message of exactly one version whatever the holes
+    /// hold, and the same call fills the holes of both. The other version's
+    /// pieces cannot produce `text` for any fill, so the pinned message
+    /// fails there.
+    fn separates_shape(&self, text: &str) -> bool {
+        match (&self.old_shape, &self.new_shape) {
+            (Some(old), Some(new)) => old.can_equal(text) != new.can_equal(text),
             _ => false,
         }
     }
@@ -717,6 +750,46 @@ fn same_readable_message(old: Option<&str>, new: Option<&str>) -> bool {
 /// with adjacent `+` literals joined. `None` when any operand is not a
 /// literal.
 fn thrown_message(throw: &[LineToken]) -> Option<String> {
+    let shape = thrown_message_shape(throw)?;
+    shape.holes.is_empty().then(|| shape.pieces.concat())
+}
+
+/// A thrown message read as fixed text around interpolation holes: `pieces`
+/// are the literal runs and `holes` the source of each `${...}` between
+/// them, so `pieces.len() == holes.len() + 1`. A message without holes is
+/// one piece.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MessageShape {
+    pieces: Vec<String>,
+    holes: Vec<String>,
+}
+
+impl MessageShape {
+    /// Whether some filling of the holes makes the message equal `text`:
+    /// the pieces occur in order, the first as a prefix and the last as a
+    /// suffix. No filling is assumed beyond that, so `false` means no value
+    /// of any hole can produce `text`.
+    fn can_equal(&self, text: &str) -> bool {
+        let Some((first, rest)) = self.pieces.split_first() else {
+            return false;
+        };
+        let Some(mut remaining) = text.strip_prefix(first.as_str()) else {
+            return false;
+        };
+        let Some((last, middle)) = rest.split_last() else {
+            return remaining.is_empty();
+        };
+        for piece in middle {
+            let Some(at) = remaining.find(piece.as_str()) else {
+                return false;
+            };
+            remaining = &remaining[at + piece.len()..];
+        }
+        remaining.ends_with(last.as_str())
+    }
+}
+
+fn thrown_message_shape(throw: &[LineToken]) -> Option<MessageShape> {
     let mut rest = throw.get(1..)?;
     if let Some(LineToken::Other(word)) = rest.first()
         && word == "("
@@ -740,11 +813,25 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
         rest = rest.get(argument..)?;
         called = true;
     }
-    let mut message = String::new();
+    let mut shape = MessageShape {
+        pieces: vec![String::new()],
+        holes: Vec::new(),
+    };
     let mut expect_operand = true;
     for (index, token) in rest.iter().enumerate() {
         if expect_operand {
-            message.push_str(literal_value(token)?);
+            match token {
+                LineToken::Template {
+                    pieces,
+                    interpolations,
+                } if !interpolations.is_empty() => {
+                    let mut pieces = pieces.iter();
+                    shape.pieces.last_mut()?.push_str(pieces.next()?);
+                    shape.pieces.extend(pieces.cloned());
+                    shape.holes.extend(interpolations.iter().cloned());
+                }
+                _ => shape.pieces.last_mut()?.push_str(literal_value(token)?),
+            }
             expect_operand = false;
             continue;
         }
@@ -772,7 +859,7 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
             _ => return None,
         }
     }
-    (!expect_operand).then_some(message)
+    (!expect_operand && shape.pieces.len() == shape.holes.len() + 1).then_some(shape)
 }
 
 /// Whether a top-level `,` comes before the `)` that closes the group
@@ -929,7 +1016,7 @@ pub(crate) fn error_payload_credits(
                 return false;
             };
             // Jest and Vitest test the regex against `error.message`.
-            facts.separates(|candidate| candidate == literal)
+            facts.separates(|candidate| candidate == literal) || facts.separates_shape(&literal)
         }
         Kind::AssertThrowsRegex | Kind::AssertRejectsRegex => {
             if !facts.message_only {
@@ -1081,6 +1168,41 @@ mod tests {
             expected: expected.to_string(),
             kind,
         }
+    }
+
+    #[test]
+    fn an_interpolated_message_is_separated_only_when_no_fill_can_match_both() {
+        use TypeScriptErrorPayloadKind as Kind;
+        let credits = |old: &str, new: &str, regex: &str| {
+            let facts = ErrorChangeFacts::read(Some(old), new);
+            error_payload_credits(&payload(Kind::ThrowsRegex, regex), &facts)
+        };
+        let old = "throw new Error(`not a count: ${text}`);";
+        let new = "throw new Error(`not a number: ${text}`);";
+        // The pinned message fits the old text for a hole filled `x` and no
+        // fill of the new text.
+        assert!(credits(old, new, "/^not a count: x$/"));
+        assert!(credits(old, new, "/^not a number: x$/"));
+        // It fits neither version, or both versions.
+        assert!(!credits(old, new, "/^something else$/"));
+        assert!(!credits(
+            "throw new Error(`a${x}`);",
+            "throw new Error(`a${x}b`);",
+            "/^ab$/"
+        ));
+        // Different interpolated expressions are filled by different values.
+        assert!(!credits(
+            old,
+            "throw new Error(`not a number: ${other}`);",
+            "/^not a count: x$/"
+        ));
+        // Unanchored, flagged or substring payloads match more than one text.
+        assert!(!credits(old, new, "/not a count/"));
+        assert!(!credits(old, new, "/^not a count: x$/i"));
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsLiteral, "\"not a count: x\""),
+            &ErrorChangeFacts::read(Some(old), new)
+        ));
     }
 
     #[test]
