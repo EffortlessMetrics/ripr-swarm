@@ -1249,8 +1249,17 @@ to `amount - 20`, and `tests/lib.test.ts` has
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
     `break`, stay `weakly_exposed` (rule 11).
+38. `const rows: Array<[number, number, number]> = []; for (const [a, b,
+    want] of rows) { assert.equal(f(a, b), want); }`: the loop runs no
+    iterations and holds no assertions, so a change to `f` is not `exposed`
+    through it (#9683). A table declared with `let`, or read elsewhere, keeps
+    the loop's own assertion as before.
 
 ## Test Mapping
+
+- #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
+  `const` table holds no assertions and a `let` table does not. Corpus row
+  `ts-trap-empty-table` moves from credited to gap.
 
 - #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
   pins the per-row assertions and the fail-closed fallbacks (a non-literal
