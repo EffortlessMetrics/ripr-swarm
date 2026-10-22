@@ -104,9 +104,6 @@ pub(crate) fn enclosing_conditions(
     }
     let target = line_start.min(original.len());
 
-    struct Block {
-        conditions: Vec<GuardCondition>,
-    }
     let mut stack: Vec<Block> = Vec::new();
     // Conditions a following `else` arm inherits from the block just closed.
     let mut chain: Option<Vec<GuardCondition>> = None;
@@ -118,20 +115,35 @@ pub(crate) fn enclosing_conditions(
             '(' => parens += 1,
             ')' => parens = parens.saturating_sub(1),
             ';' if parens == 0 => {
+                if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+                    let segment: String = masked_chars[segment_start..at].iter().collect();
+                    let segment_original: String = original[segment_start..at].iter().collect();
+                    let rest = absorb_clause(block, &segment, &segment_original);
+                    block.terminal = ends_clause(segment[rest..].trim_start());
+                }
                 chain = None;
                 segment_start = at + 1;
             }
             '{' if parens == 0 => {
-                let header: String = masked_chars[segment_start..at].iter().collect();
-                let header_original: String = original[segment_start..at].iter().collect();
+                let mut header: String = masked_chars[segment_start..at].iter().collect();
+                let mut header_original: String = original[segment_start..at].iter().collect();
+                if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+                    let rest = absorb_clause(block, &header, &header_original);
+                    header = header[rest..].to_string();
+                    header_original = header_original[rest..].to_string();
+                }
+                let switch = switch_discriminant(&header, &header_original);
                 let (conditions, next_chain) =
                     block_conditions(&header, &header_original, chain.take().unwrap_or_default());
                 closing_conditions.push(next_chain);
-                stack.push(Block { conditions });
+                stack.push(Block::new(conditions, switch));
                 segment_start = at + 1;
             }
             '}' if parens == 0 => {
                 stack.pop()?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.terminal = false;
+                }
                 chain = closing_conditions.pop().filter(|next| !next.is_empty());
                 segment_start = at + 1;
             }
@@ -150,23 +162,165 @@ pub(crate) fn enclosing_conditions(
     // exclusions.
     // A braceless head guards one statement, not a whole line: a line that
     // holds a second statement (`a = 1; b = 2;`) is left unguarded.
-    let pending: String = masked_chars[segment_start..target].iter().collect();
+    let mut pending: String = masked_chars[segment_start..target].iter().collect();
+    let mut pending_original: String = original[segment_start..target].iter().collect();
+    if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+        // A label on the changed line itself opens a clause the scan has not
+        // seen, so the clause in hand is not the line's.
+        let line = masked.lines().nth(index).unwrap_or_default();
+        if contains_word(line, "case") || contains_word(line, "default") {
+            return None;
+        }
+        let rest = absorb_clause(block, &pending, &pending_original);
+        pending = pending[rest..].to_string();
+        pending_original = pending_original[rest..].to_string();
+    }
     if !pending.trim().is_empty() && is_one_statement(&masked, index) {
-        let pending_original: String = original[segment_start..target].iter().collect();
         let (conditions, _) = block_conditions(
             &pending,
             &pending_original,
             chain.take().unwrap_or_default(),
         );
         if !conditions.is_empty() {
-            stack.push(Block { conditions });
+            stack.push(Block::new(conditions, None));
         }
     }
     let conditions: Vec<GuardCondition> = stack
         .into_iter()
-        .flat_map(|block| block.conditions)
+        .flat_map(|block| {
+            let case = block
+                .case_cond
+                .map(|text| GuardCondition { text, want: true });
+            block.conditions.into_iter().chain(case)
+        })
         .collect();
     (!conditions.is_empty()).then_some(conditions)
+}
+
+/// One open `{ .. }` block while scanning toward the changed line.
+struct Block {
+    conditions: Vec<GuardCondition>,
+    /// The identifier a `switch (d)` block dispatches on.
+    switch: Option<String>,
+    /// The previous clause of a switch cannot fall into the next label.
+    terminal: bool,
+    /// `d === label` for the clause the scan is in, when it is the only
+    /// way in (a lone, reachable-only-by-dispatch `case` label).
+    case_cond: Option<String>,
+}
+impl Block {
+    fn new(conditions: Vec<GuardCondition>, switch: Option<String>) -> Self {
+        Block {
+            conditions,
+            switch,
+            terminal: true,
+            case_cond: None,
+        }
+    }
+}
+
+/// `d` for a block header `switch (d)` whose discriminant is one identifier.
+fn switch_discriminant(masked: &str, original: &str) -> Option<String> {
+    let body = masked.trim();
+    let rest = body.strip_prefix("switch")?;
+    if rest.starts_with(is_identifier_char) {
+        return None;
+    }
+    let lead = masked.len() - masked.trim_start().len();
+    let open = body.find('(')?;
+    let close = body.rfind(')')?;
+    if !body["switch".len()..open].trim().is_empty() || !body[close + 1..].trim().is_empty() {
+        return None;
+    }
+    let name = original[lead + open + 1..lead + close].trim();
+    (!name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(is_identifier_char))
+    .then(|| name.to_string())
+}
+
+/// Read the `case X:` / `default:` labels that open `masked` (with `original`
+/// the same span), set the switch block's clause condition, and return the
+/// byte offset where the clause's statements begin. A lone `case` label with
+/// a literal value, reached only after a clause that cannot fall through,
+/// sets `d === value`; anything else clears it.
+fn absorb_clause(block: &mut Block, masked: &str, original: &str) -> usize {
+    let mut at = 0usize;
+    let (mut labels, mut bad, mut value) = (0usize, false, None::<String>);
+    loop {
+        let skip = masked[at..].len() - masked[at..].trim_start().len();
+        let start = at + skip;
+        let word = if starts_with_word(&masked[start..], "case") {
+            "case"
+        } else if starts_with_word(&masked[start..], "default") {
+            "default"
+        } else {
+            break;
+        };
+        let Some(colon) = masked[start + word.len()..].find(':') else {
+            bad = true;
+            break;
+        };
+        let colon = start + word.len() + colon;
+        labels += 1;
+        if word == "case" {
+            if masked[start + 4..colon].contains('?') {
+                bad = true;
+            }
+            value = Some(original[start + 4..colon].trim().to_string());
+        } else {
+            value = None;
+        }
+        at = colon + 1;
+    }
+    if labels == 0 {
+        return 0;
+    }
+    block.case_cond = match (&block.switch, labels, bad, block.terminal, value) {
+        (Some(d), 1, false, true, Some(value)) if is_literal_label(&value) => {
+            Some(format!("{d} === {value}"))
+        }
+        _ => None,
+    };
+    block.terminal = false;
+    at
+}
+
+fn is_literal_label(text: &str) -> bool {
+    let quoted = |q: char| {
+        text.len() >= 2
+            && text.starts_with(q)
+            && text.ends_with(q)
+            && !text[1..text.len() - 1].contains([q, '\\'])
+    };
+    quoted('\'')
+        || quoted('"')
+        || (!text.is_empty()
+            && text
+                .trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit())
+            && !text.trim_start_matches('-').is_empty())
+}
+
+/// Whether a clause's last statement leaves the switch or loop, so the next
+/// label is not entered by falling through.
+fn ends_clause(statement: &str) -> bool {
+    ["break", "return", "throw", "continue"]
+        .iter()
+        .any(|word| starts_with_word(statement, word))
+}
+
+fn starts_with_word(text: &str, word: &str) -> bool {
+    text.strip_prefix(word)
+        .is_some_and(|rest| !rest.starts_with(is_identifier_char))
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        !text[..at].ends_with(is_identifier_char)
+            && !text[at + word.len()..].starts_with(is_identifier_char)
+    })
 }
 
 /// Whether the masked line at `index` holds at most one statement: no `;`
@@ -2095,6 +2249,43 @@ mod tests {
             conditions(continued, 4, "a = 1;"),
             Some(vec!["a &&\n    b".to_string()])
         );
+    }
+
+    #[test]
+    fn switch_clauses_read_a_lone_case_label_and_nothing_else() {
+        let conditions = |source: &str, line: usize, text: &str| {
+            enclosing_conditions(source, 1, line, text)
+                .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>())
+        };
+        let source = "function run(mode, qty) {\n  let total = qty;\n  switch (mode) {\n    case 'half':\n      total = total / 2;\n      break;\n    case 'double':\n      total = total * 2;\n      break;\n    case 'a':\n    case 'b':\n      total = 0;\n      break;\n    case 'c':\n      qty = 1;\n    case 'd':\n      total = 9;\n      break;\n    default:\n      total = 7;\n  }\n  return total;\n}\n";
+        assert_eq!(
+            conditions(source, 5, "total = total / 2;"),
+            Some(vec!["mode === 'half'".to_string()])
+        );
+        // The second clause follows a `break`.
+        assert_eq!(
+            conditions(source, 8, "total = total * 2;"),
+            Some(vec!["mode === 'double'".to_string()])
+        );
+        // Stacked labels are an OR, a fall-through clause is entered from the
+        // clause above, and `default` is the complement: none is read.
+        assert_eq!(conditions(source, 12, "total = 0;"), None);
+        assert_eq!(conditions(source, 17, "total = 9;"), None);
+        assert_eq!(conditions(source, 20, "total = 7;"), None);
+        // A label on the changed line opens a clause the scan has not seen.
+        assert_eq!(conditions(source, 7, "case 'double':"), None);
+        // A braced clause and a clause nested in an `if` keep both conditions.
+        let braced = "function run(mode, flag) {\n  let total = 1;\n  switch (mode) {\n    case 1: {\n      if (flag) {\n        total = 2;\n      }\n      break;\n    }\n    case 2:\n      total = 3;\n      break;\n  }\n  return total;\n}\n";
+        assert_eq!(
+            conditions(braced, 6, "total = 2;"),
+            Some(vec!["mode === 1".to_string(), "flag".to_string()])
+        );
+        // A clause after a braced clause may be entered by falling through.
+        assert_eq!(conditions(braced, 11, "total = 3;"), None);
+        // A computed discriminant or non-literal label reads nothing.
+        let computed = "function run(mode, other) {\n  let total = 1;\n  switch (mode + 1) {\n    case 'x':\n      total = 2;\n      break;\n  }\n  switch (mode) {\n    case other:\n      total = 3;\n      break;\n  }\n  return total;\n}\n";
+        assert_eq!(conditions(computed, 5, "total = 2;"), None);
+        assert_eq!(conditions(computed, 10, "total = 3;"), None);
     }
 
     #[test]
