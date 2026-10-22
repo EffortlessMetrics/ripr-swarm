@@ -43,6 +43,22 @@ floor = 12
 match_floor = 44
 overclaim_ceiling = 0
 
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 32
+false_credit_ceiling = 0
+
+# A case whose `behavior_family` names a different operator than its edit.
+[grid.operators]
+config-duplicate-key-case = "equality"
+grid-bits-or-loose = "none"
+
 # LSP Repair Packet Command
 [[spec]]
 id = "RIPR-SPEC-0077"
