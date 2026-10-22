@@ -80,10 +80,21 @@ A cached executable is eligible only when the receipt has
 `installationState: "complete"`, its requested/manifest version, target, and
 executable name match the request, and its current executable SHA-256 matches
 the receipt. Binary-only, partial, malformed, or tampered directories are not
-probed as cache candidates. A failed install for a new version leaves an
-already completed prior version unchanged. Contenders never reclaim an
-existing lock based only on age; they fail closed after a bounded wait rather
-than risk deleting a replacement owner's lock.
+probed as cache candidates. When a release-admitted manifest digest exists for
+the requested distribution generation, the receipt must also record that exact
+manifest SHA-256 (`manifestSha256`); a receipt recorded under another digest,
+or a legacy receipt with none, is a cache miss and the install re-verifies.
+With no admitted digest the cache is explicitly offline-trusted on version and
+local byte integrity alone. A failed install for a new version leaves an
+already completed prior version unchanged.
+
+A contender reclaims an install lock only when its owner pid is no longer
+running or its heartbeat is older than five minutes; a live owner with a fresh
+heartbeat is never reclaimed, and a lock whose owner changed during the move is
+restored. The lock holder removes orphaned `.install-*` and `.replaced-*`
+siblings of its own target, never the active install directory. Reclaim by pid
+probe is local-host only; the Windows branch relies on Node's `process.kill(pid, 0)`
+and has no Windows-capable proof here.
 
 The install receipt establishes local completion and byte integrity. It is not
 a producer provenance attestation; release provenance verification remains a

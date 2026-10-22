@@ -8,7 +8,9 @@ import {
   installManagedServer,
   ManagedServerInstallOperations,
   ManagedServerInstallRequest,
-  readManagedServerInstallation
+  readManagedServerInstallation,
+  reclaimStaleLock,
+  sweepOrphanInstallDirs
 } from '../../src/managedServerInstall';
 
 suite('Managed Server Installation', () => {
@@ -108,7 +110,7 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(valid.receipt.requestedVersion, '4.0.0-rc.1+build.7');
   });
 
-  test('never reclaims a stale or replaced lock owned by another installer', async () => {
+  test('never reclaims a live fresh lock or a replaced owner', async () => {
     const request = installRequest(root, '5.0.0');
     const versionDir = path.join(request.serversRoot, request.version);
     const finalDir = path.join(versionDir, request.platformTarget);
@@ -116,9 +118,7 @@ suite('Managed Server Installation', () => {
     await fs.promises.mkdir(versionDir, { recursive: true });
     await fs.promises.mkdir(lockPath);
     const ownerPath = path.join(lockPath, 'owner');
-    await fs.promises.writeFile(ownerPath, 'stale-owner\n');
-    const old = new Date(Date.now() - 60 * 60_000);
-    await fs.promises.utimes(lockPath, old, old);
+    await fs.promises.writeFile(ownerPath, `${process.pid}:live-owner\n`);
     let extractionCalls = 0;
     const blocked = operations('must-not-install', '5.0.0');
     blocked.lockWaitMs = 80;
@@ -135,6 +135,123 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(extractionCalls, 0);
     assert.strictEqual(await fs.promises.readFile(ownerPath, 'utf8'), 'fresh-replacement-owner\n');
     assert.strictEqual(await readManagedServerInstallation(request), undefined);
+  });
+
+  test('cache hit is bound to the admitted manifest digest (#9304)', async () => {
+    const digestA = 'a'.repeat(64);
+    const digestB = 'b'.repeat(64);
+    const request = { ...installRequest(root, '7.0.0'), admittedManifestSha256: digestA };
+    const installed = await installManagedServer(request, operations('bound', '7.0.0', undefined, undefined, digestA));
+    assert.strictEqual(installed.receipt.manifestSha256, digestA);
+
+    // Positive control: same admitted digest hits with zero resolver calls.
+    let resolveCalls = 0;
+    const counting = operations('bound', '7.0.0', undefined, undefined, digestA);
+    const inner = counting.resolveArchive;
+    counting.resolveArchive = async () => {
+      resolveCalls += 1;
+      return inner();
+    };
+    assert.ok(await readManagedServerInstallation(request));
+    await installManagedServer(request, counting);
+    assert.strictEqual(resolveCalls, 0);
+
+    // Negative: a different admitted digest misses, and re-install re-resolves.
+    const rotated = { ...request, admittedManifestSha256: digestB };
+    assert.strictEqual(await readManagedServerInstallation(rotated), undefined);
+    const reinstalled = await installManagedServer(rotated, operations('rotated', '7.0.0', undefined, undefined, digestB));
+    assert.strictEqual(reinstalled.receipt.manifestSha256, digestB);
+    assert.strictEqual(await fs.promises.readFile(reinstalled.executablePath, 'utf8'), 'rotated');
+  });
+
+  test('legacy receipt without a manifest digest misses once a digest is admitted, hits when none is (#9304)', async () => {
+    const plain = installRequest(root, '7.1.0');
+    const installed = await installManagedServer(plain, operations('legacy', '7.1.0'));
+    assert.strictEqual(installed.receipt.manifestSha256, undefined);
+    assert.ok(await readManagedServerInstallation(plain), 'no admitted digest: explicit offline trust');
+    assert.strictEqual(
+      await readManagedServerInstallation({ ...plain, admittedManifestSha256: 'c'.repeat(64) }),
+      undefined
+    );
+  });
+
+  test('fresh install rejects a manifest whose digest is not the admitted one (#9304)', async () => {
+    const request = { ...installRequest(root, '7.2.0'), admittedManifestSha256: 'a'.repeat(64) };
+    await assert.rejects(
+      installManagedServer(request, operations('wrong', '7.2.0', undefined, undefined, 'b'.repeat(64))),
+      /admitted manifest SHA-256/
+    );
+    await assert.rejects(
+      installManagedServer(request, operations('missing', '7.2.0')),
+      /admitted manifest SHA-256/
+    );
+    assert.strictEqual(await readManagedServerInstallation(request), undefined);
+  });
+
+  test('install reclaims a lock left by a dead pid and sweeps orphan directories (#9304)', async () => {
+    const request = installRequest(root, '8.0.0');
+    const versionDir = path.join(request.serversRoot, request.version);
+    const finalDir = path.join(versionDir, request.platformTarget);
+    const lockPath = `${finalDir}.install.lock`;
+    await fs.promises.mkdir(lockPath, { recursive: true });
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${deadPid()}:dead\n`);
+    const orphanStage = `${finalDir}.install-1-x`;
+    const orphanDisplaced = `${finalDir}.replaced-1-x`;
+    const unrelated = path.join(versionDir, 'other-target.install-1-x');
+    for (const dir of [orphanStage, orphanDisplaced, unrelated]) {
+      await fs.promises.mkdir(dir);
+    }
+    const attempt = operations('after-crash', '8.0.0');
+    attempt.lockWaitMs = 2_000;
+    const installed = await installManagedServer(request, attempt);
+    assert.strictEqual(await fs.promises.readFile(installed.executablePath, 'utf8'), 'after-crash');
+    assert.strictEqual(fs.existsSync(orphanStage), false);
+    assert.strictEqual(fs.existsSync(orphanDisplaced), false);
+    assert.strictEqual(fs.existsSync(unrelated), true, 'other targets are never swept');
+    assert.strictEqual(fs.existsSync(finalDir), true, 'active install is never swept');
+    assert.strictEqual(fs.existsSync(lockPath), false);
+  });
+
+  test('stale heartbeat reclaims a live-pid lock; fresh heartbeat and live pid does not (#9304)', async () => {
+    const request = installRequest(root, '8.1.0');
+    const versionDir = path.join(request.serversRoot, request.version);
+    const lockPath = path.join(versionDir, `${request.platformTarget}.install.lock`);
+    await fs.promises.mkdir(lockPath, { recursive: true });
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:live\n`);
+
+    assert.strictEqual(await reclaimStaleLock(lockPath, request.serversRoot), false);
+    assert.ok(fs.existsSync(lockPath));
+
+    const old = new Date(Date.now() - 60 * 60_000);
+    await fs.promises.utimes(lockPath, old, old);
+    assert.strictEqual(await reclaimStaleLock(lockPath, request.serversRoot), true);
+    assert.strictEqual(fs.existsSync(lockPath), false);
+    assert.deepStrictEqual(await fs.promises.readdir(versionDir), []);
+  });
+
+  test('concurrent contenders over one dead-pid lock install exactly once (#9304)', async () => {
+    const request = installRequest(root, '8.2.0');
+    const finalDir = path.join(request.serversRoot, request.version, request.platformTarget);
+    const lockPath = `${finalDir}.install.lock`;
+    await fs.promises.mkdir(lockPath, { recursive: true });
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${deadPid()}:dead\n`);
+    let extractCalls = 0;
+    const shared = operations('once', '8.2.0', async () => {
+      extractCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    shared.lockWaitMs = 5_000;
+    const results = await Promise.all([1, 2, 3].map(() => installManagedServer(request, shared)));
+    assert.strictEqual(extractCalls, 1);
+    assert.strictEqual(new Set(results.map((r) => r.executablePath)).size, 1);
+  });
+
+  test('orphan sweep never removes the active install directory (#9304)', async () => {
+    const request = installRequest(root, '8.3.0');
+    const installed = await installManagedServer(request, operations('keep', '8.3.0'));
+    const finalDir = path.dirname(installed.executablePath);
+    await sweepOrphanInstallDirs(request.serversRoot, finalDir);
+    assert.ok(await readManagedServerInstallation(request));
   });
 
   test('prerelease requests admit the generation-keyed manifest version through staging and cache read-back', async () => {
@@ -192,14 +309,16 @@ function operations(
   executableContents: string,
   version: string,
   beforeExtract?: (() => Promise<void>) | undefined,
-  reportedVersion = 'ripr 1.2.3'
+  reportedVersion = 'ripr 1.2.3',
+  manifestSha256?: string
 ): ManagedServerInstallOperations {
   const bytes = Buffer.from(`archive:${executableContents}`);
   return {
     resolveArchive: async () => ({
       manifestVersion: version,
       expectedSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-      bytes
+      bytes,
+      ...(manifestSha256 !== undefined ? { manifestSha256 } : {})
     }),
     extractArchive: async (_archivePath, destination) => {
       await beforeExtract?.();
@@ -208,4 +327,18 @@ function operations(
     },
     probeExecutable: async () => reportedVersion
   };
+}
+
+/** A pid that is not running: probe a high pid range for ESRCH. */
+function deadPid(): number {
+  for (let candidate = 2_000_000_000; candidate < 2_000_000_100; candidate += 1) {
+    try {
+      process.kill(candidate, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        return candidate;
+      }
+    }
+  }
+  throw new Error('no dead pid candidate found');
 }
