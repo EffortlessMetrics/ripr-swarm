@@ -528,6 +528,15 @@ fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Ex
     }
 }
 
+/// Literal normalization expectations shared by both slash-containing dialects.
+/// Keep slashless generated-file patterns in their own consumer-specific rows.
+const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
+    ("leading-dot-segment", "./src/lib.rs", true),
+    ("inner-dot-segment", "src/./lib.rs", true),
+    ("empty-segment", "src//lib.rs", true),
+    ("normalized-nonmatch", "src/./other.rs", false),
+];
+
 pub(crate) fn glob_cases() -> Vec<Case> {
     use Expect::{GeneratedExcluded, GeneratedNotExcluded, GlobMatch, GlobNonmatch};
     let lib = "src/lib.rs";
@@ -589,27 +598,6 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             "adjacent-double-star",
             Role::Control,
             "src/**/**/lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "leading-dot-segment",
-            Role::Control,
-            "./src/lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "inner-dot-segment",
-            Role::Control,
-            "src/./lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "empty-segment",
-            Role::Control,
-            "src//lib.rs",
             lib,
             GlobMatch,
         ),
@@ -735,5 +723,25 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             GeneratedNotExcluded,
         ),
     ]);
+    for (id, pattern, matches) in NORMALIZATION_CASES {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            if matches { GlobMatch } else { GlobNonmatch },
+        ));
+        cases.push(generated_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            if matches {
+                GeneratedExcluded
+            } else {
+                GeneratedNotExcluded
+            },
+        ));
+    }
     cases
 }
