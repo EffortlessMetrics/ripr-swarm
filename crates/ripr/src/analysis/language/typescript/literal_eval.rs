@@ -55,7 +55,10 @@ pub(crate) fn return_expressions_agree(
             values.push(evaluate(&parsed.expression, &Vec::new(), 0)?);
         }
         let env: Env = params.iter().cloned().zip(values.iter().cloned()).collect();
-        if evaluate(&old.expression, &env, 0)? != evaluate(&new.expression, &env, 0)? {
+        if !same_value(
+            &evaluate(&old.expression, &env, 0)?,
+            &evaluate(&new.expression, &env, 0)?,
+        ) {
             return Some(false);
         }
         separated_on_probe_grid(&old.expression, &new.expression, &params, &values).then_some(true)
@@ -111,6 +114,15 @@ fn separated_on_probe_grid(
         }
     }
     false
+}
+
+/// `Object.is` equality: `0` and `-0` differ, so a sign-only change is never
+/// reported as agreeing.
+fn same_value(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Num(x), Val::Num(y)) => x == y && x.is_sign_negative() == y.is_sign_negative(),
+        _ => a == b,
+    }
 }
 
 struct Parsed<'a> {
@@ -328,6 +340,11 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_sign_only_zero_change_does_not_agree() {
+        assert_eq!(agree("n * 0", "n * -0", &["n"], &["5"]), Some(false));
     }
 
     #[test]

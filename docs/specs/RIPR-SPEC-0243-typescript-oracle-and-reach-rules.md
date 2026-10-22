@@ -179,33 +179,6 @@ commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
 Jest runtime-mutant labels and source hashes are retained with attribution;
 copying those labels does not claim an independent runtime rerun.
 
-**Rule 16. `t.skip()` / `t.todo()` inside a test body withdraws the test
-(#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
-`<param>.skip(...)` or `<param>.todo(...)` anywhere in its body is reported
-by the runner as skipped or todo and passes however its later assertions
-would have gone. It registers no running discriminator, exactly like a
-`.skip` registration: the test is not extracted and its assertions earn no
-credit. The check is textual and fail-closed (a conditional `t.skip()` also
-withdraws the test); `skip` / `todo` on any other receiver, or a callback
-without a context parameter, is unaffected.
-
-**Rule 17. A returned expression that agrees on every asserted input is
-unexercised (#9497).** For a changed complete one-line `return <expr>;` in a
-fixed-signature owner, when every strong assertion of every oracle-eligible
-related test observes owner calls whose arguments are all literals, and the
-old and new expressions evaluate to the same value on each of those
-inputs, no assertion can tell the versions apart and the finding reads
-`weakly_exposed` (an untouched clamp arm, the other branch of a ternary, a
-bound whose changed side no input reaches). The evaluator is exact and
-small: number, string and boolean literals, the owner's parameters,
-`+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
-selected arm is evaluated), template literals with literal substitutions
-and `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
-(a free identifier, another call, a non-literal argument, mixed-type
-coercion, a parameter reassigned in the owner, a class pin credit, a lookup
-table change) makes the answer unknown and keeps the existing verdict, so
-the rule only withdraws credit and never adds any.
-
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
 registers nothing until it is called, and its assertions name the owner only
@@ -776,6 +749,38 @@ prove its condition costs an abstention or a gap, never a credit.
    a conditional `yield` and a non-generator owner keep the old reading:
    an extra iteration of a search or accumulation need not change the
    result.
+
+**Rule 16. `t.skip()` / `t.todo()` inside a test body withdraws the test
+(#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
+`<param>.skip(...)` or `<param>.todo(...)` anywhere in its body is reported
+by the runner as skipped or todo and passes however its later assertions
+would have gone. It registers no running discriminator, exactly like a
+`.skip` registration: the test is not extracted and its assertions earn no
+credit. The check is textual and fail-closed (a conditional `t.skip()` also
+withdraws the test) but ignores comments, string literals and calls inside
+a nested callback that rebinds the same name (a subtest's own context); `skip` / `todo` on any other receiver, or a callback
+without a context parameter, is unaffected.
+
+**Rule 17. A returned expression that agrees on every asserted input is
+unexercised (#9497).** For a changed complete one-line `return <expr>;` in a
+fixed-signature owner, when every strong assertion of every oracle-eligible
+related test observes owner calls whose arguments are all literals, and the
+old and new expressions evaluate to the same value on each of those
+inputs, no assertion can tell the versions apart and the finding reads
+`weakly_exposed` (an untouched clamp arm, the other branch of a ternary, a
+bound whose changed side no input reaches). The evaluator is exact and
+small: number, string and boolean literals, the owner's parameters,
+`+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
+selected arm is evaluated), template literals with literal substitutions
+and `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
+(a free identifier, another call, a non-literal argument, mixed-type
+coercion, a parameter reassigned in the owner, a class pin credit, a lookup
+table change) makes the answer unknown and keeps the existing verdict, so
+the rule only withdraws credit and never adds any. The changed return must
+be at the owner's own function level (no earlier arrow, `function` or
+method head, since a nested parameter can shadow the owner's), the observed
+value may call nothing but the owner directly, and `0` versus `-0` counts
+as different values.
 
 ### Static limits
 

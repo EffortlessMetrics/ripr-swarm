@@ -1115,6 +1115,29 @@ pub(crate) fn ts_returned_expression_unexercised(
     {
         return false;
     }
+    // The changed return must sit at the owner's own function level: inside a
+    // nested function its parameters can shadow the owner's.
+    let before_return: String = source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| {
+            let number = index + 1;
+            number >= owner.start_line && number < line
+        })
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Drop the signature: only what follows the owner's opening brace can
+    // open a nested function.
+    let before_return = before_return
+        .split_once('{')
+        .map_or(String::new(), |(_, rest)| rest.to_string());
+    if before_return.contains("=>")
+        || before_return.contains("function")
+        || before_return.lines().any(nested_method_head)
+    {
+        return false;
+    }
     let mut evaluated = false;
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
@@ -1146,6 +1169,11 @@ pub(crate) fn ts_returned_expression_unexercised(
             if argument_lists.is_empty() {
                 return false;
             }
+            // Only direct owner calls may make up the observed value: any
+            // other call (`g(2)` that itself calls the owner) is opaque.
+            if observed_has_other_call(observed, &owner.name) {
+                return false;
+            }
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
                     &owner.file,
@@ -1161,6 +1189,61 @@ pub(crate) fn ts_returned_expression_unexercised(
         }
     }
     evaluated
+}
+
+/// Whether the line opens a method-shaped block (`name(args) {`) that is not
+/// a control-flow head.
+fn nested_method_head(line: &str) -> bool {
+    let trimmed = line.trim();
+    let trimmed = trimmed.strip_prefix("async ").unwrap_or(trimmed);
+    let trimmed = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
+    let Some(open) = trimmed.find('(') else {
+        return false;
+    };
+    let name = &trimmed[..open];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        || matches!(name, "if" | "for" | "while" | "switch" | "catch" | "with")
+    {
+        return false;
+    }
+    trimmed.trim_end().ends_with('{')
+}
+
+/// Whether `observed` calls anything other than `owner_name` (an identifier
+/// directly followed by `(`).
+fn observed_has_other_call(observed: &str, owner_name: &str) -> bool {
+    let bytes = observed.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+            {
+                i += 1;
+            }
+            let rest = observed[i..].trim_start();
+            if rest.starts_with('(') && &observed[start..i] != owner_name {
+                return true;
+            }
+        } else if b == b'"' || b == b'\'' || b == b'`' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b {
+                if bytes[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 /// The expression of a complete one-line `return <expression>;`.

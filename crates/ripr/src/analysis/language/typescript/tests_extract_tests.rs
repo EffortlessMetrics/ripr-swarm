@@ -955,3 +955,54 @@ test("no context", () => {
         "{tests:?}"
     );
 }
+
+#[test]
+fn context_skip_in_a_comment_string_or_nested_subtest_does_not_withdraw_the_test() {
+    let source = r#"
+import test from "node:test";
+test("comment", (t) => {
+    // t.skip() when CI
+    assert.equal(price(150), 130);
+});
+test("string", (t) => {
+    const note = "t.todo()";
+    assert.equal(price(150), 130);
+});
+test("parent", async (t) => {
+    await t.test("sub", (t) => {
+        t.skip();
+    });
+    assert.equal(price(150), 130);
+});
+test("real skip", (t) => {
+    if (process.env.CI) {
+        t.skip();
+    }
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["comment", "string", "parent"], "{tests:?}");
+}
+
+/// Rule 16 is textual by contract: only the `t.skip(` / `t.todo(` spelling
+/// withdraws a test. Computed (`t["skip"]`) and optional-chained (`t?.skip()`)
+/// calls are not matched; changing that must be a deliberate, AST-precise edit.
+#[test]
+fn context_skip_through_computed_or_optional_access_is_not_matched() {
+    let source = r#"
+import test from "node:test";
+test("computed", (t) => {
+    t["skip"]("x");
+    assert.equal(price(150), 130);
+});
+test("optional", (t) => {
+    t?.skip();
+    assert.equal(price(150), 130);
+});
+"#;
+    let tests = extract_tests(Path::new("test/price.test.js"), source);
+    let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
+    assert_eq!(names, ["computed", "optional"], "{tests:?}");
+}

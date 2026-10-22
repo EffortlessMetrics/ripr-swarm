@@ -124,3 +124,33 @@ fn a_parameter_rebound_before_the_return_keeps_the_existing_verdict() -> Result<
     assert_not_decided_by_evaluation(&finding);
     Ok(())
 }
+
+#[test]
+fn a_return_inside_a_nested_function_that_shadows_a_parameter_keeps_the_verdict()
+-> Result<(), String> {
+    let nested = "export function f(n: number) { return [1, 2].map(function (n) {\n  return n >= 1 ? \"a\" : \"b\";\n}); }\n";
+    let old = "  return n > 1 ? \"a\" : \"b\";";
+    let test = "import { f } from \"../src/owner\";\ntest(\"f\", () => {\n  expect(f(5)).toEqual([\"b\", \"a\"]);\n});\n";
+    let finding = finding_for("nested-shadow", nested, old, test)?;
+    assert_not_decided_by_evaluation(&finding);
+    Ok(())
+}
+
+#[test]
+fn an_indirect_owner_call_in_the_observed_value_keeps_the_verdict() -> Result<(), String> {
+    let test = clamp_test(&[("clamp(5, 0, 10) + wrap(2)", "7")]);
+    let finding = finding_for("clamp-indirect", CLAMP, CLAMP_OLD, &test)?;
+    assert_not_decided_by_evaluation(&finding);
+    Ok(())
+}
+
+#[test]
+fn one_agreeing_and_one_differing_call_list_in_one_assertion_keeps_exposed() -> Result<(), String> {
+    // `clamp(5, 0, 10)` agrees on both versions; `clamp(-3, 0, 10)` reaches the
+    // changed lower arm, so the assertion discriminates and is not withdrawn.
+    let test = clamp_test(&[("clamp(5, 0, 10) + clamp(-3, 0, 10)", "5")]);
+    let finding = finding_for("clamp-mixed-lists", CLAMP, CLAMP_OLD, &test)?;
+    assert_not_decided_by_evaluation(&finding);
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
