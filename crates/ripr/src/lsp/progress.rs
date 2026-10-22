@@ -389,17 +389,36 @@ impl AnalysisProgressTracker {
         // after acquiring the same token lock.
         notifications.started = true;
         let pending = std::mem::take(&mut notifications.pending_stages);
-        for stage in pending {
-            if let Some(message) = stage_report_message(stage) {
-                sink.notify(
-                    token.clone(),
-                    ProgressNotificationValue::Report {
-                        message: message.to_string(),
-                    },
-                )
-                .await;
+        // Held stages are advisory: bound the flush like the stage drain so a
+        // client that stops reading after Begin cannot pin the token lock
+        // that End needs, and drop them once termination is recorded so a
+        // superseded request never reports work after it was replaced.
+        let _ = tokio::time::timeout(super::progress_stages::STAGE_DRAIN_BUDGET, async {
+            for stage in pending {
+                let ended = self
+                    .tokens
+                    .lock()
+                    .map(|tokens| {
+                        tokens
+                            .get(&request.generation)
+                            .is_none_or(|record| record.terminal.is_some())
+                    })
+                    .unwrap_or(true);
+                if ended {
+                    break;
+                }
+                if let Some(message) = stage_report_message(stage) {
+                    sink.notify(
+                        token.clone(),
+                        ProgressNotificationValue::Report {
+                            message: message.to_string(),
+                        },
+                    )
+                    .await;
+                }
             }
-        }
+        })
+        .await;
     }
 
     fn notification_state(
@@ -1697,6 +1716,127 @@ mod tests {
                 return Err(format!(
                     "a token ended before Begin must stay silent: {:?}",
                     sink.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// Records sends; parks every `Begin` until released, and every
+    /// `Report` forever when `stall_reports` is set.
+    struct GatedSink {
+        events: std::sync::Mutex<Vec<String>>,
+        begin_parked: tokio::sync::Notify,
+        release_begin: tokio::sync::Notify,
+        stall_reports: bool,
+    }
+
+    impl GatedSink {
+        fn new(stall_reports: bool) -> Arc<Self> {
+            Arc::new(Self {
+                events: std::sync::Mutex::new(Vec::new()),
+                begin_parked: tokio::sync::Notify::new(),
+                release_begin: tokio::sync::Notify::new(),
+                stall_reports,
+            })
+        }
+
+        fn kinds(&self) -> Vec<String> {
+            self.events
+                .lock()
+                .map(|events| events.clone())
+                .unwrap_or_default()
+        }
+    }
+
+    impl ProgressSink for GatedSink {
+        fn create(&self, _token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn notify(&self, _token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                let kind = match &value {
+                    ProgressNotificationValue::Begin { .. } => "begin",
+                    ProgressNotificationValue::Report { .. } => "report",
+                    ProgressNotificationValue::End { .. } => "end",
+                };
+                if kind == "begin" && !self.stall_reports {
+                    self.begin_parked.notify_one();
+                    self.release_begin.notified().await;
+                }
+                if let Ok(mut events) = self.events.lock() {
+                    events.push(kind.to_string());
+                }
+                if kind == "report" && self.stall_reports {
+                    std::future::pending::<()>().await;
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn held_stages_are_dropped_when_termination_lands_during_begin() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let tracker = Arc::new(AnalysisProgressTracker::new(test_client()));
+            let sink = GatedSink::new(false);
+            tracker.install_test_sink(sink.clone());
+            let request = test_request(1);
+            if !tracker.register(&request, AnalysisProgressPhase::Analyzing) {
+                return Err("token registration was refused".to_string());
+            }
+            tracker
+                .report_stage(1, AnalysisProgressStage::LoadingInput)
+                .await;
+            let announce = {
+                let tracker = Arc::clone(&tracker);
+                let request = request.clone();
+                tokio::spawn(async move { tracker.announce(&request).await })
+            };
+            sink.begin_parked.notified().await;
+            let end = {
+                let tracker = Arc::clone(&tracker);
+                tokio::spawn(async move { tracker.end(1, AnalysisProgressEnd::Complete).await })
+            };
+            // `end` records terminal intent before it waits for the lock.
+            tokio::task::yield_now().await;
+            sink.release_begin.notify_one();
+            announce.await.map_err(|err| err.to_string())?;
+            end.await.map_err(|err| err.to_string())?;
+            if sink.kinds() != ["begin", "end"] {
+                return Err(format!(
+                    "a superseded token must not report held stages: {:?}",
+                    sink.kinds()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn stalled_held_stage_flush_cannot_pin_the_token_end() -> Result<(), String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .map_err(|err| err.to_string())?;
+        rt.block_on(async {
+            let tracker = Arc::new(AnalysisProgressTracker::new(test_client()));
+            let sink = GatedSink::new(true);
+            tracker.install_test_sink(sink.clone());
+            let request = test_request(1);
+            if !tracker.register(&request, AnalysisProgressPhase::Analyzing) {
+                return Err("token registration was refused".to_string());
+            }
+            tracker
+                .report_stage(1, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker.announce(&request).await;
+            tracker.end(1, AnalysisProgressEnd::Complete).await;
+            if sink.kinds().last().map(String::as_str) != Some("end") {
+                return Err(format!(
+                    "End must follow a stalled held-stage flush: {:?}",
+                    sink.kinds()
                 ));
             }
             Ok(())

@@ -104,8 +104,10 @@ denominator honesty, and terminal state may not diverge.
 ## Required Evidence
 
 - Tracker unit: one bounded report per stage in producer order on the same
-  token; consecutive duplicates collapse; terminal, queued, unstarted, and
-  unknown generations are silent; capability-absent clients receive no
+  token; consecutive duplicates collapse; terminal, queued, and unknown
+  generations are silent; a stage before `Begin` is held and flushed in order
+  right after it, bounded by the stage drain budget and dropped once
+  termination is recorded; capability-absent clients receive no
   stage traffic.
 - Parity unit: success, disclosed-limited, cancelled, and failed traces
   project through both real projections with identical stage identity and
@@ -152,6 +154,9 @@ denominator honesty, and terminal state may not diverge.
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_emits_one_bounded_report_per_stage_in_producer_order`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_suppresses_consecutive_duplicate_stages`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_for_terminals_queued_unstarted_and_unknown`
+- `crates/ripr/src/lsp/progress.rs::tests::stages_reported_before_begin_flush_in_order_after_it`
+- `crates/ripr/src/lsp/progress.rs::tests::held_stages_are_dropped_when_termination_lands_during_begin`
+- `crates/ripr/src/lsp/progress.rs::tests::stalled_held_stage_flush_cannot_pin_the_token_end`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_without_client_capability`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::stage_mapping_covers_every_non_terminal_producer_stage`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::cli_and_lsp_project_one_success_trace_with_identical_stage_identity`
