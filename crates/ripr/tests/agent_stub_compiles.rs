@@ -1576,12 +1576,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         .split_once(". Run ")
         .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
     assert_eq!(
-        nearest, "",
+        nearest, "none (no seam of that family in this file)",
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
         prose.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: none (no seam of that family in this file)",
         ),
         "{stderr}"
     );
