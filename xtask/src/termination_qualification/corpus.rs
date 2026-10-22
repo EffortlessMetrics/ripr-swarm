@@ -18,9 +18,6 @@ pub(crate) enum Expect {
     /// Full analysis: the changed file reports a finding and no limitation
     /// token appears.
     Supported,
-    /// The run terminates and keeps the changed file's finding. This route
-    /// projects no limitation for the unchanged file, so none is expected.
-    TerminatesWithEvidence,
     /// The hostile unchanged file is declined with `token` while the changed
     /// file still reports a finding.
     TypedLimitation {
@@ -33,10 +30,6 @@ impl Expect {
     pub(crate) fn describe(&self) -> String {
         match self {
             Self::Supported => "full analysis, no limitation".to_string(),
-            Self::TerminatesWithEvidence => {
-                "terminates; changed-file finding kept; no limitation projected on this route"
-                    .to_string()
-            }
             Self::TypedLimitation { token, .. } => format!("typed limitation `{token}`"),
         }
     }
@@ -46,8 +39,9 @@ impl Expect {
 pub(crate) enum Route {
     /// `ripr check --diff` with JSON output.
     Check,
-    /// `ripr pilot` whole-repository analysis (the only route that reads
-    /// every Rust file and discloses `rust_nesting_budget`).
+    /// `ripr pilot` whole-repository analysis (reads every Rust file; the
+    /// decline is `declined_rust_files` in the summary and a limited
+    /// `run_status` in the repo-exposure artifact).
     Pilot,
 }
 
@@ -206,7 +200,10 @@ pub(crate) fn rust_cases() -> Vec<Case> {
     let mut push = |id: String, role: Role, shape: &'static str, hostile: String| {
         for route in [Route::Check, Route::Pilot] {
             let expect = match (role, route) {
-                (Role::Discriminator, Route::Check) => Expect::TerminatesWithEvidence,
+                (Role::Discriminator, Route::Check) => Expect::TypedLimitation {
+                    token: "rust_nesting_budget",
+                    language_class: Some("producer_failure"),
+                },
                 (Role::Discriminator, Route::Pilot) => Expect::TypedLimitation {
                     token: "rust_nesting_budget",
                     language_class: None,
