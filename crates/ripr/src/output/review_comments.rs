@@ -1208,6 +1208,14 @@ fn unresolved_source_location_json() -> Value {
     })
 }
 
+/// Scope disclosure for a gate decision built from a gap ledger (issue #9301
+/// F2): the same shape review-comments emits for a ledger artifact.
+pub(crate) fn gap_ledger_analysis_scope_json(
+    records: &[crate::output::gap_decision_ledger::GapRecord],
+) -> Value {
+    analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records))
+}
+
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
     let mut value = json!({
         "scope": scope.scope,

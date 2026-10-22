@@ -286,6 +286,23 @@ pub(crate) fn build_baseline_update_remove_resolved(
                         disclosed_analyzer_version(current_analyzer_version.as_deref()),
                     ));
                     kept_entries.push(entry.clone());
+                } else if input.remove_resolved
+                    && let Some(reason) =
+                        crate::output::baseline_delta::absence_not_evaluated_reason(
+                            current.get("analysis_scope"),
+                            string_field(entry.get("path"))
+                                .or_else(|| string_field(entry.pointer("/placement/path")))
+                                .as_deref(),
+                        )
+                {
+                    // ISSUE #9301 F2: delta buckets this absence as
+                    // not_evaluated, so update must keep the live debt.
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence but not evaluated: {reason}",
+                        identity.sort_key()
+                    ));
+                    kept_entries.push(entry.clone());
                 } else if input.remove_resolved {
                     removed_resolved += 1;
                 } else {

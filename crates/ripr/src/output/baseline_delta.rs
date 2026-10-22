@@ -108,6 +108,11 @@ struct DeltaItem {
     /// unmatched across an analyzer-version boundary (issue #7421). `None`
     /// on every same-build item, so canonical renders stay byte-identical.
     analyzer_version_discontinuity: Option<AnalyzerVersionDiscontinuity>,
+    /// `Some(reason)` when the baseline entry was absent from current
+    /// evidence but its path was outside the current decision's disclosed
+    /// analysis scope (issue #9301 F2): the entry is `not_evaluated`, never
+    /// `resolved`. `None` on every in-scope item, so those render unchanged.
+    not_evaluated: Option<String>,
 }
 
 /// The baseline and current sides' producing analyzer builds for one
@@ -493,7 +498,21 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
                             ));
                             items.push(identity_discontinuity_item(baseline_record, discontinuity));
                         }
-                        None => items.push(resolved_item(baseline_record)),
+                        None => match absence_not_evaluated_reason(
+                            current.analysis_scope.as_ref(),
+                            baseline_record.path.as_deref(),
+                        ) {
+                            // ISSUE #9301 F2: absence outside the analyzed
+                            // scope is not evidence of resolution.
+                            Some(reason) => {
+                                warnings.push(format!(
+                                    "baseline entry {} is absent from current evidence but not evaluated: {reason}",
+                                    baseline_record.identity.sort_key()
+                                ));
+                                items.push(not_evaluated_item(baseline_record, reason));
+                            }
+                            None => items.push(resolved_item(baseline_record)),
+                        },
                     }
                 }
             }
@@ -1268,6 +1287,8 @@ fn push_missing_input_items(
             matched_legacy_identity: None,
             canonical_replacement_candidate: None,
             analyzer_version_discontinuity: None,
+            not_evaluated: None,
+        not_evaluated: None,
         });
     }
 }
@@ -1304,6 +1325,7 @@ fn matched_item(
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     };
     // Every fallback-only join is a reviewable compatibility event (issue
     // #1964): the match kind, the warning flag, the retained legacy identity,
@@ -1348,6 +1370,7 @@ fn unmatched_current_item(current: &CurrentDecision) -> DeltaItem {
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     }
 }
 
@@ -1380,6 +1403,7 @@ fn resolved_item(baseline: &BaselineRecord) -> DeltaItem {
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     }
 }
 
@@ -1401,7 +1425,88 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     }
+}
+
+/// Whether a baseline entry absent from current evidence may be read as
+/// resolved (issue #9301 F2). Returns `Some(reason)` when it may not.
+///
+/// A gate decision built from a diff-scoped review-comments document lists
+/// only gaps in the analyzed files, so absence elsewhere says nothing about
+/// the gap. Resolution needs the entry's file inside the disclosed
+/// `analysis_scope`; a missing, malformed, incomplete, or unrecognized
+/// disclosure fails closed. `baseline update --remove-resolved` shares this
+/// predicate so delta and update cannot disagree.
+pub(super) fn absence_not_evaluated_reason(
+    analysis_scope: Option<&Value>,
+    entry_path: Option<&str>,
+) -> Option<String> {
+    let Some(scope) = analysis_scope.filter(|scope| scope.is_object()) else {
+        return Some(
+            "the current gate decision discloses no analysis_scope, so it is not established that this entry's file was analyzed; regenerate the gate decision with a current build"
+                .to_string(),
+        );
+    };
+    let kind = scope
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if !matches!(
+        kind,
+        "diff_scoped_changed_files" | "working_set" | "gap_ledger_artifact"
+    ) {
+        return Some(format!(
+            "the current gate decision's analysis scope `{kind}` is not recognized, so file coverage is not established"
+        ));
+    }
+    if scope
+        .get("unevaluated_seams")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count > 0)
+    {
+        return Some(
+            "the current analysis skipped seams inside its scope, so absence is not evidence of resolution"
+                .to_string(),
+        );
+    }
+    let Some(path) = entry_path
+        .map(normalize_scope_path)
+        .filter(|p| !p.is_empty())
+    else {
+        return Some(
+            "the baseline entry has no path to join against the analyzed scope".to_string(),
+        );
+    };
+    let covered = ["changed_files", "changed_production_files"]
+        .iter()
+        .filter_map(|key| scope.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|file| normalize_scope_path(file) == path);
+    if covered {
+        None
+    } else {
+        Some(format!(
+            "`{path}` is outside the files the current analysis covered (scope `{kind}`)"
+        ))
+    }
+}
+
+fn normalize_scope_path(path: &str) -> String {
+    let unified = path.trim().replace('\\', "/");
+    unified.trim_start_matches("./").to_string()
+}
+
+fn not_evaluated_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
+    let mut item = stale_item(
+        baseline,
+        format!(
+            "Reviewed baseline identity is absent from current gate-decision evidence but was not evaluated: {reason}. It is neither resolved nor removable; run a full-scope analysis covering the entry before treating it as fixed."
+        ),
+    );
+    item.not_evaluated = Some(reason);
+    item
 }
 
 fn missing_current_input_item(baseline: &BaselineRecord) -> DeltaItem {
@@ -1422,6 +1527,7 @@ fn missing_current_input_item(baseline: &BaselineRecord) -> DeltaItem {
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     }
 }
 
@@ -1452,6 +1558,7 @@ fn invalid_baseline_item(value: &Value) -> DeltaItem {
         matched_legacy_identity: None,
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
+        not_evaluated: None,
     }
 }
 
@@ -1665,6 +1772,16 @@ fn item_json(item: &DeltaItem, causal_projection: Option<&CausalDeltaArtifact>) 
                 "current_analyzer_version": discontinuity.current,
             }),
         );
+    }
+    // Additive (issue #9301 F2): present only on baseline entries whose
+    // absence was outside the analyzed scope, so in-scope items render
+    // byte-identical to before. The bucket stays `stale_baseline_entry` so
+    // every consumer that withholds on stale entries keeps withholding.
+    if let Some(reason) = item.not_evaluated.as_ref()
+        && let Some(object) = output.as_object_mut()
+    {
+        object.insert("evaluation".to_string(), json!("not_evaluated"));
+        object.insert("not_evaluated_reason".to_string(), json!(reason));
     }
     output
 }
