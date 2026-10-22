@@ -297,7 +297,7 @@ def generated_totals(
     rules: list[tuple[re.Pattern[str], bool]],
     changed_files: int,
     total_lines: int | None = None,
-    blob_lines: Callable[[str], int | None] | None = None,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines). A truncated file listing cannot
     prove which lines are generated, so it exempts nothing."""
@@ -318,13 +318,20 @@ def generated_totals(
     return _add_unlisted_stats(pr_files, rules, total_lines, files, lines, blob_lines)
 
 
+def _entry_paths(entry: dict[str, Any]) -> list[str]:
+    paths = [str(entry.get("filename") or "")]
+    if entry.get("previous_filename"):
+        paths.append(str(entry["previous_filename"]))
+    return paths
+
+
 def _add_unlisted_stats(
     pr_files: list[dict[str, Any]],
     rules: list[tuple[re.Pattern[str], bool]],
     total_lines: int | None,
     files: int,
     lines: int,
-    blob_lines: Callable[[str], int | None] | None = None,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> tuple[int, int]:
     """GitHub drops per-file line counts for the files past its diff budget
     (they list as zero-line `modified`), while the PR totals still include
@@ -334,23 +341,28 @@ def _add_unlisted_stats(
     generated. Any unreadable file keeps the whole residual counted."""
     if total_lines is None or blob_lines is None:
         return files, lines
+    # Every zero-line entry is unlisted whatever its status, so an added,
+    # renamed or removed hand-written file is bounded rather than exempted.
     unlisted = [
         e
         for e in pr_files
         if not (int(e.get("additions") or 0) + int(e.get("deletions") or 0))
-        and e.get("status") == "modified"
     ]
     residual = total_lines - sum(
         int(e.get("additions") or 0) + int(e.get("deletions") or 0) for e in pr_files
     )
-    declared = [e for e in unlisted if is_generated(str(e.get("filename") or ""), rules)]
+    declared = [
+        e
+        for e in unlisted
+        if all(is_generated(path, rules) for path in _entry_paths(e))
+    ]
     if residual <= 0 or not declared:
         return files, lines
     bound = 0
     for entry in unlisted:
         if entry in declared:
             continue
-        counted = blob_lines(str(entry["filename"]))
+        counted = blob_lines(entry)
         if counted is None:
             return files, lines
         bound += counted
@@ -733,14 +745,54 @@ def self_test() -> None:
         {"filename": "crates/ripr/src/lib.rs", "status": "modified", "additions": 3, "deletions": 0},
         {"filename": "fixtures/b/package.json", "status": "modified"},
     ]
-    sizes = {"fixtures/b/package.json": 60}
-    bound = sizes.get
+    sizes = {"fixtures/b/package.json": 60, "src/new.rs": 500, "src/gone.rs": 400, "src/moved.rs": 700}
+    bound = lambda entry: sizes.get(entry["filename"])  # noqa: E731
     assert generated_totals(stat_less, rules, 5) == (1, 1700), "no total, no residual"
     assert generated_totals(stat_less, rules, 5, 1703 + 2900) == (1, 1700), "no reader, no residual"
     assert generated_totals(stat_less, rules, 5, 1703 + 2900, bound) == (3, 1700 + 2840)
     assert generated_totals(stat_less, rules, 5, 1703, bound) == (1, 1700), "no residual lines"
     assert generated_totals(stat_less, rules, 5, 1703 + 40, bound) == (3, 1700), "a bound above the residual exempts none"
-    assert generated_totals(stat_less, rules, 5, 1703 + 2900, {}.get) == (1, 1700), "an unreadable file keeps the residual counted"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900, lambda entry: None) == (1, 1700), "an unreadable file keeps the residual counted"
+    # Whatever the status, a count-less hand-written file is bounded, not exempted.
+    for status, name, extra in (
+        ("added", "src/new.rs", {}),
+        ("removed", "src/gone.rs", {}),
+        ("renamed", "src/moved.rs", {"previous_filename": "src/old.rs"}),
+    ):
+        listed_files = stat_less[:4] + [{"filename": name, "status": status, **extra}]
+        assert generated_totals(listed_files, rules, 5, 1703 + 2900, bound) == (
+            3, 1700 + 2900 - sizes[name]
+        ), status
+        assert generated_totals(listed_files, rules, 5, 1703 + 2900, lambda entry: None) == (1, 1700), status
+    # A rename is generated only if both ends are.
+    renamed_lock = stat_less[:3] + [
+        {"filename": "fixtures/d/package-lock.json", "previous_filename": "src/old.rs", "status": "renamed"}
+    ]
+    assert generated_totals(renamed_lock, rules, 4, 1700 + 800, lambda entry: 0) == (3, 2500)
+    assert generated_totals(renamed_lock, rules, 4, 1700 + 800, lambda entry: 900) == (3, 1700)
+    # The live reader bounds a rename at the merge base under its previous name.
+    calls: list[str] = []
+
+    def fake_gh(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        url = next(a for a in command if a.startswith("repos/"))
+        calls.append(url)
+        if "/compare/" in url:
+            return subprocess.CompletedProcess(command, 0, "c" * 40 + "\n", "")
+        text = {"src/old.rs": "a\nb\nc\n", "src/moved.rs": "a\n"}.get(url.split("contents/")[1].split("?")[0])
+        if text is None:
+            return subprocess.CompletedProcess(command, 1, "", "HTTP 404")
+        return subprocess.CompletedProcess(command, 0, text, "")
+
+    real_run = subprocess.run
+    subprocess.run = fake_gh  # type: ignore[assignment]
+    try:
+        reader = gh_blob_lines("o/r", {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}})
+        assert reader({"filename": "src/moved.rs", "previous_filename": "src/old.rs"}) == 4
+        assert reader({"filename": "src/fresh.rs"}) == 0
+    finally:
+        subprocess.run = real_run
+    assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
+    assert not any(f"ref={'a' * 40}" in call and "contents" in call for call in calls), "never at the base tip"
     big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
     admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
@@ -840,32 +892,46 @@ def self_test() -> None:
     print("candidate-admission self-test: all controls passed")
 
 
-def gh_blob_lines(repository: str, current: dict[str, Any]) -> Callable[[str], int | None]:
-    """Lines of a path at the PR base plus at its head: an upper bound on what
-    the file changed. A path absent at one end counts 0 there; any other read
-    failure is None so the caller counts the file's lines instead."""
-    refs = [
-        str((current.get("base") or {}).get("sha") or ""),
-        str((current.get("head") or {}).get("sha") or ""),
-    ]
+def gh_blob_lines(
+    repository: str, current: dict[str, Any]
+) -> Callable[[dict[str, Any]], int | None]:
+    """Lines of a listed file at the merge base (under its previous name for a
+    rename) plus at the PR head: an upper bound on what the file changed. A
+    path absent at one end counts 0 there; any other read failure, including
+    an unresolvable merge base, is None so the caller counts the file's lines
+    instead."""
+    head = str((current.get("head") or {}).get("sha") or "")
+    tip = str((current.get("base") or {}).get("sha") or "")
+    cache: dict[str, str | None] = {}
 
-    def count(path: str) -> int | None:
-        total = 0
-        for ref in refs:
-            if not SHA_RE.fullmatch(ref):
-                return None
-            done = subprocess.run(
-                ["gh", "api", "-H", "Accept: application/vnd.github.raw",
-                 f"repos/{repository}/contents/{quote(path)}?ref={ref}"],
-                capture_output=True, text=True, check=False,
-            )
-            if done.returncode != 0:
-                if "HTTP 404" in done.stderr:
-                    continue
-                return None
-            text = done.stdout
-            total += text.count("\n") + (1 if text and not text.endswith("\n") else 0)
-        return total
+    def gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["gh", "api", *args], capture_output=True, text=True, check=False)
+
+    def merge_base() -> str | None:
+        if "sha" not in cache:
+            found = ""
+            if SHA_RE.fullmatch(tip) and SHA_RE.fullmatch(head):
+                done = gh([f"repos/{repository}/compare/{tip}...{head}", "--jq", ".merge_base_commit.sha"])
+                found = done.stdout.strip() if done.returncode == 0 else ""
+            cache["sha"] = found if SHA_RE.fullmatch(found) else None
+        return cache["sha"]
+
+    def lines_at(path: str, ref: str) -> int | None:
+        done = gh(["-H", "Accept: application/vnd.github.raw",
+                   f"repos/{repository}/contents/{quote(path)}?ref={ref}"])
+        if done.returncode != 0:
+            return 0 if "HTTP 404" in done.stderr else None
+        text = done.stdout
+        return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+
+    def count(entry: dict[str, Any]) -> int | None:
+        base = merge_base()
+        if base is None or not SHA_RE.fullmatch(head):
+            return None
+        filename = str(entry.get("filename") or "")
+        before = lines_at(str(entry.get("previous_filename") or filename), base)
+        after = lines_at(filename, head)
+        return None if before is None or after is None else before + after
 
     return count
 
@@ -874,7 +940,7 @@ def generated_from_files(
     current: dict[str, Any],
     pr_files: Path | None,
     attributes: Path | None,
-    blob_lines: Callable[[str], int | None] | None = None,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines) from the fetched PR file listing and
     the base commit's .gitattributes; (0, 0) unless both were supplied."""
