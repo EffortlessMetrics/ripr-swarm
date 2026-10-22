@@ -18,7 +18,8 @@ Scenarios:
 - `line-moved-canonical-match` — the line moved but the canonical identity is
   unchanged: a canonical match, so no warning and no `baseline_match_kind`.
 - `two-gaps-one-line-same-class` — two gaps share one line and static class:
-  the canonical match stays clean; the colliding gap with a different canonical id is new and blocks.
+  the canonical match stays clean; the colliding gap with a different
+  canonical id is new and blocks.
 - `missing-canonical-identity` — the candidate carries no canonical or seam
   identity: the fallback-only match is disclosed.
 - `mixed-canonical-and-legacy-entries` — a baseline mixing canonical and

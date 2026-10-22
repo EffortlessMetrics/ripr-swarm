@@ -7,8 +7,9 @@ Spec: RIPR-SPEC-0014
 A `baseline-check` gate run whose explicit baseline contains legacy
 `path:line:static_class` fallback identities, and current PR guidance whose
 candidates share an anchor with those entries. The `expected/gate-baseline/`
-corpus holds five adversarial scenarios (issue #1934): a fallback-only match
-for a genuinely new canonical gap, a line-moved candidate whose canonical
+corpus holds five adversarial scenarios (issue #1934): a fallback collision
+with a genuinely different canonical gap (now new and blocking, issue #1964),
+a line-moved candidate whose canonical
 identity still matches, two gaps on one line with the same static class, a
 candidate with no canonical identity, and a baseline mixing canonical and
 legacy entries. The top-level check golden uses a comment-only diff so the
@@ -35,6 +36,9 @@ compares against the checked-in `gate-decision.json` / `gate-decision.md`.
 
 - A fallback join to a baseline entry whose canonical gap id differs from the
   candidate's is refused: the candidate is new and blocks (issue #1964).
+- A candidate with no canonical gap id of its own still joins a
+  canonical-bearing fallback, disclosed as `legacy_path_line_class` (no
+  divergence can be shown; same as `ripr baseline diff`).
 - Every fallback-only baseline match against a legacy entry without a
   canonical id keeps `is_baseline_new = false` during the legacy
   compatibility window, emits a report-level warning naming the

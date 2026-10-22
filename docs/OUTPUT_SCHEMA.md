@@ -10130,8 +10130,12 @@ Field contract:
   The field is omitted for canonical identity matches and for baseline-new
   candidates, so their rendered decisions stay byte-identical. During the
   compatibility window a fallback-only match against a baseline entry with no
-  canonical gap id still suppresses blocking but also produces a report-level warning naming the candidate and the matched
-  legacy identity.
+  canonical gap id still suppresses blocking but also produces a report-level
+  warning naming the candidate and the matched legacy identity. A candidate
+  with no canonical gap id of its own also still joins a canonical-bearing
+  fallback, disclosed as `legacy_path_line_class`, because no divergence can be
+  shown (same as `ripr baseline diff`). Only two differing canonical ids refuse
+  the join.
 - `decisions[].evidence` - static evidence and optional calibration confidence
   effects used for the candidate.
 - `decisions[].repair_route` - uniform failure-time route object, present on
