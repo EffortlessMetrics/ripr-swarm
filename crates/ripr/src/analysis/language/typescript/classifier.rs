@@ -4443,16 +4443,31 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
     let calls_owner = |text: &str| {
         text.match_indices(owner_name).any(|(at, _)| {
             let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
-            let mut before = text[..at].chars().rev();
+            let mut before = text[..at].chars().rev().peekable();
             // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
-            // same way a bare call does; a call or index result
-            // (`f().owner(`, `a[0].owner(`) is some other receiver.
+            // same way a bare call does when its whole receiver is an
+            // identifier chain; a call or index step anywhere in it
+            // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
+            // receiver.
             let boundary = match before.next() {
                 None => true,
-                Some('.') => match before.next() {
-                    Some('?') => before.next().is_some_and(word),
-                    other => other.is_some_and(word),
-                },
+                Some('.') => {
+                    before.next_if_eq(&'?');
+                    loop {
+                        if before.next_if(|c| word(*c)).is_none() {
+                            break false;
+                        }
+                        while before.next_if(|c| word(*c)).is_some() {}
+                        match before.peek() {
+                            Some('.') => {
+                                before.next();
+                                before.next_if_eq(&'?');
+                            }
+                            Some(')' | ']') => break false,
+                            _ => break true,
+                        }
+                    }
+                }
                 Some(c) => !word(c),
             };
             let after = &text[at + owner_name.len()..];
@@ -4504,7 +4519,10 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
 fn receiver_start(masked: &str, marker: usize) -> usize {
     let line_start = |at: usize| masked[..at].rfind('\n').map_or(0, |nl| nl + 1);
     let mut start = line_start(marker);
-    if !masked[start..marker].trim().is_empty() {
+    // A line that begins with `.` continues a chain even when more steps
+    // (`.catch(...).then(`) precede the marker on it.
+    let continues = masked[start..marker].trim_start().starts_with('.');
+    if !continues && !masked[start..marker].trim().is_empty() {
         return masked[..marker]
             .rfind(';')
             .map_or(start, |at| (at + 1).max(start));

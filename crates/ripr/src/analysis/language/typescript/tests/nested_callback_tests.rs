@@ -883,6 +883,10 @@ fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
             "  return ready<Config>(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
         (
+            "same-line-continuation",
+            "  return ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
             "multi-line-member-generic",
             "  return this.ready<Map<string, number>>(cfg)\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
@@ -908,6 +912,14 @@ fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
         (
             "call-result-member",
             "  return make().ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "call-result-member-chain",
+            "  return make().obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "index-result-member-chain",
+            "  return table[0].obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
         ),
         (
             "index-result-member",
@@ -944,6 +956,11 @@ fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result
         "{head}  return ready(cfg)\n    .then((r) => {{ expect(r).toEqual(cfg); }}, () => {{}});\n}});\n"
     );
     let finding = settings_finding("multi-line-then", &tied, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+
+    // A namespace-import member call and a same-line continuation tie too.
+    let namespaced = "import * as settings from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  return settings.ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n});\n";
+    let finding = settings_finding("namespaced-then", namespaced, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown);
 
     // The owner is called, but not by the chain that holds the `expect(`.
