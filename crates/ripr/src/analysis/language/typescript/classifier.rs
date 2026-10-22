@@ -5043,6 +5043,13 @@ pub(crate) fn strongest_family_matching_oracle(
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
                 }
+                // RIPR-SPEC-0243 decision 19: a call count does not see the
+                // arguments a changed side-effect call sends.
+                _ if matches!(probe_family, ProbeFamily::SideEffect)
+                    && mock_call_count_assertion(assertion) =>
+                {
+                    (OracleKind::MockExpectation, OracleStrength::Weak)
+                }
                 // RIPR-SPEC-0249 rule 1: a class pin on a predicate whose
                 // branches return different classes.
                 _ if pin_facts.credits(&candidate.test.file, assertion) => {

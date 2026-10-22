@@ -974,12 +974,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     Adopted: a `for...of` loop over a top-level test-local `const` that is
     an empty array literal and is named only in its declaration and that
     loop runs the body zero times, so it reads as no assertions (rule 11's
-    loop form). Adopted: an assertion whose observed expression is
-    `<path>.mock.callCount()` or `<path>.mock.calls.length` counts calls
-    and reads `mock_expectation` / weak, like `toHaveBeenCalledTimes`,
-    under any matcher. Rejected: crediting the count as an exact value of
-    the arguments the changed call sends; pinning `mock.calls[0].arguments`
-    is a different expression and keeps its reading.
+    loop form). Adopted: for a changed side-effect call (a probe whose
+    change is to what the owner's call sends), an assertion whose observed
+    expression is a plain identifier path ending `.mock.callCount()` or
+    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
+    this; extraction still labels the equality `exact_value`). Rejected:
+    crediting the count as an exact value of the arguments the changed call
+    sends. Not demoted: a deleted call or a value that decides how many
+    calls run (a count sees both), an aliased or optional-chained count,
+    and `mock.calls[0].arguments` pins, which keep their reading.
 
 ## Required Evidence
 

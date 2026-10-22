@@ -202,9 +202,6 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         } else {
             None
         };
-        for assertion in tests.iter_mut().flat_map(|test| test.assertions.iter_mut()) {
-            demote_mock_call_count(assertion);
-        }
         (tests, conditional_credit_gap, None)
     }) else {
         return (Vec::new(), None, None);
@@ -240,41 +237,6 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         gap.sample_line = expansion.reported_line(gap.sample_line);
     }
     (tests, gap, Some(expansion))
-}
-
-/// `assert.equal(send.mock.callCount(), 1)` and
-/// `expect(send.mock.calls.length).toBe(1)` compare how many times a mock ran,
-/// not what it was called with, so they read like `toHaveBeenCalledTimes`:
-/// `mock_expectation` / weak, never the `exact_value` the equality matcher
-/// would give a computed result (#9684).
-fn demote_mock_call_count(assertion: &mut TypeScriptAssertion) {
-    let counts_calls = assertion
-        .observed_expression
-        .as_deref()
-        .is_some_and(is_mock_call_count_expression);
-    if counts_calls && assertion.mock_payload.is_none() {
-        assertion.oracle_kind = OracleKind::MockExpectation;
-        assertion.oracle_strength = OracleStrength::Weak;
-    }
-}
-
-/// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
-/// identifier path.
-fn is_mock_call_count_expression(text: &str) -> bool {
-    let text = text.trim();
-    let Some(path) = text
-        .strip_suffix(".mock.callCount()")
-        .or_else(|| text.strip_suffix(".mock.calls.length"))
-    else {
-        return false;
-    };
-    !path.is_empty()
-        && path.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-        })
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
