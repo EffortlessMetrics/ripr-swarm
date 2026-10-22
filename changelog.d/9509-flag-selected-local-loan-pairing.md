@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A boundary compared against a flag-selected local (`let unit = if si { KIB } else { KB };`) now pairs with the exact assertion in a test helper that forwards its parameters, so the verdict follows the resolved input instead of stopping at `weakly_exposed` with `same_test_pairing_missing`. A helper that computes an argument or asserts only that the result is non-empty still does not pair (#9509).

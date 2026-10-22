@@ -83,11 +83,24 @@ Progress:
   `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_PILOT_SEAM_BUDGET   Maximum seams written to pilot artifacts (repo-exposure.json,
-                            agent-seam-packets.json). Default: 2000. Set to 0 to disable
-                            the budget and write all seams (may produce very large files).
-                            When the budget is applied, both artifacts include a
-                            limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_SEAM_BUDGET        Maximum seams written to pilot artifacts (repo-exposure.json,
+                                 agent-seam-packets.json). Default: 2000. Set to 0 to disable
+                                 the budget and write all seams (may produce very large files).
+                                 When the budget is applied, both artifacts include a
+                                 limitations[] disclosure naming the env var and a repair route.
+  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum seams analyzed and ranked in one pilot run.
+                                 Default: 10000. Set to 0 to analyze every seam. When the
+                                 limit cuts the ranking, the terminal and summary state
+                                 "ranked N of M seams" and actionable seam totals become
+                                 lower bounds until you raise or remove the limit.
+  RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
+                                 in the current-change discovery path, exactly as `ripr
+                                 check` uses it. When the deadline trips, the pilot
+                                 scope line reads `current change: git timed out`
+                                 (pilot keeps fixed phrases for determinism; the
+                                 machine-readable git_invocation_timeout name is what
+                                 `ripr check` reports). 0 disables the deadline.
+                                 Invalid values fail closed. Default: 300 (5 minutes).
 
 Outputs:
   - repo-exposure.json and repo-exposure.md
@@ -99,6 +112,12 @@ and points to one next focused test action; it does not run mutation testing,
 edit source files, or configure CI policy. If analysis exceeds the timeout,
 pilot-summary.json and pilot-summary.md are written with status=partial and an
 explicit retry command.
+
+Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
+not the exit code, is the verdict, and a stderr line discloses this at the
+time it happens. CI must gate on pilot-summary.json's top-level `status`
+field (`complete` vs `partial`), never on the exit code alone, or a timed-out
+run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
@@ -250,7 +269,9 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif
+                               human, human-full, json, github, sarif,
+                               check-findings-json (identified snapshot
+                               for `agent verify`)
                              Badge (diff-scoped, for README status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
@@ -399,6 +420,13 @@ Environment variables:
                                     effective limit are clamped with disclosure.
                                     Invalid values fail closed as
                                     partial_budget_invalid. Default: 1000.
+  RIPR_CHECK_FINDINGS_BYTES         Byte budget for the findings array in
+                                    `check --format json`; a render above the
+                                    budget fails the run closed instead of
+                                    emitting an unusable document. Set to 0
+                                    to remove the cap (unbounded); an
+                                    unparseable value fails the run.
+                                    Default: 1000000 (1 MB).
   RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
                                     invocation in the diff-load path. A git command
                                     that exceeds the deadline is terminated and the
@@ -596,6 +624,15 @@ Options:
   --json       Emit the core checks as stable JSON and use the same exit status.
   --profile    Check installed-binary analysis (default) or prerequisites for
                building RIPR from source.
+
+Environment variables:
+  RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and
+                  writes use this path instead of the default
+                  {workspace_root}/target/ripr/cache). Useful for read-only
+                  or immutable source checkouts and for redirecting the
+                  cache to a faster or larger volume. Unset or empty keeps
+                  the default. Example:
+                  RIPR_CACHE_DIR=/var/cache/ripr ripr check
 
 Default human output fits one 80x24 screen: failures first, each with a Fix
 line, then compact passing groups. `-v`/`--verbose` prints binary identity,
