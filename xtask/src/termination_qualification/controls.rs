@@ -235,8 +235,8 @@ fn write_executable(path: &Path, script: &str) -> Result<(), String> {
 }
 
 /// True when the pid recorded by the stub no longer names a live process.
-/// Linux answers from `/proc`; other Unix hosts (macOS) ask `ps`. Anything the
-/// host cannot answer reads as not gone, which fails the control.
+/// Asks `ps` (Linux and macOS); anything the host cannot answer reads as not
+/// gone, which fails the control.
 #[cfg(unix)]
 fn child_gone(pid_file: &Path) -> bool {
     let Ok(text) = fs::read_to_string(pid_file) else {
@@ -245,33 +245,28 @@ fn child_gone(pid_file: &Path) -> bool {
     let Ok(pid) = text.trim().parse::<u32>() else {
         return false;
     };
-    if PathBuf::from("/proc/self").exists() {
-        return match fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(text) => text
-                .rsplit_once(')')
-                .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
-                .is_some_and(|state| state == "Z" || state == "X"),
-            // Gone only when the pid's entry is absent; a permission error is
-            // unknown, not gone.
-            Err(error) => {
-                error.kind() == std::io::ErrorKind::NotFound
-                    && !PathBuf::from(format!("/proc/{pid}")).exists()
-            }
-        };
-    }
-    let Ok(output) = std::process::Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .env("PATH", exec::CHILD_PATH)
-        .output()
-    else {
+    let ps = ["/bin/ps", "/usr/bin/ps"].map(PathBuf::from);
+    let Some(ps) = ps.iter().find(|path| path.is_file()) else {
         return false;
     };
-    let state = String::from_utf8_lossy(&output.stdout);
+    let args = ["-o", "stat=", "-p", &pid.to_string()].map(str::to_string);
+    let Ok(out) = crate::run::capture_bytes_in_dir_with_timeout(
+        ps,
+        &args,
+        Path::new("/"),
+        &[("PATH", exec::CHILD_PATH)],
+        &[],
+        Duration::from_secs(10),
+        "termination child liveness",
+    ) else {
+        return false;
+    };
     // `ps -p` exits 1 with no output when the pid does not exist.
-    if output.status.success() {
-        state.trim().starts_with('Z')
-    } else {
-        state.trim().is_empty() && output.status.code() == Some(1)
+    let state = String::from_utf8_lossy(&out.stdout);
+    match out.status.and_then(|status| status.code()) {
+        Some(0) => state.trim().starts_with('Z'),
+        Some(1) => state.trim().is_empty(),
+        _ => false,
     }
 }
 
