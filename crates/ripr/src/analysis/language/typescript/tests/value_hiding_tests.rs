@@ -321,6 +321,10 @@ fn owner_mentions_the_call_counter_cannot_read_keep_the_credit() -> Result<(), S
             "mention-alias",
             "  const g = scaled;\n  expect(g(3, 7)).toBe(21);",
         ),
+        (
+            "mention-qualified",
+            "  expect(other.scaled(3, 7)).toBe(21);",
+        ),
     ] {
         let finding = run(label, &format!("{property}\n{extra}"))?;
         assert_eq!(
