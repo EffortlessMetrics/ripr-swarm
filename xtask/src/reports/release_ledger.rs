@@ -67,6 +67,10 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
             .manifest
             .map(|path| read_json::<Value>(path, "manifest"))
             .transpose()?,
+        audit_file_sha256: ledger.audit.as_ref().map(|audit| {
+            read_bounded(&audit.path, "audit")
+                .map(|bytes| format!("{:x}", Sha256::digest(&bytes)))
+        }),
     };
     let mut reasons = validate(&ledger, &context);
     if args.require_final && ledger.stage != STAGE_FINAL {
