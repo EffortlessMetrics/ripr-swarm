@@ -3587,11 +3587,16 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             "{pointer}: {envelope}"
         );
     }
-    assert_eq!(
-        envelope.pointer("/analysis_scope/downstream_consumable"),
-        Some(&serde_json::Value::Bool(false)),
-        "{envelope}"
-    );
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        assert_eq!(
+            envelope.pointer(pointer),
+            Some(&serde_json::Value::Bool(false)),
+            "{pointer}: {envelope}"
+        );
+    }
     assert_eq!(envelope["findings"].as_array().map(Vec::len), Some(0));
     let message = envelope["run_limitations"][0]["message"]
         .as_str()
