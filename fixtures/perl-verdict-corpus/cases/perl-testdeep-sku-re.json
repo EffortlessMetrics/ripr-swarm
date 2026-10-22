@@ -17,15 +17,15 @@
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
     "mutants": [
       {
-        "replacement": "'A-' . int($n + 1)",
-        "mutated_line": "return 'A-' . int($n + 1);",
+        "replacement": "sprintf(\"A-%d\", $n + 1)",
+        "mutated_line": "return sprintf(\"A-%d\", $n + 1);",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the number is off by one"
       },
       {
-        "replacement": "'B-' . int($n)",
-        "mutated_line": "return 'B-' . int($n);",
+        "replacement": "sprintf(\"B-%d\", $n)",
+        "mutated_line": "return sprintf(\"B-%d\", $n);",
         "outcome": "tests_failed",
         "failing_test": "t/inventory.t: sku has the A- prefix and a number",
         "equivalence_review": "not equivalent: the prefix changes"
@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-sku-re.json",
-    "sha256": "2e750689b7f1474db09dfb2cce163dcc53b36bb23ea095ba33c305d82fb2b99d",
+    "sha256": "672642423f69500611879515fc38a8317eca2a7f615ebb0c134bccf554a72904",
     "provenance": "producer"
   }
 }

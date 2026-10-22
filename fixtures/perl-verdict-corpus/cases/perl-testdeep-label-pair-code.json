@@ -17,15 +17,15 @@
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
     "mutants": [
       {
-        "replacement": "[ $sku, $count + 1 ]",
-        "mutated_line": "return [ $sku, $count + 1 ];",
+        "replacement": "[$sku, ($count + 1)]",
+        "mutated_line": "return [$sku, ($count + 1)];",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the count is off by one"
       },
       {
-        "replacement": "[ $sku, -$count ]",
-        "mutated_line": "return [ $sku, -$count ];",
+        "replacement": "[$sku, (-$count)]",
+        "mutated_line": "return [$sku, (-$count)];",
         "outcome": "tests_failed",
         "failing_test": "t/inventory.t: pair has the sku and a positive count",
         "equivalence_review": "not equivalent: the count is negated"
@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-label-pair-code.json",
-    "sha256": "16cca52593fb71173190d9df0d7556c9ccb3255e39eece862135545e8e622d58",
+    "sha256": "3cd7c398daf038c04f1c985d96229e9ef45ab303add12099bb1b29b57efe588e",
     "provenance": "producer"
   }
 }

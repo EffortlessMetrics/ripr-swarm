@@ -3,14 +3,14 @@
     {
       "behavior_hint": "return_value",
       "change_id": "change:file:lib/Inventory.pm:36:36",
-      "changed_observable": "[ $sku, $count + 0 ]",
-      "changed_text_digest": "fnv64:9d1301c52c61e013",
+      "changed_observable": "[$sku, ($count)]",
+      "changed_text_digest": "fnv64:6799789663201101",
       "file_id": "file:lib/Inventory.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-613",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-609",
       "provenance_refs": [],
       "range": {
-        "end_column": 32,
+        "end_column": 28,
         "end_line": 36,
         "start_column": 0,
         "start_line": 36
@@ -20,7 +20,7 @@
   "dynamic_boundaries": [],
   "files": [
     {
-      "digest": "sha256:8f477dad9983ab3a2bb51eb27dfa71a1479fa78561b8a098dad137a02b302cb5",
+      "digest": "sha256:965a9f98cc1f83048935d2c37ef16bde935fd74fae3cdaea7d9e51ceba556613",
       "file_id": "file:lib/Inventory.pm",
       "package_names": [
         "Inventory"
@@ -206,7 +206,7 @@
       "file_id": "file:lib/Inventory.pm",
       "kind": "sub",
       "name": "label_pair",
-      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-613",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-609",
       "package": "Inventory",
       "provenance_refs": [
         "prov:syntax:file:lib/Inventory.pm"
@@ -219,7 +219,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:aaddc6d1cf3656554c6e77680af1d94ea1c1171fc11be3e9131b8fad6ae5946f",
+  "packet_fingerprint": "sha256:174ddc8e7e30cd87ae8e90792216b741134df4d8331a9d7373a053c088c0e6dd",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -281,10 +281,10 @@
       "change_id": "change:file:lib/Inventory.pm:36:36",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-613",
+      "owner_id": "owner:lib/Inventory.pm:sub:Inventory::label_pair:534-609",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__label_pair_534-613:change:file:lib/Inventory.pm:36:36",
+      "relation_id": "relation:file:t/inventory.t:lib/Inventory.pm:owner_lib/Inventory.pm_sub_Inventory__label_pair_534-609:change:file:lib/Inventory.pm:36:36",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/inventory.t"
     },

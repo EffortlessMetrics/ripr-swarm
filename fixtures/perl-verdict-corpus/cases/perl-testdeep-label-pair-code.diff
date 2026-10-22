@@ -1,5 +1,5 @@
 diff --git a/lib/Inventory.pm b/lib/Inventory.pm
-index 3b6d591..474a59b 100644
+index 3b6d591..2f60127 100644
 --- a/lib/Inventory.pm
 +++ b/lib/Inventory.pm
 @@ -34,7 +34,7 @@ sub make_record {
@@ -7,7 +7,7 @@ index 3b6d591..474a59b 100644
  sub label_pair {
      my ($sku, $count) = @_;
 -    return [$sku, $count];
-+    return [ $sku, $count + 0 ];
++    return [$sku, ($count)];
  }
  
  1;
