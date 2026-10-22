@@ -5378,8 +5378,10 @@ pub(crate) fn classify_change_with_alias_state(
     let field_update_witnessed = !probe_shape.specific
         && lookup_change.is_none()
         && !returns_changed_state
-        && ts_field_update_change(owner, line_text, old_line_text)
-            .is_some_and(|change| ts_field_update_witnessed(&change, owner, &related_candidates));
+        && ts_field_update_change(owner, line_text, old_line_text).is_some_and(|change| {
+            !ts_field_has_accessor(&change, owner, owners)
+                && ts_field_update_witnessed(&change, owner, &related_candidates)
+        });
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
