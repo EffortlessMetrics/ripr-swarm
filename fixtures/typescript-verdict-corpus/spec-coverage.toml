@@ -26,6 +26,17 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 121
 
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 13
+false_credit_ceiling = 2
+
 # LSP Repair Packet Command
 [[spec]]
 id = "RIPR-SPEC-0077"
@@ -802,3 +813,28 @@ reason = "False actionable: field update read through a same-file helper is not 
 case = "ts-grid-delete-table"
 issue = 9534
 reason = "False actionable: field update read through a literal table is not credited (#9534)."
+
+[[known_false]]
+case = "ts-trap-empty-table"
+issue = 9683
+reason = "False exposed: a loop over an empty table asserts nothing but reads as pinned (#9683)."
+
+[[known_false]]
+case = "ts-trap-mocked-send"
+issue = 9684
+reason = "False exposed: a mock checked only for being called is credited the computed argument (#9684)."
+
+[[known_false]]
+case = "ts-trap-rethrown-assert"
+issue = 9685
+reason = "False actionable: an assertion in a try whose catch rethrows reads as weak (#9685)."
+
+[[known_false]]
+case = "ts-trap-wrapped-through"
+issue = 9685
+reason = "False actionable: an assertion in a wrapper that rethrows reads as weak (#9685)."
+
+[[known_false]]
+case = "ts-trap-floating-promise"
+issue = 9686
+reason = "False actionable: an unawaited promise assertion that node:test still fails reads as weak (#9686)."
