@@ -2218,7 +2218,7 @@ over, and the second disproof reframed the whole work item:
    owner tokens `stop_after_attempt`/`__call__`, so it would read `orthogonal`
    anyway. Three coupled barriers, not one.
 2. **`exposed` is the *wrong target*.** The golden
-   `fixtures/python_broad_boolean_assertion` pins `assert is_priority(100)` — a
+   `fixtures/python_broad_boolean_assertion` pins `assert is_priority(amount)` — a
    *direct* call to the changed predicate owner under a broad boolean — as
    `weakly_exposed`/`smoke` **by design**. The tenacity case is that exact shape
    plus a local binding. Flipping it to `exposed` would contradict the golden and

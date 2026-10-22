@@ -7762,6 +7762,25 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/tests/sibling_effect_oracle.rs::independent_token_observer_survives_implicit_refusal",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::refused_implicit_kind_preserves_independent_token_confirmation",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::workspace_expansion_scan_is_once_per_immutable_run",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::cached_receiver_exclusions_remain_receiver_specific",
+  "crates/ripr/tests/sibling_effect_oracle.rs::receiver_construction_cannot_seed_the_observed_effect",
+  "crates/ripr/tests/sibling_effect_oracle.rs::same_test_dispatch_cannot_credit_disconnected_assertions",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_credit_belongs_to_the_ordered_shared_sink_assertion",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_binding_refuses_self_comparison_and_opaque_observers",
+  "crates/ripr/tests/sibling_effect_oracle.rs::unused_reverse_trait_does_not_authorize_parser_oracle",
+  "crates/ripr/tests/sibling_effect_oracle.rs::paired_implicit_dispatch_matrix_binds_both_effect_families",
+  "crates/ripr/tests/sibling_effect_oracle.rs::free_inherent_and_wrong_receiver_push_matrix_stays_weak",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::known_implicit_dispatch_requires_this_tests_receiver",
+  "crates/ripr/tests/sibling_effect_oracle.rs::parser_only_decoys_cannot_supply_aggregation_discrimination",
+  "crates/ripr/tests/sibling_effect_oracle.rs::direct_effect_observer_retains_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_trait_effect_observers_retain_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::free_and_inherent_trait_method_names_do_not_admit_decoys",
+  "crates/ripr/tests/sibling_effect_oracle.rs::lone_proximity_retains_discrimination_with_weak_reach",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_effect_kind_cannot_confirm_beside_owner_caller",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_is_shared_across_changed_arms_cold_and_warm",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_rebuilds_after_a_same_path_helper_edit",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
@@ -7797,7 +7816,6 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test",
   "crates/ripr/src/analysis/classify/flow.rs::tests::turbofish_err_return_sinks_to_the_error_variant",
-  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::self_computed_expected_value_is_weak_and_unconfirmed",
@@ -7820,6 +7838,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
+  "fixtures/rust_unused_trait_effect_oracle",
   "fixtures/collection_argument_imported_constructor",
   "fixtures/collection_argument_macro_constructor",
   "fixtures/collection_argument_proc_constructor",
@@ -7845,6 +7864,7 @@ fixtures = [
   "fixtures/collection_argument_wrong_field",
   "fixtures/collection_argument_wrong_receiver",
   "fixtures/benches_harness_evidence",
+  "fixtures/rust_sibling_effect_oracle",
   "fixtures/oracle_confirmation_mixed",
   "fixtures/owner_parameter_token_coincidence",
   "fixtures/self_computed_expected_value",
@@ -7864,9 +7884,12 @@ fixtures = [
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
+  "crates/ripr/src/analysis/classify/implicit_effect.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs",
   "crates/ripr/src/analysis/classifier.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
@@ -7875,6 +7898,9 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
+  "fixtures/rust_sibling_effect_oracle/expected/check.json",
+  "fixtures/rust_sibling_effect_oracle/expected/human.txt",
+  "fixtures/rust_sibling_effect_oracle/expected/human-full.txt",
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
@@ -14313,13 +14339,16 @@ spec = "docs/specs/RIPR-SPEC-0212-npm-native-launcher-boundary.md"
 tests = [
   "packaging/npm/launcher/test/run-tests.test.cjs",
   "packaging/npm/launcher/test/launcher.test.cjs",
-  "xtask/src/policy/distribution/tests.rs"
+  "xtask/src/policy/distribution/tests.rs",
+  "xtask/src/version.rs"
 ]
 code = [
   "packaging/npm/launcher/package.json",
   "packaging/npm/launcher/bin/ripr.cjs",
   "packaging/npm/launcher/lib/launcher.cjs",
-  "xtask/src/policy/distribution/npm_launcher.rs"
+  "xtask/src/policy/distribution/npm_launcher.rs",
+  "xtask/src/policy/distribution/mod.rs",
+  "xtask/src/version.rs"
 ]
 outputs = [
   "packaging/npm/launcher/README.md",
@@ -17518,6 +17547,22 @@ tests = [
   "xtask/src/reports/release_ledger/rule_tests.rs::deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row",
   "xtask/src/reports/release_ledger/rule_tests.rs::derived_ledger_validates_and_overrides_resolve_blocking_rows",
   "xtask/src/reports/release_ledger/rule_tests.rs::bad_overrides_are_rejected",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_modules_and_items_are_spans",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::braces_in_strings_chars_comments_and_raw_strings_do_not_end_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::attributes_in_strings_and_other_cfgs_are_not_spans",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::an_unclosed_item_is_not_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::zero_context_diffs_parse_hunks_and_whole_files",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::quoted_paths_are_never_inline_edits",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::hunks_must_sit_inside_a_span_on_every_side_that_has_lines",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::only_product_rust_files_are_candidates",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::a_span_sharing_a_line_with_other_code_is_not_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::touching_a_span_boundary_line_is_a_product_change",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::an_escaped_quote_char_literal_is_blanked_whole",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_on_a_field_or_parameter_is_not_an_item_span",
+  "xtask/src/reports/release_ledger/capture_tests.rs::editor_rust_is_scanned_and_same_line_product_edits_stay_product",
+  "xtask/src/reports/release_ledger/capture_tests.rs::changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit",
+  "xtask/src/reports/release_ledger/rule_tests.rs::inline_test_only_product_paths_count_as_evidence",
+  "xtask/src/reports/release_ledger/capture_tests.rs::inline_test_edits_are_detected_per_hunk_from_real_git",
   "xtask/src/reports/release_ledger/rule_tests.rs::short_commit_ids_do_not_panic_the_override_reference",
   "xtask/src/reports/release_ledger/rule_tests.rs::repeated_derive_flags_are_rejected_before_any_file_is_read",
   "xtask/src/reports/release_ledger/rule_tests.rs::failed_derivation_leaves_an_existing_output_untouched",
@@ -17526,6 +17571,7 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
   "xtask/src/reports/release_ledger/tests.rs::markdown_projection_shows_every_records_theme",
+  "xtask/src/reports/release_ledger/tests.rs::input_over_the_byte_cap_is_rejected_not_truncated",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]
@@ -17964,6 +18010,31 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0310"
+name = "A producer-identified check-findings artifact verifies movement by gap id"
+spec = "docs/specs/RIPR-SPEC-0310-check-findings-artifact-verifies-by-gap-id.md"
+tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_key_typescript_findings_by_derived_gap_id",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_a_missing_or_incomplete_analysis",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_duplicate_and_malformed_findings",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_refuse_a_partial_scope_or_any_run_limitation",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_identity_tracks_diff_only_settings_but_repo_exposure_does_not",
+  "crates/ripr/src/agent/artifact.rs::tests::verify_snapshot_dispatch_routes_only_the_declared_findings_kind",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/agent/artifact.rs",
+  "crates/ripr/src/output/check_findings.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0310-check-findings-artifact-verifies-by-gap-id.md",
 ]
 metrics = [
   "unit_test_pass_rate",

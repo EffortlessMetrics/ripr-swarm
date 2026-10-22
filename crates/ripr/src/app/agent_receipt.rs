@@ -84,14 +84,11 @@ pub(crate) fn canonical_agent_receipt_verify_render(
         .map_err(|err| receipt_verify_input_error("artifact_read", err))?;
     let after_json = read_snapshot(&after_path, "receipt after")
         .map_err(|err| receipt_verify_input_error("artifact_read", err))?;
-    let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        root,
-        &before_json,
-        "receipt before",
-    )
-    .map_err(|err| receipt_verify_input_error("artifact", err))?;
+    let before_identity =
+        crate::agent::artifact::validate_verify_snapshot(root, &before_json, "receipt before")
+            .map_err(|err| receipt_verify_input_error("artifact", err))?;
     let after_identity =
-        crate::agent::artifact::validate_repo_exposure_artifact(root, &after_json, "receipt after")
+        crate::agent::artifact::validate_verify_snapshot(root, &after_json, "receipt after")
             .map_err(|err| receipt_verify_input_error("artifact", err))?;
     if let Err(reason) =
         crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
