@@ -3110,8 +3110,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "same-module helper with an arbitrary name",
-            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            "same-module helper with an arbitrary name and a computed argument (a literal one is credited by helper_inline)",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(10 + 10)\n",
             unresolved,
         ),
         (
