@@ -1,0 +1,10 @@
+diff --git a/idioms/memo.py b/idioms/memo.py
+--- a/idioms/memo.py
++++ b/idioms/memo.py
+@@ -3,5 +3,5 @@
+ 
+ def doubled(key):
+     if key not in _cache:
+-        _cache[key] = key * 2
++        _cache[key] = key * 3
+     return _cache[key]
