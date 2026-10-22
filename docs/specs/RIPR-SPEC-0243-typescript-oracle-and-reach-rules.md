@@ -971,6 +971,25 @@ rejected alternative. Any can be reversed later without touching the rest.
     gaps until the adapter resolves literal tables and same-file helper
     assertions, #9534). A getter-backed field is not detected.
 
+19. **Literal tables and same-file assertion helpers (2026-10-22, #9534).**
+    Adopted, extending decision 18. (a) A table-driven expected side counts when
+    it is a bare name destructured by `for (const [a, b] of rows)` from a
+    constant numeric table (`const rows = [[0, 0], [1, 1]]`, equal-width rows,
+    each cell an integer), the owner call is in that loop (and counting loops
+    `for (let i = 0; i < n; i++)` bounded by a column or a positive literal),
+    nothing rebinds the destructured names, and some row calls the owner at
+    least once and expects a nonzero value. Other loops, computed or ragged
+    tables, and bounds the scan cannot read refuse. (b) A same-file top-level
+    function whose body is exactly one assertion call is treated as that
+    assertion at each call site: the call must be its own statement ending in
+    `;`, every argument a bare name or non-negative integer, every use of a
+    parameter a plain argument or member base, and every mention of the helper
+    such a call; a helper free name declared more than once refuses. The
+    renamed assertion then passes every ordinary gate (binding, oracle kind,
+    pinned expected side, field-update rules). Rejected: helpers with more than
+    one statement, defaults, async or generator helpers, aliases and exports,
+    computed arguments, strings, and calls inside expressions.
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON

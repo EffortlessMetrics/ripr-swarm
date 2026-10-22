@@ -1367,10 +1367,10 @@ pub(crate) fn ts_field_update_witnessed(
         test.assertions.iter().any(|assertion| {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !matches!(assertion.oracle_kind, OracleKind::ExactValue)
-                || !assertion_expected_side_is_pinned(assertion)
             {
                 return false;
             }
+            let pinned = assertion_expected_side_is_pinned(assertion);
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
@@ -1409,8 +1409,29 @@ pub(crate) fn ts_field_update_witnessed(
                 .any(|(at, _)| {
                     // The assertion observes the field itself, not a derived
                     // value (`stats.hits - stats.hits`).
-                    ts_field_update_precedes_read(change, &owner.name, &masked, line_start + at)
-                        .is_some_and(|receiver| observed == format!("{receiver}.{}", change.field))
+                    let read = line_start + at;
+                    if pinned {
+                        return ts_field_update_precedes_read(change, &owner.name, &masked, read)
+                            .is_some_and(|receiver| {
+                                observed == format!("{receiver}.{}", change.field)
+                            });
+                    }
+                    // A table-driven expected side: the witness proves the loops
+                    // around the call run at least once for a nonzero row.
+                    ts_field_update_precedes_read_through_loops(change, &owner.name, &masked, read)
+                        .is_some_and(|receiver| {
+                            observed == format!("{receiver}.{}", change.field)
+                                && ts_expected_identifier(&masked[read + observed.len()..line_end])
+                                    .is_some_and(|expected| {
+                                        ts_table_expected_witnessed(
+                                            &owner.name,
+                                            &receiver,
+                                            &masked,
+                                            expected,
+                                            read,
+                                        )
+                                    })
+                        })
                 })
         })
     })
