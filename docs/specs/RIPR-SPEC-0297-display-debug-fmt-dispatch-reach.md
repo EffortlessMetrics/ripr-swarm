@@ -90,8 +90,8 @@ Existing shadow checks for the owner's type and trait still apply. Derived
 
 Reach alone leaves a changed `Display::fmt` that only calls
 `write!(f, "literal", args)` at `weakly_exposed`: the `write!` is not a
-returned value, and the test never names `fmt`. Two links close that read, and
-both are required:
+returned value, and the test never names `fmt`. Three links close that read, and
+all are required:
 
 - Propagation. When the owner is a `fmt` whose whole body is one
   `write!` into its own formatter parameter, with a string-literal format and
@@ -104,6 +104,12 @@ both are required:
   admitted only for `Display` and only when no inherent `to_string` competes.
   `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
   that bare name.
+
+- Stimulus. The change must be to string-literal text only (the probe's before
+  and after differ only inside string literals). A literal fragment is written
+  whatever the test passes in, so an exact pin sees it. A changed argument
+  (`self.0 * 2`) can leave the output equal for the one value the test chose, so
+  it keeps its prior verdict.
 
 A `format!` or `{}` side, a computed expected string, a weaker assertion such as
 `ends_with`, and `Debug` owners are not read here and keep their prior verdict.

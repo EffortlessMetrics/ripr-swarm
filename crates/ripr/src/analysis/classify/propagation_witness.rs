@@ -3406,6 +3406,54 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0297: a `write!(f, ..)` tail of a `fmt` completes under its
+    /// own tag, and a file that may bind `write` (or `format`) gets nothing.
+    #[test]
+    fn format_tail_witness_completes_a_fmt_write_tail_and_refuses_a_rebound_write() {
+        let expression = "write!(f, \"{}C\", self.0)";
+        let body = format!(
+            "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n    {expression}\n}}"
+        );
+        let owner = constant_owner(&body);
+        let probe = probe_at(ProbeFamily::ReturnValue, expression, 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = format_tail_witness(&probe, &owner, Some(&body), &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert_eq!(
+            witness.map(|witness| witness.limitations),
+            Some(vec![
+                "fmt_write_owner_tail".to_string(),
+                "static_local_flow_only".to_string()
+            ])
+        );
+        for prefix in [
+            "macro_rules! write { ($($t:tt)*) => { Ok(()) }; }\n",
+            "use other::write;\n",
+            "macro_rules! format { ($($t:tt)*) => { String::new() }; }\n",
+        ] {
+            let source = format!("{prefix}{body}");
+            assert!(
+                format_tail_witness(&probe, &owner, Some(&source), &sinks).is_none(),
+                "{source}"
+            );
+        }
+        // `writeln!`, a format-less `write!` and a shadowed formatter name
+        // are not read.
+        for tail in ["writeln!(f, \"{}C\", self.0)", "write!(f, \"C\")x"] {
+            let body = format!(
+                "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n    {tail}\n}}"
+            );
+            assert_eq!(
+                format_owner_tail_line(&constant_owner(&body), tail),
+                None,
+                "{tail}"
+            );
+        }
+    }
+
     #[test]
     fn format_tail_witness_refuses_a_file_that_may_rebind_format() {
         let expression = "format!(\"{}\", x * 3)";

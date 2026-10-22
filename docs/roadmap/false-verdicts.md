@@ -5,7 +5,7 @@ Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main pl
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 16 | 579 |
+| Rust | 15 | 590 |
 | TypeScript | 33 | 309 |
 | Python | 25 | 191 |
 | Perl | 1 | 60 |

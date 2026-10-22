@@ -638,6 +638,9 @@ impl ClassifiedProbeEvidence {
             &propagation_witness,
             Some(PropagationWitnessDiagnostic::Valid(witness))
                 if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+        ) && crate::analysis::classify::changes_only_string_literals(
+            context.probe.before.as_deref(),
+            context.probe.after.as_deref(),
         );
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
             (fmt_write_tail

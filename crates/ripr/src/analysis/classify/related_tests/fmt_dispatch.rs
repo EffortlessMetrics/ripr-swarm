@@ -245,6 +245,43 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
     )
 }
 
+/// Whether the changed expression differs from its prior text only inside
+/// string literals. A literal fragment of a `write!` is written whatever the
+/// test passes in, so an exact pin sees it; a changed argument may leave the
+/// output equal for the one value the test chose (`self.0 * 2` at `0`).
+pub(in crate::analysis) fn changes_only_string_literals(
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    let outside = |text: &str| {
+        let mut kept = String::new();
+        let mut in_string = false;
+        let mut escaped = false;
+        for c in text.chars() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                    kept.push('"');
+                }
+            } else {
+                kept.push(c);
+                in_string = c == '"';
+            }
+        }
+        (kept, in_string)
+    };
+    let (kept_before, open_before) = outside(before);
+    let (kept_after, open_after) = outside(after);
+    !open_before && !open_after && kept_before == kept_after && before != after
+}
+
 /// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
 /// text a `Display::fmt` writes when `value` is typed as the owner's self
 /// type and the test reaches that `fmt` by dispatch. One side is a string
@@ -283,9 +320,22 @@ pub(in crate::analysis) fn assertion_pins_display_string(
     let [first, second] = sides.as_slice() else {
         return false;
     };
+    // One string token: `"a".to_owned() + "b"` starts and ends with a quote
+    // but is a computed expectation.
     let is_literal = |side: &str| {
         let side = side.trim();
-        side.starts_with('"') && side.ends_with('"') && side.len() >= 2
+        let Some(inner) = side
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+        else {
+            return false;
+        };
+        let mut escaped = false;
+        inner.chars().all(|c| {
+            let ok = escaped || c != '"';
+            escaped = !escaped && c == '\\';
+            ok
+        })
     };
     let value = match (is_literal(first), is_literal(second)) {
         (false, true) => first,
@@ -293,6 +343,11 @@ pub(in crate::analysis) fn assertion_pins_display_string(
         _ => return false,
     };
     let masked = mask_comments_and_strings(&test.body);
+    // The assertion's own span: a side repeated elsewhere in the test is
+    // ambiguous, so it fails closed.
+    if test.body.matches(value.as_str()).count() != 1 {
+        return false;
+    }
     let Some(side_start) = test.body.find(value.as_str()) else {
         return false;
     };
@@ -1072,6 +1127,60 @@ mod tests {
         ] {
             assert!(pins_display_string(&impls, assertion, body), "{body}");
         }
+    }
+
+    #[test]
+    fn display_string_pin_refuses_a_computed_or_doubled_expectation() {
+        let display = ["fmt::Display for Temp"];
+        for assertion in [
+            "assert_eq!(Temp(1).to_string(), \"1\".to_owned() + \"C\");",
+            "assert_eq!(\"1C\", \"1C\");",
+        ] {
+            assert!(
+                !pins_display_string(&display, assertion, assertion),
+                "{assertion}"
+            );
+        }
+        // The same side written twice has no single assertion span.
+        let twice =
+            "assert_eq!(Temp(1).to_string(), \"1C\");\nassert_eq!(Temp(1).to_string(), \"1C\");";
+        assert!(!pins_display_string(
+            &display,
+            "assert_eq!(Temp(1).to_string(), \"1C\");",
+            twice
+        ));
+    }
+
+    #[test]
+    fn only_a_change_to_string_literal_text_counts_as_literal_only() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        assert!(same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+        assert!(same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}\\u{b0}C\", self.0)"
+        ));
+        // An argument changed, with or without a literal change beside it.
+        assert!(!same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}C\", self.0 * 2)"
+        ));
+        assert!(!same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}F\", self.1)"
+        ));
+        // Nothing changed, or no prior text.
+        assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
+        assert!(!super::changes_only_string_literals(
+            None,
+            Some("write!(f, \"x\")")
+        ));
+        // An unterminated literal is not read.
+        assert!(!same("write!(f, \"x)", "write!(f, \"y)"));
     }
 
     #[test]
