@@ -4026,7 +4026,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The Inspected block names the change-first scope when there is a change.
     assert!(
         terminal.contains(
-            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n\n"
+            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n  actionable seams: 1 total, showing 1\n\n"
         ),
         "{terminal}"
     );
