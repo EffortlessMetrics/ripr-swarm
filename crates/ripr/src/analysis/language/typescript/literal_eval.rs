@@ -386,7 +386,7 @@ mod tests {
             None
         );
         assert_eq!(
-            agree("total >= 100", "total > 100", &["total"], &["99"]),
+            agree("total >= 100", "total > 100", &["total"], &["20"]),
             None
         );
         assert_eq!(
