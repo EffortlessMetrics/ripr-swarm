@@ -30,6 +30,7 @@ Linked issues:
 - #9138 (assertion after an always-exiting try/finally)
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9435 (exact oracle ignored on five changed-line shapes)
 
 Linked PRs:
 
@@ -678,6 +679,75 @@ from owner credit when a body-local destructuring names it
 `ImportAliasOwnerCall` relation; a default import keeps its
 `ImportedOwnerCall` relation, which the import record proves.
 
+### Changed-line shapes
+
+**Rule 15. A changed line whose value reaches the owner's return reads as a
+return-value change (#9435, 2026-10-22).** Four shapes carry no `return`
+keyword, so the probe-shape classifier reads them as unrecognised and a
+strong exact assertion on the owner stays `weakly_exposed` with
+`preview_advisory_only`. Each now reads as `ReturnValue` when the structure
+below holds, and keeps the old reading otherwise. A shape that does not
+prove its condition costs an abstention or a gap, never a credit.
+
+1. **Declared concise arrow.** `export const f = (n) => n * 2;`, when `f` is
+   the owner itself (a local arrow nested in the owner binds another name
+   and returns nothing), returns its body, including a body that passes a callback
+   (`xs.reduce((a, b) => a + b, 0)`). A body with a comparison operator or
+   a type argument (`<`, `>` outside the `=>` of a callback), a curried
+   arrow (the body is itself an arrow head) and a block body keep the old
+   reading: a comparison is a predicate boundary that an exact value does
+   not witness.
+2. **Compound assignment to the returned state.** `this.balance += amount;`
+   or `t += i * 2;` (any of `+= -= *= /= %= **= <<= >>= >>>= &= |= ^= &&=
+   ||= ??=`) where the target is a plain name or `this.name`, the old
+   statement wrote the same target, and the owner body has exactly one
+   `return`, at its top level and after the assignment, whose whole
+   expression is the target. Every block enclosing the assignment is a
+   `for`, `while` or `do` loop (a branch may skip it; a loop over an empty
+   input may run zero times, the same limit every return-value credit has
+   when the test's inputs never reach the changed line), the body has no
+   nested function, class or method, and no other statement writes the
+   target between the declaration and the return. For a `this.name` target
+   no call may sit between the assignment and the return, because a method
+   (`this.reset()`) can rewrite the field unseen. The changed span is the
+   statement between the common prefix and suffix of the old and new line,
+   widened to the nearest `;`, `{` or `}`, so one statement of a minified
+   line is read alone.
+3. **Edited arm of an unchanged conditional.** `return c ? a : b` where old
+   and new differ in exactly one arm and `c` is one comparison of an owner
+   parameter the body never writes (`===`, `!==`, `==`, `!=`, `<`, `<=`,
+   `>`, `>=`, either operand order) with a number, a plain string (no quote
+   or backslash inside), a boolean, `null`, `undefined` or a member path
+   (`Level.High`). It is
+   credited when a strong, pinned, exact-value assertion of an oracle
+   relation calls the owner with a literal argument that provably selects
+   the edited arm: numbers compare by value; strings, booleans and
+   `null`/`undefined` by equality; a member path only by the same text, and
+   not when the test body rebinds the path's root (`const Level = ...`). The
+   assertion must observe the owner's whole result (not `price(150) > 0`),
+   through the owner's name or an import alias, and an expected value that
+   provably equals neither the old nor the new arm is dead and credits
+   nothing. Two
+   different member paths decide nothing, because enum members may share a
+   value. A moved condition is a boundary change (RIPR-SPEC-0027), not this
+   rule.
+4. **Generator loop bound.** `for (let i = 0; i <= n; i++)` against
+   `i < n` (or the descending `>=`/`>` with `i--`; the header is
+   `let`/`var i = <integer literal>` stepping by one, and the bound is a
+   read-only owner parameter or an integer literal), in a generator whose
+   loop is a direct child of the generator body with no `return` or `throw`
+   before it, and whose loop body has a plain `yield` at its own top level
+   (no `if`, `?`, `&&` or `||` before it there) and no `break`,
+   `continue`, `return`, `throw` or write to the counter. The extra
+   iteration yields one more element when the counter reaches the bound,
+   so an exact assertion on the whole drained sequence (`[...gen(3)]` or
+   `Array.from(gen(3))`) from a call whose literal argument satisfies
+   `init <= n` (`init >= n` descending) sees it. An assertion on a prefix
+   (`gen(3).next().value`), a call whose counter cannot reach the bound,
+   a conditional `yield` and a non-generator owner keep the old reading:
+   an extra iteration of a search or accumulation need not change the
+   result.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -1077,6 +1147,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
+  pins each shape's credit and the fallbacks that reach the rule (a weak
+  oracle, a curried or comparing arrow, a branch, a second return, another
+  write, an unselected or aliased arm, a prefix or unreached generator
+  sequence). Corpus rows `shape-arrow-const-export`,
+  `shape-reduce-initial-value`, `shape-class-method-compound-assign`,
+  `shape-enum-branch-weight` and `shape-generator-upper-bound` move from
+  gap to credited.
 - #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
   pins literal rejection equality, resolved-value domain separation,
   unshadowed runner imports and unchanged unresolved forms. Fixture
@@ -1181,6 +1259,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #9435 (rule 15): `probe_shape.rs` (`declared_arrow_value_body`),
+  `returned_state_guard.rs` (`ts_returned_state_change`),
+  `ternary_arm_guard.rs` (`ts_ternary_arm_change`),
+  `loop_bound_guard.rs` (`ts_loop_bound_change`), and the witnesses
+  `ts_arm_change_witnessed` and `ts_loop_bound_witnessed` in
+  `classifier.rs`, which promote the probe shape to `ReturnValue` before the
+  verdict ladder runs.
 - #7315: `expect_assertion_from_expression` reads the rejection modifier and
   concrete expected argument; `TypeScriptAssertionBindings` supplies the
   explicit runner import and existing scope filter. The existing
