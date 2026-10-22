@@ -727,9 +727,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     host still abstains): the finding is `static_unknown` with
     `decorator_indirection`. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
-    that never triggers the mark (`skipif(False)`, `xfail(False)`,
-    `unittest.skipIf(False)`, `unittest.skipUnless(True)`, also as
-    `condition=`), and `pytest.importorskip` of one bare module name that
+    that never triggers the mark and is the only condition, given with the
+    string `reason` the runner requires for a boolean
+    (`skipif(False, reason="...")`, `xfail(False, reason="...")`,
+    `unittest.skipIf(False, "...")`, `unittest.skipUnless(True, "...")`).
+    A missing or non-string reason, a second positional condition, a
+    `condition=` that overrides the positional one and a `*` spread keep
+    the control, because the runner then errors, skips or xfails. The
+    second decidable case is `pytest.importorskip` of one bare module name that
     every interpreter ships (`json`, `math`, `re`, ...). The adapter does
     not evaluate whether any other module is installed, so `importorskip`
     of it, or with `minversion` or `reason`, still abstains

@@ -184,6 +184,7 @@ fn given_a_module_level_skip_then_every_test_in_the_file_is_activation_controlle
     for header in [
         "import pytest\npytest.importorskip('no_such_module')\n",
         "import pytest\npytest.skip('no', allow_module_level=True)\n",
+        "import pytest\nnp = pytest.importorskip('no_such_module')\n",
         "from pytest import importorskip\nimportorskip('no_such_module')\n",
         "import pytest\npytestmark = pytest.mark.skip(reason='no')\n",
         "from pytest import mark\npytestmark = mark.skip(reason='no')\n",
@@ -236,6 +237,26 @@ fn given_a_skip_condition_that_is_a_inert_literal_then_the_test_is_not_controlle
         ("pytest.mark.skip(reason='always')", true),
         ("pytest.mark.xfail(reason='unconditional')", true),
         ("pytest.mark.xfail(True, reason='always')", true),
+        // The runner rejects a boolean condition without a string reason, so the
+        // body never runs; a second positional is a condition, not a reason; a
+        // `condition=` keyword overrides the positional one.
+        ("pytest.mark.skipif(False)", true),
+        ("pytest.mark.skipif(condition=False)", true),
+        ("pytest.mark.skipif(False, reason=None)", true),
+        ("pytest.mark.skipif(False, 'never')", true),
+        ("pytest.mark.skipif(False, True, reason='r')", true),
+        (
+            "pytest.mark.skipif(False, sys.platform == 'win32', reason='r')",
+            true,
+        ),
+        (
+            "pytest.mark.skipif(False, reason='r', condition=True)",
+            true,
+        ),
+        ("pytest.mark.xfail(False)", true),
+        ("pytest.mark.xfail(False, run=False)", true),
+        ("pytest.mark.xfail(False, True, reason='r')", true),
+        ("pytest.mark.skipif(*FLAGS, reason='r')", true),
     ] {
         let source = format!(
             "import pytest\nimport sys\n\n@{decorator}\ndef test_x():\n    assert 1 == 1\n"
@@ -249,6 +270,9 @@ fn given_a_skip_condition_that_is_a_inert_literal_then_the_test_is_not_controlle
     for (decorator, controlled) in [
         ("unittest.skipIf(False, 'never')", false),
         ("unittest.skipUnless(True, 'never')", false),
+        ("unittest.skipIf(False, reason='never')", false),
+        ("unittest.skipIf(False)", true),
+        ("unittest.skipIf(False, 'never', 'extra')", true),
         ("unittest.skipIf(True, 'always')", true),
         ("unittest.skipUnless(False, 'always')", true),
     ] {
@@ -284,6 +308,8 @@ fn given_importorskip_of_an_always_present_module_then_the_file_stays_active() {
             false,
         ),
         ("import pytest\npytest.importorskip('numpy')\n", true),
+        ("import pytest\nnp = pytest.importorskip('numpy')\n", true),
+        ("import pytest\nj = pytest.importorskip('json')\n", false),
         (
             "import pytest\npytest.importorskip('json', minversion='99')\n",
             true,
