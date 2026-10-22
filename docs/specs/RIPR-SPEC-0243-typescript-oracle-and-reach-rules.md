@@ -767,9 +767,9 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
-**Rule 16. Playwright Test specs of pure functions (#9434, #9652).** A spec
+**Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
 that imports `expect` and `test` from `@playwright/test` reads like its
-plain form in five places:
+plain form in six places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -801,6 +801,14 @@ plain form in five places:
    fits neither or both versions, a changed or different interpolated
    expression, a second throw site, and unanchored, flagged or substring
    payloads (`toThrow("...")`) keep the old reading.
+6. A changed field of a single-line returned object literal
+   (`return { area: w * h, perimeter: 2 * w + h };`, one `key: value`
+   differing from the removed line) is observed by an assertion on that
+   field of the owner's result: `d.perimeter` for `const d = dims(3, 4)` or
+   `dims(3, 4).perimeter`, including the second term of an `expect.soft`
+   pair. The base must be the owner call or a local alias of it; a field
+   whose value is unchanged, another object's field and another owner keep
+   the old reading.
 
 **Rule 17. `t.skip()` / `t.todo()` inside a test body withdraws the test
 (#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
@@ -1307,19 +1315,25 @@ to `amount - 20`, and `tests/lib.test.ts` has
     old pieces for some fill of `${text}`). With `/^something else$/`,
     `/not a count/`, `/^not a count: x$/i` or `toThrow("not a count: x")`:
     unchanged.
+39. `src/soft.ts` returns `{ area: w * h, perimeter: 2 * w + h }` where it
+    returned `perimeter: 2 * (w + h)`, and the Playwright spec runs
+    `const d = dims(3, 4); expect.soft(d.area).toBe(12);
+    expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
+    (today `weakly_exposed`: only the unchanged `area` term reached the
+    changed-value check). With only the `d.area` assertion: unchanged.
 
-42. `src/rank.ts` `return score >= 90 ? "gold" : "silver";` changed to
+40. `src/rank.ts` `return score >= 90 ? "gold" : "silver";` changed to
     `"bronze"`; the only running test is `it("...", () => {
     expect(rank(90)).to.equal("gold"); })` and the silver assertion is
     `it.skip`: `weakly_exposed` (today `exposed`; rule 18 on the active
     test, the skipped one is already withdrawn). Corpus case
     `mocha-it-skip-sole-pin`.
-43. `src/clamp.ts` `Math.min(hi, Math.max(lo, n))` changed to `Math.max(lo +
+41. `src/clamp.ts` `Math.min(hi, Math.max(lo, n))` changed to `Math.max(lo +
     1, n)`; tests `clamp(15, 0, 10)` and `clamp(5, 0, 10)`:
     `weakly_exposed` (today `exposed`; rule 18: both inputs give the same
     value on both versions). A test `clamp(-3, 0, 10)` keeps `exposed`.
     Corpus case `mocha-clamp-unexercised-lower-arm`.
-44. `describeAttempt(attempt)` `attempt === 0 ? "first" : ...` with the
+42. `describeAttempt(attempt)` `attempt === 0 ? "first" : ...` with the
     `"retry"` text changed (or the test relaxed to `attempt <= 0`); one test
     calls `describeAttempt(0)` and the other starts with `t.skip("not
     ready")` before asserting: `weakly_exposed` (today `exposed`; rule 17

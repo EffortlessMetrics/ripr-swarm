@@ -102,6 +102,9 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 pub(crate) struct CreditFacts<'a> {
     pub(crate) mock_facts: &'a MockCallFacts,
     pub(crate) pin_facts: &'a PinFacts,
+    /// The one field of a single-line returned object literal whose value
+    /// changed, when the old line is known (RIPR-SPEC-0243 rule 17).
+    pub(crate) changed_field: Option<&'a TypeScriptChangedField>,
 }
 
 /// Returns `true` when there is static evidence that a strong assertion in one
@@ -206,6 +209,7 @@ pub(crate) fn ts_changed_value_is_observed(
     let CreditFacts {
         mock_facts,
         pin_facts,
+        changed_field,
     } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -226,7 +230,13 @@ pub(crate) fn ts_changed_value_is_observed(
 
     // Collect changed identifier tokens from the discriminator value.
     let raw_discriminator = typescript_missing_discriminator_value(&probe_shape.family, line_text);
-    let changed_tokens: Vec<String> = if let Some(ref disc) = raw_discriminator {
+    let changed_tokens: Vec<String> = if let Some(field) = changed_field {
+        // The changed field's own value, not the first field of the literal.
+        identifier_tokens(&field.value)
+            .into_iter()
+            .filter(|tok| !CALL_EFFECT_TEMPLATE_WORDS.contains(&tok.as_str()))
+            .collect()
+    } else if let Some(ref disc) = raw_discriminator {
         let raw_expr = strip_synthesized_prefix(disc);
         identifier_tokens(raw_expr)
             .into_iter()
@@ -339,6 +349,29 @@ pub(crate) fn ts_changed_value_is_observed(
                     owner_is_method,
                     &namespace_receivers,
                 ) {
+                    return true;
+                }
+                // RIPR-SPEC-0243 rule 17: `<owner call or alias of one>.<key>`
+                // reads the changed field of the returned literal.
+                if let Some(field) = changed_field
+                    && let Some(base) = observed
+                        .trim()
+                        .strip_suffix(field.key.as_str())
+                        .and_then(|rest| rest.trim_end().strip_suffix('.'))
+                    && (ts_masked_observes_owner(
+                        &ts_mask_literals_and_comments(base),
+                        &owner_names,
+                        owner_is_method,
+                        &namespace_receivers,
+                    ) || ts_observed_local_aliases_owner(
+                        base,
+                        &owner_names,
+                        &changed_tokens,
+                        candidate.test,
+                        owner_is_method,
+                        &namespace_receivers,
+                    ))
+                {
                     return true;
                 }
                 if changed_tokens
@@ -5699,6 +5732,7 @@ pub(crate) fn classify_change_with_alias_state(
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
+    let changed_field = ts_changed_object_field(old_line_text, line_text);
     let error_facts = ErrorChangeFacts::read(old_line_text, line_text);
     // RIPR-SPEC-0247 rule 1 reads the owner body only when an effect seam
     // has a related mock payload to credit.
@@ -5900,6 +5934,7 @@ pub(crate) fn classify_change_with_alias_state(
                 CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    changed_field: changed_field.as_ref(),
                 },
             ));
 
@@ -6074,6 +6109,7 @@ pub(crate) fn classify_change_with_alias_state(
                 error_facts: &error_facts,
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                changed_field: changed_field.as_ref(),
             },
             mock_paths: &mock_paths,
             alias_map,
@@ -7813,6 +7849,7 @@ struct Rule8LadderFacts<'a> {
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
     pin_facts: &'a PinFacts,
+    changed_field: Option<&'a TypeScriptChangedField>,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -7839,6 +7876,7 @@ fn ts_rule8_mocked_changed_callee(
         error_facts,
         mock_facts,
         pin_facts,
+        changed_field,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -7892,6 +7930,7 @@ fn ts_rule8_mocked_changed_callee(
                 CreditFacts {
                     mock_facts,
                     pin_facts,
+                    changed_field,
                 },
             )
         {
