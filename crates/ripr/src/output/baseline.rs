@@ -277,7 +277,18 @@ fn baseline_entry_from_decision(
     }))
 }
 
-fn fallback_identity(
+/// Stored-string contract for the legacy `path:line:static_class` baseline
+/// fallback identity (#9666). This is deliberately NOT
+/// [`crate::output::path::path_identity_key`]: that key is host-dependent
+/// (`\` is a separator only on Windows; ASCII case folds on Windows/macOS),
+/// while a baseline is a committed text artifact that must key identically on
+/// every host that reads it. The stored string therefore always rewrites `\`
+/// to `/`, strips leading `./`, and never case-folds. Switching to the shared
+/// host key would silently change stored identities (a Windows-authored
+/// baseline would stop matching on Linux), so any change needs a versioned
+/// key with compatibility reads. This is the single owner for create, delta
+/// and update.
+pub(crate) fn fallback_identity(
     path: Option<&str>,
     line: Option<u64>,
     static_class: Option<&str>,
@@ -381,6 +392,21 @@ fn string_field(value: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fallback_identity_is_a_host_independent_stored_string() {
+        let id = |p| super::fallback_identity(Some(p), Some(7), Some("weakly_gripped"));
+        let want = Some("src/a/B.rs:7:weakly_gripped".to_string());
+        assert_eq!(id("src/a/B.rs"), want);
+        assert_eq!(id("src\\a\\B.rs"), want);
+        assert_eq!(id("./src/a/B.rs"), want);
+        // No case folding: stored identity stays case-exact on every host.
+        assert_ne!(id("src/a/b.rs"), want);
+        assert_eq!(
+            super::fallback_identity(Some("a.rs"), None, Some("x")),
+            None
+        );
+    }
+
     use super::{baseline_create_report_from_gate_decision_json, render_baseline_create_json};
 
     #[test]
