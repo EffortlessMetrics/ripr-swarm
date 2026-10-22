@@ -48,8 +48,14 @@ fn assert_entry_related(label: &str, owner_source: &str, test_source: &str) -> R
         finding.related_tests
     );
     assert_eq!(finding.ripr.reach.state, StageState::Yes, "{label}");
-    // Indirect reach never reaches `exposed` on its own.
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    // Indirect reach never reaches `exposed` on its own, and an exact oracle
+    // behind an entry is unknown, not an actionable gap (#9290).
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+    assert_eq!(
+        finding.stop_reasons,
+        [StopReason::PropagationEvidenceUnknown],
+        "{label}"
+    );
     assert!(
         finding
             .missing
@@ -101,6 +107,29 @@ fn factory_product_call_relates_to_private_helper() -> Result<(), String> {
             .any(|line| line.contains("(`merge`)")),
         "the summary names the entry the test calls: {:?}",
         finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn weak_oracle_through_an_entry_stays_an_actionable_gap() -> Result<(), String> {
+    // A weak oracle's missing stronger assertion is actionable on any reach,
+    // so only an exact oracle behind the entry reads unknown (#9290).
+    let finding = merge_finding(
+        "entry-weak-oracle",
+        MERGE,
+        "import { it, expect } from 'vitest';\nimport { merge } from '../src/merge';\n\nit('merges', () => {\n  expect(merge({ a: 1 }, { b: 2 })).toBeDefined();\n});\n",
+    )?;
+    assert!(
+        relates_through_entry(&finding),
+        "related: {:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding.stop_reasons.is_empty(),
+        "{:?}",
+        finding.stop_reasons
     );
     Ok(())
 }

@@ -5241,17 +5241,37 @@ pub(crate) fn classify_change_with_alias_state(
             )],
         )
     } else if reach_only_through_module_entry {
+        // An exact oracle on a same-module entry cannot say whether the
+        // entry's own code carries the owner's effect to the assertion, so
+        // "no discriminator" is not established: unknown, not a gap
+        // (RIPR-SPEC-0027). A weak oracle stays `weakly_exposed`: its
+        // missing stronger assertion is actionable on any reach.
+        let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank();
+        let (class, observe, discriminate) = if entry_oracle_is_strong {
+            (
+                ExposureClass::StaticUnknown,
+                StageState::Unknown,
+                StageState::Unknown,
+            )
+        } else {
+            (
+                ExposureClass::WeaklyExposed,
+                StageState::Weak,
+                StageState::Weak,
+            )
+        };
         (
-            ExposureClass::WeaklyExposed,
+            class,
             StageState::Yes,
-            StageState::Weak,
-            StageState::Weak,
+            observe,
+            discriminate,
             vec![module_entry_reach_summary(
                 owner,
                 &related_candidates,
                 reexport_index,
                 alias_map,
                 workspace_root,
+                entry_oracle_is_strong,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
@@ -5335,9 +5355,12 @@ pub(crate) fn classify_change_with_alias_state(
         missing,
     };
     let ladder_exposed = matches!(verdict.class, ExposureClass::Exposed);
-    // Only the unresolved-callback arm yields `static_unknown` before the
-    // post-ladder rules; any later `static_unknown` is the rule 8 mock cause.
-    let ladder_unresolved_unknown = matches!(verdict.class, ExposureClass::StaticUnknown);
+    // Only the module-entry and unresolved-callback arms yield `static_unknown`
+    // before the post-ladder rules; any later one is the rule 8 mock cause.
+    let ladder_entry_unknown =
+        matches!(verdict.class, ExposureClass::StaticUnknown) && reach_only_through_module_entry;
+    let ladder_unresolved_unknown =
+        matches!(verdict.class, ExposureClass::StaticUnknown) && !ladder_entry_unknown;
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
@@ -5367,10 +5390,12 @@ pub(crate) fn classify_change_with_alias_state(
         discriminate_state,
         mut missing,
     } = verdict;
-    let static_unknown_by_mock =
-        matches!(class, ExposureClass::StaticUnknown) && !ladder_unresolved_unknown;
+    let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
+        && !ladder_unresolved_unknown
+        && !ladder_entry_unknown;
     let unresolved_callback_unknown =
         matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
+    let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
     // unchanged. Outside rule 8 a static limit is advisory: an `exposed`
@@ -5470,6 +5495,8 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if ladder_entry_unknown {
+        "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if ladder_unresolved_unknown {
         "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
@@ -5536,6 +5563,9 @@ pub(crate) fn classify_change_with_alias_state(
         match &class {
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_entry_unknown => {
+            "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
             "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -5709,6 +5739,8 @@ pub(crate) fn classify_change_with_alias_state(
             vec![StopReason::StaticProbeUnknown]
         } else if unresolved_callback_unknown {
             vec![StopReason::GapEvidenceUnresolved]
+        } else if entry_reach_unknown {
+            vec![StopReason::PropagationEvidenceUnknown]
         } else {
             Vec::new()
         },
@@ -6708,6 +6740,7 @@ fn module_entry_reach_summary(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
+    discriminator_unknown: bool,
 ) -> String {
     let called: Vec<String> = owner
         .module_entries
@@ -6733,6 +6766,12 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    if discriminator_unknown {
+        return format!(
+            "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            owner.name, entries
+        );
+    }
     format!(
         "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
         owner.name, entries, owner.name
