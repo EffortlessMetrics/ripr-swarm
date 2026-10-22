@@ -412,7 +412,8 @@ exact-value `assert_eq!` with one operand that is the owner's call itself
 `.unwrap()`, never a projection such as `.len()`, an operator or a wrapping
 call) and the other not naming the owner. A call on an empty or zero input
 (`[]`, `vec![]`, `""`, `None`, `::new()`, a bare `0`) is not such a pin: the
-closure or exit may not run, so the gap stays. One matching test suffices. It runs after the framework-oracle rule and before
+closure or exit may not run, so the gap stays. One matching test suffices.
+The rule runs after the framework-oracle rule and before
 `withhold_unsupported_gap`, writes the finding the same way, and credits
 nothing.
 
@@ -429,16 +430,17 @@ closure, a returned closure the test applies, a `Result` collect) needs those
 shapes added to the pin rules with runtime controls; that is follow-up work,
 not part of this rule. The cost is that a true gap in these shapes reads
 `static_unknown` too: `shape-let-else-branch-unreached` and
-`shape-windows-strict-vs-loose`, whose cases accept `limited`.
-`shape-closure-returned-zero-input` keeps its gap through the zero-input
-rule.
+`shape-windows-strict-vs-loose`, whose cases accept `limited`. The zero-input
+rule keeps the gap for `shape-closure-returned-zero-input`.
 
-Corpus effect: `shape-thread-join-result`, `shape-closure-returned-adder`,
-`shape-collect-result-short-circuit`, `shape-sort-direction-truncate`,
-`shape-impl-trait-return-filter` and `shape-let-else-branch-pinned` move from
+Corpus effect on main: `shape-thread-join-result`,
+`shape-sort-direction-truncate` and `shape-let-else-branch-pinned` move from
 `false_actionable` to `abstained`; `shape-let-else-branch-unreached` and
-`shape-windows-strict-vs-loose` move from `ideal` to `abstained`. No other
-row moves.
+`shape-windows-strict-vs-loose` move from `ideal` to `abstained`. The cases
+`shape-closure-returned-adder`, `shape-collect-result-short-circuit` and
+`shape-impl-trait-return-filter` (same rule, `false_actionable` to
+`abstained`) and `shape-closure-returned-zero-input` (gap kept) are added by
+#9463; their rows are blessed there. No other row moves.
 
 ## Scope boundary
 
