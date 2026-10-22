@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use super::corpus::{Case, Expect, Route};
-use super::model::{Control, ControlKind, RowResult};
+use super::corpus::Case;
+use super::model::{Control, ControlKind};
 
 fn control(id: &str, expected: &str) -> Control {
     Control {
@@ -33,7 +33,7 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
     use std::fs;
     use std::time::Duration;
 
-    use super::corpus::Route;
+    use super::corpus::{Expect, Route};
     use super::exec::{self, Binary, CHILD_PATH, ROOT_TOKEN};
     use super::model::RowResult;
     use crate::blind_journey::sha256_hex;
