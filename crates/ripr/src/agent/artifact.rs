@@ -4589,4 +4589,45 @@ mod tests {
         cleanup?;
         Ok(())
     }
+
+    /// #9665: rewriting `producer.tool` is refused by the producer-identity
+    /// gate whether or not the version is also forged, and that gate runs
+    /// before the version-equality gate. A genuine version under a foreign
+    /// tool is therefore not accepted, and a forged version under a foreign
+    /// tool reports the identity refusal rather than the version refusal.
+    #[test]
+    fn repo_exposure_validation_rejects_rewritten_producer_tool() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            for version in [env!("CARGO_PKG_VERSION"), "0.10.9"] {
+                let mutated = validate_mutated_identity(&root, &document, |document| {
+                    document["artifact"]["producer"]["tool"] = json!("not-ripr");
+                    document["artifact"]["producer"]["version"] = json!(version);
+                })?;
+                match mutated {
+                    Err(error) if error.contains("invalid or unknown producer identity") => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "foreign tool with version {version}: unexpected rejection: {error}"
+                        ));
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "foreign producer tool with version {version} was accepted"
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
 }
