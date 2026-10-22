@@ -55,7 +55,9 @@ struct ModuleDeclarationAdmission {
 
 #[derive(Clone, Debug, Default)]
 struct FunctionAssertions {
-    body: String,
+    /// The parsed function text, kept as a fingerprint: a copy of every test
+    /// body stayed live for the whole run just to answer `StaleSource`.
+    body: BodyFingerprint,
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
@@ -64,6 +66,32 @@ struct FunctionAssertions {
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
+}
+
+/// Length plus two independently keyed 64-bit hashes of a function's text.
+/// Equal text always matches; differing text matching would need a collision
+/// in both hashes, and the compared texts are two reads of the same source
+/// span, not attacker-chosen pairs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BodyFingerprint {
+    len: usize,
+    hashes: [u64; 2],
+}
+
+impl BodyFingerprint {
+    fn of(text: &str) -> Self {
+        use std::hash::{Hash, Hasher};
+        let hash = |key: u8| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut hasher);
+            text.hash(&mut hasher);
+            hasher.finish()
+        };
+        Self {
+            len: text.len(),
+            hashes: [hash(0), hash(1)],
+        }
+    }
 }
 
 /// One assertion a test borrows from a check helper it calls.
@@ -185,7 +213,7 @@ impl OwnerPinAssertions {
         if let Some(refusal) = &facts.refusal {
             return Some(refusal.clone());
         }
-        if facts.body != body {
+        if facts.body != BodyFingerprint::of(body) {
             return Some(AssertionContextRefusal::StaleSource);
         }
         if let Some(name) = facts.macros.intersection(ambiguous_macros).next() {
@@ -2242,7 +2270,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             &mut result.functions,
             key,
             FunctionAssertions {
-                body: body_source,
+                body: BodyFingerprint::of(&body_source),
                 refusal: None,
                 assertions,
                 macros,
