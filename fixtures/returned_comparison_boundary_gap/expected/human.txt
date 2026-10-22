@@ -31,7 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/returned_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_comparison_boundary_gap/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
   ripr context --root <cwd>/fixtures/returned_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_comparison_boundary_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:ca3e18b4 --root <cwd>/fixtures/returned_comparison_boundary_gap/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:ca3e18b4 --root <cwd>/fixtures/returned_comparison_boundary_gap/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/returned_comparison_boundary_gap/input --at src/lib.rs:3 --kind predicate
 

@@ -217,7 +217,7 @@ Updated:
 ## Pending — proximity_name_oracle_not_credited (19)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
 
 Command:
 `cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
@@ -227,6 +227,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — proximity_name_oracle_not_credited (20)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (21)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs

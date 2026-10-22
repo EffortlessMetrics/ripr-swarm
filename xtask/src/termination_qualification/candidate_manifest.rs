@@ -1,8 +1,9 @@
-//! Reader for the frozen-candidate manifest (#1609). The manifest does not
-//! exist yet, so this is the contract the harness consumes, not a copy of its
-//! schema: `candidate.sha` must be the full 40-character commit the candidate
-//! was frozen at. #1609's DTO should expose that field, or this reader moves
-//! with it. Nothing else in the manifest is read or trusted here.
+//! Reader for the frozen-candidate manifest (#1609). The DTO and its admission
+//! validator are `LiveHeadSnapshot` in the release candidate harness; this is
+//! the one field the termination harness consumes: `candidate.sha`, the full
+//! 40-character commit the candidate was frozen at. A test admits a fixture
+//! through the real validator and requires this reader to agree. Nothing else
+//! in the manifest is read or trusted here.
 
 use std::fs;
 use std::path::Path;

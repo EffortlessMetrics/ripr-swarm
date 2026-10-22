@@ -159,7 +159,7 @@ Updated:
 ## Pending — property_macro_unrelated_package (12)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
 
 Command:
 `cargo xtask goldens bless property_macro_unrelated_package --reason "..."`
@@ -170,6 +170,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — property_macro_unrelated_package (13)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless property_macro_unrelated_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — property_macro_unrelated_package (14)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs

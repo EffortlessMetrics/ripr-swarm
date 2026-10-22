@@ -54,6 +54,19 @@ Updated:
 ## Pending — rust_sibling_effect_oracle (5)
 
 Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_sibling_effect_oracle (6)
+
+Reason:
 RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
 
 Command:
