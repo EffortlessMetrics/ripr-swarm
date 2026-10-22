@@ -428,7 +428,23 @@ mod tests {
         assert_eq!(check.assertion_line, 5);
         assert_eq!(check.assertion_text, "ensure!(actual == 7);");
         assert_eq!(check.local, "actual");
-        assert_eq!(check.spans.len(), 4);
+        // Spans are helper, collected test, binding and assertion, in that order.
+        let slices = check
+            .spans
+            .iter()
+            .map(|&(start, end)| CHECK.get(start as usize..end as usize))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slices,
+            [
+                Some(
+                    "fn check_answer() -> Result<()> {\n    let actual = super::answer();\n    ensure!(actual == 7);\n    Ok(())\n}"
+                ),
+                Some("#[test]\nfn observes_answer() -> Result<()> {\n    check_answer()\n}"),
+                Some("let actual = super::answer();"),
+                Some("ensure!(actual == 7);"),
+            ]
+        );
         // The collected test may precede its helper, and the import order is free.
         let reordered = "use anyhow::{ensure, Result};\n\n#[test]\nfn observes_answer() -> Result<()> {\n    check_answer()\n}\n\nfn check_answer() -> Result<()> {\n    let actual = super::answer();\n    ensure!(actual == 7u8);\n    Ok(())\n}\n";
         let test = test_of(reordered)?;
