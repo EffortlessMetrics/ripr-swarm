@@ -273,7 +273,19 @@ fn verify(text: &str, pin: &Pin) -> Result<usize, String> {
     let header = format!("uses: {action}@{revision} # {original_ref}");
     let mut count = 0;
     for step in text.split("\n      - ").skip(1) {
-        if !step.lines().any(|line| line.trim() == header) {
+        let headers = step
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let key = if index == 0 {
+                    Some(line)
+                } else {
+                    line.strip_prefix("        ")
+                }?;
+                key.starts_with("uses: ").then_some(key)
+            })
+            .collect::<Vec<_>>();
+        if headers != [header.as_str()] {
             continue;
         }
         count += 1;
@@ -351,6 +363,48 @@ fn pin_contract_rejects_inputs_in_other_step_mappings() -> Result<(), String> {
                 verify(&text, pin).is_err(),
                 "{action} credited an input outside with: {decoy}"
             );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pin_contract_rejects_uses_headers_in_step_data() -> Result<(), String> {
+    for (action, reference) in [
+        ("dtolnay/rust-toolchain", "1.95.0"),
+        ("Swatinem/rust-cache", "v2"),
+        ("taiki-e/install-action", "v2"),
+        ("taiki-e/install-action", "cargo-deny"),
+    ] {
+        let pin = PINS
+            .iter()
+            .find(|pin| pin.1 == action && pin.2 == reference)
+            .ok_or("missing header control")?;
+        let header = format!("uses: {}@{} # {}", pin.1, pin.3, pin.2);
+        let wrong = format!(
+            "uses: {}@0000000000000000000000000000000000000000 # {}",
+            pin.1, pin.2
+        );
+        let input = pin
+            .4
+            .map(|input| format!("        with:\n          {input}\n"))
+            .unwrap_or_default();
+        for prefix in [String::new(), "name: control\n        ".to_string()] {
+            let text = format!(
+                "steps:\n      - {prefix}{wrong}\n{input}        env:\n          DECOY: |\n            {header}\n"
+            );
+            assert_eq!(
+                verify(&text, pin)?,
+                0,
+                "{action} credited a header in step data"
+            );
+            let positive = text.replace(&wrong, &header);
+            assert_eq!(verify(&positive, pin)?, 1, "normal step header must pass");
+            let duplicate = positive.replace(
+                "        env:\n",
+                &format!("        {header}\n        env:\n"),
+            );
+            assert_eq!(verify(&duplicate, pin)?, 0, "duplicate header must fail");
         }
     }
     Ok(())
