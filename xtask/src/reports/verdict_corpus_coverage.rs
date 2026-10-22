@@ -36,6 +36,10 @@ pub(crate) struct Ledger {
     /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
     #[serde(default)]
     pub(crate) oracle: Option<super::oracle::OracleGate>,
+    /// Every false verdict the corpus still scores, each with its owner
+    /// (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) known_false: Vec<super::known_false::KnownFalse>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

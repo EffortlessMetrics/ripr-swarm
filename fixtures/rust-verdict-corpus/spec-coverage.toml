@@ -818,3 +818,25 @@ reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-ver
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+[[known_false]]
+case = "grid-flow-err-guard"
+issue = 6578
+reason = "Mislabeled truth: the case's own test does not pin the version string, so one mutant survives; relabel to partially_discriminated in #9408."
+
+[[known_false]]
+case = "mined-allowlist-listed-row-ftp"
+issue = 9409
+reason = "Conditional continue on a const skip-list is not evaluated per table row; analyzer fix tracked in #9409."
+
+[[known_false]]
+case = "regex-syntax-max-scalar-two-byte"
+issue = 5503
+reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
