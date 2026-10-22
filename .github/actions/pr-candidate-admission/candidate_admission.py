@@ -773,15 +773,19 @@ def self_test() -> None:
     # The live reader bounds a rename at the merge base under its previous name.
     calls: list[str] = []
 
-    def fake_gh(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+    def fake_gh(command: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
         url = next(a for a in command if a.startswith("repos/"))
         calls.append(url)
         if "/compare/" in url:
-            return subprocess.CompletedProcess(command, 0, "c" * 40 + "\n", "")
-        text = {"src/old.rs": "a\nb\nc\n", "src/moved.rs": "a\n"}.get(url.split("contents/")[1].split("?")[0])
+            return subprocess.CompletedProcess(command, 0, b"c" * 40 + b"\n", b"")
+        text = {
+            "src/old.rs": b"a\nb\nc\n",
+            "src/moved.rs": b"a\n",
+            "img/logo.png": b"\x89PNG\xff\xfe\n",
+        }.get(url.split("contents/")[1].split("?")[0])
         if text is None:
-            return subprocess.CompletedProcess(command, 1, "", "HTTP 404")
-        return subprocess.CompletedProcess(command, 0, text, "")
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 404")
+        return subprocess.CompletedProcess(command, 0, text, b"")
 
     real_run = subprocess.run
     subprocess.run = fake_gh  # type: ignore[assignment]
@@ -789,6 +793,7 @@ def self_test() -> None:
         reader = gh_blob_lines("o/r", {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}})
         assert reader({"filename": "src/moved.rs", "previous_filename": "src/old.rs"}) == 4
         assert reader({"filename": "src/fresh.rs"}) == 0
+        assert reader({"filename": "img/logo.png"}) is None, "a binary blob keeps the residual counted"
     finally:
         subprocess.run = real_run
     assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
@@ -904,15 +909,16 @@ def gh_blob_lines(
     tip = str((current.get("base") or {}).get("sha") or "")
     cache: dict[str, str | None] = {}
 
-    def gh(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["gh", "api", *args], capture_output=True, text=True, check=False)
+    def gh(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+        # Bytes, not text: a binary blob must not raise while decoding.
+        return subprocess.run(["gh", "api", *args], capture_output=True, check=False)
 
     def merge_base() -> str | None:
         if "sha" not in cache:
             found = ""
             if SHA_RE.fullmatch(tip) and SHA_RE.fullmatch(head):
                 done = gh([f"repos/{repository}/compare/{tip}...{head}", "--jq", ".merge_base_commit.sha"])
-                found = done.stdout.strip() if done.returncode == 0 else ""
+                found = done.stdout.decode("ascii", "replace").strip() if done.returncode == 0 else ""
             cache["sha"] = found if SHA_RE.fullmatch(found) else None
         return cache["sha"]
 
@@ -920,9 +926,13 @@ def gh_blob_lines(
         done = gh(["-H", "Accept: application/vnd.github.raw",
                    f"repos/{repository}/contents/{quote(path)}?ref={ref}"])
         if done.returncode != 0:
-            return 0 if "HTTP 404" in done.stderr else None
-        text = done.stdout
-        return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+            return 0 if b"HTTP 404" in done.stderr else None
+        data = done.stdout
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None  # a binary blob has no line count to bound by
+        return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
     def count(entry: dict[str, Any]) -> int | None:
         base = merge_base()
