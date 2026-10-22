@@ -4196,6 +4196,139 @@ fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result
     Ok(())
 }
 
+/// Classify the edit `old_return` -> `new_return` of `circle_area` under a
+/// one-line test, with the old line so an explicit `approx` band can be read.
+fn classify_band_edit(
+    owner_source: &str,
+    old_return: &str,
+    new_return: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change_with_old(
+        Path::new("src/geometry.py"),
+        owner_source.lines().count(),
+        &format!("    return {new_return}"),
+        Some(&format!("    return {old_return}")),
+        &extract_owners(Path::new("src/geometry.py"), owner_source),
+        &extract_tests(
+            Path::new("tests/test_geometry.py"),
+            &format!(
+                "import pytest\nfrom src.geometry import circle_area\n\n\
+                 def test_circle_area():\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "numeric edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const AREA_OWNER: &str = "def circle_area(radius):\n    return 3.14159 * radius * radius\n";
+
+#[test]
+fn approx_band_the_edit_leaves_is_credited_and_one_it_stays_inside_is_a_gap() -> Result<(), String>
+{
+    // RIPR-SPEC-0238 rule 21: the band is evaluated for a one-statement
+    // arithmetic owner under a literal-argument call.
+    let band = "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)";
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            band
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            band
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    // `abs=` alone, the swapped operand order and a parenthesized layout read the same.
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.566, abs=0.05)",
+        "assert pytest.approx(12.566, abs=0.05) == circle_area(2)",
+        "assert (circle_area(2) == pytest.approx(12.566, abs=0.05))",
+        "assert circle_area(radius=2) == pytest.approx(12.566, abs=0.05)",
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                AREA_OWNER,
+                "3.14159 * radius * radius",
+                "3.1416 * radius * radius",
+                assertion
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    // The old value was already outside the band, a non-literal argument, a
+    // positional band, an operator the evaluation does not model and a value on
+    // the band edge are not decided.
+    for (old, new, assertion) in [
+        (
+            "3.0 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
+        ),
+        (
+            "3.14159 * radius ** 2",
+            "3.2 * radius ** 2",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.14159 * radius * radius + 0.00964",
+            "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", old),
+                old,
+                new,
+                assertion
+            )?,
+            unread,
+            "{old} -> {new} under {assertion}"
+        );
+    }
+    // A longer body or a method receiver is not the bounded shape either.
+    assert_eq!(
+        classify_band_edit(
+            "def circle_area(radius):\n    radius = abs(radius)\n    return 3.14159 * radius * radius\n",
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)"
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     classify_log_edit_message("balance low: %s", assertion)
 }

@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;

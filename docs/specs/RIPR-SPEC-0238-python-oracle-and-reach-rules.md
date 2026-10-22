@@ -677,19 +677,31 @@ mutant calibrates the rule; ripr reports only the static shape.
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
 
-21. **An explicit `approx` band abstains on a numeric edit.** Rule 12
-    reads `pytest.approx(expected)` at its default tolerance as pinning
-    the value. When the assertion the row selects passes an explicit band,
-    `approx(expected, rel=...)`, `abs=...`, a positional second or third
-    argument, or a `*` or `**` spread that may carry one (a literal `None`
-    counts as absent), static evidence cannot tell whether the band
-    excludes the pre-change value. On a changed line that contains a
-    digit the finding is `static_unknown` with the static limit
-    `unsupported_syntax` naming the band. ripr does not evaluate the band,
-    so a change outside it (`py-idioms-approx-constant-outside-tolerance`)
-    abstains as well as one inside it
+21. **An explicit `approx` band is evaluated where it is decidable, else
+    abstains on a numeric edit.** Rule 12 reads `pytest.approx(expected)`
+    at its default tolerance as pinning the value. When the assertion the
+    row selects passes an explicit band, `approx(expected, rel=...)`,
+    `abs=...`, a positional second or third argument, or a `*` or `**`
+    spread that may carry one (a literal `None` counts as absent), the
+    band may admit the pre-change value. One shape is evaluated: the owner
+    is an undecorated one-statement function whose changed line is
+    `return <expr>` over numeric literals, its own parameters and
+    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
+    approx(<number>, rel=<number>, abs=<number>)` in either operand order
+    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
+    compared with pytest's tolerance (`abs` alone, else the larger of
+    `rel * |expected|` and `abs`, default `1e-12`). An old result inside
+    the band and a new result outside it is `exposed`
+    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    every selected strong assertion and with no unbanded strong
+    assertion, is `weakly_exposed` naming the band
     (`py-idioms-approx-constant-within-tolerance`, whose old reading as
-    `exposed` was a false exposed).
+    `exposed` was a false exposed). Everything else stays
+    `static_unknown` with the static limit `unsupported_syntax` naming the
+    band: an old result already outside the band, a result within `1e-9`
+    (relative) of the band edge, a non-literal argument, a positional
+    band, `**`, a longer body, a method or decorated owner, and a run
+    without the old line (repo mode).
 22. **A `caplog.text` membership check on a changed log call abstains.**
     When the changed line is a logging call (`<receiver>.debug`, `.info`,
     `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
