@@ -88,10 +88,20 @@ const BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
         ],
-        excluded: &[(
-            "fixtures/evidence-promotion-honesty-corpus/reports/",
-            "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
-        )],
+        excluded: &[
+            (
+                "fixtures/evidence-promotion-honesty-corpus/reports/",
+                "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
+            ),
+            (
+                "fixtures/evidence-quality-benchmark/",
+                "frozen captures of an earlier `ripr` build (schema_version 0.2) retained as benchmark evidence, not current producer output",
+            ),
+            (
+                "fixtures/python-real-repo-evals/",
+                "frozen captures of an earlier `ripr` build (schema_version 0.2) retained as eval evidence, not current producer output",
+            ),
+        ],
     },
     Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -151,14 +161,20 @@ const BINDINGS: &[Binding] = &[
         pointer: Some("/$defs/command_spec"),
         corpus: Corpus::CommandSpecs { verify: false },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (null `command_specs` entries) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
         pointer: Some("/$defs/verification_command_spec"),
         corpus: Corpus::CommandSpecs { verify: true },
         edge_fixtures: &[],
-        excluded: &[],
+        excluded: &[(
+            "fixtures/evidence-promotion-honesty-corpus/reports/",
+            "hand-written `source_report` stimulus (null `command_specs` entries) read by check-evidence-promotion-honesty, not producer output",
+        )],
     },
     Binding {
         schema_path: "schemas/ripr/repair-assurance.schema.json",
