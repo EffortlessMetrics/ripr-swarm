@@ -307,7 +307,7 @@ with no `static_limit_kind` under `rust_caller_loop_selector_unresolved` when:
 
 - the changed line is one integer-literal arm of a one-parameter owner whose
   body matches on that parameter;
-- exactly one non-test function calls the owner, from a `for VAR in A..B` or
+- the owner's only call (no other function or test calls it) is in a `for VAR in A..B` or
   `A..=B` loop in the `next` of an `impl Iterator for TYPE`, where each bound
   is an integer literal or a uniquely defined `const`, the range holds at most
   64 selectors, the call is `owner(VAR)` once at the loop body's top level, no

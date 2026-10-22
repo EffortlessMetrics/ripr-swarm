@@ -112,7 +112,7 @@ pub(in crate::analysis) fn withhold_caller_loop_selector_gap(
     // Every non-test function that calls the owner, with the loop reading.
     let mut loops = Vec::new();
     for caller in index.functions() {
-        if caller.id == owner.id || !masked(&caller.body).contains(&format!("{}(", owner.name)) {
+        if caller.id == owner.id || !calls_name(&masked(&caller.body), &owner.name) {
             continue;
         }
         let Some(facts) = find_file_facts(index, &caller.file) else {
@@ -124,7 +124,9 @@ pub(in crate::analysis) fn withhold_caller_loop_selector_gap(
             &facts.source,
             caller.start_line,
         ) {
-            CallerLoop::NotLooped => {}
+            // Another call outside a loop reaches the owner by a path this
+            // pass does not read.
+            CallerLoop::NotLooped => return false,
             CallerLoop::Refused => return false,
             CallerLoop::Domain(domain) => {
                 let Some(iterator) = iterator_type(&facts.source, caller) else {
@@ -133,6 +135,14 @@ pub(in crate::analysis) fn withhold_caller_loop_selector_gap(
                 loops.push((domain, iterator, caller));
             }
         }
+    }
+    // A test that calls the owner itself is judged by the ordinary reach rules.
+    if index
+        .tests()
+        .iter()
+        .any(|test| calls_name(&masked(&test.body), &owner.name))
+    {
+        return false;
     }
     let [(domain, iterator, caller)] = loops.as_slice() else {
         return false;
@@ -217,6 +227,21 @@ fn word_offsets(text: &str, name: &str) -> Vec<usize> {
         .collect()
 }
 
+/// Offsets of free-function calls `name(`: a whole identifier that is not a
+/// method (`.name(`) or a path tail (`x::name(`).
+fn call_offsets(text: &str, name: &str) -> Vec<usize> {
+    word_offsets(text, name)
+        .into_iter()
+        .filter(|&at| {
+            text[at + name.len()..].starts_with('(') && !text[..at].trim_end().ends_with(['.', ':'])
+        })
+        .collect()
+}
+
+fn calls_name(text: &str, name: &str) -> bool {
+    !call_offsets(text, name).is_empty()
+}
+
 /// An unsigned integer literal: decimal or hex, `_` separators, optional
 /// integer suffix.
 fn int_literal(text: &str) -> Option<u64> {
@@ -245,6 +270,9 @@ fn int_literal(text: &str) -> Option<u64> {
 /// The integer literal an arm line selects on: `2 => 0x07FF,`. Alternatives,
 /// ranges, guards and bindings are not a single selector.
 fn arm_selector(line: &str) -> Option<u64> {
+    if line.matches("=>").count() != 1 {
+        return None;
+    }
     let (pattern, _) = line.split_once("=>")?;
     int_literal(pattern)
 }
@@ -267,7 +295,10 @@ fn selector_param(owner_code: &str, owner_name: &str) -> bool {
         return false;
     };
     let name = name.trim();
-    is_ident(name) && owner_code.contains(&format!("match {name} {{"))
+    // One `match`, on the parameter: the changed arm cannot belong to another.
+    is_ident(name)
+        && owner_code.contains(&format!("match {name} {{"))
+        && word_offsets(owner_code, "match").len() == 1
 }
 
 enum CallerLoop {
@@ -296,14 +327,14 @@ fn caller_loop(code: &str, owner: &str, file_source: &str, start_line: usize) ->
         let Some(body) = block(&code[body_start..]) else {
             continue;
         };
-        if !body.contains(&format!("{owner}(")) {
+        if !calls_name(body, owner) {
             continue;
         }
         if found.is_some() || !is_ident(var) {
             return CallerLoop::Refused;
         }
         let call = format!("{owner}({var})");
-        let calls = body.matches(&format!("{owner}(")).count();
+        let calls = call_offsets(body, owner).len();
         // The call is the loop's own statement: top level of the body, once,
         // with the loop variable as its whole argument, and no exit before it.
         let Some(call_at) = body.find(&call) else {
@@ -420,7 +451,15 @@ fn iterator_type(
         .iter()
         .rev()
         .find(|line| line.trim_start().starts_with("impl"))?;
-    let after = head.split_once("Iterator for ")?.1;
+    let (before_trait, after) = head.split_once("Iterator for ")?;
+    // `DoubleEndedIterator for` is another trait.
+    if !before_trait
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_whitespace() || ch == '>' || ch == ':')
+    {
+        return None;
+    }
     let name: String = after
         .trim_start()
         .chars()
@@ -508,7 +547,10 @@ fn after_call(text: &str) -> Option<&str> {
 fn assert_operand_hits(test_code: &str, name: &str) -> usize {
     let mut hits = 0;
     for macro_name in ["assert_eq!", "assert_ne!"] {
-        for (at, _) in test_code.match_indices(macro_name) {
+        for at in word_offsets(test_code, macro_name.trim_end_matches('!'))
+            .into_iter()
+            .filter(|&at| test_code[at + macro_name.len() - 1..].starts_with('!'))
+        {
             let Some(args) = test_code[at + macro_name.len()..]
                 .trim_start()
                 .strip_prefix('(')
@@ -631,6 +673,26 @@ mod tests {
             caller_loop("{ let x = m(2); }", "m", CONSTS, 1),
             CallerLoop::NotLooped
         ));
+    }
+
+    #[test]
+    fn only_free_calls_of_the_whole_name_count() {
+        assert!(calls_name("let x = m(i);", "m"));
+        for text in ["foo_m(i)", "self.m(i)", "x::m(i)", "m (i)", "let m = 1;"] {
+            assert!(!calls_name(text, "m"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_line_with_two_arms_is_not_one_selector() {
+        assert_eq!(arm_selector("1 => a, 2 => b,"), None);
+    }
+
+    #[test]
+    fn a_second_match_in_the_owner_is_refused() {
+        let code =
+            "fn m(n: usize) -> u32 { match n { 1 => 1, _ => 0 } match kind { 2 => 2, _ => 0 } }";
+        assert!(!selector_param(code, "m"));
     }
 
     #[test]
