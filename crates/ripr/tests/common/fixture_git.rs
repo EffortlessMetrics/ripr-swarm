@@ -309,16 +309,27 @@ fn run_git_deadline(
             root.display()
         )));
     }
-    // Fixture repositories are always their own temp tree: an inherited
-    // hook/wrapper repository selector must not redirect fixture setup into
-    // the outer repository.
-    let mut child = Command::new("git")
+    // Fixture inputs are the owned root and explicit arguments/local config.
+    // Ambient Git selectors, injected config, identities and object paths
+    // must not redirect or change setup. Do this on the child command, never
+    // by mutating the multithreaded test process's environment.
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(key);
+        }
+    }
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut child = command
         .args(args)
         .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
+        .env("GIT_CONFIG_GLOBAL", null_config)
+        .env("GIT_CONFIG_SYSTEM", null_config)
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -417,6 +428,62 @@ mod tests {
         if is_retryable_checkout(&["checkout", "-b", "probe-branch"]) {
             return Err("branch creation must never retry".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_preserves_utf8_bytes_in_its_own_worktree() -> Result<(), String> {
+        let root = unique_root("bytes with spaces")?;
+        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+        fixture_git_ok(&root, &["config", "user.name", "Fixture"])?;
+        fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
+        let contents = "corpus: café, İstanbul, 日本語\n";
+        std::fs::write(root.join("corpus.txt"), contents)
+            .map_err(|error| format!("write corpus fixture: {error}"))?;
+        fixture_git_ok(&root, &["add", "corpus.txt"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "corpus fixture"])?;
+        let stored = fixture_git_output(&root, &["show", "HEAD:corpus.txt"])?;
+        assert_eq!(stored, contents);
+        let top = fixture_git_output(&root, &["rev-parse", "--show-toplevel"])?;
+        assert_eq!(
+            std::fs::canonicalize(top.trim()).map_err(|error| error.to_string())?,
+            std::fs::canonicalize(&root.0).map_err(|error| error.to_string())?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_keeps_explicit_local_and_command_configuration() -> Result<(), String> {
+        let root = unique_root("explicit-config")?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        fixture_git_ok(&root, &["config", "fixture.setting", "local"])?;
+        assert_eq!(
+            fixture_git_output(&root, &["config", "--get", "fixture.setting"])?,
+            "local\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "fixture.setting=command",
+                    "config",
+                    "--get",
+                    "fixture.setting"
+                ]
+            )?,
+            "command\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_reports_stable_english_diagnostics() -> Result<(), String> {
+        let root = unique_root("diagnostic")?;
+        let error = fixture_git_output(&root, &["not-a-fixture-subcommand"])
+            .err()
+            .ok_or("invalid git command unexpectedly succeeded")?;
+        assert!(error.contains("is not a git command"), "{error}");
         Ok(())
     }
 
