@@ -157,6 +157,31 @@ fn a_boundary_call_in_an_assertion_message_cannot_supply_a_pin() -> Result<(), S
 }
 
 #[test]
+fn a_hidden_owner_alias_keeps_the_literal_input_family_unknown() -> Result<(), String> {
+    for hidden in [
+        "let alias = fits; let _ = alias(\"abc\", 2 + 1);",
+        "let alias = r#fits; let _ = alias(\"abc\", 2 + 1);",
+    ] {
+        let source = candidate().replace(
+            "assert!(fits(\"abc\", 3));",
+            &format!("assert!(fits(\"abc\", 3)); {hidden}"),
+        );
+        let finding = finding(&source)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{hidden}: {finding:#?}"
+        );
+    }
+    let source = format!(
+        "{}\nfn hidden() {{ let alias = fits; let _ = alias(\"abc\", 2 + 1); }}\n",
+        candidate()
+    );
+    assert_eq!(finding(&source)?.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
 fn computed_arguments_and_unsupported_owner_expressions_stay_unknown() -> Result<(), String> {
     for argument in [
         "build(\"abc\")",
@@ -205,7 +230,10 @@ fn primitive_aliases_and_imports_cannot_supply_intrinsic_meaning() -> Result<(),
         );
     }
     let source = format!("{}\nuse std::primitive::usize;\n", candidate());
-    assert_eq!(finding(&source)?.class, ExposureClass::Exposed);
+    // Primitive binding authority alone admits this builtin import. The
+    // unchanged whole-index reference-completeness authority has a narrower
+    // import grammar, so this context remains intentionally unsupported.
+    assert_eq!(finding(&source)?.class, ExposureClass::InfectionUnknown);
     Ok(())
 }
 

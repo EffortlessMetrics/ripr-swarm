@@ -9,7 +9,7 @@ use super::targeted_calls::{TargetedCallShape, TargetedCallSyntax};
 use crate::analysis::facts::{
     FunctionImplContext, FunctionSummary, OracleFact, RustIndex, TestSummary,
 };
-use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::{owner_reference_count, parse_clean_source_file};
 use crate::domain::{
     Confidence, FlowSinkFact, FlowSinkKind, Probe, ProbeFamily, StageEvidence, StageState,
     SymbolId, ValueContext, ValueFact,
@@ -261,7 +261,22 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
             }
         }
     }
-    (!rows.is_empty()).then(|| LiteralLengthBoundary {
+    let references = context
+        .index
+        .files()
+        .values()
+        .try_fold(0usize, |count, facts| {
+            count.checked_add(owner_reference_count(&facts.source, &owner.name)?)
+        });
+    // Match the existing literal-slice family's conservative completeness
+    // authority: one declaration plus these exact source calls. An alias,
+    // function pointer or unindexed input cannot silently disappear. Its
+    // closed source grammar also refuses imports except `use super::*`, even
+    // when the separate primitive-name authority admits a builtin import.
+    if rows.is_empty() || references != rows.len().checked_add(1) {
+        return None;
+    }
+    Some(LiteralLengthBoundary {
         owner: owner.id.clone(),
         expression: context.probe.expression.clone(),
         predicate_line: context.probe.location.line,

@@ -57,7 +57,12 @@ exercised boundary from a missing one.
   by the parser and a plain decimal `usize` input. At most 64 call rows and
   512 source bytes per string literal are read. Other expressions, aliases,
   hidden calls and unresolved owner or primitive bindings keep the ordinary
-  unknown reading. This is a diff-only refinement; the general evaluator,
+  unknown reading. The existing whole-index owner-reference counter must
+  account for exactly the declaration and the admitted literal call sites;
+  function references and aliases cannot hide another input. Its closed
+  source grammar permits only `use super::*` imports, so even a direct
+  `std::primitive::usize` import is an unsupported context for this leaf.
+  This is a diff-only refinement; the general evaluator,
   repo-seam/test-grip path and persistent fact/classification generations are
   unchanged.
   Each typed row retains its test identity, owner identity and exact source
