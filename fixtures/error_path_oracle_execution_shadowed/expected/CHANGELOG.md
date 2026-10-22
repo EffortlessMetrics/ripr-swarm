@@ -346,3 +346,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (27)
+
+Reason:
+RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

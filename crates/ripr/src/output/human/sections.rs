@@ -538,6 +538,14 @@ pub(super) fn render_finding_with_shared_sections(
                 reason.as_str(),
                 reason.describe()
             ));
+            // A gap-evidence stop always rides a named static limitation, whose
+            // `Next:` line is specific; the generic stop-reason line would
+            // compete with it.
+            if *reason == crate::domain::StopReason::GapEvidenceUnresolved
+                && finding.static_limit_kind.is_some()
+            {
+                continue;
+            }
             out.push_str(&format!("    Next: {}\n", reason.next_step()));
         }
     }

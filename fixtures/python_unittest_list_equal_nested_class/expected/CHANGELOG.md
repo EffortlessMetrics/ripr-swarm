@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unittest_list_equal_nested_class (9)
+
+Reason:
+RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_nested_class --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

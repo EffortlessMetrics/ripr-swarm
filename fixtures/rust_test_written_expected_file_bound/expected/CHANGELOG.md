@@ -113,3 +113,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_test_written_expected_file_bound (10)
+
+Reason:
+RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+
+Command:
+`cargo xtask goldens bless rust_test_written_expected_file_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -190,3 +190,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (15)
+
+Reason:
+RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -82,6 +82,7 @@ pub(crate) fn render_verdict_explanation(
             ));
         }
     }
+    let mut investigation_step_printed = false;
     let needs = verdict_changers(finding, owner_signature);
     if !needs.is_empty() {
         out.push_str("  To change the verdict, a test needs to:\n");
@@ -96,6 +97,7 @@ pub(crate) fn render_verdict_explanation(
             | ExposureClass::StaticUnknown
     ) {
         let step = crate::output::next_step::reconcile_next_step(finding);
+        investigation_step_printed = !step.is_empty();
         if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
             out.push_str(&format!("  - {step}\n"));
@@ -109,7 +111,10 @@ pub(crate) fn render_verdict_explanation(
                 reason.as_str(),
                 stop_reason_meaning(reason)
             ));
-            out.push_str(&format!("    Next: {}\n", reason.next_step()));
+            // The unknown classes already print one investigation step above.
+            if !investigation_step_printed {
+                out.push_str(&format!("    Next: {}\n", reason.next_step()));
+            }
         }
     }
     out
@@ -345,6 +350,22 @@ mod tests {
             relation_confidence: None,
             miss: None,
         }
+    }
+
+    #[test]
+    fn explain_renders_a_next_line_under_each_stop_reason() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
+
+        let text = render_verdict_explanation(&finding, None);
+        assert!(
+            text.contains(&format!(
+                "    Next: {}\n",
+                StopReason::HelperIdentityUnresolved.next_step()
+            )),
+            "{text}"
+        );
     }
 
     #[test]

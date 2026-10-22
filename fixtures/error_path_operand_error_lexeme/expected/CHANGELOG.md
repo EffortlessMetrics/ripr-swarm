@@ -272,3 +272,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (21)
+
+Reason:
+RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

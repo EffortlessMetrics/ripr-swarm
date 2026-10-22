@@ -45,7 +45,7 @@ Weakness
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
-    Next: Add a test that calls the changed code and asserts an exact result; run `ripr explain` on the finding for what ripr did read.
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.

@@ -59,8 +59,8 @@ impl StaticLimitKind {
                  generated code, and assert on its result."
             }
             StaticLimitKind::MissingImportGraph => {
-                "Import the owner in the test by a static, resolvable path (no relative-dynamic \
-                 or computed import) so ripr can connect the test to it."
+                "Import the owner in the test by a static, absolute path (not a dynamic, \
+                 computed or unresolved relative import) so ripr can connect the test to it."
             }
             StaticLimitKind::DecoratorIndirection => {
                 "Test the undecorated function directly, and assert on the decorated result with \
@@ -131,8 +131,8 @@ impl StaticLimitKind {
                  assert on the result."
             }
             StaticLimitKind::RustAssertionContextUnresolved => {
-                "Use the standard `assert_eq!` in a test that always compiles: drop the feature \
-                 `cfg` on the test and any glob import that rebinds the macro."
+                "Add an ungated test that uses the standard assertion macro on the changed value, \
+                 and remove any glob import that rebinds that macro."
             }
             StaticLimitKind::RustLogCaptureUnresolved => {
                 "Assert on the return value or a returned error in addition to the captured log \
@@ -205,8 +205,8 @@ impl StopReason {
                  with an exact `assert_eq!`."
             }
             StopReason::FeatureUnknown => {
-                "Run `ripr` with the cargo feature set your tests use, or add a test that builds \
-                 without the gating feature."
+                "Add a test that builds without the gating feature and asserts on the changed \
+                 owner's result."
             }
             StopReason::AsyncBoundaryOpaque => {
                 "Await the changed function in the test and assert on its output, rather than \
@@ -225,8 +225,7 @@ impl StopReason {
                  field), not only on success."
             }
             StopReason::StaticProbeUnknown => {
-                "Add a test that calls the changed code and asserts an exact result; run \
-                 `ripr explain` on the finding for what ripr did read."
+                "Add a test that calls the changed code and asserts an exact result."
             }
             StopReason::TransitiveReachUnresolved => {
                 "Call the changed owner directly from a test so the path needs no name-matched \
@@ -241,8 +240,8 @@ impl StopReason {
                  a test that always runs, so ripr can tie it to this change."
             }
             StopReason::HelperIdentityUnresolved => {
-                "Rename one of the same-named workspace functions, or call the changed one by \
-                 its full path in the test, so the call binds to one function."
+                "Call the changed function by its full path in the test so the call binds to one \
+                 function; rename a same-named function only if the path is not enough."
             }
         }
     }
@@ -300,6 +299,8 @@ mod tests {
                 StaticLimitKind::RustFrameworkOracleUnresolved => 25,
             }
         }
+        const COUNT: usize = 26;
+        assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
             ordinals,
@@ -328,7 +329,9 @@ mod tests {
                 StopReason::HelperIdentityUnresolved => 14,
             }
         }
+        const COUNT: usize = 15;
         let all = StopReason::all();
+        assert_eq!(all.len(), COUNT);
         let ordinals: Vec<usize> = all.iter().map(ordinal).collect();
         assert_eq!(ordinals, (0..all.len()).collect::<Vec<_>>());
     }
@@ -362,6 +365,24 @@ mod tests {
                 kind.as_str()
             );
         }
+    }
+
+    #[test]
+    fn next_steps_are_distinct_per_stop_reason() {
+        let mut seen = std::collections::BTreeSet::new();
+        for reason in StopReason::all() {
+            assert!(
+                seen.insert(reason.next_step()),
+                "{} repeats another stop reason's next step",
+                reason.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn helper_identity_next_step_binds_by_full_path() {
+        let step = StopReason::HelperIdentityUnresolved.next_step();
+        assert!(step.contains("full path"), "{step}");
     }
 
     #[test]
