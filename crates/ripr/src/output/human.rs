@@ -6466,6 +6466,110 @@ mod tests {
         );
     }
 
+    /// #9373 item 1: stage names and conservative state words are explained
+    /// beside the selected finding, once even when many findings are hidden.
+    #[test]
+    fn bounded_evidence_legend_explains_stages_and_states_once() {
+        let findings = (0..3)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("legend-finding-{index}");
+                finding.probe.location.line += index;
+                finding
+            })
+            .collect();
+        let output = bounded_output_with_findings(findings);
+        assert_eq!(
+            output.findings.len(),
+            3,
+            "the legend needs real hidden subjects"
+        );
+        assert_eq!(
+            output
+                .findings
+                .iter()
+                .map(|finding| &finding.id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3,
+            "finding identities must stay distinct before testing omission"
+        );
+        let rendered = render(&output);
+
+        assert_eq!(rendered.matches("  Evidence: reach ").count(), 1);
+        assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
+        assert!(rendered.contains("· discriminator no\n    Stages (static evidence):"));
+        for meaning in [
+            "reach = test path to changed owner",
+            "infection = inputs can activate change",
+            "propagation = changed effect reaches output",
+            "observation = assertion observes changed effect",
+            "discriminator = assertion distinguishes intended from wrong behavior",
+            "yes = evidence found",
+            "weak = partial evidence",
+            "no = evidence not found",
+            "unknown/opaque = analysis limited",
+            "missing = named input absent from tests",
+            "not established = discriminator unconfirmed",
+            "not applicable = stage unused",
+        ] {
+            assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
+        }
+        assert!(rendered.contains("2 lower-priority finding(s) omitted"));
+        assert!(rendered.contains("more detail line(s) in --format human-full"));
+        assert!(rendered.lines().all(|line| line.chars().count() <= 180));
+
+        let mut exposed = sample_finding();
+        exposed.class = ExposureClass::Exposed;
+        let rendered = render(&bounded_output_with_findings(vec![exposed]));
+        assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
+    }
+
+    #[test]
+    fn bounded_evidence_legend_keeps_empty_full_and_json_surfaces() -> Result<(), String> {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+
+        let mut base_side = sample_finding();
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut unresolved = sample_finding();
+        unresolved.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+        let mut suppressed = bounded_output_with_findings(vec![sample_finding()]);
+        suppressed.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/ripr-suppressions.toml".to_string(),
+            suppressed: vec![SuppressedCheckFinding {
+                finding_id: suppressed.findings[0].id.clone(),
+                selector: "src/**".to_string(),
+            }],
+            warnings: Vec::new(),
+        });
+        for output in [
+            bounded_output_with_findings(vec![]),
+            bounded_output_with_findings(vec![base_side]),
+            bounded_output_with_findings(vec![unresolved]),
+            suppressed,
+        ] {
+            let rendered = render(&output);
+            assert!(!rendered.contains("  Evidence: reach "), "{rendered}");
+            assert!(
+                !rendered.contains("Stages (static evidence):"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("States: yes ="), "{rendered}");
+        }
+
+        let output = bounded_output_with_findings(vec![sample_finding()]);
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        let json = crate::output::json::render(&output);
+        for retained in [&full, &json] {
+            assert!(!retained.contains("Stages (static evidence):"));
+            assert!(!retained.contains("States: yes ="));
+        }
+        assert!(full.contains("propagation unknown: propagation unclear"));
+        let json: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(json["findings"][0]["ripr"]["propagate"]["state"], "unknown");
+        Ok(())
+    }
+
     /// #4324 review: the `discriminate` stage grades the strongest related
     /// oracle, so a non-`exposed` finding can carry a `yes` grade while the
     /// digest simultaneously names the missing discriminating input. The
@@ -6499,6 +6603,7 @@ mod tests {
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
         );
 
+        let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -6509,6 +6614,24 @@ mod tests {
             digest.contains("· discriminator not established\n"),
             "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
         );
+
+        finding.class = ExposureClass::Exposed;
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("· discriminator yes\n"), "{digest}");
+
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr.reveal.discriminate.state = StageState::Weak;
+        finding.activation.missing_discriminators = missing;
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("· discriminator weak\n"), "{digest}");
     }
 
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized

@@ -16,6 +16,11 @@ Start here:
   Changed behavior: Ok(())
   Related test (1 of 2 matched rows): tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

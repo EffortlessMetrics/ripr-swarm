@@ -357,3 +357,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_runner_detect_no_runner (18)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

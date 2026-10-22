@@ -22,6 +22,11 @@ Start here:
   Analyzer limit: Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation…
   Related test: tests/test_totals.py:4 test_total_includes_tax
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `total`
     - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full

@@ -266,6 +266,15 @@ pub(crate) fn render_finding_digest_with_config(
             finding.ripr.reveal.observe.state.as_str(),
             compact_discriminator_token(finding),
         ));
+        // #9373 item 1: explain the pipeline and its conservative tokens at
+        // the bounded surface; full human and machine evidence stay unchanged.
+        out.push_str(concat!(
+            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+            "      propagation = changed effect reaches output; observation = assertion observes changed effect;\n",
+            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+            "      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+        ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));

@@ -16,6 +16,11 @@ Start here:
   Changed behavior: Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))
   Related test (1 of 3 matched rows): tests/buf_tests.rs:11 try_get_int_reports_short_input
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach try_get_int: try_get_int_reports_short_input, try_get_int_sign_extends
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 13 more detail line(s) in --format human-full

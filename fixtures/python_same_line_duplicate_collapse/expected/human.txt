@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_checkout.py::test_checkout_payload_smoke (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `status == "paid"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `checkout_payload`
     - infection yes: Changed Python field or attribute construction can alter object state: `return {"status": "paid", "event": "receipt.sent", "id": order_id}`
     - 5 more detail line(s) in --format human-full

@@ -30,6 +30,9 @@ Linked issues:
   Start-here selection ranks changed-file role first, so an unknown probe
   seeded by a test-file edit cannot lead over a decisive production
   verdict.
+- [#9373](https://github.com/EffortlessMetrics/ripr-swarm/issues/9373) -
+  item 1 explains the bounded Evidence stages and conservative state words
+  beside the selected finding.
 
 Linked PRs:
 
@@ -166,7 +169,23 @@ decisive stages behind a remainder count (#4324):
 
 ```text
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
 ```
+
+The five-line legend immediately follows the compact line, once for the selected
+digest, including an exposed finding when selected. It explains static evidence,
+not execution or test adequacy. `weak` means partial evidence across the stages,
+and `no` means evidence was not found, never that a behavior is impossible.
+No legend renders when there is no selected digest (empty, all-suppressed,
+base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
+five lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 only;
+the shared class vocabulary and per-class discoverability in items 2 and 3 are
+unchanged.
 
 Every stage always carries an evidence line, so the compact line names all
 five stages for every finding and never silently drops one. The discriminator

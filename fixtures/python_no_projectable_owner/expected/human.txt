@@ -23,6 +23,11 @@ Start here:
   Missing discriminator: Only heuristic Python test links were found for `<module>`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion
   Related test: tests/test_constants.py:4 test_base_discount
   Evidence: reach weak · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `BASE_DISCOUNT = 12`
     - 5 more detail line(s) in --format human-full

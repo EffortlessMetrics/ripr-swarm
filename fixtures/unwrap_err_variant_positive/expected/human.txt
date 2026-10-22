@@ -16,6 +16,11 @@ Start here:
   Changed behavior: return Err(CalcError::Negative);
   Related test: tests/errors.rs:4 negative_input_rejects_with_negative_error
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach compute: negative_input_rejects_with_negative_error
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full

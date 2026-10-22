@@ -309,3 +309,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_observer (14)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

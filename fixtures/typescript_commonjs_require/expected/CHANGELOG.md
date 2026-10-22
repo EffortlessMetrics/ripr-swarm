@@ -445,3 +445,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_commonjs_require (19)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless typescript_commonjs_require --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

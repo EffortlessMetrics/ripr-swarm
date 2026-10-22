@@ -19,6 +19,11 @@ Start here:
   Related test: src/lib.rs:10 above_threshold_gets_reduced (no test input reaches `capacity == threshold`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach fetch_limit: above_threshold_gets_reduced
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 8 more detail line(s) in --format human-full

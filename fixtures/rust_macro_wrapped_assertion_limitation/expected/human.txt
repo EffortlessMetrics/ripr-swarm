@@ -18,6 +18,11 @@ Start here:
   Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro (has no assertion)
   Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
   Evidence: reach yes · infection weak · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach inner: test_inner_with_custom_assertion_macro
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 7 more detail line(s) in --format human-full

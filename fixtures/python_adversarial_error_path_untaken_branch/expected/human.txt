@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_parseint.py::test_parse_ok (high)
   Next step — Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching "empty"`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `parse`
     - infection yes: Changed Python error path can alter raised exception/control behavior: `raise KeyError("empty")`
     - 5 more detail line(s) in --format human-full

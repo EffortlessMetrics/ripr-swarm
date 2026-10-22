@@ -22,6 +22,11 @@ Start here:
   Analyzer limit: Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics
   Related test: tests/test_service.py:4 test_fetch_total_monkeypatches_remote_total
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `fetch_total`
     - infection unknown: Static limit `mocked_module` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full

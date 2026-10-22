@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_render.py::test_render_explicit_verbose_false (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `render`
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `def render(name, verbose=True):`
     - 5 more detail line(s) in --format human-full

@@ -23,6 +23,11 @@ Start here:
   Related test: tests/test_discount.py:4 test_apply_discount_boundary
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
     - 8 more detail line(s) in --format human-full

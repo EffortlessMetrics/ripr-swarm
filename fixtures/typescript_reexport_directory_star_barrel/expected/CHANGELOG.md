@@ -165,3 +165,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (15)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

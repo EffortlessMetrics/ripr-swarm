@@ -19,6 +19,11 @@ Start here:
   Related test: src/lib.rs:12 records_into_the_bag (no test input enters `if x > 10`)
   Next step: Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach add: records_into_the_bag
     - infection weak: No related test call enters guard `if x > 10`; observed `x` values: `4`
     - 8 more detail line(s) in --format human-full

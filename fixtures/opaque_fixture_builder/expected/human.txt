@@ -25,6 +25,11 @@ Start here:
     run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
     classification may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach discounted_total: fixture_builder_case_has_no_discount
     - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is…
     - 5 more detail line(s) in --format human-full

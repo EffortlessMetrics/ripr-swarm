@@ -1041,3 +1041,16 @@ dependent verify commitments and receipt byte hashes bind those exact updated
 bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
 all tamper controls remain unchanged. This is a portable negative-control
 input update, not a new execution receipt.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

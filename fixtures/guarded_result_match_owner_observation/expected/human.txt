@@ -18,6 +18,11 @@ Start here:
   Related test: tests/protocol.rs:4 validates_ready_response
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach expect_response: validates_ready_response
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 9 more detail line(s) in --format human-full

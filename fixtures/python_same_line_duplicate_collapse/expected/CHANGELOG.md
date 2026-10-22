@@ -490,3 +490,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_line_duplicate_collapse (21)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless python_same_line_duplicate_collapse --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

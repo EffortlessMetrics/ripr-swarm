@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_tax.py::test_tax_band (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named input absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `tax_band`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= 100:`
     - 5 more detail line(s) in --format human-full
