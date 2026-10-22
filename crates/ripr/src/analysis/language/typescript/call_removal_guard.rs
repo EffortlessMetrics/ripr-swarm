@@ -139,9 +139,13 @@ fn spy_bindings(body: &str, receiver: &str, method: &str) -> Vec<String> {
             continue;
         };
         let before = before.trim_end();
+        // Step by whole characters: a byte offset after a multi-byte
+        // identifier character would not be a char boundary.
         let name_start = before
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
-            .map_or(0, |i| i + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+            .map_or(0, |(i, c)| i + c.len_utf8());
         let name = &before[name_start..];
         let keyword = before[..name_start].trim_end();
         if is_plain_identifier(name) && (keyword.ends_with("const") || keyword.ends_with("let")) {
@@ -193,6 +197,26 @@ mod tests {
         assert!(spy_bindings(body, "other", "write").is_empty());
         // An unbound spy cannot be counted.
         assert!(spy_bindings("mock.method(sink, \"write\");", "sink", "write").is_empty());
+        // A non-ASCII local name must not split a character.
+        assert!(
+            spy_bindings(
+                "const naïve = mock.method(sink, \"write\");",
+                "sink",
+                "write"
+            )
+            .is_empty()
+        );
+        assert!(
+            spy_bindings("const é = mock.method(sink, \"write\");", "sink", "write").is_empty()
+        );
+        assert!(
+            spy_bindings(
+                "const ünï_x = mock.method(sink, \"write\");",
+                "sink",
+                "write"
+            )
+            .is_empty()
+        );
         // A spy spelled inside a string or a comment binds nothing.
         let phantom = "const note = 'const write = mock.method(sink, \"write\")';\n// const write = mock.method(sink, \"write\");\n";
         assert!(spy_bindings(phantom, "sink", "write").is_empty());
