@@ -1,0 +1,12 @@
+diff --git a/src/ops.rs b/src/ops.rs
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -17,7 +17,7 @@
+ impl Neg for Money {
+     type Output = Money;
+     fn neg(self) -> Money {
+-        Money(-self.0)
++        Money(0 - self.0)
+     }
+ }
+ 

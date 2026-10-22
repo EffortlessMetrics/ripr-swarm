@@ -416,6 +416,13 @@ each labeled row carries an `oracle` object (expected, `observed_kind`,
 `observed_strength`, `observed_all`, `outcome`). These never enter
 `false_verdict_rate` or any verdict rate.
 
+The `[[known_false]]` tables of `spec-coverage.toml` (`case`, `issue`,
+`reason`) list every false verdict the corpus still scores with its owning
+issue. A whole-corpus `check` fails on a false row that is not listed and on a
+listed row that is no longer false, so a bless cannot absorb a new false
+verdict and a fixed row cannot return unnoticed. A `--case` subset is never
+gated on it.
+
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is
 labeled and refuses a floor or ceiling above the labeled count. `check`

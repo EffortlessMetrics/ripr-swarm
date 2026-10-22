@@ -261,8 +261,17 @@ jobs:
             if (-not (Test-Path $logs)) { continue }
             foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
               try {
-                $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
-                if ($bytes.Length -gt $cap) { $bytes = $bytes[($bytes.Length - $cap)..($bytes.Length - 1)] }
+                # Share-tolerant open: the hung VS Code host still holds its logs, and ReadAllBytes
+                # fails on a file another process has open for write (run 39720121179).
+                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite,Delete')
+                try {
+                  $take = [int][Math]::Min($stream.Length, $cap)
+                  $null = $stream.Seek(-$take, 'End')
+                  $bytes = New-Object byte[] $take
+                  $read = 0
+                  while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
+                  if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
+                } finally { $stream.Dispose() }
                 $text = [System.Text.Encoding]::UTF8.GetString($bytes)
                 foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
                 $to = Join-Path $dest "$lane\$($file.FullName.Substring($logs.Length + 1))"

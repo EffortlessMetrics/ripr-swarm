@@ -39,6 +39,10 @@ pub(crate) struct Ledger {
     /// The operator-grid and trap gate (`verdict_corpus_grid.rs`).
     #[serde(default)]
     pub(crate) grid: Option<super::grid::GridGate>,
+    /// Every false verdict the corpus still scores, each with its owner
+    /// (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) known_false: Vec<super::known_false::KnownFalse>,
     /// Coverage axes beyond spec examples: language shapes, test-library
     /// idioms and hostile inputs, each with the case count `check` protects.
     #[serde(default)]
