@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-dyn-trait-method-exact",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-dyn-trait-method-exact.diff",
+  "anchor": {
+    "file": "src/traits.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "dyn_trait_object_assert_eq",
+  "hard_case": "The owner is a trait-impl method called through `Box<dyn Shape>`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.0 + self.0",
+        "mutated_line": "self.0 + self.0",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::square_area_through_dyn",
+        "equivalence_review": "not equivalent: `self.0.pow(2)` becomes `self.0 + self.0`"
+      },
+      {
+        "replacement": "self.0 * self.0 + 1",
+        "mutated_line": "self.0 * self.0 + 1",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::square_area_through_dyn",
+        "equivalence_review": "not equivalent: `self.0.pow(2)` becomes `self.0 * self.0 + 1`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "square_area_through_dyn uses side 3, so doubling (6) and +1 (10) both miss 9. Shape: dynamic dispatch.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}
