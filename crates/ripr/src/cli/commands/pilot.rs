@@ -189,6 +189,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 limit_info: None,
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
+                declined_rust_files: Vec::new(),
             },
             load_pilot_current_change(&input, git_timeout),
         ))
@@ -240,9 +241,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let corpus_key = report.corpus_key;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let declined_rust_files = report.declined_rust_files.clone();
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     // The current change is loaded before the budget cut so an actionable
     // changed seam past the cut is kept and can still rank change-first. A
@@ -360,7 +363,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis::workspace_unanalyzed_source_languages(&input.root),
         !rust_files.is_empty(),
     )
-    .with_rust_exclusion(rust_excluded);
+    .with_rust_exclusion(rust_excluded)
+    .with_declined_rust_files(declined_rust_files.clone());
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -418,6 +422,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            &declined_rust_files,
         ),
     )?;
 
@@ -1124,6 +1129,7 @@ mod tests {
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
+                    declined_rust_files: Vec::new(),
                 })
             },
         );

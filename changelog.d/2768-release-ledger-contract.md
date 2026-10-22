@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `cargo xtask release-ledger --input <ledger.json>` validates a direct-main release ledger: the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the exact first-parent and reachable range, and one digest set shared by the JSON, Markdown and manifest projections. Dispositions are `rule_derived`; the ledger does not claim per-commit review. This is the contract and validator piece; Git capture and the derivation rule follow (#2768).
