@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-saturating-add-limit",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-saturating-add-limit.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 43
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "saturating_arithmetic_assert",
+  "hard_case": "Both the saturating and the +11 forms return 255 at the one input.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x.wrapping_add(10)",
+        "mutated_line": "x.wrapping_add(10)",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::bump_saturates",
+        "equivalence_review": "not equivalent: `x.checked_add(10).unwrap_or(u8::MAX)` becomes `x.wrapping_add(10)`"
+      },
+      {
+        "replacement": "x.saturating_add(11)",
+        "mutated_line": "x.saturating_add(11)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `x.checked_add(10).unwrap_or(u8::MAX)` becomes `x.saturating_add(11)`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "bump_saturates pins 250 to 255. Wrapping gives 4 and fails; `saturating_add(11)` also saturates at 255 and survives. Shape: saturating arithmetic.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -1,13 +1,13 @@
 # False-verdict ledger
 
-Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main e2f1db52
+Tracking issue: #9430, linked from the 0.11 tracker (#9271). Measured on main 5009e5cc plus this change
 (2026-10-22) with `cargo xtask verdict-corpus check-all`.
 
 | Language | False | Cases |
 | --- | --- | --- |
-| Rust | 2 | 510 |
-| TypeScript | 1 | 180 |
-| Python | 0 | 80 |
+| Rust | 12 | 535 |
+| TypeScript | 11 | 216 |
+| Python | 9 | 111 |
 | Perl | 1 | 60 |
 
 Every false row is listed once in the `[[known_false]]` tables of
@@ -25,6 +25,19 @@ spec or the analyzer. Never exclude or reclassify it.
 | `regex-syntax-max-scalar-two-byte` (Rust) | false actionable | The match-arm selector domain through a bounded caller loop is not derived. | Analyzer | #5503 | Row, with `regex-syntax-word-byte` as the negative |
 | `jest-mined-private-impl-dispatcher` (TS) | false actionable | A module-private impl behind an exported dispatcher reads as a gap and the repair names a private symbol. | Analyzer: follow the exported caller | #6655 | Row |
 | `perl-testmore-tier-far-from-boundary` (Perl) | false exposed | No row-owned predicate discriminator fact, so inputs far from the changed threshold look aligned. | Producer fact, then consumer | #8979 (perl-lsp-swarm#17237, #5562) | Row |
+
+### Rows from the language-shape coverage batches
+
+| Group | Cases | Owner |
+| --- | --- | --- |
+| Rust exact pin read as gap | `shape-thread-join-result`, `shape-sort-direction-truncate`, `shape-let-else-branch-pinned` | #9440 |
+| Rust generated and fn-value owners | `shape-hostile-owner-as-path-value`, `-owner-through-fn-pointer`, `-cfg-attr-test`, `-macro-defined-owner` | #9442 |
+| Rust attribute noise | `shape-hostile-attribute-noise-test` | #9439 (fix in #9451) |
+| Rust const-generic and cast | `shape-const-generic-empty-only`, `shape-cast-truncation-mask` | #9444 |
+| TS exact oracle ignored | `shape-arrow-const-export`, `-reduce-initial-value`, `-class-method-compound-assign`, `-enum-branch-weight`, `-generator-upper-bound` | #9435 |
+| TS credit on unreached arms | `shape-nullish-middle-operand`, `-template-plural-boundary`, `-async-catch-fallback-unexercised`, `-static-factory-rounding` | #9437 |
+| TS silent enum member edit | `shape-enum-member-value-unread` | #9436 |
+| Python language shapes | nine `py-shapes-*` cases | #9412 |
 
 ## Gate
 

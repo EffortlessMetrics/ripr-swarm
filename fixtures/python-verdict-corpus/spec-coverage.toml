@@ -641,4 +641,48 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
-# (none: this corpus scores no false verdicts)
+
+[[known_false]]
+case = "py-shapes-async-default"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-context-exit-record"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dataclass-classmethod-free"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-decorator-retry-count"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dunder-add"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-dunder-eq-type-guard"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-generator-bound"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-match-wildcard-arm"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."
+
+[[known_false]]
+case = "py-shapes-relative-import-missing-tier"
+issue = 9412
+reason = "Python language-shape false verdict; the Python coverage thread fixes these (#9412)."

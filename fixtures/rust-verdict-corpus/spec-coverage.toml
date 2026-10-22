@@ -14,6 +14,25 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 144
 
+# Coverage axes beyond spec examples (`axes` on a case). Each axis names a
+# side of the Rust language or test ecosystem the corpus is held to cover;
+# `floor` is the fewest tagged cases `verdict-corpus validate` and `check`
+# accept, so an axis cannot shrink silently. Raise it when coverage grows.
+[[axis]]
+id = "test_library_idiom"
+description = "Test-library idioms: insta, proptest, quickcheck, rstest, test-case, tokio, mockall, assert_matches, claims, expect-test, trybuild, criterion and serial_test shapes."
+floor = 59
+
+[[axis]]
+id = "language_shape"
+description = "Language shapes: operator, conversion, iterator, Drop and Default impls; dyn dispatch, generics, const generics, impl Trait and associated consts; let-else, labeled break, slice patterns, casts and closures; async, threads and interior mutability."
+floor = 13
+
+[[axis]]
+id = "hostile_input"
+description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
+floor = 12
+
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
 # matches fall below `match_floor` or overclaims (ripr reads the test
@@ -841,3 +860,53 @@ reason = "Conditional continue on a const skip-list is not evaluated per table r
 case = "regex-syntax-max-scalar-two-byte"
 issue = 5503
 reason = "Match-arm selector domain through a bounded caller loop is not derived; analyzer fix tracked in #5503."
+
+[[known_false]]
+case = "shape-hostile-attribute-noise-test"
+issue = 9439
+reason = "Attribute noise around a test hides it; fix in #9451, entry leaves with that PR."
+
+[[known_false]]
+case = "shape-thread-join-result"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-sort-direction-truncate"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-let-else-branch-pinned"
+issue = 9440
+reason = "Rust exact pin read as gap (#9440)."
+
+[[known_false]]
+case = "shape-hostile-owner-as-path-value"
+issue = 9442
+reason = "Owner referenced as a path value is not followed (#9442)."
+
+[[known_false]]
+case = "shape-hostile-owner-through-fn-pointer"
+issue = 9442
+reason = "Owner reached through a fn pointer is not followed (#9442)."
+
+[[known_false]]
+case = "shape-hostile-cfg-attr-test"
+issue = 9442
+reason = "cfg_attr-wrapped test is not recognized (#9442)."
+
+[[known_false]]
+case = "shape-hostile-macro-defined-owner"
+issue = 9442
+reason = "Macro-defined owner is not resolved (#9442)."
+
+[[known_false]]
+case = "shape-const-generic-empty-only"
+issue = 9444
+reason = "Const-generic empty-array case (#9444)."
+
+[[known_false]]
+case = "shape-cast-truncation-mask"
+issue = 9444
+reason = "Cast truncation mask case (#9444)."

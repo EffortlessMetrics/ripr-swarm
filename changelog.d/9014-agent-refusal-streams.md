@@ -1,8 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent card --json` and `ripr agent stub --json` now write their typed
-  refusal document (`agent_card_refusal`, `rust_test_stub` `state: refused`) to
-  stdout with the prose on stderr, matching `check`, `agent packet` and
-  `agent verify-execute`; and an unknown `--seam-id` now exits 3 on `agent card`,
-  `agent stub` and `agent packet` (previously packet exited 2). Other packet failures keep exit 2. If the refusal
-  document cannot be rendered or written to stdout (for example a closed stdout
-  reader), these refusals exit 2 instead of 3 (#9014).

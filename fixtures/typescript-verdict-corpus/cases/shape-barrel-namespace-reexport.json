@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-barrel-namespace-reexport",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-barrel-namespace-reexport.diff",
+  "anchor": {
+    "file": "src/barrel/units.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "vitest_namespace_reexport_tobecloseto",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return cm / 2.5;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/barrel.test.ts > converts centimetres through the namespace re-export",
+        "equivalence_review": "the edit itself: The `export * as units` member is pinned to two decimals, which 2.5 misses."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The `export * as units` member is pinned to two decimals, which 2.5 misses. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
