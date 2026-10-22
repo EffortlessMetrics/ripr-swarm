@@ -534,30 +534,33 @@ fn publish_sharded_generation(
     std::fs::create_dir_all(&generation_dir)
         .map_err(|err| format!("create sharded cache generation dir failed: {err}"))?;
     let mut unpublished = UnpublishedGeneration::new(generation_dir);
-    let mut shard_refs = Vec::with_capacity(shard_count);
-    for (index, range) in ranges.iter().enumerate() {
-        crate::analysis::cancellation::checkpoint()?;
-        #[cfg(test)]
-        if fail_after_shards_value() == Some(index) {
-            clear_fail_after_shards();
-            return Err(
-                "injected sharded cache publication failure before remaining shards".to_string(),
-            );
+    let workers = shard_publish_workers(shard_count);
+    let shard_refs = if workers > 1 {
+        write_shards_in_parallel(key, seams, &ranges, &sharded_dir, &publication_id, workers)?
+    } else {
+        let mut shard_refs = Vec::with_capacity(shard_count);
+        for (index, range) in ranges.iter().enumerate() {
+            crate::analysis::cancellation::checkpoint()?;
+            #[cfg(test)]
+            if fail_after_shards_value() == Some(index) {
+                clear_fail_after_shards();
+                return Err(
+                    "injected sharded cache publication failure before remaining shards"
+                        .to_string(),
+                );
+            }
+            shard_refs.push(write_shard(
+                key,
+                seams,
+                range,
+                index,
+                shard_count,
+                &sharded_dir,
+                &publication_id,
+            )?);
         }
-        let Some(chunk) = seams.get(range.start..range.end) else {
-            return Err("classified cache shard range is out of bounds".to_string());
-        };
-        let file = format!("g{publication_id}/shard-{index:05}.json");
-        let path = resolve_sharded_cache_file(&sharded_dir, &file)?;
-        let envelope = borrowed_shard_envelope(key, index, shard_count, chunk);
-        let digest = super::semantic_body_digest(SHARDED_ENVELOPE_DIGEST_DOMAIN, &envelope)?;
-        stream_checksummed_cache_file(path, "sharded cache file", &envelope, digest)?;
-        shard_refs.push(ShardedCacheShardRef {
-            index,
-            file,
-            seams: chunk.len(),
-        });
-    }
+        shard_refs
+    };
     crate::analysis::cancellation::checkpoint()?;
     #[cfg(test)]
     if fail_after_shards_value() == Some(shard_count) {
@@ -611,6 +614,156 @@ fn publish_sharded_generation(
         ),
         advisory: None,
     })
+}
+
+/// Encode and atomically write one shard of a generation.
+fn write_shard(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    range: &Range<usize>,
+    index: usize,
+    shard_count: usize,
+    sharded_dir: &Path,
+    publication_id: &str,
+) -> Result<ShardedCacheShardRef, String> {
+    let Some(chunk) = seams.get(range.start..range.end) else {
+        return Err("classified cache shard range is out of bounds".to_string());
+    };
+    let file = format!("g{publication_id}/shard-{index:05}.json");
+    let path = resolve_sharded_cache_file(sharded_dir, &file)?;
+    let envelope = borrowed_shard_envelope(key, index, shard_count, chunk);
+    let digest = super::semantic_body_digest(SHARDED_ENVELOPE_DIGEST_DOMAIN, &envelope)?;
+    stream_checksummed_cache_file(path, "sharded cache file", &envelope, digest)?;
+    Ok(ShardedCacheShardRef {
+        index,
+        file,
+        seams: chunk.len(),
+    })
+}
+
+/// Shard encoding is CPU-bound (a digest pass and a write pass per shard) and
+/// shards are independent files, so a few workers cut the wall clock of a large
+/// publication. The cap keeps serializer scratch bounded: each worker holds one
+/// shard's encode state plus the fixed IO buffer.
+const SHARD_PUBLISH_MAX_WORKERS: usize = 4;
+const SHARD_PUBLISH_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+std::thread_local! {
+    static SHARD_WORKERS_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Tests observe thread-local counters, so they publish serially unless a test
+/// asks for workers.
+#[cfg(test)]
+pub(super) fn with_shard_publish_workers<T>(workers: usize, run: impl FnOnce() -> T) -> T {
+    let previous = SHARD_WORKERS_OVERRIDE.with(|slot| slot.replace(Some(workers)));
+    let result = run();
+    SHARD_WORKERS_OVERRIDE.with(|slot| slot.set(previous));
+    result
+}
+
+#[cfg(test)]
+fn shard_publish_workers(shard_count: usize) -> usize {
+    SHARD_WORKERS_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or(1)
+        .clamp(1, SHARD_PUBLISH_MAX_WORKERS)
+        .min(shard_count)
+}
+
+#[cfg(not(test))]
+fn shard_publish_workers(shard_count: usize) -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .clamp(1, SHARD_PUBLISH_MAX_WORKERS)
+        .min(shard_count)
+}
+
+/// Write every shard with `workers` threads. Shards are claimed in index order;
+/// the first failure stops further claims and the lowest-index error is
+/// returned, so the outcome does not depend on scheduling. Workers carry the
+/// caller's cancellation context and check it before each shard.
+fn write_shards_in_parallel(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    ranges: &[Range<usize>],
+    sharded_dir: &Path,
+    publication_id: &str,
+    workers: usize,
+) -> Result<Vec<ShardedCacheShardRef>, String> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let shard_count = ranges.len();
+    let token = crate::analysis::cancellation::current_token();
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let results: Mutex<Vec<Option<Result<ShardedCacheShardRef, String>>>> =
+        Mutex::new((0..shard_count).map(|_| None).collect());
+    let spawn_failure = Mutex::new(None::<String>);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let spawned = std::thread::Builder::new()
+                .name("ripr-cache-shard".to_string())
+                .stack_size(SHARD_PUBLISH_WORKER_STACK_BYTES)
+                .spawn_scoped(scope, || {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        while !stop.load(Ordering::Acquire) {
+                            let index = next.fetch_add(1, Ordering::AcqRel);
+                            let Some(range) = ranges.get(index) else {
+                                break;
+                            };
+                            let outcome =
+                                crate::analysis::cancellation::checkpoint().and_then(|()| {
+                                    write_shard(
+                                        key,
+                                        seams,
+                                        range,
+                                        index,
+                                        shard_count,
+                                        sharded_dir,
+                                        publication_id,
+                                    )
+                                });
+                            if outcome.is_err() {
+                                stop.store(true, Ordering::Release);
+                            }
+                            if let Ok(mut slots) = results.lock()
+                                && let Some(slot) = slots.get_mut(index)
+                            {
+                                *slot = Some(outcome);
+                            }
+                        }
+                    });
+                });
+            if let Err(error) = spawned {
+                stop.store(true, Ordering::Release);
+                if let Ok(mut slot) = spawn_failure.lock() {
+                    slot.get_or_insert(format!("spawn sharded cache writer failed: {error}"));
+                }
+                break;
+            }
+        }
+    });
+    let slots = results
+        .into_inner()
+        .map_err(|_| "sharded cache writer state was poisoned".to_string())?;
+    let mut refs = Vec::with_capacity(shard_count);
+    for slot in slots {
+        match slot {
+            Some(Ok(shard)) => refs.push(shard),
+            Some(Err(error)) => return Err(error),
+            None => break,
+        }
+    }
+    if refs.len() != shard_count {
+        let failure = spawn_failure.into_inner().ok().flatten();
+        return Err(failure
+            .unwrap_or_else(|| "sharded cache publication left shards unwritten".to_string()));
+    }
+    Ok(refs)
 }
 
 /// The loader prefers a single entry over a manifest. A competing writer that rolls
@@ -1730,6 +1883,106 @@ mod tests {
             "replacing a single entry with shards must not leave the preferred single path"
         );
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Every `shard-*.json` under the key's sharded dir as (name, bytes), sorted.
+    fn shard_files(
+        cache: &RepoSeamFactCache,
+        key: &RepoSeamCacheKey,
+    ) -> Result<Vec<(String, Vec<u8>)>, String> {
+        let mut files = Vec::new();
+        for generation in listed_generation_dirs(cache, key)? {
+            let generation = cache.sharded_entry_dir(key).join(generation);
+            for entry in std::fs::read_dir(&generation).map_err(|err| err.to_string())? {
+                let path = entry.map_err(|err| err.to_string())?.path();
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if name.starts_with("shard-") {
+                    files.push((name, std::fs::read(&path).map_err(|err| err.to_string())?));
+                }
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    #[test]
+    fn parallel_shard_publication_writes_the_serial_bytes() -> Result<(), String> {
+        let seams: Vec<_> = (0..24)
+            .map(|i| classified_with_pad(&format!("p{i}")))
+            .collect();
+        let key = empty_key();
+        let one = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 24, &seams[..1]))?;
+        let ceiling = one.saturating_add(one / 2).max(one.saturating_add(64));
+
+        let serial_dir = isolated_dir("shards-serial");
+        let parallel_dir = isolated_dir("shards-parallel");
+        ignore_remove_dir_all(&serial_dir);
+        ignore_remove_dir_all(&parallel_dir);
+        let serial = RepoSeamFactCache::at_dir(serial_dir.clone());
+        let parallel = RepoSeamFactCache::at_dir(parallel_dir.clone());
+        let serial_status = with_shard_publish_workers(1, || {
+            serial
+                .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 3, ceiling)
+        })?;
+        let parallel_status = with_shard_publish_workers(4, || {
+            parallel
+                .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 3, ceiling)
+        })?;
+        let serial_files = shard_files(&serial, &key)?;
+        let parallel_files = shard_files(&parallel, &key)?;
+        round_trip(&parallel, &key, &seams)?;
+        ignore_remove_dir_all(&serial_dir);
+        ignore_remove_dir_all(&parallel_dir);
+
+        assert_eq!(serial_status.label, parallel_status.label);
+        assert!(
+            serial_files.len() > 4,
+            "the fixture must exceed the worker count: {}",
+            serial_files.len()
+        );
+        assert_eq!(serial_files, parallel_files);
+        Ok(())
+    }
+
+    #[test]
+    fn parallel_shard_publication_stops_on_cancellation_without_a_manifest() -> Result<(), String> {
+        let seams: Vec<_> = (0..24)
+            .map(|i| classified_with_pad(&format!("c{i}")))
+            .collect();
+        let key = empty_key();
+        let one = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 24, &seams[..1]))?;
+        let ceiling = one.saturating_add(one / 2).max(one.saturating_add(64));
+        let dir = isolated_dir("shards-cancelled");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+
+        let token = crate::analysis::cancellation::AnalysisCancellationToken::new();
+        token.cancel(crate::analysis::cancellation::AnalysisAbortKind::Cancelled);
+        let result = crate::analysis::cancellation::with_token(&token, || {
+            with_shard_publish_workers(4, || {
+                cache.store_classified_seams_with_record_and_byte_limits(
+                    &key, &seams, None, 3, ceiling,
+                )
+            })
+        });
+        let loaded = cache.load_classified_seams(&key);
+        ignore_remove_dir_all(&dir);
+
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.starts_with("analysis cancelled:")),
+            "a cancelled publication must fail as cancelled: {result:?}"
+        );
+        assert!(
+            !matches!(loaded, CacheLoad::Hit(_)),
+            "a cancelled publication must not admit a generation"
+        );
         Ok(())
     }
 
