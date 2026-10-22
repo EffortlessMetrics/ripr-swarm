@@ -263,12 +263,15 @@ impl<'a> AttemptTracker<'a> {
         }
         self.current = None;
         self.handed_over = true;
-        for (successor, ended) in std::mem::take(&mut self.successors) {
+        let mut pending = std::mem::take(&mut self.successors).into_iter();
+        while let Some((successor, ended)) = pending.next() {
             match ended {
                 Some(state) if state == "superseded" => {}
                 Some(state) => return Some(state),
                 None => {
                     self.current = Some(successor);
+                    // Later successors wait for this one to end in turn.
+                    self.successors = pending.collect();
                     break;
                 }
             }
@@ -657,6 +660,29 @@ mod tests {
         );
         assert_eq!(
             tracker.observe(status("superseded", "2", "did_save")),
+            Some("succeeded".to_string())
+        );
+    }
+
+    #[test]
+    fn a_second_replacement_survives_the_first_handover() {
+        let mut tracker = AttemptTracker::new(Some("did_save"));
+        assert_eq!(tracker.observe(status("running", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("running", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("running", "4", "watched_input")),
+            None
+        );
+        assert_eq!(tracker.observe(status("superseded", "2", "did_save")), None);
+        assert_eq!(
+            tracker.observe(status("superseded", "3", "config_reload")),
+            None
+        );
+        assert_eq!(
+            tracker.observe(status("succeeded", "4", "watched_input")),
             Some("succeeded".to_string())
         );
     }
