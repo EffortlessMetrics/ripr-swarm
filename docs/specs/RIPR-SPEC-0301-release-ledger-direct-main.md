@@ -245,6 +245,7 @@ valid-ledger control that yields no reasons.
   `history_row_claiming_surviving_lines_is_rejected`,
   `blank_override_ref_is_rejected`, `unknown_rule_version_is_rejected`,
   `markdown_with_a_conflicting_second_digest_line_is_rejected`,
+  `markdown_projection_shows_every_records_theme`,
   `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
   `valid_ledger_has_no_reasons`).
 
