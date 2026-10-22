@@ -748,11 +748,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    still credits; rule 12 treats an explicit `assertAlmostEqual`
    tolerance as weak, and aligning `approx` with it is tracked in #6585
    rather than changed here without a corpus case.
-7. **Unrecognized forms.** Adopted: `assertIs`, `assertIsNone`,
+7. **Unrecognized forms.** Adopted: `assertIs`,
    `assertListEqual`, `pytest.warns`, an aliased `pt.raises` and an
    awaited mock assertion stay unrecorded (reach-only), because recording
    them adds credit no spec promises and no corpus case yet shows the
-   cost. `assertAlmostEqual` was in this list until #6603: the corpus
+   cost. `self.assertIsNone` and `self.assertIsNotNone` left this list
+   (#6585): the assertion table above records them, only for the `self.`
+   receiver and only when the file defines no method of that name, and their
+   observation gate reads the asserted operand, never the failure `msg`.
+   `assertAlmostEqual` was in this list until #6603: the corpus
    case `py-spec0233-ex08-almost-equal` fails on its `+ 2` mutant, so
    rule 12 records its default-tolerance form like `pytest.approx`. Rejected: add the rest here
    without evidence. Each can follow rule 12's route when a corpus case

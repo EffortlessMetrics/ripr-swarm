@@ -622,6 +622,41 @@ fn classify_change_reads_assert_is_none_forms_as_recognized_assertions_without_o
 }
 
 #[test]
+fn assert_is_none_failure_message_and_shadowing_helpers_earn_no_credit() -> Result<(), String> {
+    let source = "def first(items):\n    if not items:\n        return None\n    return items[0]\n";
+    let owners = extract_owners(Path::new("app/first.py"), source);
+    let class_for = |test_source: &str| -> Result<ExposureClass, String> {
+        let tests = extract_tests(Path::new("tests/test_first.py"), test_source);
+        classify_change(
+            Path::new("app/first.py"),
+            3,
+            "        return None",
+            &owners,
+            &tests,
+        )
+        .map(|finding| finding.class)
+        .ok_or_else(|| "changed return inside owner should classify".to_string())
+    };
+    // The owner call sits only in the failure message: it never decides
+    // whether the assertion passes, so it must not read as observed.
+    let message_only = class_for(
+        "import unittest\nfrom app.first import first\nclass T(unittest.TestCase):\n    def test_empty(self):\n        self.assertIsNone(None, msg=first([]))\n",
+    )?;
+    assert_ne!(message_only, ExposureClass::Exposed);
+    // A file-local `assertIsNone` may check nothing; keep the helper reading.
+    let shadowed = class_for(
+        "from app.first import first\nclass TestX:\n    def assertIsNone(self, value):\n        pass\n    def test_x(self):\n        self.assertIsNone(first([]))\n",
+    )?;
+    assert_ne!(shadowed, ExposureClass::Exposed);
+    // Genuine unittest control: the asserted operand is the owner call.
+    let genuine = class_for(
+        "import unittest\nfrom app.first import first\nclass T(unittest.TestCase):\n    def test_empty(self):\n        self.assertIsNone(first([]))\n",
+    )?;
+    assert_eq!(genuine, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn classify_change_relates_path_parameter_route_to_concrete_client_call() -> Result<(), String> {
     let source = r#"
 api = object()

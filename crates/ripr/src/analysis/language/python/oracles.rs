@@ -417,6 +417,15 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
                 text_for_range(source, second.range()).trim()
             )
         })
+        .or_else(|| {
+            unary_asserted_operand(call).map(|operand| {
+                format!(
+                    "{}({})",
+                    text_for_range(source, call.func.range()).trim(),
+                    text_for_range(source, operand.range()).trim()
+                )
+            })
+        })
         .unwrap_or_else(|| text.clone());
     Some(PythonAssertion {
         text,
@@ -658,16 +667,28 @@ fn oracle_for_call(
         }
         // `self.assertIsNone(x)` pins the value to `None`; `assertIsNotNone`
         // admits any other value. Only `self.` is the unittest method.
-        "assertIsNone" if name == "self.assertIsNone" => Some((
-            OracleKind::ExactValue,
-            OracleStrength::Strong,
-            oracle_shape_for_call_arguments(call, PythonOracleShape::ExactAssertion),
-        )),
-        "assertIsNotNone" if name == "self.assertIsNotNone" => Some((
-            OracleKind::RelationalCheck,
-            OracleStrength::Weak,
-            oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
-        )),
+        // A file that defines its own `assertIsNone` may shadow the unittest
+        // method with a helper that checks nothing, so it keeps the
+        // unresolved-helper reading.
+        "assertIsNone"
+            if name == "self.assertIsNone" && !file_defines_method(source, "assertIsNone") =>
+        {
+            Some((
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                oracle_shape_for_call_arguments(call, PythonOracleShape::ExactAssertion),
+            ))
+        }
+        "assertIsNotNone"
+            if name == "self.assertIsNotNone"
+                && !file_defines_method(source, "assertIsNotNone") =>
+        {
+            Some((
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
+            ))
+        }
         "assertTrue" | "assertFalse" => Some((
             OracleKind::SmokeOnly,
             OracleStrength::Smoke,
@@ -787,6 +808,35 @@ pub(super) fn exception_assertion_callable(call: &ast::ExprCall) -> Option<(&Exp
 
 /// The two operands a comparison assertion call compares, positional or named
 /// (`first=`, `second=`); never its `msg`.
+/// `true` when `source` defines (`def name(`) a function or method called
+/// `name`, so a call to it may not be the standard library one.
+fn file_defines_method(source: &str, name: &str) -> bool {
+    let needle = format!("def {name}");
+    source
+        .match_indices(&needle)
+        .any(|(index, _)| source[index + needle.len()..].trim_start().starts_with('('))
+}
+
+/// The asserted operand of the unary `self.assertIsNone` / `assertIsNotNone`
+/// (`obj`), so a failure `msg` never reaches the observation gates.
+fn unary_asserted_operand(call: &ast::ExprCall) -> Option<&Expr> {
+    let name = expr_full_name(call.func.as_ref())?;
+    if !matches!(name.as_str(), "self.assertIsNone" | "self.assertIsNotNone") {
+        return None;
+    }
+    call.args.first().or_else(|| {
+        call.keywords
+            .iter()
+            .find(|keyword| {
+                keyword
+                    .arg
+                    .as_ref()
+                    .is_some_and(|arg| arg.as_str() == "obj")
+            })
+            .map(|keyword| &keyword.value)
+    })
+}
+
 fn compared_operands(call: &ast::ExprCall) -> Option<(&Expr, &Expr)> {
     let name = expr_full_name(call.func.as_ref())?;
     let last_segment = name.rsplit('.').next().unwrap_or(name.as_str());
