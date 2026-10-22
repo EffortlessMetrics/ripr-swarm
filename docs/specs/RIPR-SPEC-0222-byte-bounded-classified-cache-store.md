@@ -50,6 +50,17 @@ proving a universal RSS threshold.
 - Encoding writes through a bounded IO buffer into the existing atomic
   temporary-file protocol. The store path does not retain the complete
   encoded entry or shard as a `Vec<u8>`.
+- Shards of one generation are written by up to four workers
+  (`available_parallelism`, capped, never above the shard count; #5363).
+  Each worker holds one shard's encode state and its own bounded IO buffer,
+  so auxiliary store memory is at most four times that bound. Shard bytes,
+  names, order, the manifest and the commit step are unchanged and still run
+  on the calling thread after every shard exists. Workers carry the caller's
+  cancellation context and check it before each shard; the first failure stops
+  further claims and the lowest-index error is returned. A worker that cannot
+  be spawned leaves its shards to the calling thread, so a thread limit does
+  not leave the cache cold. A failed or cancelled publication removes its
+  unpublished generation and keeps the prior one.
 - The primary shard/single-entry bound is encoded bytes:
   `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` (default 8 MiB,
   `CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES`). Record count
@@ -183,6 +194,9 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_hide_a_newer_sharded_manifest`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_writes_the_serial_bytes`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_stops_on_cancellation_without_a_manifest`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_falls_back_to_the_caller_when_no_worker_spawns`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded`
@@ -218,6 +232,6 @@ proving a universal RSS threshold.
 
 - Ordinary encoded shard/single-entry bytes `<=` configured ceiling
 - Auxiliary live store memory `<=` bounded IO buffer + serializer scratch
-  + bounded metadata
+  per worker (at most four) + bounded metadata
 - Host-scoped 10k/self-dogfood store-phase RSS remains
   `not_established` in this change; #3794 retains that observation

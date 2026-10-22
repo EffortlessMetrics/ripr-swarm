@@ -8,7 +8,8 @@ use super::reach::relation_establishes_reach;
 use super::reveal::contains_as_whole_word;
 use crate::analysis::rust_index::FunctionSummary;
 use crate::analysis::syntax::{
-    constant_table_call_column, owner_reference_count, parse_clean_source_file,
+    constant_table_call_column, direct_literal_call_column, owner_reference_count,
+    parse_clean_source_file,
 };
 use crate::domain::{
     FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
@@ -140,15 +141,41 @@ fn boundary_values(
         if calls.is_empty() {
             return Some(Err(unresolved()));
         }
-        // One ordinary call per table is the admitted family. Additional,
-        // macro-hidden or helper calls must not disappear from the absence proof.
-        if calls.len() != 1 {
-            return Some(Err(unresolved()));
-        }
-        let Some((column, text, macro_count)) =
-            constant_table_call_column(&test.body, &owner.name, position)
-        else {
-            return Some(Err(unresolved()));
+        // Either one ordinary call over a constant table, or straight-line
+        // direct calls whose slice argument is a literal in each assertion.
+        // Additional, macro-hidden or helper calls must not disappear from the
+        // absence proof.
+        let table = match calls.as_slice() {
+            [only] => constant_table_call_column(&test.body, &owner.name, position)
+                .map(|(column, text, macro_count)| (column, text, macro_count, only.line)),
+            _ => None,
+        };
+        let (rows, macro_count): (Vec<(String, usize, String)>, usize) = match table {
+            Some((column, text, macro_count, line)) => (
+                column
+                    .into_iter()
+                    .map(|cell| (cell, line, text.clone()))
+                    .collect(),
+                macro_count,
+            ),
+            None => {
+                let Some((column, macro_count)) =
+                    direct_literal_call_column(&test.body, &owner.name, position)
+                else {
+                    return Some(Err(unresolved()));
+                };
+                if column.len() != calls.len() {
+                    return Some(Err(unresolved()));
+                }
+                let mut sites: Vec<_> = calls.iter().map(|call| (call.line, &call.text)).collect();
+                sites.sort_by_key(|(line, _)| *line);
+                let rows = column
+                    .into_iter()
+                    .zip(sites)
+                    .map(|(cell, (line, text))| (cell, line, text.to_string()))
+                    .collect();
+                (rows, macro_count)
+            }
         };
         let assertions: Vec<_> = test
             .assertions
@@ -166,19 +193,17 @@ fn boundary_values(
         {
             return Some(Err(unresolved()));
         }
-        if column.len() > 64 {
-            return Some(Err(unresolved()));
-        }
-        for cell in column {
+        for (cell, line, source) in rows {
             let Some(length) = literal_slice_length(&cell) else {
                 return Some(Err(unresolved()));
             };
             if length == target && witness.is_none() {
-                witness = Some((calls[0].line, text.clone()));
+                witness = Some((line, source));
             }
             lengths.push(length);
         }
-        admitted_calls = admitted_calls.checked_add(1)?;
+        // The table path is one call; direct calls are each a use.
+        admitted_calls = admitted_calls.checked_add(calls.len())?;
     }
     if lengths.is_empty() {
         return Some(Err(unresolved()));
@@ -284,7 +309,7 @@ fn slice_parameter(owner: &FunctionSummary, name: &str) -> Option<usize> {
     })
 }
 
-fn literal_slice_length(text: &str) -> Option<usize> {
+pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
     if text.len() > 4096 {
         return None;
     }
@@ -322,4 +347,105 @@ fn literal_slice_length(text: &str) -> Option<usize> {
             _ => false,
         }))
     .then_some(elements.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
+    use crate::domain::SymbolId;
+    use std::path::PathBuf;
+
+    fn owner_with_body(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("src/lib.rs::mean".to_string()),
+            name: "mean".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    #[test]
+    fn literal_slice_length_counts_only_plain_immutable_literal_rows() {
+        for (text, length) in [
+            ("&[]", Some(0)),
+            ("&[1, 2, 3]", Some(3)),
+            ("&[-1, 2]", Some(2)),
+            ("&[\"a\", \"b\"]", Some(2)),
+            ("&mut [1]", None),
+            ("&raw const [1]", None),
+            ("[1, 2]", None),
+            ("&[0; 4]", None),
+            ("&[1 + 1]", None),
+            ("&[x]", None),
+            ("&[-x]", None),
+            ("&[!1]", None),
+            ("&[#[cfg(a)] 1]", None),
+            ("&values", None),
+        ] {
+            assert_eq!(literal_slice_length(text), length, "{text}");
+        }
+    }
+
+    #[test]
+    fn literal_slice_length_enforces_element_and_size_bounds() {
+        let at_limit = format!("&[{}]", vec!["1"; 256].join(", "));
+        assert_eq!(literal_slice_length(&at_limit), Some(256));
+        let over_elements = format!("&[{}]", vec!["1"; 257].join(", "));
+        assert_eq!(literal_slice_length(&over_elements), None);
+        // `&["` and `"]` are five bytes, so 4091 filler bytes sit exactly on the limit.
+        let at_bytes = format!("&[\"{}\"]", "a".repeat(4091));
+        assert_eq!(at_bytes.len(), 4096);
+        assert_eq!(literal_slice_length(&at_bytes), Some(1));
+        let over_bytes = format!("&[\"{}\"]", "a".repeat(4092));
+        assert_eq!(over_bytes.len(), 4097);
+        assert_eq!(literal_slice_length(&over_bytes), None);
+    }
+
+    #[test]
+    fn slice_parameter_finds_the_position_of_an_immutable_slice_reference() {
+        let owner = owner_with_body("fn mean(scale: u64, xs: &[u64]) -> u64 { 0 }");
+        assert_eq!(slice_parameter(&owner, "xs"), Some(1));
+        assert_eq!(slice_parameter(&owner, "scale"), None);
+        assert_eq!(slice_parameter(&owner, "missing"), None);
+    }
+
+    #[test]
+    fn slice_parameter_refuses_shapes_that_change_the_len_receiver() {
+        for body in [
+            "fn mean(xs: &mut [u64]) -> u64 { 0 }",
+            "fn mean(mut xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &Vec<u64>) -> u64 { 0 }",
+            "fn mean(xs: [u64; 2]) -> u64 { 0 }",
+            "fn mean(ref xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &[u64]) -> String { String::new() }",
+            "fn mean(xs: &[u64]) { }",
+            "fn mean<T>(xs: &[T]) -> u64 { 0 }",
+            "async fn mean(xs: &[u64]) -> u64 { 0 }",
+            "fn mean(&self, xs: &[u64]) -> u64 { 0 }",
+            "fn mean(xs: &[u64]) -> u64 { let xs = &[1u64][..]; xs.len() as u64 }",
+            "fn mean(xs: &[u64]) -> u64 { println!(\"x\"); 0 }",
+            "not rust {",
+        ] {
+            assert_eq!(
+                slice_parameter(&owner_with_body(body), "xs"),
+                None,
+                "{body}"
+            );
+        }
+        let float = owner_with_body("fn mean(xs: &[f64]) -> f64 { 0.0 }");
+        assert_eq!(slice_parameter(&float, "xs"), Some(0));
+    }
 }

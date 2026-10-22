@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+mod editor_refresh;
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
 use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
@@ -184,6 +185,8 @@ fn measure_corpus_entry(
         "speed.cold_pilot_peak_rss_mb",
         "speed.warm_check_ms",
         "speed.warm_check_peak_rss_mb",
+        "speed.editor_refresh_ms",
+        "speed.editor_refresh_unanswered_progress_ms",
         "trust.self_contradictions",
     ];
     let checkout = match prepare_checkout(entry, options) {
@@ -310,6 +313,7 @@ fn measure_corpus_entry(
         .map(|output| output.trim().to_string())
         .filter(|value| !value.is_empty());
     let check_args = warm_check_args(&root, &base);
+    let editor_base = base.clone();
     let subject = warm_check_subject(root, base, head);
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
@@ -343,6 +347,49 @@ fn measure_corpus_entry(
         &mut contradictions,
         &mut missing_sources,
     );
+
+    // The same edit-save refresh through the editor server, once with the
+    // client answering progress creation and once never answering it.
+    for (metric, reply) in [
+        (
+            "speed.editor_refresh_ms",
+            editor_refresh::ProgressReply::Answer,
+        ),
+        (
+            "speed.editor_refresh_unanswered_progress_ms",
+            editor_refresh::ProgressReply::Withhold,
+        ),
+    ] {
+        samples.push(
+            match editor_refresh::measure_editor_refresh(
+                binary,
+                &checkout,
+                &editor_base,
+                &envs,
+                reply,
+                timeout,
+            ) {
+                Ok(Some(refresh)) => sample(
+                    metric,
+                    if refresh.complete() {
+                        SampleOutcome::Value(refresh.ms)
+                    } else {
+                        SampleOutcome::Incomplete(refresh.ms)
+                    },
+                    format!(
+                        "edited save of `{}` against {editor_base}, terminal state `{}`",
+                        refresh.file, refresh.state
+                    ),
+                ),
+                Ok(None) => sample(
+                    metric,
+                    SampleOutcome::NotMeasured,
+                    format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
+                ),
+                Err(err) => sample(metric, SampleOutcome::Failed, err),
+            },
+        );
+    }
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));

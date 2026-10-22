@@ -19,7 +19,12 @@ Advanced and compatibility workflows:
   review-summary
              Join agent-loop artifacts into a compact review packet.
 
-Ordinary repair path:
+Repair path (start here):
+  ripr repair [<item>]
+  # edit one focused test
+  ripr continue
+
+The same transaction with explicit phases:
   ripr agent repair --seam-id ID --phase before
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
@@ -27,9 +32,10 @@ Ordinary repair path:
 From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step.
 
-Seam IDs come from `ripr pilot --root .` (or `ripr agent status`), which
-prints the exact `--phase before` command. The `probe:...` finding IDs that
-`ripr check` prints are not seam IDs.
+`--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
+and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
+`repo-probe:...`), a canonical gap ID, or a `file:line` location that names
+one repair-eligible seam.
 
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
@@ -133,10 +139,11 @@ generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 Refusal contract (#5007): a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
-stderr carries one versioned `agent_card_refusal` envelope (`schema_version`
+stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
 `0.1`) naming the typed `error.kind`, the asked-for `seam_id`, the verbatim
-human prose, and one typed `remedy_route`; without `--json` stderr carries the
-prose rendering only. Stdout stays empty on every refusal. Operational
+human prose, and one typed `remedy_route`, and stderr carries the prose
+rendering; without `--json` stdout stays empty and stderr carries the prose
+rendering only. Operational
 failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;
@@ -180,8 +187,9 @@ grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
 ("configured off for strongly_gripped seams and is not included in agent
 results"). Side-effect and call-presence gaps, async, unsafe, and generic
-owners are refused with a named reason (exit `3`); stdout stays empty on a
-refusal.
+owners are refused with a named reason (exit `3`); under `--json` stdout
+carries the `rust_test_stub` document with `state: refused` and stderr carries
+the prose; without `--json` stdout stays empty on a refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
@@ -433,10 +441,12 @@ or declare the repository safe to merge.
 Repair scope: the edit target must match the test-surface path
 convention (`tests`/`test` paths, `*_test`/`*_tests`, `test_*`, and
 TypeScript test-file conventions), and the cage authorizes it whole-file.
-Inline `#[cfg(test)]` modules don't qualify their file: a repository
-whose only tests are inline in non-test-surface files is permanently out
-of repair scope — the repair workflow consumes only file-level cage
-authority. The before phase refuses such seams before creating anything.
+One exception: when a seam's only tests live in one inline `#[cfg(test)]`
+module of the production file, the before phase can bind that module's
+body as the edit cage instead — production code outside the module stays
+untouched, and the file must be committed before the start (#5210, #9033).
+Seams with no test-surface file and no such single inline module are out
+of repair scope; the before phase refuses them before creating anything.
 
 Environment variables:
   RIPR_PERSIST_LATENCY_TRACE  When present, emits diagnostic persist-phase

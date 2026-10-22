@@ -147,8 +147,20 @@ rule only for an assertion whose context was admitted.
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
    does not compile and refuses.
-   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
-   the async-context refusal below. An `#[rstest]` case table is admitted
+   An assertion inside an `async` block keeps the async-context refusal below,
+   except the one `async` block that is the only argument of
+   `tokio::spawn(..)` chained directly into `.await.unwrap()` or
+   `.await.expect(..)` (cluster 12a, #6578): the awaited `JoinHandle` yields
+   the task's panic as a `JoinError`, which `unwrap` re-raises on the test
+   task, as a joined thread does below. The test must be a `#[tokio::test]`
+   admitted above, and the file must hold no item, binding or alias named
+   `tokio` or `spawn`, no `use` in the file may bring in a glob or a
+   `tokio` or `spawn` path other than the crate's own `tokio::..` (a `use super::*;` inside an inline `mod` is fine), an
+   `expect` message must be a literal (it runs before `expect` does), and
+   the block itself holds no `return` or `?` (they would skip the assertion,
+   and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
+   `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
+   any other spawn function stay refused. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
@@ -1240,7 +1252,14 @@ would. Such an assertion is a pin when:
    optionally negated by one `!`. A conjunction, a comparison, a chained
    call or a double negation pins nothing about the owner's result. Message
    arguments do not decide whether the test fails and are not read.
-3. Every other rule above holds unchanged: execution and macro admission
+3. (#9074) The condition may instead be one plain identifier (optionally negated by
+   one `!`) that the test binds once with an immutable `let` to a complete
+   owner call, read under the same binding rules as `assert_eq!(binding, true)`
+   (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
+   operand of assertions after the `let`, once in this assertion. A `mut` or
+   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
+   other non-assertion use, or a binding named in the message refuses.
+4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
    gate. A bool owner with an early `return` has no `Ok`/`Some` head, so the
@@ -2330,12 +2349,14 @@ assertions. This repair shares the existing callback without that larger migrati
   imported, ambiguous, shadowed and disabled declarations. The property
   quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
-  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs thirteen
-  bool-owner layouts (both boundary sides, let-bound inputs, far inputs
-  only, one side only, a shadowing closure, an uncalled closure, a boundary
-  call or binding only in a message argument or an operand comment, and a boundary call left
-  unasserted on the assertion's line) against the rewrite and a `<`
-  mutant; only the two `exposed` layouts fail on the mutant.
+  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs seventeen
+  bool-owner layouts (both boundary sides, let-bound inputs and let-bound
+  results, a crate-qualified call, far inputs only, one side only, a
+  let-bound disjunction, a reassigned mutable binding, a shadowing closure, an
+  uncalled closure, a boundary call or binding only in a message argument or
+  an operand comment, and a boundary call left unasserted on the assertion's
+  line) against the rewrite and a `<` mutant; only the four `exposed` layouts
+  fail on the mutant.
   `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
   kept trait default through `Unit.advance()` and through `let unit = Unit;`,
   and refuses an impl that overrides the default; only the two `exposed`
@@ -2554,3 +2575,17 @@ the leading `return ` and trailing `;` are dropped from the changed and prior
 text before boundary extraction (#9116). Only a top-level comparison normalises;
 a comparison nested in a call, index, turbofish (`x.parse::<i32>() > 5`) or
 compound value keeps the return-value reading.
+
+When only the integer-literal threshold (or, for `==`/`!=`, the literal) of the compared owner parameter moves
+by more than one (`x > 100` to `x > 102`), an observed exact input of that
+parameter that separates the old and new comparison (`thr(101)`: true before,
+false after) is a discriminator even though it equals neither threshold, so the
+equality-boundary gap is not borrowed and the reading stays as it was (#9147).
+The check only ever removes a downgrade: it declines, and the gap stays, for a
+suffixed or computed literal, a non-parameter or reversed left operand, a
+non-integer input or an operator-family change it cannot evaluate. Inputs on
+the same side of both thresholds keep the gap.
+
+The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).
