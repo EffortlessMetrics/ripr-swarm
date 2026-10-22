@@ -1,6 +1,8 @@
-//! #9529: immutable revisions retain the original step's explicit tool choice.
+//! #9529: immutable revisions retain explicit inputs or verified action defaults.
 //! Resolved via exact upstream heads/tags on 2026-10-22; rust-cache v2 is
 //! annotated, so the pin is its peeled commit, not its tag-object SHA.
+//! 035fceb3 hard-codes 1.95.0 for both generated 1.95 and 1.95.0 refs and
+//! declares no toolchain input; stable/v1 and both taiki variants consume inputs.
 #[path = "../test_support.rs"]
 mod test_support;
 
@@ -30,7 +32,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95.0"),
+        None,
         4,
     ),
     (
@@ -86,7 +88,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95.0"),
+        None,
         1,
     ),
     (
@@ -102,7 +104,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: \"1.95\""),
+        None,
         1,
     ),
     (
@@ -118,7 +120,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95.0"),
+        None,
         1,
     ),
     (
@@ -134,7 +136,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: \"1.95\""),
+        None,
         1,
     ),
     (
@@ -246,7 +248,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: \"1.95\""),
+        None,
         2,
     ),
     (
@@ -254,7 +256,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
-        Some("toolchain: 1.95.0"),
+        None,
         1,
     ),
 ];
@@ -289,6 +291,21 @@ fn verify(text: &str, pin: &Pin) -> Result<usize, String> {
             continue;
         }
         count += 1;
+        // Upstream's generated 1.95/1.95.0 revision hard-codes 1.95.0 in
+        // runs.steps[parse].env; it does not declare inputs.toolchain. A with
+        // value would be ignored, so it cannot establish the toolchain claim.
+        if *revision == "035fceb3c12fb0c6a9461b52775e16473133e591"
+            && step
+                .split_once("\n        with:\n")
+                .is_some_and(|(_, inputs)| {
+                    inputs
+                        .lines()
+                        .take_while(|line| line.trim().is_empty() || line.starts_with("          "))
+                        .any(|line| line.starts_with("          toolchain:"))
+                })
+        {
+            return Err(format!("{header} does not accept a toolchain input"));
+        }
         if let Some(input) = input
             && !step
                 .split_once("\n        with:\n")
@@ -313,7 +330,10 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
         assert_eq!(count, pin.5, "{} {}@{}", pin.0, pin.1, pin.2);
         total += count;
     }
-    assert_eq!(total, 39, "38 burn-down pins plus the inherited #9527 cache pin");
+    assert_eq!(
+        total, 39,
+        "38 burn-down pins plus the inherited #9527 cache pin"
+    );
     Ok(())
 }
 
@@ -321,7 +341,7 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
 fn pin_contract_rejects_missing_wrong_or_neighboring_inputs() -> Result<(), String> {
     let pin = PINS
         .iter()
-        .find(|pin| pin.0 == "future-clippy.yml" && pin.1 == "dtolnay/rust-toolchain")
+        .find(|pin| pin.0 == "rust-gates.yml" && pin.1 == "dtolnay/rust-toolchain")
         .ok_or("missing toolchain control")?;
     let text = source(pin.0)?;
     assert_eq!(verify(&text, pin)?, 1);
@@ -432,6 +452,27 @@ fn first_run_main_composition_keeps_both_new_actions_pinned() -> Result<(), Stri
         );
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(violations[0].contains(action), "{violations:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn fixed_toolchain_revision_rejects_ignored_override_inputs() -> Result<(), String> {
+    for reference in ["1.95", "1.95.0"] {
+        let pin = PINS
+            .iter()
+            .find(|pin| pin.1 == "dtolnay/rust-toolchain" && pin.2 == reference)
+            .ok_or("missing fixed-toolchain control")?;
+        assert!(pin.4.is_none(), "fixed revision has no toolchain input");
+        let text = format!("steps:\n      - uses: {}@{} # {}\n", pin.1, pin.3, pin.2);
+        assert_eq!(verify(&text, pin)?, 1);
+        for value in ["1.95", "1.95.0", "stable"] {
+            let wrong = format!("{text}        with:\n          toolchain: {value}\n");
+            assert!(
+                verify(&wrong, pin).is_err(),
+                "ignored override was credited"
+            );
+        }
     }
     Ok(())
 }

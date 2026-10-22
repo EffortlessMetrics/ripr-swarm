@@ -42,7 +42,6 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
         with:
-          toolchain: 1.95.0
           targets: wasm32-wasip2
           components: rustfmt, clippy
       - run: cargo fmt --check
