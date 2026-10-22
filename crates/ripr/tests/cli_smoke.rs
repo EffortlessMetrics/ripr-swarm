@@ -31,6 +31,9 @@ mod check_artifact_stdin;
 mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/containment_refusal.rs"]
+mod containment_refusal;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;

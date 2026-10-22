@@ -222,6 +222,7 @@ all renderers.
 
 ## Test Mapping (Amendment #7331, #7332)
 
+- `crates/ripr/tests/cli_smoke/containment_refusal.rs::repo_exposure_containment_failure_keeps_the_refusal_document`
 - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection`
 - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
 - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
