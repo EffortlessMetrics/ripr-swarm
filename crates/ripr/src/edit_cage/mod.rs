@@ -2635,13 +2635,14 @@ mod tests {
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = true;
         let verdict_for = |after: &str| {
-            let observation =
-                inline_test_region::observe_attempt_inline_region(inline_test_region::InlineTargetCopies {
+            let observation = inline_test_region::observe_attempt_inline_region(
+                inline_test_region::InlineTargetCopies {
                     worktree: Ok(after.to_string()),
                     index_matches: true,
                     head_matches: true,
                     baseline: &baseline,
-                });
+                },
+            );
             evaluate_edit_cage(
                 &policy,
                 &AttemptDelta {
