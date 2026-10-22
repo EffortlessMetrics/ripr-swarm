@@ -41,12 +41,29 @@ export function stringValues(value: Record<string, unknown> | undefined): string
  * quotes all three, so a quoted gap id such as `'len(x)>0'` still passes.
  * An unterminated span is refused.
  */
-export function hasUnsafeShellMetacharacter(command: string): boolean {
-  if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(command)) {
+export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = false): boolean {
+  const checked = windowsQuoting ? command.replace(WINDOWS_CONSOLE_QUOTED_SPAN, 'X') : command;
+  if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(checked)) {
     return true;
   }
-  const spans = command.split("'");
+  const spans = checked.split("'");
   return spans.length % 2 === 0 || spans.some((span, index) => index % 2 === 0 && /[$()]/.test(span));
+}
+
+/**
+ * One span in the Windows console form the server's `windows_console_quote`
+ * writes (`crates/ripr/src/agent/loop_commands.rs`): double quotes, interior
+ * `"` doubled. The server never emits this form for a value holding `$` or a
+ * backtick, which PowerShell and Git Bash expand inside double quotes, and the
+ * span here refuses `%` as well, which cmd.exe expands. Line breaks, NUL and the
+ * typographic quotes PowerShell reads as quotes are refused as in the POSIX
+ * form. Backslashes are literal inside the span (a trailing run is doubled).
+ */
+const WINDOWS_CONSOLE_QUOTED_SPAN = /"(?:[^"$`%\r\n\0\u2018-\u201f]|"")*"/g;
+
+/** Whether this extension host runs the server on Windows, where `shell_arg` quotes for the console. */
+export function isWindowsHost(): boolean {
+  return process.platform === 'win32';
 }
 
 /**
@@ -98,10 +115,19 @@ export function testRunnerCommandLeavesScope(normalized: string): boolean {
 /**
  * Quote one argument exactly as the server's `shell_arg`
  * (`crates/ripr/src/agent/loop_commands.rs`): bare when every character is in
- * `[A-Za-z0-9._/:-]`, otherwise single-quoted with `'` written as `'\''`.
+ * `[A-Za-z0-9._/:-]`; on Windows, double-quoted with `"` doubled and a trailing
+ * backslash run doubled, unless the value holds `$` or a backtick; otherwise
+ * single-quoted with `'` written as `'\''`.
  */
-export function serverShellArg(value: string): string {
-  return /^[A-Za-z0-9._/:-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+export function serverShellArg(value: string, windows: boolean = isWindowsHost()): string {
+  if (/^[A-Za-z0-9._/:-]+$/.test(value)) {
+    return value;
+  }
+  if (windows && !/[$`]/.test(value)) {
+    const trailing = /\\*$/.exec(value)?.[0] ?? '';
+    return `"${value.replace(/"/g, '""')}${trailing}"`;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**
