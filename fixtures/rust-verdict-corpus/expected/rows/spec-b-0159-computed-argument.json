@@ -8,14 +8,14 @@
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",
-  "observed_verdict": "limited",
+  "observed_verdict": "gap",
   "followed_retarget": false,
   "changed_since_labeling": false,
   "observed_classifications": [
     "infection_unknown",
     "weakly_exposed"
   ],
-  "outcome": "abstained",
+  "outcome": "false_actionable",
   "contradictions": [],
   "findings_scored": 2,
   "findings_contradicted": 0,

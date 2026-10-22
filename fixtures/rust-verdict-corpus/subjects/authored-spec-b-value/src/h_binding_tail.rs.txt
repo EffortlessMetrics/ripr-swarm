@@ -16,12 +16,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn three_bytes_is_a_triple() {
+    fn three_bytes_is_a_triple_h_binding_tail() {
         assert!(is_triple("abc"));
     }
 
     #[test]
-    fn other_widths_are_not() {
+    fn other_widths_are_not_h_binding_tail() {
         assert!(!is_triple("ab"));
         assert!(!is_triple("abcd"));
     }

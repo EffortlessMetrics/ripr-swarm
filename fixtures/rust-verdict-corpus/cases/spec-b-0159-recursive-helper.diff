@@ -3,10 +3,10 @@ diff --git a/src/h_recursion.rs b/src/h_recursion.rs
 +++ b/src/h_recursion.rs
 @@ -2,7 +2,7 @@
  
- fn is_wide(input: &str, depth: usize) -> bool {
+ fn wide_r(input: &str, depth: usize) -> bool {
      if depth == 0 {
 -        input.len() > 3
 +        3 < input.len()
      } else {
-         is_wide(input, depth - 1)
+         wide_r(input, depth - 1)
      }

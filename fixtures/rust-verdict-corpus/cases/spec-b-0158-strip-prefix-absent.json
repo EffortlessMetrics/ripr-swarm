@@ -20,7 +20,7 @@
         "replacement": "n < 3",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "v_strip::tests::an_unprefixed_argument_is_not",
+        "failing_test": "v_strip::tests::an_unprefixed_argument_is_not_v_strip",
         "equivalence_review": "the edit itself: n < 3 accepts the zero length an unprefixed argument yields"
       }
     ]
@@ -35,7 +35,7 @@
   },
   "reasoning": "Only the unprefixed row (ab) reaches the None default of the strip_prefix chain, and it alone fails when the comparison widens to < 3. Spec cells: RIPR-SPEC-0158#2.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed",

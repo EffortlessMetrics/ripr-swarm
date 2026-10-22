@@ -20,15 +20,15 @@
         "replacement": "3 <= input.len()",
         "mutated_line": "3 <= input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_callers::tests::rows_straddle_four_callers",
-        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers fails on it"
+        "failing_test": "h_callers::tests::rows_straddle_four_callers_h_callers",
+        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers_h_callers fails on it"
       },
       {
         "replacement": "4 < input.len()",
         "mutated_line": "4 < input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_callers::tests::rows_straddle_four_callers",
-        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers fails on it"
+        "failing_test": "h_callers::tests::rows_straddle_four_callers_h_callers",
+        "equivalence_review": "not equivalent: h_callers::tests::rows_straddle_four_callers_h_callers fails on it"
       }
     ]
   },
@@ -40,9 +40,9 @@
       "silent"
     ]
   },
-  "reasoning": "is_wide has two callers, classify_shared and label_shared. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#8.",
+  "reasoning": "wide_c has two callers, classify_shared and label_shared. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#8.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "infection_unknown",

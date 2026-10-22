@@ -1,12 +1,12 @@
 //! The call site passes a computed argument; the reach relation holds but the
 //! row value does not transfer.
 
-fn is_wide(input: &str) -> bool {
+fn wide_x(input: &str) -> bool {
     input.len() > 3
 }
 
 pub fn classify_trimmed(input: &str) -> &'static str {
-    if is_wide(input.trim()) {
+    if wide_x(input.trim()) {
         "wide"
     } else {
         "narrow"
@@ -18,7 +18,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rows_straddle_four_computed() {
+    fn rows_straddle_four_computed_h_computed() {
         assert_eq!(classify_trimmed(" abcd "), "wide");
         assert_eq!(classify_trimmed(" abc "), "narrow");
     }

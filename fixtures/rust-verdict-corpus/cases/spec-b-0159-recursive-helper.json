@@ -20,15 +20,15 @@
         "replacement": "3 <= input.len()",
         "mutated_line": "3 <= input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_recursion::tests::rows_straddle_four_recursion",
-        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion fails on it"
+        "failing_test": "h_recursion::tests::rows_straddle_four_recursion_h_recursion",
+        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion_h_recursion fails on it"
       },
       {
         "replacement": "4 < input.len()",
         "mutated_line": "4 < input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_recursion::tests::rows_straddle_four_recursion",
-        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion fails on it"
+        "failing_test": "h_recursion::tests::rows_straddle_four_recursion_h_recursion",
+        "equivalence_review": "not equivalent: h_recursion::tests::rows_straddle_four_recursion_h_recursion fails on it"
       }
     ]
   },
@@ -40,12 +40,12 @@
       "silent"
     ]
   },
-  "reasoning": "is_wide calls itself before it compares, so the chain is not acyclic. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#7.",
+  "reasoning": "wide_r calls itself before it compares, so the chain is not acyclic. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#7.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "f88e3952",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "infection_unknown"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   },

@@ -11,12 +11,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn absent_delimiter_lands_on_the_boundary() {
+    fn absent_delimiter_lands_on_the_boundary_v_closure() {
         assert!(closure_boundary_hit("ab", 'x'));
     }
 
     #[test]
-    fn present_delimiter_misses_the_boundary() {
+    fn present_delimiter_misses_the_boundary_v_closure() {
         assert!(!closure_boundary_hit("xab", 'x'));
         assert!(!closure_boundary_hit("abx", 'x'));
     }

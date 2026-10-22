@@ -20,7 +20,7 @@
         "replacement": "n >= 3",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "h_binding_tail::tests::other_widths_are_not",
+        "failing_test": "h_binding_tail::tests::other_widths_are_not_h_binding_tail",
         "equivalence_review": "the edit itself: n >= 3 is also true for a four-byte input"
       }
     ]
@@ -35,7 +35,7 @@
   },
   "reasoning": "n is a unique helper call whose return is a binding tail, and the abcd row fails when the comparison widens to >= 3. Spec cells: RIPR-SPEC-0159#2.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

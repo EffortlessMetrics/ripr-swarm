@@ -20,7 +20,7 @@
         "replacement": "end >= start",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "v_shadow::tests::present_delimiter_misses_the_boundary",
+        "failing_test": "v_shadow::tests::present_delimiter_misses_the_boundary_v_shadow",
         "equivalence_review": "the edit itself: end >= start is also true when the delimiter sits after the boundary"
       }
     ]
@@ -35,7 +35,7 @@
   },
   "reasoning": "end is rebound before the comparison, so the compared binding is not the chain's. The tests still pin the absent row and both present rows, so widening to >= fails the abx row. Spec cells: RIPR-SPEC-0158#6.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "infection_unknown",

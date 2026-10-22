@@ -1,13 +1,13 @@
 //! The helper is reached through a path-qualified call site.
 
 mod meter {
-    pub fn is_wide(input: &str) -> bool {
+    pub fn wide_p(input: &str) -> bool {
         input.len() > 3
     }
 }
 
 pub fn classify_path(input: &str) -> &'static str {
-    if meter::is_wide(input) {
+    if meter::wide_p(input) {
         "wide"
     } else {
         "narrow"
@@ -19,7 +19,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rows_straddle_four_path() {
+    fn rows_straddle_four_path_h_path() {
         assert_eq!(classify_path("abcd"), "wide");
         assert_eq!(classify_path("abc"), "narrow");
     }

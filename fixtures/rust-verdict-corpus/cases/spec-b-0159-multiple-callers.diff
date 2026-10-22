@@ -4,7 +4,7 @@ diff --git a/src/h_callers.rs b/src/h_callers.rs
 @@ -1,7 +1,7 @@
  //! The helper has two callers.
  
- fn is_wide(input: &str) -> bool {
+ fn wide_c(input: &str) -> bool {
 -    input.len() > 3
 +    3 < input.len()
  }

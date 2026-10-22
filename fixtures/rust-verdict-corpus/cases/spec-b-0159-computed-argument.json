@@ -20,15 +20,15 @@
         "replacement": "3 <= input.len()",
         "mutated_line": "3 <= input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_computed::tests::rows_straddle_four_computed",
-        "equivalence_review": "not equivalent: h_computed::tests::rows_straddle_four_computed fails on it"
+        "failing_test": "h_computed::tests::rows_straddle_four_computed_h_computed",
+        "equivalence_review": "not equivalent: h_computed::tests::rows_straddle_four_computed_h_computed fails on it"
       },
       {
         "replacement": "4 < input.len()",
         "mutated_line": "4 < input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_computed::tests::rows_straddle_four_computed",
-        "equivalence_review": "not equivalent: h_computed::tests::rows_straddle_four_computed fails on it"
+        "failing_test": "h_computed::tests::rows_straddle_four_computed_h_computed",
+        "equivalence_review": "not equivalent: h_computed::tests::rows_straddle_four_computed_h_computed fails on it"
       }
     ]
   },
@@ -42,8 +42,8 @@
   },
   "reasoning": "classify_trimmed passes input.trim(), a computed argument, so row values do not transfer, while the tests still reach the helper through the caller. The padded abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#9.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "f88e3952",
+    "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "infection_unknown",
       "weakly_exposed"

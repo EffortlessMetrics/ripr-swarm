@@ -11,12 +11,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_two_letter_flag_is_long_enough() {
+    fn a_two_letter_flag_is_long_enough_v_strip() {
         assert!(flag_long_enough("--ab"));
     }
 
     #[test]
-    fn an_unprefixed_argument_is_not() {
+    fn an_unprefixed_argument_is_not_v_strip() {
         assert!(!flag_long_enough("ab"));
     }
 }

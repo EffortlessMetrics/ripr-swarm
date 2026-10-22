@@ -20,7 +20,7 @@
         "replacement": "end >= start",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "v_rfind::tests::present_delimiter_misses_the_boundary",
+        "failing_test": "v_rfind::tests::present_delimiter_misses_the_boundary_v_rfind",
         "equivalence_review": "the edit itself: end >= start is also true when the delimiter sits after the boundary"
       }
     ]
@@ -35,7 +35,7 @@
   },
   "reasoning": "boundary_hit pins the absent-delimiter row (end 1, start 1) and both present-delimiter rows, so widening the comparison to >= fails the abx row. Spec cells: RIPR-SPEC-0158#1.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed",

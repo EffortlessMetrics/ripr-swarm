@@ -734,7 +734,7 @@ scope = "in"
 
 [[spec.waived]]
 example = 18
-reason = "receiver-reader shapes (non-parameter receiver, other-typed parameter, two call sites, non-unique method, overflow, duplicated constants, struct layouts) are pinned by unit tests on the reader; no corpus case builds each one, and the three corpus shapes above cover the end-to-end refusal"
+reason = "receiver-reader shapes (non-parameter receiver, other-typed parameter, two call sites, non-unique method, overflow, duplicated constants, struct layouts) are pinned by the unit tests of the receiver reader in analysis/classify/helper_transfer; the corpus builds the three end-to-end refusals method-hop-field-read-rebound, -nonliteral and -second-ctor (examples 15 to 17), not each remaining shape"
 
 # Bounded helper-call transfer
 [[spec]]

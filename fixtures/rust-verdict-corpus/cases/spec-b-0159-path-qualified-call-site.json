@@ -20,15 +20,15 @@
         "replacement": "3 <= input.len()",
         "mutated_line": "3 <= input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_path::tests::rows_straddle_four_path",
-        "equivalence_review": "not equivalent: h_path::tests::rows_straddle_four_path fails on it"
+        "failing_test": "h_path::tests::rows_straddle_four_path_h_path",
+        "equivalence_review": "not equivalent: h_path::tests::rows_straddle_four_path_h_path fails on it"
       },
       {
         "replacement": "4 < input.len()",
         "mutated_line": "4 < input.len()",
         "outcome": "tests_failed",
-        "failing_test": "h_path::tests::rows_straddle_four_path",
-        "equivalence_review": "not equivalent: h_path::tests::rows_straddle_four_path fails on it"
+        "failing_test": "h_path::tests::rows_straddle_four_path_h_path",
+        "equivalence_review": "not equivalent: h_path::tests::rows_straddle_four_path_h_path fails on it"
       }
     ]
   },
@@ -40,9 +40,9 @@
       "silent"
     ]
   },
-  "reasoning": "classify_path reaches is_wide as meter::is_wide(input), a path-qualified call site. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#5.",
+  "reasoning": "classify_path reaches wide_p as meter::wide_p(input), a path-qualified call site. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#5.",
   "labeling_observation": {
-    "ripr_commit": "840e0cf2",
+    "ripr_commit": "f88e3952",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "infection_unknown",

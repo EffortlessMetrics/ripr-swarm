@@ -4,7 +4,7 @@ diff --git a/src/h_path.rs b/src/h_path.rs
 @@ -2,7 +2,7 @@
  
  mod meter {
-     pub fn is_wide(input: &str) -> bool {
+     pub fn wide_p(input: &str) -> bool {
 -        input.len() > 3
 +        3 < input.len()
      }
