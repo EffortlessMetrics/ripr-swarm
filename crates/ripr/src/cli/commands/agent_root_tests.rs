@@ -98,6 +98,7 @@ fn cli_snapshot_verify_absolute_inputs_retain_literal_unix_root() -> Result<(), 
         root_explicit: true,
         before: before.clone(),
         after: after.clone(),
+        gap_id: None,
         json: true,
     })?;
     let value: serde_json::Value =
@@ -122,6 +123,7 @@ fn cli_snapshot_verify_absolute_inputs_retain_literal_unix_root() -> Result<(), 
         root_explicit: true,
         before: PathBuf::from("target/identity/before.json"),
         after: PathBuf::from("target/identity/after.json"),
+        gap_id: None,
         json: true,
     })?;
     app::agent_receipt::validate_agent_receipt_verify_json(&root, &relative)?;
@@ -243,6 +245,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
         root_explicit: true,
         before: before.clone(),
         after: after.clone(),
+        gap_id: None,
         json: true,
     })?;
     let verify: serde_json::Value =
@@ -628,6 +631,7 @@ fn cli_non_git_patch_snapshots_refuse_missing_git_revision_provenance() -> Resul
         root_explicit: true,
         before,
         after,
+        gap_id: None,
         json: true,
     })
     .err()
@@ -679,6 +683,7 @@ fn cli_git_patch_brief_without_base_verifies_real_boundary_edit() -> Result<(), 
         root_explicit: true,
         before,
         after,
+        gap_id: None,
         json: true,
     })?;
     let value: serde_json::Value =

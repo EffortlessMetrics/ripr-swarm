@@ -3128,6 +3128,43 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     Ok(())
 }
 
+/// #9211 for the seam walk: a stage big enough to need the whole-index tables
+/// pays the workspace macro-site scan once on the caller before any seam is
+/// queued, not whichever worker asks first while the others wait. A small
+/// stage reads none of them and pays nothing.
+#[test]
+fn evidence_pass_warms_the_workspace_scan_once_and_only_for_large_stages() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("the fixture must build a context")?;
+    if seams.len() >= WARM_MIN_SEAMS {
+        return Err("the fixture must be a small stage".into());
+    }
+    let evidence = pass.evidence_for(&seams);
+    if evidence.len() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    if context.workspace_scan_passes() != 0 {
+        return Err("a small stage must not pay the whole-index scan".into());
+    }
+    pass.warm_shared_tables(context, None, &None);
+    // At most the ambiguity pass plus one completion; the fixture has no
+    // macro-site consumer, so only the warm can have paid it.
+    let paid = context.workspace_scan_passes();
+    if !(1..=2).contains(&paid) {
+        return Err(format!("expected the primed scan, got {paid} passes"));
+    }
+    pass.warm_shared_tables(context, None, &None);
+    pass.evidence_for(&seams);
+    if context.workspace_scan_passes() != paid {
+        return Err("a later stage must not rescan the workspace".into());
+    }
+    Ok(())
+}
+
 #[test]
 fn given_compact_evidence_when_direct_owner_call_reaches_error_seam_then_activation_is_yes()
 -> Result<(), String> {

@@ -1732,6 +1732,37 @@ mod tests {
     }
 
     #[test]
+    fn capped_review_comments_fixture_matches_schema() -> Result<(), String> {
+        // A document with brief-cap and policy omissions carries
+        // `analysis_scope.cap_omitted_seams` / `omitted_by_policy` (#9301); it
+        // must validate, and a negative or non-integer count must not.
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        let fixture = read_json(
+            root.join("tests/fixtures/verification/ripr/review-comments.capped.valid.json"),
+        )?;
+        assert_eq!(fixture["analysis_scope"]["cap_omitted_seams"], 2);
+        let check = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "capped review comments".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert!(check(&fixture).is_empty(), "{:#?}", check(&fixture));
+        for bad in [serde_json::json!(-1), serde_json::json!("2")] {
+            let mut broken = fixture.clone();
+            broken["analysis_scope"]["cap_omitted_seams"] = bad;
+            assert!(!check(&broken).is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_gap_ledger_card_has_its_own_schema_branch() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;

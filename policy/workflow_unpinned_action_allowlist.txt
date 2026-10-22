@@ -1,0 +1,5 @@
+# The third-party action SHA-pin burn-down is complete (#9529).
+# Keep this file empty apart from comments: check-workflows rejects every row,
+# including zero-count rows and rows matching newly restored mutable refs.
+# Pin third-party actions to verified full commit SHAs; preserve supported inputs
+# and ref-dependent defaults, and identify the original ref in a comment.
