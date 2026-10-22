@@ -579,6 +579,20 @@ fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> 
     std::fs::write(&bare_path, &bare.stdout).map_err(|error| format!("write bare: {error}"))?;
     let (ok, _) = run_verify(&bare_path, &after)?;
     expect_exit(ok, false, "unenveloped before snapshot")?;
+    // A gap-bound verify over an unenveloped snapshot is an operational error
+    // (exit 2), never a typed gap refusal (exit 3).
+    let not_findings = bound(&gap_id, &bare_path, &after)?;
+    if not_findings.status.code() != Some(2) {
+        return Err(format!(
+            "--gap-id over a non-findings snapshot must exit 2, got {:?}",
+            not_findings.status.code()
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&not_findings.stderr),
+        "not a canonical repo-exposure artifact",
+        "operational error named",
+    )?;
 
     // Forgery 3: reversed lineage is incomparable.
     let (ok, out) = run_verify(&after, &before)?;
