@@ -1355,6 +1355,7 @@ pub(crate) fn ts_arm_change_witnessed(
     change: &TernaryArmChange,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
@@ -1364,30 +1365,6 @@ pub(crate) fn ts_arm_change_witnessed(
         if !candidate.relation.uses_oracle()
             || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
         {
-            return false;
-        }
-        // A test that rebinds the enum root compares its own constants, not
-        // the owner module's.
-        if change
-            .member_root()
-            .is_some_and(|root| local_identifier_declared_in_test_body(&test.body_text, root))
-        {
-            return false;
-        }
-        // A test importing the enum root from a module other than the
-        // owner's names a different enum that may share the root's text.
-        if change.member_root().is_some_and(|root| {
-            test.imports_in_file.iter().any(|import| {
-                import.local == root
-                    && !import_source_matches_owner(
-                        import,
-                        &test.file,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    )
-            })
-        }) {
             return false;
         }
         let receivers =
@@ -1420,9 +1397,19 @@ pub(crate) fn ts_arm_change_witnessed(
             };
             let arguments =
                 substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
-            arguments
-                .get(change.param_index)
-                .is_some_and(|argument| change.selects_changed_arm(argument))
+            arguments.get(change.param_index).is_some_and(|argument| {
+                change.selects_changed_arm(argument, |test_path, owner_path| {
+                    enum_member_guard::ts_same_enum_member(
+                        test_path,
+                        owner_path,
+                        test,
+                        owner,
+                        reexport_index,
+                        alias_map,
+                        workspace_root,
+                    )
+                })
+            })
         })
     })
 }
@@ -5173,6 +5160,7 @@ pub(crate) fn classify_change_with_alias_state(
                 &change,
                 owner,
                 &related_candidates,
+                reexport_index,
                 alias_map,
                 workspace_root,
             )

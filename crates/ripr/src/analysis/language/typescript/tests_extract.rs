@@ -164,6 +164,17 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
         let code = blank_ranges(source, &masked);
+        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let unstable_member_roots: Vec<String> = imports
+            .iter()
+            .filter(|import| {
+                !enum_member_guard::enum_member_root_is_read_only(&enum_code, &import.local)
+            })
+            .map(|import| import.local.clone())
+            .collect();
+        for test in &mut tests {
+            test.unstable_member_roots_in_file = unstable_member_roots.clone();
+        }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
             for test in &mut tests {
@@ -2596,6 +2607,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         // per file before the test is returned to the caller.
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
+        unstable_member_roots_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         default_member_only_locals_in_file: Vec::new(),

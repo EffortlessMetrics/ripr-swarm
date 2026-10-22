@@ -70,6 +70,7 @@ mod deleted_lines;
 mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
+mod enum_member_guard;
 mod error_payload_guard;
 mod guard_entry_guard;
 mod instance_class_guard;
