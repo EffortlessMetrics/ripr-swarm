@@ -6000,6 +6000,7 @@ pub(crate) fn classify_change_with_alias_state(
             credits: CreditFacts {
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                changed_field: changed_field.as_ref(),
             },
         },
         &related_candidates,

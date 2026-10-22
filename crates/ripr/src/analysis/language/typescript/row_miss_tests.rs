@@ -429,6 +429,7 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
                 credits: CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    changed_field: None,
                 },
             },
             &candidates,
