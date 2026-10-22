@@ -27,8 +27,12 @@ pub(crate) struct Options {
     pub(crate) work: PathBuf,
     pub(crate) expected_sha256: Option<String>,
     pub(crate) expected_version: Option<String>,
+    /// `CANDIDATE_SHA` from the frozen-candidate manifest (#1609): the commit
+    /// the admitted binary must report in its `--version` line.
+    pub(crate) expected_commit: Option<String>,
     pub(crate) families: Vec<Family>,
     pub(crate) removal_controls: Vec<(Family, PathBuf)>,
+    pub(crate) removal_manifest: Option<PathBuf>,
     pub(crate) repeat: bool,
     pub(crate) deadline: Duration,
     pub(crate) allow_incomplete: bool,
@@ -127,10 +131,22 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
         &run_root.join("instrument"),
         &cases,
     ));
+    controls_out.extend(super::execution_controls::execution_controls(
+        &run_root.join("execution"),
+        &cases,
+    ));
+    let (supplied, bindings) = match supplied_controls(options) {
+        Ok(supplied) => supplied,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&run_root);
+            return Err(error);
+        }
+    };
     controls_out.extend(controls::removal_controls(
         &run_root.join("removal"),
         &cases,
-        &options.removal_controls,
+        &supplied,
+        &bindings,
         &identity.sha256,
         &identity.reported_version,
         options.deadline,
@@ -221,6 +237,15 @@ fn admit_binary(options: &Options) -> Result<BinaryIdentity, String> {
         ));
     }
     let reported_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
+    if let Some(expected) = &options.expected_commit {
+        let reported = super::removal_builds::version_commit(&reported_version);
+        if !reported.is_some_and(|commit| commit.eq_ignore_ascii_case(expected)) {
+            return Err(format!(
+                "binary reports commit {} but --expected-commit is {expected}",
+                reported.unwrap_or("none")
+            ));
+        }
+    }
     if let Some(expected) = &options.expected_version
         && !reported_version.contains(expected.as_str())
     {
@@ -375,8 +400,10 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut work = PathBuf::from(DEFAULT_WORK);
     let mut expected_sha256 = None;
     let mut expected_version = None;
+    let mut expected_commit = None;
     let mut families = Vec::new();
     let mut removal_controls = Vec::new();
+    let mut removal_manifest = None;
     let mut repeat = true;
     let mut deadline = ROW_DEADLINE;
     let mut allow_incomplete = false;
@@ -406,13 +433,22 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
             "--work-dir" => work = PathBuf::from(value),
             "--expected-sha256" => expected_sha256 = Some(value),
             "--expected-version" => expected_version = Some(value),
+            "--expected-commit" => expected_commit = Some(value),
             "--family" => families.push(parse_family(&value)?),
             "--removal-control" => {
                 let (family, path) = value.split_once('=').ok_or_else(|| {
                     format!("--removal-control expects <family>=<binary>; {}", usage())
                 })?;
-                removal_controls.push((parse_family(family)?, PathBuf::from(path)));
+                let family = parse_family(family)?;
+                if removal_controls.iter().any(|(seen, _)| *seen == family) {
+                    return Err(format!(
+                        "--removal-control {} was given twice; each family takes one control",
+                        family.as_str()
+                    ));
+                }
+                removal_controls.push((family, PathBuf::from(path)));
             }
+            "--removal-manifest" => removal_manifest = Some(PathBuf::from(value)),
             "--deadline-seconds" => {
                 let seconds: u64 = value.parse().map_err(|error| {
                     format!("--deadline-seconds must be an integer, got `{value}` ({error})")
@@ -440,12 +476,45 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
         work,
         expected_sha256,
         expected_version,
+        expected_commit,
         families,
         removal_controls,
+        removal_manifest,
         repeat,
         deadline,
         allow_incomplete,
     })
+}
+
+/// Controls named on the command line plus those a build manifest vouches for.
+/// A family may take only one source of control.
+type SuppliedControls = (Vec<(Family, PathBuf)>, Vec<controls::Binding>);
+
+fn supplied_controls(options: &Options) -> Result<SuppliedControls, String> {
+    let mut supplied = options.removal_controls.clone();
+    let mut bindings = Vec::new();
+    if let Some(path) = &options.removal_manifest {
+        let manifest = super::removal_builds::load_manifest(path)?;
+        for entry in manifest.controls {
+            for family in entry.families {
+                if supplied.iter().any(|(seen, _)| *seen == family) {
+                    return Err(format!(
+                        "family {} has both a --removal-control and a manifest control",
+                        family.as_str()
+                    ));
+                }
+                supplied.push((family, entry.path.clone()));
+                bindings.push(controls::Binding {
+                    family,
+                    id: entry.id.clone(),
+                    expected_sha256: entry.sha256.clone(),
+                    edits_sha256: entry.edits_sha256.clone(),
+                    source_commit: manifest.source_commit.clone(),
+                });
+            }
+        }
+    }
+    Ok((supplied, bindings))
 }
 
 fn parse_family(value: &str) -> Result<Family, String> {
@@ -466,7 +535,7 @@ fn parse_family(value: &str) -> Result<Family, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--family <name>]... [--removal-control <family>=<binary>]... [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
+    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--expected-commit <sha>] [--family <name>]... [--removal-control <family>=<binary>]... [--removal-manifest <manifest.json>] [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
 }
 
 fn hash_file(path: &Path) -> Result<String, String> {
@@ -476,7 +545,7 @@ fn hash_file(path: &Path) -> Result<String, String> {
 }
 
 /// Copy the admitted executable into the owned run root and verify the copy.
-fn snapshot_binary(
+pub(super) fn snapshot_binary(
     source: &Path,
     run_root: &Path,
     expected_sha256: &str,

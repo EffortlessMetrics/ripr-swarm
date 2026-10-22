@@ -277,3 +277,204 @@ fn repeated_capture_flags_are_rejected_before_git_runs() -> Result<(), String> {
         "the repeated flag is named",
     )
 }
+
+#[test]
+fn inline_test_edits_are_detected_per_hunk_from_real_git() -> Result<(), String> {
+    let root = new_repo("inline")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let path = "crates/ripr/src/lib.rs";
+        let base = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n    }\n}\n",
+                ),
+            )],
+            "base",
+        )?;
+        let test_only = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "test: tighten (#41)",
+        )?;
+        let product_only = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "fix: change (#42)",
+        )?;
+        let mixed = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    3\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 3);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "fix: both (#43)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &mixed,
+            main: &mixed,
+        })?;
+        let inline = |sha: &str| -> Result<Vec<String>, String> {
+            facts
+                .commits
+                .iter()
+                .find(|commit| commit.commit_sha == sha)
+                .map(|commit| commit.inline_test_paths.clone())
+                .ok_or_else(|| format!("{sha} missing from facts"))
+        };
+        require(
+            inline(&test_only)? == [path.to_string()],
+            "a hunk inside the cfg(test) module is an inline-test edit",
+        )?;
+        require(
+            inline(&product_only)?.is_empty(),
+            "a hunk in product code is not",
+        )?;
+        require(
+            inline(&mixed)?.is_empty(),
+            "a hunk inside and a hunk outside the module keeps the file product",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
+#[test]
+fn editor_rust_is_scanned_and_same_line_product_edits_stay_product() -> Result<(), String> {
+    let root = new_repo("inline-edge")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("editors/zed/src")).map_err(|error| error.to_string())?;
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let zed = "editors/zed/src/lib.rs";
+        let shared = "crates/ripr/src/shared.rs";
+        let base = commit(
+            &root,
+            &[
+                (
+                    zed,
+                    Some(
+                        "pub fn run() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert!(true);\n    }\n}\n",
+                    ),
+                ),
+                (
+                    shared,
+                    Some("#[cfg(test)] mod tests {} pub fn value() -> u8 { 1 }\n"),
+                ),
+            ],
+            "base",
+        )?;
+        let edit = commit(
+            &root,
+            &[
+                (
+                    zed,
+                    Some(
+                        "pub fn run() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert!(1 == 1);\n    }\n}\n",
+                    ),
+                ),
+                (
+                    shared,
+                    Some("#[cfg(test)] mod tests {} pub fn value() -> u8 { 2 }\n"),
+                ),
+            ],
+            "fix: edit (#51)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &edit,
+            main: &edit,
+        })?;
+        let found = facts
+            .commits
+            .iter()
+            .find(|commit| commit.commit_sha == edit)
+            .ok_or("edit missing")?;
+        require(
+            found.inline_test_paths == [zed.to_string()],
+            "the editor test edit is inline; the same-line product edit is not",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
+#[test]
+fn changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit() -> Result<(), String> {
+    let root = new_repo("inline-gate")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let path = "crates/ripr/src/gate.rs";
+        let gated = "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nfn helper() -> u8 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {}\n}\n";
+        let base = commit(&root, &[(path, Some(gated))], "base")?;
+        // Pure deletion of the attribute line: `helper` now compiles in production.
+        let ungated = commit(
+            &root,
+            &[(
+                path,
+                Some(&gated.replacen("#[cfg(test)]\nfn helper", "fn helper", 1)),
+            )],
+            "fix: compile helper everywhere (#61)",
+        )?;
+        // Pure insertion of an attribute line above existing code.
+        let regated = commit(&root, &[(path, Some(gated))], "fix: gate helper (#62)")?;
+        // Adding a whole new test module is a test-only change.
+        let added = commit(
+            &root,
+            &[(
+                path,
+                Some(&format!(
+                    "{gated}#[cfg(test)]\nmod more {{\n    #[test]\n    fn also() {{}}\n}}\n"
+                )),
+            )],
+            "test: more (#63)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &added,
+            main: &added,
+        })?;
+        let inline = |sha: &str| -> Result<Vec<String>, String> {
+            facts
+                .commits
+                .iter()
+                .find(|commit| commit.commit_sha == sha)
+                .map(|commit| commit.inline_test_paths.clone())
+                .ok_or_else(|| format!("{sha} missing from facts"))
+        };
+        require(
+            inline(&ungated)?.is_empty(),
+            "deleting only the attribute line changes production compilation",
+        )?;
+        require(
+            inline(&regated)?.is_empty(),
+            "inserting only the attribute line changes production compilation",
+        )?;
+        require(
+            inline(&added)? == [path.to_string()],
+            "a whole new cfg(test) module is a test-only change",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}

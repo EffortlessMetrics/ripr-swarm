@@ -11379,6 +11379,8 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
+  "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/method_hop_tests.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
@@ -14311,13 +14313,16 @@ spec = "docs/specs/RIPR-SPEC-0212-npm-native-launcher-boundary.md"
 tests = [
   "packaging/npm/launcher/test/run-tests.test.cjs",
   "packaging/npm/launcher/test/launcher.test.cjs",
-  "xtask/src/policy/distribution/tests.rs"
+  "xtask/src/policy/distribution/tests.rs",
+  "xtask/src/version.rs"
 ]
 code = [
   "packaging/npm/launcher/package.json",
   "packaging/npm/launcher/bin/ripr.cjs",
   "packaging/npm/launcher/lib/launcher.cjs",
-  "xtask/src/policy/distribution/npm_launcher.rs"
+  "xtask/src/policy/distribution/npm_launcher.rs",
+  "xtask/src/policy/distribution/mod.rs",
+  "xtask/src/version.rs"
 ]
 outputs = [
   "packaging/npm/launcher/README.md",
@@ -16545,7 +16550,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::parameter_is_stable_only_when_the_body_never_rebinds_it",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_keeps_credit_only_with_a_non_zero_tested_input",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_does_not_bind_a_rebound_parameter",
-  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::neutral_operand_change_reads_one_bounded_shape",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::identity_operand_in_every_tested_call_withdraws_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::additive_identity_is_not_read_because_plus_concatenates_strings",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::nested_owner_call_keeps_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs::owner_only_relation_holds_for_a_constant_and_withdraws_credit",
 ]
 fixtures = [
   "fixtures/ts_dropped_term_zero_input",
@@ -16555,6 +16564,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/dropped_term_guard.rs",
   "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/value_hiding_guard.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md",
@@ -17511,6 +17521,22 @@ tests = [
   "xtask/src/reports/release_ledger/rule_tests.rs::deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row",
   "xtask/src/reports/release_ledger/rule_tests.rs::derived_ledger_validates_and_overrides_resolve_blocking_rows",
   "xtask/src/reports/release_ledger/rule_tests.rs::bad_overrides_are_rejected",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_modules_and_items_are_spans",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::braces_in_strings_chars_comments_and_raw_strings_do_not_end_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::attributes_in_strings_and_other_cfgs_are_not_spans",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::an_unclosed_item_is_not_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::zero_context_diffs_parse_hunks_and_whole_files",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::quoted_paths_are_never_inline_edits",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::hunks_must_sit_inside_a_span_on_every_side_that_has_lines",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::only_product_rust_files_are_candidates",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::a_span_sharing_a_line_with_other_code_is_not_a_span",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::touching_a_span_boundary_line_is_a_product_change",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::an_escaped_quote_char_literal_is_blanked_whole",
+  "xtask/src/reports/release_ledger/inline_tests_tests.rs::cfg_test_on_a_field_or_parameter_is_not_an_item_span",
+  "xtask/src/reports/release_ledger/capture_tests.rs::editor_rust_is_scanned_and_same_line_product_edits_stay_product",
+  "xtask/src/reports/release_ledger/capture_tests.rs::changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit",
+  "xtask/src/reports/release_ledger/rule_tests.rs::inline_test_only_product_paths_count_as_evidence",
+  "xtask/src/reports/release_ledger/capture_tests.rs::inline_test_edits_are_detected_per_hunk_from_real_git",
   "xtask/src/reports/release_ledger/rule_tests.rs::short_commit_ids_do_not_panic_the_override_reference",
   "xtask/src/reports/release_ledger/rule_tests.rs::repeated_derive_flags_are_rejected_before_any_file_is_read",
   "xtask/src/reports/release_ledger/rule_tests.rs::failed_derivation_leaves_an_existing_output_untouched",

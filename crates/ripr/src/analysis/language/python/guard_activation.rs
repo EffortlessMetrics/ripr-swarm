@@ -863,6 +863,7 @@ mod tests {
         CallRow {
             line: 1,
             text: "quote(..)".to_string(),
+            elements: std::collections::BTreeMap::new(),
             bindings: bindings
                 .iter()
                 .map(|(parameter, value)| {

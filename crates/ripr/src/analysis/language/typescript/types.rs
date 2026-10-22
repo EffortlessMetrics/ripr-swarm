@@ -549,6 +549,11 @@ pub(crate) struct TypeScriptAssertion {
     /// (RIPR-SPEC-0085 §PR5). When `true` and `expected_value_or_variant`
     /// is `None`, the `typescript_dynamic_assertion_unresolved` limitation is emitted.
     pub(crate) has_dynamic_matcher_arg: bool,
+    /// The dynamic matcher argument as written (`normalize(text)` in
+    /// `assert.equal(normalize(normalize(text)), normalize(text))`), so the
+    /// classifier can ask whether the expected side is built from the owner
+    /// alone. `None` when the argument is a literal or absent.
+    pub(crate) dynamic_expected_text: Option<String>,
     /// Confidence derived from oracle_strength + literal concreteness
     /// (RIPR-SPEC-0085 §PR5).
     pub(crate) oracle_confidence: OracleConfidence,
