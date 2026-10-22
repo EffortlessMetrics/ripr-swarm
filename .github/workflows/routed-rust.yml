@@ -170,6 +170,10 @@ jobs:
     outputs:
       status: ${{ steps.candidate.outputs.status }}
       reason: ${{ steps.candidate.outputs.reason }}
+      detail: ${{ steps.candidate.outputs.detail }}
+      cut_status: ${{ steps.candidate.outputs.cut_status }}
+      cut_reason: ${{ steps.candidate.outputs.cut_reason }}
+      cut_detail: ${{ steps.candidate.outputs.cut_detail }}
       claim: ${{ steps.candidate.outputs.claim }}
       acceptance_delta: ${{ steps.candidate.outputs.acceptance_delta }}
       competing_prs: ${{ steps.candidate.outputs.competing_prs }}
@@ -374,6 +378,10 @@ jobs:
           ADMISSION_RESULT: ${{ needs.admission.result }}
           ADMISSION_STATUS: ${{ needs.admission.outputs.status }}
           ADMISSION_REASON: ${{ needs.admission.outputs.reason }}
+          ADMISSION_DETAIL: ${{ needs.admission.outputs.detail }}
+          ADMISSION_CUT_STATUS: ${{ needs.admission.outputs.cut_status }}
+          ADMISSION_CUT_REASON: ${{ needs.admission.outputs.cut_reason }}
+          ADMISSION_CUT_DETAIL: ${{ needs.admission.outputs.cut_detail }}
           ADMISSION_CLAIM: ${{ needs.admission.outputs.claim }}
           ADMISSION_ACCEPTANCE_DELTA: ${{ needs.admission.outputs.acceptance_delta }}
           ADMISSION_COMPETING_PRS: ${{ needs.admission.outputs.competing_prs }}
@@ -413,12 +421,9 @@ jobs:
           elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
             status=fail
             message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge queue or the merge-ready label"
-          elif [ "$ADMISSION_RESULT" != "success" ]; then
-            status=fail
-            message="candidate admission result was $ADMISSION_RESULT"
-          elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then
-            status=fail
-            message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown}"
+          elif [ "$ADMISSION_CUT_STATUS" = "refused" ] && [ "$ADMISSION_STATUS" != "refused" ] && { [ "$ADMISSION_STATUS" = "admitted" ] || [ "$ADMISSION_RESULT" = "success" ]; }; then status=fail; message="hard-cut admission refused: ${ADMISSION_CUT_REASON:-unknown} — ${ADMISSION_CUT_DETAIL:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
+          elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
+          elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
@@ -470,7 +475,7 @@ jobs:
           fi
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

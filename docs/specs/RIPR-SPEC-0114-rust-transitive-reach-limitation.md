@@ -111,7 +111,9 @@ Genuinely-untested stays genuinely-untested.
 ### Fail-closed boundaries
 
 - NEVER change the classification from `no_static_path` (or from `weakly_exposed` on the
-  proximity-only path, #7071). No promotion of any kind.
+  proximity-only path, #7071). No promotion of any kind. The one exception is
+  the non-actionable withhold to `static_unknown` for proc-macro library code
+  (below, #8999), which makes no claim stronger than before.
 - Walk is NAME matching over LEXICAL call facts only — no AST resolution, no visibility tracking.
 - The witness walk is bounded at MAX 5 hops. Past it, the walk only asks
   whether a test enters the chain at any depth, and names the same
@@ -120,6 +122,36 @@ Genuinely-untested stays genuinely-untested.
 - Macro invocations (`name!`) stop the walk immediately at that branch.
 - Callees not found in the production function set stop that branch (fail-closed on external deps).
 - The message uses "may" language: "may call toward this change through a path ripr does not fully trace."
+
+### Proc-macro crates (#8999)
+
+Obligation: a finding that would read `no_static_path` and sits in the library
+of a proc-macro package reads `static_unknown` (severity `note`), because tests
+reach proc-macro code through `#[derive]`/attribute expansion in another crate,
+which ripr does not follow.
+
+- Proc-macro library code is a module of the library of a package whose
+  manifest sets `[lib] proc-macro = true` (or `proc_macro`), read through the
+  committed-source overlay so a dirty `Cargo.toml` cannot change a
+  committed-history finding. A build script, `src/main.rs`, `src/bin/**`,
+  explicit `[[bin]]`/`[[example]]`/`[[test]]`/`[[bench]]` targets, and
+  `tests/`, `benches/`, `examples/` are not library code and keep
+  `no_static_path`. A missing or unreadable manifest keeps `no_static_path`.
+- A file under the library source directory that only a bin consumes (a
+  module `main.rs` declares) still counts as library code. That direction is
+  safe: the result is `static_unknown`, an abstention, never a promotion or a
+  gap claim.
+- There is no source-text fallback: a `#[proc_macro_derive]` spelled in a
+  comment or string changes nothing.
+- The rewrite runs after the transitive and macro witness searches, so a
+  witness pointer they found stays; the `transitive_reach_unresolved` and
+  `macro_reach_unresolved` stop reasons (which say the class stays
+  `no_static_path`) are dropped and `static_probe_unknown` is the stop reason.
+- Reach and the stages that followed only from reach being ruled out
+  (activate/observe/discriminate and their evidence lines) become unknown with
+  truthful summaries; evidence gains a `proc_macro_expansion:` line. A negative
+  a stage established on its own evidence is kept.
+- Never promotes: only `no_static_path` is rewritten, only to `static_unknown`.
 
 ### Wire format
 
@@ -229,6 +261,23 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — JSON evidence names the last established edge, first unresolved edge, analyzer route, and non-claim
 - `crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail`
   — human output projects limitation detail under `Limitation detail`
+
+- `crates/ripr/src/analysis/classifier.rs::tests::given_uncalled_owner_in_manifest_proc_macro_crate_without_markers_when_classified_then_static_unknown`
+  — proc-macro obligation: manifest authority, stages and evidence made consistent
+- `crates/ripr/src/analysis/classifier.rs::tests::given_non_library_target_of_proc_macro_package_when_classified_then_still_no_static_path`
+  — build script, bin and integration test keep `no_static_path`
+- `crates/ripr/src/analysis/classifier.rs::tests::given_proc_macro_marker_only_in_comment_or_string_of_ordinary_crate_when_classified_then_still_no_static_path`
+  — no source-text fallback
+- `crates/ripr/src/analysis/facts/member_crates.rs::tests::a_dirty_manifest_does_not_flip_the_committed_answer`
+  — committed-overlay manifest read, both directions, fail closed when absent at HEAD
+- `crates/ripr/tests/proc_macro_no_static_path.rs::proc_macro_library_reads_static_unknown_in_findings_json_and_human`
+  — JSON and human output
+- `crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_library_with_the_same_source_keeps_no_static_path`
+  — discriminating negative
+- `crates/ripr/tests/proc_macro_no_static_path.rs::a_transitive_witness_survives_the_proc_macro_withhold`
+  — witness limit kind and pointer kept, transitive stop reason dropped
+- `crates/ripr/tests/proc_macro_no_static_path.rs::build_script_of_a_proc_macro_package_is_not_proc_macro_library_code`
+  — diff-path negative for a build script
 
 ## Implementation Mapping
 

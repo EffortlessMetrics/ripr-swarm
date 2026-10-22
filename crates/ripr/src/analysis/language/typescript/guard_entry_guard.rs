@@ -104,9 +104,6 @@ pub(crate) fn enclosing_conditions(
     }
     let target = line_start.min(original.len());
 
-    struct Block {
-        conditions: Vec<GuardCondition>,
-    }
     let mut stack: Vec<Block> = Vec::new();
     // Conditions a following `else` arm inherits from the block just closed.
     let mut chain: Option<Vec<GuardCondition>> = None;
@@ -118,20 +115,36 @@ pub(crate) fn enclosing_conditions(
             '(' => parens += 1,
             ')' => parens = parens.saturating_sub(1),
             ';' if parens == 0 => {
+                if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+                    let segment: String = masked_chars[segment_start..at].iter().collect();
+                    let segment_original: String = original[segment_start..at].iter().collect();
+                    let rest = absorb_clause(block, &segment, &segment_original);
+                    let rest = segment[rest..].trim_start();
+                    block.terminal = !has_label_word(rest) && ends_clause(rest);
+                }
                 chain = None;
                 segment_start = at + 1;
             }
             '{' if parens == 0 => {
-                let header: String = masked_chars[segment_start..at].iter().collect();
-                let header_original: String = original[segment_start..at].iter().collect();
+                let mut header: String = masked_chars[segment_start..at].iter().collect();
+                let mut header_original: String = original[segment_start..at].iter().collect();
+                if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+                    let rest = absorb_clause(block, &header, &header_original);
+                    header = header[rest..].to_string();
+                    header_original = header_original[rest..].to_string();
+                }
+                let switch = switch_discriminant(&header, &header_original);
                 let (conditions, next_chain) =
                     block_conditions(&header, &header_original, chain.take().unwrap_or_default());
                 closing_conditions.push(next_chain);
-                stack.push(Block { conditions });
+                stack.push(Block::new(conditions, switch));
                 segment_start = at + 1;
             }
             '}' if parens == 0 => {
                 stack.pop()?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.terminal = false;
+                }
                 chain = closing_conditions.pop().filter(|next| !next.is_empty());
                 segment_start = at + 1;
             }
@@ -143,11 +156,204 @@ pub(crate) fn enclosing_conditions(
     if parens != 0 || stack.is_empty() {
         return None;
     }
+    // A braceless `if (c)` / `else if (c)` / `else` head that directly
+    // precedes the line makes the line that arm's one-statement body. Any
+    // other text before the line (a loop head, a nested braceless `if`, a
+    // continued expression) reads no extra condition, which only withdraws
+    // exclusions.
+    // A braceless head guards one statement, not a whole line: a line that
+    // holds a second statement (`a = 1; b = 2;`) is left unguarded.
+    let mut pending: String = masked_chars[segment_start..target].iter().collect();
+    let mut pending_original: String = original[segment_start..target].iter().collect();
+    if let Some(block) = stack.last_mut().filter(|block| block.switch.is_some()) {
+        // A label on the changed line itself opens a clause the scan has not
+        // seen, so the clause in hand is not the line's.
+        let line = masked.lines().nth(index).unwrap_or_default();
+        if has_label_word(line) {
+            return None;
+        }
+        let rest = absorb_clause(block, &pending, &pending_original);
+        pending = pending[rest..].to_string();
+        pending_original = pending_original[rest..].to_string();
+    }
+    if !pending.trim().is_empty() && is_one_statement(&masked, index) {
+        let (conditions, _) = block_conditions(
+            &pending,
+            &pending_original,
+            chain.take().unwrap_or_default(),
+        );
+        if !conditions.is_empty() {
+            stack.push(Block::new(conditions, None));
+        }
+    }
     let conditions: Vec<GuardCondition> = stack
         .into_iter()
-        .flat_map(|block| block.conditions)
+        .flat_map(|block| {
+            let case = block
+                .case_cond
+                .map(|text| GuardCondition { text, want: true });
+            block.conditions.into_iter().chain(case)
+        })
         .collect();
     (!conditions.is_empty()).then_some(conditions)
+}
+
+/// One open `{ .. }` block while scanning toward the changed line.
+struct Block {
+    conditions: Vec<GuardCondition>,
+    /// The identifier a `switch (d)` block dispatches on.
+    switch: Option<String>,
+    /// The previous clause of a switch cannot fall into the next label.
+    terminal: bool,
+    /// `d === label` for the clause the scan is in, when it is the only
+    /// way in (a lone, reachable-only-by-dispatch `case` label).
+    case_cond: Option<String>,
+}
+impl Block {
+    fn new(conditions: Vec<GuardCondition>, switch: Option<String>) -> Self {
+        Block {
+            conditions,
+            switch,
+            terminal: true,
+            case_cond: None,
+        }
+    }
+}
+
+/// `d` for a block header `switch (d)` whose discriminant is one identifier.
+fn switch_discriminant(masked: &str, original: &str) -> Option<String> {
+    let body = masked.trim();
+    let rest = body.strip_prefix("switch")?;
+    if rest.starts_with(is_identifier_char) {
+        return None;
+    }
+    let lead = masked.len() - masked.trim_start().len();
+    let open = body.find('(')?;
+    let close = body.rfind(')')?;
+    if !body["switch".len()..open].trim().is_empty() || !body[close + 1..].trim().is_empty() {
+        return None;
+    }
+    let name = original[lead + open + 1..lead + close].trim();
+    (!name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(is_identifier_char))
+    .then(|| name.to_string())
+}
+
+/// Read the `case X:` / `default:` labels that open `masked` (with `original`
+/// the same span), set the switch block's clause condition, and return the
+/// byte offset where the clause's statements begin. A lone `case` label with
+/// a literal value, reached only after a clause that cannot fall through,
+/// sets `d === value`; anything else clears it.
+fn absorb_clause(block: &mut Block, masked: &str, original: &str) -> usize {
+    let mut at = 0usize;
+    let (mut labels, mut bad, mut value) = (0usize, false, None::<String>);
+    loop {
+        let skip = masked[at..].len() - masked[at..].trim_start().len();
+        let start = at + skip;
+        let word = if starts_with_word(&masked[start..], "case") {
+            "case"
+        } else if starts_with_word(&masked[start..], "default") {
+            "default"
+        } else {
+            break;
+        };
+        let Some(colon) = masked[start + word.len()..].find(':') else {
+            bad = true;
+            break;
+        };
+        let colon = start + word.len() + colon;
+        labels += 1;
+        if word == "case" {
+            if masked[start + 4..colon].contains('?') {
+                bad = true;
+            }
+            value = Some(original[start + 4..colon].trim().to_string());
+        } else {
+            value = None;
+        }
+        at = colon + 1;
+    }
+    // Without `;` several clauses share one segment (`case 'a': foo() case
+    // 'b': bar()`); a label past the first statement opens a clause this scan
+    // cannot place, so nothing is known about the clause in hand.
+    if has_label_word(&masked[at..]) {
+        block.case_cond = None;
+        block.terminal = false;
+        return at;
+    }
+    if labels == 0 {
+        return 0;
+    }
+    block.case_cond = match (&block.switch, labels, bad, block.terminal, value) {
+        (Some(d), 1, false, true, Some(value)) if is_literal_label(&value) => {
+            Some(format!("{d} === {value}"))
+        }
+        _ => None,
+    };
+    block.terminal = false;
+    at
+}
+
+fn has_label_word(text: &str) -> bool {
+    contains_word(text, "case") || contains_word(text, "default")
+}
+
+fn is_literal_label(text: &str) -> bool {
+    let quoted = |q: char| {
+        text.len() >= 2
+            && text.starts_with(q)
+            && text.ends_with(q)
+            && !text[1..text.len() - 1].contains([q, '\\'])
+    };
+    quoted('\'')
+        || quoted('"')
+        || (!text.is_empty()
+            && text
+                .trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit())
+            && !text.trim_start_matches('-').is_empty())
+}
+
+/// Whether a clause's last statement leaves the switch or loop, so the next
+/// label is not entered by falling through.
+fn ends_clause(statement: &str) -> bool {
+    ["break", "return", "throw", "continue"]
+        .iter()
+        .any(|word| starts_with_word(statement, word))
+}
+
+fn starts_with_word(text: &str, word: &str) -> bool {
+    text.strip_prefix(word)
+        .is_some_and(|rest| !rest.starts_with(is_identifier_char))
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        !text[..at].ends_with(is_identifier_char)
+            && !text[at + word.len()..].starts_with(is_identifier_char)
+    })
+}
+
+/// Whether the masked line at `index` holds at most one statement: no `;`
+/// outside parentheses other than a final one.
+fn is_one_statement(masked: &str, index: usize) -> bool {
+    let Some(line) = masked.lines().nth(index) else {
+        return false;
+    };
+    let line = line.trim();
+    let body = line.strip_suffix(';').unwrap_or(line);
+    let mut parens = 0usize;
+    for c in body.chars() {
+        match c {
+            '(' | '[' | '{' => parens += 1,
+            ')' | ']' | '}' => parens = parens.saturating_sub(1),
+            ';' if parens == 0 => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// The conditions a block with `header` needs, and the chain a directly
@@ -438,17 +644,455 @@ pub(crate) fn parameter_defaults(owner_source: &str, params: &[String]) -> Optio
     Some(defaults)
 }
 
+/// How a destructured property gets its value when the call omits it.
+#[derive(Clone, Debug, PartialEq)]
+enum PropDefault {
+    /// No default: the binding is `undefined`.
+    Absent,
+    Literal(Lit),
+    /// A default the reader cannot evaluate (`Infinity`, another binding).
+    Unknown,
+}
+
+#[derive(Clone, Debug)]
+struct OptionProp {
+    key: String,
+    local: String,
+    default: PropDefault,
+}
+
+/// A destructured options parameter, `{ a, b = 1, c: d } = {}`: the local
+/// bindings it introduces and the literal object a call must pass to set them.
+#[derive(Clone, Debug)]
+pub(crate) struct OptionsParameter {
+    index: usize,
+    /// The whole parameter defaults to `{}`, so an omitted argument is legal.
+    empty_default: bool,
+    props: Vec<OptionProp>,
+}
+
+impl OptionsParameter {
+    /// `local`'s value for a call whose argument at this position is
+    /// `argument` (`None` when omitted); `None` when it cannot be read.
+    fn value_of(&self, prop: &OptionProp, argument: Option<&str>) -> Option<Lit> {
+        let supplied = match argument.map(str::trim) {
+            // Omitted or explicit `undefined` applies the `= {}` default;
+            // without one, destructuring throws and nothing is known.
+            None | Some("undefined") => {
+                if !self.empty_default {
+                    return None;
+                }
+                None
+            }
+            Some(text) => object_property(text, &prop.key)?,
+        };
+        match supplied {
+            Some(literal) if literal != Lit::Undef => Some(literal),
+            // A missing key and an explicit `undefined` both apply the default.
+            _ => match &prop.default {
+                PropDefault::Absent => Some(Lit::Undef),
+                PropDefault::Literal(literal) => Some(literal.clone()),
+                PropDefault::Unknown => None,
+            },
+        }
+    }
+}
+
+/// The owner's parameter list when it holds a destructured options object:
+/// per-position plain names (empty for an options position) and default
+/// flags, plus the options parameters. `None` for anything it cannot read
+/// exactly (rest, nested defaults it cannot place, type annotations beyond a
+/// plain name, decorators), or when no parameter is destructured.
+pub(crate) struct ParameterShapes {
+    pub(crate) names: Vec<String>,
+    pub(crate) defaults: Vec<bool>,
+    pub(crate) options: Vec<OptionsParameter>,
+}
+
+pub(crate) fn parameter_shapes(owner_source: &str) -> Option<ParameterShapes> {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    // The masked text lines up byte for byte with the source only when no
+    // multi-byte character was replaced.
+    if masked.len() != owner_source.len() {
+        return None;
+    }
+    let open = masked.find('(')?;
+    // A decorator or a call before the parameter list is not the header.
+    if !header_prefix_is_binding(&masked[..open]) {
+        return None;
+    }
+    let ranges = parameter_part_ranges(&masked, open)?;
+    let after_list = ranges.close + 1;
+    let chars: Vec<char> = masked[after_list..].chars().collect();
+    let mut next = 0usize;
+    while next < chars.len() && chars[next].is_whitespace() {
+        next += 1;
+    }
+    let arrow = chars.get(next) == Some(&'=') && chars.get(next + 1) == Some(&'>');
+    if !arrow && !opens_body_after_paren(&chars, next) {
+        return None;
+    }
+    let mut shapes = ParameterShapes {
+        names: Vec::new(),
+        defaults: Vec::new(),
+        options: Vec::new(),
+    };
+    for (index, (start, end)) in ranges.parts.iter().enumerate() {
+        let part = owner_source[*start..*end].trim();
+        if part.starts_with("...") {
+            return None;
+        }
+        // A `this` parameter is erased from the call's positional arguments.
+        if part.starts_with("this") && !part["this".len()..].starts_with(is_identifier_char) {
+            return None;
+        }
+        if part.starts_with('{') {
+            shapes.options.push(options_parameter(part, index)?);
+            shapes.names.push(String::new());
+            shapes.defaults.push(true);
+            continue;
+        }
+        let ident: String = part
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .collect();
+        if ident.is_empty() || ident.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        shapes.defaults.push(part_has_default(part));
+        shapes.names.push(ident);
+    }
+    (!shapes.options.is_empty()).then_some(shapes)
+}
+
+/// `const f = async (` / `export default async function f(` style prefixes:
+/// words, `=`, `*`, `<generics>` and `export`, with no call, decorator or
+/// block before the parameter list.
+fn header_prefix_is_binding(prefix: &str) -> bool {
+    !prefix.contains(['@', ';', '{', '(', ')'])
+}
+
+struct ParameterRanges {
+    /// Byte index of the `)` that closes the list.
+    close: usize,
+    /// Byte ranges of each top-level parameter within the source.
+    parts: Vec<(usize, usize)>,
+}
+
+/// Split the parenthesized list that opens at `open` into parameter ranges.
+fn parameter_part_ranges(masked: &str, open: usize) -> Option<ParameterRanges> {
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, c) in masked[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    close = Some(open + at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let list_start = open + 1;
+    let list = &masked[list_start..close];
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    let mut previous = ' ';
+    for (at, c) in list.char_indices() {
+        match c {
+            '(' | '[' | '{' | '<' => depth += 1,
+            // The `>` of an `=>` inside a type does not close an angle.
+            '>' if previous == '=' => {}
+            ')' | ']' | '}' | '>' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                parts.push((list_start + start, list_start + at));
+                start = at + 1;
+            }
+            _ => {}
+        }
+        previous = c;
+    }
+    if depth != 0 {
+        return None;
+    }
+    if !list[start..].trim().is_empty() {
+        parts.push((list_start + start, list_start + list.len()));
+    }
+    Some(ParameterRanges { close, parts })
+}
+
+/// A default `= v` after the optional annotation; `=>` inside a type is not
+/// one.
+fn part_has_default(part: &str) -> bool {
+    part.match_indices('=').any(|(at, _)| {
+        let after = &part[at + 1..];
+        !after.starts_with(['>', '=']) && !part[..at].ends_with(['=', '!'])
+    })
+}
+
+/// Parse `{ a, b = 1, c: d = 2 } = {}` (optionally `: Name` annotated).
+fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
+    let mut depth = 0usize;
+    let mut close = None;
+    let mut quote: Option<char> = None;
+    for (at, c) in part.char_indices() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    close = Some(at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let mut rest = part[close + 1..].trim();
+    if let Some(annotation) = rest.strip_prefix(':') {
+        let name_len = annotation
+            .trim_start()
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .count();
+        if name_len == 0 {
+            return None;
+        }
+        let annotation = annotation.trim_start();
+        rest = annotation[name_len..].trim();
+    }
+    let empty_default = match rest {
+        "" => false,
+        _ => {
+            let value = rest.strip_prefix('=')?;
+            if value.trim() != "{}" {
+                return None;
+            }
+            true
+        }
+    };
+    let body = &part[1..close];
+    let items: Vec<&str> = match split_top_level(body, ",") {
+        Some(items) => items,
+        None => vec![body],
+    };
+    let mut props: Vec<OptionProp> = Vec::new();
+    for item in items {
+        let item = item.trim();
+        if item.is_empty() || item.starts_with("...") {
+            continue;
+        }
+        let key: String = item
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .collect();
+        if key.is_empty() || key.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        let after = item[key.len()..].trim();
+        let (local, default_text) = if after.is_empty() {
+            (key.clone(), None)
+        } else if let Some(default) = after.strip_prefix('=').filter(|d| !d.starts_with('=')) {
+            (key.clone(), Some(default))
+        } else if let Some(renamed) = after.strip_prefix(':') {
+            let renamed = renamed.trim();
+            if renamed.starts_with(['{', '[']) {
+                // A nested pattern introduces bindings this reader leaves
+                // unreadable.
+                continue;
+            }
+            let local: String = renamed
+                .chars()
+                .take_while(|c| is_identifier_char(*c))
+                .collect();
+            if local.is_empty() || local.starts_with(|c: char| c.is_ascii_digit()) {
+                return None;
+            }
+            let tail = renamed[local.len()..].trim();
+            if tail.is_empty() {
+                (local, None)
+            } else {
+                let default = tail.strip_prefix('=').filter(|d| !d.starts_with('='))?;
+                (local, Some(default))
+            }
+        } else {
+            return None;
+        };
+        if props.iter().any(|prop| prop.local == local) {
+            return None;
+        }
+        let default = match default_text {
+            None => PropDefault::Absent,
+            Some(text) => match parse_literal(text) {
+                Some(literal) => PropDefault::Literal(literal),
+                // A later default can write an earlier binding.
+                None if default_may_assign(text) => return None,
+                None => PropDefault::Unknown,
+            },
+        };
+        props.push(OptionProp {
+            key,
+            local,
+            default,
+        });
+    }
+    Some(OptionsParameter {
+        index,
+        empty_default,
+        props,
+    })
+}
+
+/// Whether a default expression could assign a binding (`x = v`, `x += v`,
+/// `x++`); comparison operators and `=>` do not.
+fn default_may_assign(text: &str) -> bool {
+    if text.contains("++") || text.contains("--") {
+        return true;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    chars.iter().enumerate().any(|(at, c)| {
+        *c == '='
+            && chars.get(at + 1) != Some(&'=')
+            && chars.get(at + 1) != Some(&'>')
+            && !matches!(
+                at.checked_sub(1).and_then(|before| chars.get(before)),
+                Some('=' | '!' | '<' | '>')
+            )
+    })
+}
+
+/// `Object.prototype` members a destructuring default reads through the
+/// prototype when the literal has no own key.
+const INHERITED_KEYS: [&str; 12] = [
+    "constructor",
+    "toString",
+    "toLocaleString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "__proto__",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+];
+
+/// The literal a test writes for `key` in an object-literal argument:
+/// `Some(None)` when the key is absent, `Some(Some(v))` when set to the
+/// literal `v`, and `None` when the argument is not a plain object literal or
+/// the key's value cannot be read (a spread, computed key, accessor, method,
+/// duplicate or non-literal value could set it).
+fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
+    if INHERITED_KEYS.contains(&key) {
+        return None;
+    }
+    let text = text.trim();
+    let inner = text.strip_prefix('{')?.strip_suffix('}')?;
+    // `{ a } + { b }`-style text is not one literal.
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for c in inner.chars() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    if depth != 0 || quote.is_some() {
+        return None;
+    }
+    let entries: Vec<&str> = match split_top_level(inner, ",") {
+        Some(entries) => entries,
+        None => vec![inner],
+    };
+    let mut found: Option<Option<Lit>> = None;
+    for entry in entries {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if entry.starts_with("...") || entry.starts_with('[') {
+            return None;
+        }
+        let (name, rest) =
+            if let Some(quote) = entry.chars().next().filter(|c| matches!(c, '\'' | '"')) {
+                let close = entry[1..].find(quote)? + 1;
+                // An escaped key is not compared raw.
+                if entry[1..close].contains('\\') {
+                    return None;
+                }
+                (entry[1..close].to_string(), entry[close + 1..].trim())
+            } else {
+                let name: String = entry
+                    .chars()
+                    .take_while(|c| is_identifier_char(*c))
+                    .collect();
+                if name.is_empty() {
+                    return None;
+                }
+                let rest = entry[name.len()..].trim();
+                (name, rest)
+            };
+        let value = if rest.is_empty() {
+            // Shorthand `{ key }`: the value is another binding.
+            None
+        } else if let Some(value) = rest.strip_prefix(':') {
+            Some(value)
+        } else {
+            // A method, getter or setter (`get key() {}`, `key() {}`).
+            return None;
+        };
+        // `__proto__: v` sets the prototype, not a property.
+        if name == "__proto__" {
+            return None;
+        }
+        if name != key {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let literal = parse_literal(value?)?;
+        found = Some(Some(literal));
+    }
+    Some(found.unwrap_or(None))
+}
+
 /// One owner call's argument bindings, read from literal arguments.
 pub(crate) struct CallInputs<'a> {
     pub(crate) owner_source: &'a str,
     pub(crate) params: &'a [String],
     pub(crate) defaults: &'a [bool],
+    /// Destructured options parameters (`{ a = 1 } = {}`), by position.
+    pub(crate) options: &'a [OptionsParameter],
     pub(crate) arguments: &'a [String],
 }
 
 impl CallInputs<'_> {
     fn lookup(&self, name: &str) -> Option<Lit> {
-        let index = self.params.iter().position(|param| param == name)?;
+        let Some(index) = self.params.iter().position(|param| param == name) else {
+            return self.lookup_option(name);
+        };
         if !ts_parameter_is_stable(self.owner_source, name) {
             return None;
         }
@@ -460,6 +1104,23 @@ impl CallInputs<'_> {
             None if !self.defaults.get(index).copied().unwrap_or(true) => Some(Lit::Undef),
             None => None,
         }
+    }
+
+    /// The value a destructured options property takes for this call.
+    fn lookup_option(&self, name: &str) -> Option<Lit> {
+        let (options, prop) = self
+            .options
+            .iter()
+            .find_map(|options| Some((options, options.props.iter().find(|p| p.local == name)?)))?;
+        if !ts_parameter_is_stable(self.owner_source, name) {
+            return None;
+        }
+        options.value_of(
+            prop,
+            self.arguments
+                .get(options.index)
+                .map(|argument| argument.as_str()),
+        )
     }
 
     /// `Some(false)` when `condition` is provably false for this call and
@@ -979,6 +1640,7 @@ mod tests {
             owner_source: SOURCE,
             params,
             defaults,
+            options: &[],
             arguments,
         }
     }
@@ -1033,6 +1695,7 @@ mod tests {
             owner_source: source,
             params: &params,
             defaults: &defaults,
+            options: &[],
             arguments: &call,
         };
         assert!(!call_excludes_arm(&inputs, &arms));
@@ -1056,6 +1719,7 @@ mod tests {
                 owner_source: source,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             let arms = vec![GuardCondition {
@@ -1077,6 +1741,7 @@ mod tests {
                 owner_source: source,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             let arms = vec![GuardCondition {
@@ -1108,6 +1773,7 @@ mod tests {
             owner_source: source,
             params: &params,
             defaults: &defaulted,
+            options: &[],
             arguments: &explicit,
         };
         assert!(!call_excludes_arm(&call, &arms));
@@ -1124,6 +1790,7 @@ mod tests {
                 owner_source: "function f(x) {\n  return x;\n}\n",
                 params: &p,
                 defaults: &d,
+                options: &[],
                 arguments: &arguments,
             };
             assert!(
@@ -1195,6 +1862,7 @@ mod tests {
                 owner_source: src,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             call_excludes_arm(
@@ -1309,6 +1977,7 @@ mod tests {
             owner_source: src,
             params: &params,
             defaults: &defaults,
+            options: &[],
             arguments: &arguments,
         };
         assert!(!call_excludes_arm(
@@ -1385,5 +2054,302 @@ mod tests {
         }
         // No length cap on the annotation.
         check(&format!("run(c: string): {}B {{", "A | ".repeat(120)));
+    }
+
+    const OPTIONS: &str = "export function run(items, { preserveOrder = true, limit = Infinity, mode: kind = 'fast' } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n  if (kind === 'slow') {\n    c();\n  }\n  if (limit > 3) {\n    d();\n  }\n}\n";
+
+    /// Whether a call with `arguments` provably keeps the arm that holds
+    /// `text` (on `line` of `source`) closed.
+    fn excludes(source: &str, line: usize, text: &str, arguments: &[&str]) -> bool {
+        let Some(shapes) = parameter_shapes(source) else {
+            return false;
+        };
+        let Some(arms) = enclosing_conditions(source, 1, line, text) else {
+            return false;
+        };
+        let arguments: Vec<String> = arguments.iter().map(|a| a.to_string()).collect();
+        let call = CallInputs {
+            owner_source: source,
+            params: &shapes.names,
+            defaults: &shapes.defaults,
+            options: &shapes.options,
+            arguments: &arguments,
+        };
+        call_excludes_arm(&call, &arms)
+    }
+
+    #[test]
+    fn reads_destructured_options_parameters() {
+        let shapes = parameter_shapes(OPTIONS).map(|s| (s.names, s.defaults, s.options.len()));
+        assert_eq!(
+            shapes,
+            Some((
+                vec!["items".to_string(), String::new()],
+                vec![false, true],
+                1
+            ))
+        );
+        // Annotated by name, arrow, and async forms read the same list.
+        for source in [
+            "function f(a, { x = 1 }: Opts = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "const f = ({ x = 1 } = {}) => {\n  if (x) {\n    y();\n  }\n};\n",
+            "export default async function f({ x = 1 } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+        ] {
+            assert!(parameter_shapes(source).is_some(), "{source}");
+        }
+        // Rest, decorators, type-literal annotations, other defaults and a
+        // plain list are not options shapes.
+        for source in [
+            "function f({ x }, ...rest) {\n  if (x) {\n    y();\n  }\n}\n",
+            "@Dec() f({ x } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ x }: { x: number } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ x } = defaults) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ [k]: x } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f(a, b) {\n  if (a) {\n    y();\n  }\n}\n",
+        ] {
+            assert!(parameter_shapes(source).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn option_defaults_and_literal_objects_decide_the_guard() {
+        // `else` arm of `if (preserveOrder)`: closed whenever preserveOrder
+        // is truthy, which is the default.
+        let else_arm = |args: &[&str]| excludes(OPTIONS, 5, "b();", args);
+        assert!(else_arm(&["[]"]));
+        assert!(else_arm(&["[]", "undefined"]));
+        assert!(else_arm(&["[]", "{}"]));
+        assert!(else_arm(&["[]", "{ limit: 2 }"]));
+        assert!(else_arm(&["[]", "{ preserveOrder: true }"]));
+        assert!(else_arm(&["[]", "{ preserveOrder: undefined }"]));
+        assert!(else_arm(&["[]", "{ 'preserveOrder': 1 }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: false }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: 0 }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: null }"]));
+        // Unreadable objects may set the key.
+        assert!(!else_arm(&["[]", "opts"]));
+        assert!(!else_arm(&["[]", "null"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: pick() }"]));
+        assert!(!else_arm(&["[]", "{ ...base }"]));
+        assert!(!else_arm(&["[]", "{ limit: 1, ...base }"]));
+        assert!(!else_arm(&["[]", "{ ['preserve' + 'Order']: false }"]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ get preserveOrder() { return false; } }"
+        ]));
+        assert!(!else_arm(&["[]", "{ preserveOrder() { return false; } }"]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ preserveOrder: true, preserveOrder: false }"
+        ]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ limit: 2 } + { preserveOrder: false }"
+        ]));
+        // `then` arm: closed only when the call turns the option off.
+        let then_arm = |args: &[&str]| excludes(OPTIONS, 3, "a();", args);
+        assert!(then_arm(&["[]", "{ preserveOrder: false }"]));
+        assert!(!then_arm(&["[]"]));
+        assert!(!then_arm(&["[]", "{}"]));
+        // A renamed property reads through its local name.
+        let slow = |args: &[&str]| excludes(OPTIONS, 8, "c();", args);
+        assert!(slow(&["[]"]));
+        assert!(slow(&["[]", "{ mode: 'fast' }"]));
+        assert!(!slow(&["[]", "{ mode: 'slow' }"]));
+        assert!(!slow(&["[]", "{ mode: pick() }"]));
+        // A default the reader cannot evaluate is unknown when omitted.
+        let large = |args: &[&str]| excludes(OPTIONS, 11, "d();", args);
+        assert!(large(&["[]", "{ limit: 1 }"]));
+        assert!(!large(&["[]"]));
+        assert!(!large(&["[]", "{ limit: 9 }"]));
+        // Without `= {}` an omitted options argument throws, so nothing is
+        // known about the arm.
+        let strict = "function run(items, { preserveOrder = true }) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(strict, 5, "b();", &["[]"]));
+        assert!(excludes(strict, 5, "b();", &["[]", "{}"]));
+    }
+
+    #[test]
+    fn signature_and_literal_shapes_that_misplace_the_options_position_are_refused() {
+        let generic = "function run(cb: Array<(x: number) => void>, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        let shapes = parameter_shapes(generic)
+            .map(|s| s.options.iter().map(|o| o.index).collect::<Vec<_>>());
+        assert_eq!(shapes, Some(vec![1]));
+        assert!(
+            parameter_shapes("function run(a: Array<number, { x = 1 } = {}) {\n  a();\n}\n")
+                .is_none()
+        );
+        let this_param = "function run(this: void, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(parameter_shapes(this_param).is_none());
+        let this_arg = "function run(thisArg, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(parameter_shapes(this_arg).is_some());
+        let flag = "function run(items, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(excludes(
+            flag,
+            5,
+            "b();",
+            &["[]", "{ preserveOrder: true }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ preserveOrder: true }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ 'preserve\\x4Frder': false }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ __proto__: { preserveOrder: false } }"]
+        ));
+        assert!(excludes(
+            flag,
+            5,
+            "b();",
+            &["[]", "{ nested: { preserveOrder: false } }"]
+        ));
+        // Inherited members and later defaults that assign are not read.
+        let inherited = "function run(items, { toString = false } = {}) {\n  if (toString) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(inherited, 5, "a();", &["[]", "{}"]));
+        let assigning = "function run(items, { flag = true, other = (flag = false) } = {}) {\n  if (flag) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(assigning, 5, "b();", &["[]", "{}"]));
+        assert!(parameter_shapes(assigning).is_none());
+    }
+
+    #[test]
+    fn braceless_arms_read_their_head_and_nothing_else() {
+        let conditions = |source: &str, line: usize, text: &str| {
+            enclosing_conditions(source, 1, line, text)
+                .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>())
+        };
+        let plain = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 3;\n  return total;\n}\n";
+        assert_eq!(
+            conditions(plain, 4, "total = total / 3;"),
+            Some(vec!["coupon === 'HALF'".to_string()])
+        );
+        // The statement after the arm is no longer under it.
+        assert_eq!(conditions(plain, 5, "return total;"), None);
+        let chain = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF') {\n    total = 1;\n  } else if (qty > 100)\n    total = 2;\n  else\n    total = 3;\n  return total;\n}\n";
+        assert_eq!(
+            conditions(chain, 6, "total = 2;"),
+            Some(vec![
+                "!(coupon === 'HALF')".to_string(),
+                "qty > 100".to_string()
+            ])
+        );
+        // An `else` after a braceless arm has no known head to invert, so it
+        // keeps only the enclosing conditions.
+        let bare_else = "function run(qty, coupon) {\n  if (coupon === 'HALF')\n    qty = 1;\n  else\n    qty = 2;\n  return qty;\n}\n";
+        assert_eq!(conditions(bare_else, 5, "qty = 2;"), None);
+        // A loop head or nested braceless `if` reads no condition of its own.
+        let looped = "function run(items, flag) {\n  for (const item of items)\n    flag = item;\n  return flag;\n}\n";
+        assert_eq!(conditions(looped, 3, "flag = item;"), None);
+        let nested = "function run(a, b) {\n  if (a)\n    if (b)\n      a = 1;\n  return a;\n}\n";
+        assert_eq!(conditions(nested, 4, "a = 1;"), None);
+        // A second statement on the line is not the arm's body.
+        let two = "function run(qty, coupon) {\n  let total = qty * 10;\n  if (coupon === 'HALF')\n    total = total / 2; total += 2;\n  return total;\n}\n";
+        assert_eq!(conditions(two, 4, "total = total / 2; total += 2;"), None);
+        // A continued condition is not a head.
+        let continued = "function run(a, b) {\n  if (a &&\n    b)\n    a = 1;\n  return a;\n}\n";
+        assert_eq!(
+            conditions(continued, 4, "a = 1;"),
+            Some(vec!["a &&\n    b".to_string()])
+        );
+    }
+
+    #[test]
+    fn switch_clauses_read_a_lone_case_label_and_nothing_else() {
+        let conditions = |source: &str, line: usize, text: &str| {
+            enclosing_conditions(source, 1, line, text)
+                .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>())
+        };
+        let source = "function run(mode, qty) {\n  let total = qty;\n  switch (mode) {\n    case 'half':\n      total = total / 2;\n      break;\n    case 'double':\n      total = total * 2;\n      break;\n    case 'a':\n    case 'b':\n      total = 0;\n      break;\n    case 'c':\n      qty = 1;\n    case 'd':\n      total = 9;\n      break;\n    default:\n      total = 7;\n  }\n  return total;\n}\n";
+        assert_eq!(
+            conditions(source, 5, "total = total / 2;"),
+            Some(vec!["mode === 'half'".to_string()])
+        );
+        // The second clause follows a `break`.
+        assert_eq!(
+            conditions(source, 8, "total = total * 2;"),
+            Some(vec!["mode === 'double'".to_string()])
+        );
+        // Stacked labels are an OR, a fall-through clause is entered from the
+        // clause above, and `default` is the complement: none is read.
+        assert_eq!(conditions(source, 12, "total = 0;"), None);
+        assert_eq!(conditions(source, 17, "total = 9;"), None);
+        assert_eq!(conditions(source, 20, "total = 7;"), None);
+        // A label on the changed line opens a clause the scan has not seen.
+        assert_eq!(conditions(source, 7, "case 'double':"), None);
+        // A braced clause and a clause nested in an `if` keep both conditions.
+        let braced = "function run(mode, flag) {\n  let total = 1;\n  switch (mode) {\n    case 1: {\n      if (flag) {\n        total = 2;\n      }\n      break;\n    }\n    case 2:\n      total = 3;\n      break;\n  }\n  return total;\n}\n";
+        assert_eq!(
+            conditions(braced, 6, "total = 2;"),
+            Some(vec!["mode === 1".to_string(), "flag".to_string()])
+        );
+        // A clause after a braced clause may be entered by falling through.
+        assert_eq!(conditions(braced, 11, "total = 3;"), None);
+        // A computed discriminant or non-literal label reads nothing.
+        let computed = "function run(mode, other) {\n  let total = 1;\n  switch (mode + 1) {\n    case 'x':\n      total = 2;\n      break;\n  }\n  switch (mode) {\n    case other:\n      total = 3;\n      break;\n  }\n  return total;\n}\n";
+        assert_eq!(conditions(computed, 5, "total = 2;"), None);
+        assert_eq!(conditions(computed, 10, "total = 3;"), None);
+    }
+
+    #[test]
+    fn semicolon_free_clauses_share_a_segment_and_read_nothing() {
+        let body = |text: &str, line: usize, changed: &str| {
+            let source = format!("function run(m, t) {{\n  switch (m) {{\n{text}  }}\n}}\n");
+            enclosing_conditions(&source, 1, line, changed)
+        };
+        assert_eq!(
+            body(
+                "    case 'a':\n      foo()\n    case 'b':\n      bar()\n",
+                6,
+                "bar()"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break\n    case 'b':\n      bar()\n",
+                6,
+                "bar()"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break;\n    case 'b':\n      foo()\n    case 'c':\n      bar();\n",
+                8,
+                "bar();"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break\n    default:\n      t = 3;\n",
+                6,
+                "t = 3;"
+            ),
+            None
+        );
+        // One semicolon-free clause with a single label is still read.
+        let single = body("    case 'a':\n      bar()\n", 4, "bar()")
+            .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>());
+        assert_eq!(single, Some(vec!["m === 'a'".to_string()]));
+    }
+
+    #[test]
+    fn a_reassigned_or_shadowed_option_local_is_not_read() {
+        let reassigned = "function run(items, { preserveOrder = true } = {}) {\n  preserveOrder = !items;\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(reassigned, 5, "b();", &["[]"]));
+        let shadowed = "function run(items, { preserveOrder = true } = {}) {\n  const preserveOrder = items.length;\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(shadowed, 5, "b();", &["[]"]));
     }
 }

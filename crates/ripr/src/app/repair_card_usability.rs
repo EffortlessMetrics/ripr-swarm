@@ -231,6 +231,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         entry: &profile.entry,
         witness: profile.witness.as_ref(),
         finding_id,
+        finding_gap_id: None,
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: "abc123",
