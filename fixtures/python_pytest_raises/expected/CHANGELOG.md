@@ -586,3 +586,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_raises (19)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_pytest_raises --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

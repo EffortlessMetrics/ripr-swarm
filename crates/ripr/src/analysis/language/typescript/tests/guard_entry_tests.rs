@@ -589,3 +589,46 @@ fn a_second_statement_on_a_braceless_arm_line_keeps_exposed() -> Result<(), Stri
     assert_ne!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
+
+const SWITCH_PRICE: &str = "export function price(qty: number, mode?: string): number {\n  let total = qty * 10;\n  switch (mode) {\n    case 'half':\n      total = total / 2;\n      break;\n    case 'free':\n      total = 0;\n      break;\n  }\n  return total;\n}\n";
+
+fn switch_clause(label: &str, test: &str) -> Result<Finding, String> {
+    finding_at(
+        label,
+        SWITCH_PRICE,
+        5,
+        "      total = total / 3;",
+        "      total = total / 2;",
+        test,
+    )
+}
+
+#[test]
+fn a_switch_clause_no_test_input_selects_withdraws_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        ("switch-closed", vec![("price(2)", "20")]),
+        (
+            "switch-other-label",
+            vec![("price(2)", "20"), ("price(3, 'free')", "0")],
+        ),
+    ] {
+        let finding = switch_clause(label, &test_with(&calls))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_switch_clause_some_test_input_can_select_keeps_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        (
+            "switch-selected",
+            vec![("price(2)", "20"), ("price(3, 'half')", "15")],
+        ),
+        ("switch-computed", vec![("price(2, pick())", "20")]),
+    ] {
+        let finding = switch_clause(label, &test_with(&calls))?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    }
+    Ok(())
+}
