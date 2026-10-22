@@ -63,7 +63,7 @@ line, because the refusal does not apply to them.
 ### Rule 2: continue command
 
 The terminal's final step and the Markdown summary's repair introduction name
-the `ripr continue` command that step 1 prints, not an `--attempt ...
+the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 --phase after` spelling that step 1 never prints.
 
 ## Required Evidence
@@ -87,7 +87,7 @@ the `ripr continue` command that step 1 prints, not an `--attempt ...
 1. A dirty working tree and an inline-module repair target: the terminal prints
    the commit-or-stash line before step 1.
 2. A clean tree or a `tests/` target: the line is absent.
-3. Step 3 reads "run the `ripr continue --attempt ...` command that step 1
+3. Step 3 reads "run the `continue --attempt ...` command that step 1
    prints".
 
 ## Test Mapping

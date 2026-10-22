@@ -2104,7 +2104,7 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
 /// The repair start refuses only an inline-module target file that differs
 /// from HEAD, so the precondition appears exactly when the change is
 /// uncommitted and the repair targets an inline module; step 3 names the
-/// `ripr continue` command that step 1 prints.
+/// `continue --attempt ...` command that step 1 prints.
 #[test]
 fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() -> Result<(), String>
 {
@@ -2164,8 +2164,7 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
         "{inline_dirty}"
     );
     assert!(
-        inline_dirty
-            .contains("  3. run the `ripr continue --attempt ...` command that step 1 prints\n"),
+        inline_dirty.contains("  3. run the `continue --attempt ...` command that step 1 prints\n"),
         "{inline_dirty}"
     );
 
@@ -2179,7 +2178,7 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
         "{markdown}"
     );
     assert!(
-        markdown.contains("then run the `ripr continue` command it prints:"),
+        markdown.contains("then run the `continue --attempt ...` command it prints:"),
         "{markdown}"
     );
 
@@ -2190,7 +2189,7 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
     let tests_dirty = render(&tests_dir_entry, &dirty)?;
     assert!(!tests_dirty.contains("uncommitted edits"), "{tests_dirty}");
     assert!(
-        tests_dirty.contains("  3. run the `ripr continue"),
+        tests_dirty.contains("  3. run the `continue --attempt ...`"),
         "{tests_dirty}"
     );
     Ok(())

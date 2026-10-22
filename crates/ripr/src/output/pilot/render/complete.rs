@@ -445,7 +445,7 @@ pub(crate) fn render_pilot_summary_md(
                 ));
             }
             out.push_str(&format!(
-                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `ripr continue` command it prints:\n\n",
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `continue --attempt ...` command it prints:\n\n",
             ));
             vec![command]
         }
@@ -792,7 +792,7 @@ pub(crate) fn render_pilot_terminal(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default()
         ));
-        out.push_str("  3. run the `ripr continue --attempt ...` command that step 1 prints\n");
+        out.push_str("  3. run the `continue --attempt ...` command that step 1 prints\n");
         out.push_str(
             "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
         );
