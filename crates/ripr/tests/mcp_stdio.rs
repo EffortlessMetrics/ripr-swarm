@@ -4083,6 +4083,11 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
             let gap = structured_tool_success(&gap, "ripr_get_gap")?;
             let finding_id = gap["item"]["finding_id"].as_str().ok_or("no finding id")?;
             let refusal = cli_repair_refusal(&root, finding_id)?;
+            if second_module && refusal.is_none() {
+                return Err(format!(
+                    "two candidate inline modules: the CLI must refuse {finding_id}"
+                ));
+            }
             let ready = prepare["repair_packet_ready"] == true;
             if ready && refusal.is_some() {
                 return Err(format!(

@@ -245,6 +245,13 @@ impl RepairReadiness {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.inline_test_module.is_some()) =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
+            }
             None => {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface"
             }
@@ -1252,6 +1259,8 @@ mod tests {
         if !lifted.ready
             || lifted.ineligibility.is_some()
             || site.inline_test_module.as_deref() != Some("tests")
+            || !lifted.reason().contains("governed inline")
+            || lifted.reason().contains("on a test surface")
         {
             return Err(format!(
                 "matching inline admission did not lift: {lifted:?}"
