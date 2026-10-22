@@ -949,11 +949,6 @@ issue = 7089
 reason = "A user macro_rules! wrapping assert_eq! reads as a weak gap; it should be credited, or at worst limited under the macro-wrapped limit (#7089)."
 
 [[known_false]]
-case = "idiom-display-string-pin"
-issue = 9608
-reason = "A Display impl pinned through to_string() reads as a weak gap (#9608)."
-
-[[known_false]]
 case = "idiom-fixture-builder-total"
 issue = 9609
 reason = "A method pinned on a fixture-built receiver reads as a weak gap (#9609)."

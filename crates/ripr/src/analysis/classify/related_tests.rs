@@ -26,6 +26,7 @@ use std::path::Path;
 mod equality_dispatch;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+pub(in crate::analysis) use fmt_dispatch::assertion_pins_display_string;
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by

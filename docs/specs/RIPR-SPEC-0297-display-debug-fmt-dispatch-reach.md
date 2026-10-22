@@ -86,6 +86,29 @@ link is established from syntax:
 Existing shadow checks for the owner's type and trait still apply. Derived
 `Debug` has no indexed `fmt` owner and is out of scope.
 
+### Pinned Display output (#9608)
+
+Reach alone leaves a changed `Display::fmt` that only calls
+`write!(f, "literal", args)` at `weakly_exposed`: the `write!` is not a
+returned value, and the test never names `fmt`. Two links close that read, and
+both are required:
+
+- Propagation. When the owner is a `fmt` whose whole body is one
+  `write!` into its own formatter parameter, with a string-literal format and
+  arguments free of macros, closures, blocks, branches, `?` and `.await`, and no
+  `format!` or `write!` binding in the file, the same direct-output witness as
+  a `format!` tail completes (`fmt_write_owner_tail`).
+- Observation. An exact-value `assert_eq!` whose one side is a string literal
+  and whose other side is `value.to_string()`, with `value` typed as the owner's
+  self type by the strict rule above, pins the whole text the owner writes. It is
+  admitted only for `Display` and only when no inherent `to_string` competes.
+  `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
+  that bare name.
+
+A `format!` or `{}` side, a computed expected string, a weaker assertion such as
+`ends_with`, and `Debug` owners are not read here and keep their prior verdict.
+This credits only; it widens no actionability.
+
 ## Required Evidence
 
 - Positive: Debug and Display via `format!`, `write!`, `println!`,
@@ -117,7 +140,12 @@ Existing shadow checks for the owner's type and trait still apply. Derived
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the
-  `tests` module, one test per Required Evidence bullet.
+  `tests` module, one test per Required Evidence bullet, plus the Display
+  string pin tests.
+- `crates/ripr/src/analysis/classify/propagation_witness.rs`:
+  `fmt_owner_tail_line_reads_only_a_write_into_the_formatter_parameter`.
+- `fixtures/rust-verdict-corpus` case `idiom-display-string-pin` (runtime
+  truth `discriminated`, verdict `credited`).
 
 ## Implementation Mapping
 
@@ -126,6 +154,15 @@ Existing shadow checks for the owner's type and trait still apply. Derived
   `expr_has_type`.
 - `crates/ripr/src/analysis/classify/related_tests.rs`: candidate prefilter,
   `calls_owner` and `owner_call_relation_reason` wiring.
+- `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:
+  `assertion_pins_display_string`.
+- `crates/ripr/src/analysis/classify/propagation_witness.rs`:
+  `format_tail_witness` reads the `write!(f, ..)` tail of a `fmt` owner.
+- `crates/ripr/src/analysis/classifier/evidence.rs`: admits the Display
+  string pin through the owner-return-pin closure for a `fmt_write_owner_tail`
+  witness.
+- `crates/ripr/src/analysis/classify/reveal.rs`: a `fmt` owner skips the
+  same-name import defeat.
 
 ## Metrics
 
