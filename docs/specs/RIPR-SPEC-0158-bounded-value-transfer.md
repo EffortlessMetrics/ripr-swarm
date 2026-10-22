@@ -105,6 +105,16 @@ exercised boundary from a missing one.
   not the compared number, so that row leaves the local unresolved and
   the boundary reads `infection_unknown` instead of a missing
   discriminator (#9276).
+- An equality fact whose one side is an owner parameter and whose other
+  side is a local that evaluated to a plain integer names the value, not
+  the local (`bytes == 1024`, not `bytes == unit`), on either side of the
+  comparison. A test helper that forwards its parameters
+  (`fn expect_tier(want, bytes, si) { assert_eq!(want, tier(bytes, si)) }`)
+  then pairs the call with its exact assertion through the same-test
+  pairing, which matches `parameter == literal` terms against the
+  literals the call feeds. A helper that computes an argument
+  (`tier(bytes + 1, si)`) or asserts only that the result is non-empty
+  still does not pair (#9509).
 
 ## Acceptance Examples
 
