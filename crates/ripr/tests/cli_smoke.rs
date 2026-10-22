@@ -17215,6 +17215,73 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     Ok(())
 }
 
+/// #9500: through the real binary, `reports gap-ledger --repo-exposure` on an
+/// unenveloped legacy artifact (or one stamped by another producer version)
+/// writes a `blocked` ledger with the envelope diagnosis and a regeneration
+/// command that runs this binary, not a clean `advisory` with no warnings.
+/// The positive control, a real producer artifact ledgering cleanly, is
+/// `gap-ledger` consuming real producer output in the
+/// `producer_verify_packet` fixture, which ledgers a real `check --format repo-exposure-json` artifact.
+#[test]
+fn gap_ledger_repo_exposure_refuses_legacy_and_foreign_producer_artifacts() -> Result<(), String> {
+    let cwd = unique_temp_workspace("gap-ledger-legacy-envelope");
+    std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd: {e}"))?;
+    let seam = serde_json::json!({
+        "seam_id": "seam:src/lib.rs:1", "kind": "predicate_boundary",
+        "file": "src/lib.rs", "line": 1, "grip_class": "weak"
+    });
+    let legacy = serde_json::json!({
+        "schema_version": "0.4", "scope": "repo", "seams": [seam.clone()]
+    });
+    let foreign = serde_json::json!({
+        "schema_version": "0.5", "scope": "repo", "seams": [seam],
+        "artifact": {"producer": {"tool": "ripr", "version": "0.10.9"}}
+    });
+    let exe = env!("CARGO_BIN_EXE_ripr");
+    for (name, payload, needle) in [
+        ("legacy", legacy, "no RIPR producer envelope"),
+        ("foreign", foreign, "produced by RIPR 0.10.9"),
+    ] {
+        let source = cwd.join(format!("{name}.repo-exposure.json"));
+        let out = cwd.join(format!("{name}.ledger.json"));
+        std::fs::write(&source, payload.to_string()).map_err(|e| format!("write source: {e}"))?;
+        let output = run_command(
+            exe,
+            Some(&cwd),
+            &[
+                "reports",
+                "gap-ledger",
+                "--root",
+                ".",
+                "--repo-exposure",
+                &source.to_string_lossy(),
+                "--out",
+                &out.to_string_lossy(),
+                "--out-md",
+                &cwd.join(format!("{name}.ledger.md")).to_string_lossy(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        let ledger = std::fs::read_to_string(&out).map_err(|e| format!("{name}: {e}"))?;
+        let ledger: serde_json::Value = serde_json::from_str(&ledger).map_err(|e| e.to_string())?;
+        let warnings = ledger["warnings"].to_string();
+        let ok = ledger["status"] == "blocked"
+            && ledger["records"].as_array().is_some_and(Vec::is_empty)
+            && warnings.contains(needle)
+            && warnings.contains(" check --root")
+            && !warnings.contains("`ripr check --root");
+        if !ok {
+            let _ = std::fs::remove_dir_all(&cwd);
+            return Err(format!(
+                "{name}: expected a blocked ledger naming `{needle}` and the running binary; exit {:?}\n{ledger}",
+                output.status.code()
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&cwd);
+    Ok(())
+}
+
 /// A seam whose only tests sit in a file with two candidate inline
 /// `#[cfg(test)]` modules gets a focused-test suggestion but no repair target.
 /// The README sends readers to the `ripr agent repair` command pilot prints,
