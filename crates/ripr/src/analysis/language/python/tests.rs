@@ -7700,6 +7700,64 @@ fn a_coroutine_runner_is_transparent_and_the_filter_bound_decides_the_verdict() 
     Ok(())
 }
 
+/// Classifies the `start > 0` -> `start >= 0` loop-bound change in a
+/// generator whose counter is `body`'s only update, against a strong exact
+/// test whose assertion is `assert {call} == [3, 2, 1]` (#9412).
+fn classify_loop_bound(body: &str, call: &str) -> Result<crate::domain::Finding, String> {
+    let source = format!("def countdown(start):\n    while start >= 0:\n{body}");
+    let owners = extract_owners(Path::new("src/gen.py"), &source);
+    let tests = extract_tests(
+        Path::new("tests/test_gen.py"),
+        &format!(
+            "from src.gen import countdown\n\n\ndef test_steps():\n    assert {call} == [3, 2, 1]\n"
+        ),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse one test for `{call}`");
+    super::classify::classify_change_with_source(
+        Path::new("src/gen.py"),
+        2,
+        "    while start >= 0:",
+        Some("    while start > 0:"),
+        &owners,
+        &tests,
+        Some(&source),
+    )
+    .ok_or_else(|| format!("loop bound change should classify for `{call}`"))
+}
+
+const UNIT_STEP_BODY: &str = "        yield start\n        start -= 1\n";
+
+#[test]
+fn a_unit_stepped_while_counter_reaches_its_bound_from_an_input_past_it() -> Result<(), String> {
+    // countdown(3) never binds `start` to 0, but the loop does reach it.
+    let finding = classify_loop_bound(UNIT_STEP_BODY, "list(countdown(3))")?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    // An input below the bound never enters the walk: it stays a gap.
+    let finding = classify_loop_bound(UNIT_STEP_BODY, "list(countdown(-2))")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_counter_the_loop_may_skip_or_leave_early_is_not_walked() -> Result<(), String> {
+    for body in [
+        // a step of two can jump over the bound
+        "        yield start\n        start -= 2\n",
+        // the step is conditional
+        "        yield start\n        if start:\n            start -= 1\n",
+        // the loop can leave before the bound
+        "        if start == 2:\n            break\n        yield start\n        start -= 1\n",
+        // the counter is updated twice
+        "        yield start\n        start -= 1\n        start -= 1\n",
+        // the counter is rebound
+        "        yield start\n        start = start - 1\n",
+    ] {
+        let finding = classify_loop_bound(body, "list(countdown(3))")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{body}");
+    }
+    Ok(())
+}
+
 #[test]
 fn a_runner_lookalike_wrapper_stays_opaque() -> Result<(), String> {
     // A bare `run(...)` or another receiver's `.run(...)` is any function: it

@@ -38,6 +38,7 @@
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
+use super::loop_walk::python_loop_step;
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
@@ -151,6 +152,8 @@ pub(super) fn python_boundary_evidence(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
+    owner_source: Option<&str>,
+    line: usize,
 ) -> Option<PythonBoundaryEvidence> {
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
@@ -237,6 +240,21 @@ pub(super) fn python_boundary_evidence(
     let mut right_values = Vec::new();
     // The comprehension local takes each element of its iterable; any other
     // operand resolves to its one value.
+    // A `while` counter stepped by one in the loop body passes through its
+    // bound, so an input past the bound reaches it inside the loop.
+    let counter_walk = owner_source
+        .zip(operators.first())
+        .and_then(|(source, (start, len))| {
+            let step = python_loop_step(source, line, &left)?;
+            let bound = right.parse::<i128>().ok()?;
+            let operator = condition.get(*start..*start + *len)?;
+            let toward = if step.decreasing {
+                matches!(operator, ">" | ">=")
+            } else {
+                matches!(operator, "<" | "<=")
+            };
+            (operators.len() == 1 && toward).then_some((step, bound))
+        });
     let candidates = |operand: &str, row: &CallRow| -> Vec<String> {
         match &filter {
             Some(filter) if filter.local == operand => row
@@ -244,9 +262,19 @@ pub(super) fn python_boundary_evidence(
                 .get(filter.iterable)
                 .cloned()
                 .unwrap_or_default(),
-            _ => resolve_operand(operand, row, &constants)
-                .into_iter()
-                .collect(),
+            _ => {
+                let mut values: Vec<String> = resolve_operand(operand, row, &constants)
+                    .into_iter()
+                    .collect();
+                if let Some((step, bound)) = &counter_walk
+                    && step.local == operand
+                    && let Some(start) = values.first().and_then(|value| value.parse::<i128>().ok())
+                    && step.reaches(start, *bound)
+                {
+                    values.push(bound.to_string());
+                }
+                values
+            }
         }
     };
     for row in &rows {
