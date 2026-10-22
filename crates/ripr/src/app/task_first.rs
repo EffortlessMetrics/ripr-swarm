@@ -205,14 +205,16 @@ fn repair_refusal(
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
                 // verdict: "repair route not ready" alone sends the reader
-                // hunting for what to strengthen (#9604).
-                let missing = eligibility.readiness.missing_evidence.join(", ");
+                // hunting for what to strengthen (#9604). The parenthetical
+                // matches the agent card's readiness line so both surfaces
+                // read the same way.
+                let missing = eligibility.readiness.missing_evidence.join("; ");
                 if missing.is_empty() {
                     (RefusalKind::RouteNotReady, label.to_string())
                 } else {
                     (
                         RefusalKind::RouteNotReady,
-                        format!("{label}: missing {missing}"),
+                        format!("{label} (missing evidence: {missing})"),
                     )
                 }
             } else {
@@ -1426,7 +1428,7 @@ pub(crate) mod tests {
         assert!(
             refusal
                 .reason
-                .starts_with("repair route not ready: missing "),
+                .starts_with("repair route not ready (missing evidence: "),
             "{}",
             refusal.reason
         );
@@ -1550,7 +1552,7 @@ pub(crate) mod tests {
         assert!(
             refused
                 .reason
-                .starts_with("repair route not ready: missing "),
+                .starts_with("repair route not ready (missing evidence: "),
             "{}",
             refused.reason
         );
