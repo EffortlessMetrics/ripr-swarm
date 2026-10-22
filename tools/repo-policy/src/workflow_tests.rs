@@ -34,6 +34,8 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
     for (route, command) in routes {
         let action = if route == "ub-review.yml" {
             "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
+        } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
+            "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
         } else {
             "v1"
         };
