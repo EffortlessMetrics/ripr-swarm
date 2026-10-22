@@ -1,7 +1,7 @@
 {
   "subject_id": "authored-py-pytest-hostile",
   "origin": "authored",
-  "version_label": "authored@3608bb9a",
+  "version_label": "authored@3608bb9a+9522",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [
@@ -60,6 +60,10 @@
     {
       "path": "hostile/stars.py",
       "sha256": "5f5dec7e139d5c464ed9bd667b988cfe1900ddcc9e642c11c316e6c3401effbb"
+    },
+    {
+      "path": "hostile/stars_no_all.py",
+      "sha256": "058292ab6d0c396005f690e31991d9e801af0e47891f84fe8195bbb36a4fe201"
     },
     {
       "path": "hostile/tabs.py",
@@ -128,6 +132,10 @@
     {
       "path": "tests/test_stars.py",
       "sha256": "402b753f45f927846d1aa3532f43ce0de6206fdc9a1d4517299c0a5b9b37d9c6"
+    },
+    {
+      "path": "tests/test_stars_no_all.py",
+      "sha256": "164b8478f203aef034a83691cbe55c5bd53eb84a081579fce81e4d750f74f045"
     },
     {
       "path": "tests/test_tabs.py",
