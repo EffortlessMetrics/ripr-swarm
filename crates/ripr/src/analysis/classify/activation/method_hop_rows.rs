@@ -196,3 +196,16 @@ fn receiver_cell_never_binds_through_a_plain_forwarding_hop() -> Result<(), Stri
     assert!(owner_rows(&source)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn a_test_local_binding_of_the_constructor_name_binds_no_row() -> Result<(), String> {
+    // `let ByteSize = |n| ..` makes `ByteSize(215)` something other than the
+    // tuple constructor, so the receiver cell would name a value the owner
+    // never sees (#9329 Devin review).
+    let calls = "        let ByteSize = |n: u64| crate::ByteSize(n * 2);\n        check(\"430 B\", ByteSize(215), true);";
+    assert_eq!(
+        owner_rows(&source(HELPER_CALL, calls))?,
+        Vec::<Vec<(String, String)>>::new()
+    );
+    Ok(())
+}

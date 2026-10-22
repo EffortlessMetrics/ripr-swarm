@@ -310,4 +310,8 @@ fn projection_reads_exactly_one_in_range_tuple_index() {
     }
     assert!(is_receiver_cell("ByteSize(1)"));
     assert!(!is_receiver_cell("1024"));
+    // A scalar literal holding a parenthesis is not a constructed receiver.
+    for scalar in ["\"(hi)\"", "'('", "\"f(x)\""] {
+        assert!(!is_receiver_cell(scalar), "{scalar}");
+    }
 }

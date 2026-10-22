@@ -40,7 +40,12 @@ use crate::analysis::facts::{FunctionContainer, RustIndex};
 /// Whether a row cell value is a constructed receiver string rather than a
 /// scalar literal.
 pub(in crate::analysis::classify) fn is_receiver_cell(value: &str) -> bool {
-    value.contains('(')
+    // `Type(..)`: a quoted string or char literal holding a parenthesis
+    // (`"(hi)"`, `'('`) starts with a quote and is a scalar.
+    value
+        .split_once('(')
+        .is_some_and(|(head, _)| is_identifier(head))
+        && value.ends_with(')')
 }
 
 /// The canonical constructed string of a receiver argument, or `None`.

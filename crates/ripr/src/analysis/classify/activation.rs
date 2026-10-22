@@ -3649,6 +3649,21 @@ pub(in crate::analysis) fn computed_input_parameters(
     computed
 }
 
+/// Capitalized identifiers in call text that are applied or path-qualified
+/// (`Size(..)`, `Size::new(..)`): the names a receiver argument may construct.
+fn constructor_names(text: &str) -> impl Iterator<Item = &str> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(|ch: char| ch.is_ascii_uppercase())
+        .filter(move |(at, _)| !text[..*at].chars().next_back().is_some_and(is_word))
+        .filter_map(move |(at, _)| {
+            let end = text[at..]
+                .find(|ch: char| !is_word(ch))
+                .map_or(text.len(), |n| at + n);
+            let after = &text[end..];
+            (after.starts_with('(') || after.starts_with("::")).then(|| &text[at..end])
+        })
+}
+
 /// Bind the entry function's direct test rows down the resolved chain
 /// to the owner's parameters. Each hop's call-site arguments bind
 /// positionally: a literal binds directly, the caller's own parameter
@@ -3689,7 +3704,11 @@ fn helper_transferred_rows(
                 test,
                 &entry.caller.name,
                 call.line,
-            )
+            ) && !constructor_names(&call.text).any(|name| {
+                // #9329 Devin review: a test-local `let Size = |n| ..` makes
+                // `Size(1024)` something other than the tuple constructor.
+                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
+            })
         },
         &receivers,
     );

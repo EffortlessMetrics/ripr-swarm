@@ -970,9 +970,11 @@ pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
     chain.hops.iter().any(|hop| hop.receiver.is_some())
 }
 
-/// The receiver self forms a method hop admits.
+/// The receiver self forms a method hop admits. `&mut self` is refused: the
+/// method may change a field before it reaches the owner, so the receiver
+/// value the test built is no longer the value the owner sees.
 fn is_plain_self_receiver(parameter: &str) -> bool {
-    matches!(parameter.trim(), "self" | "&self" | "&mut self")
+    matches!(parameter.trim(), "self" | "&self")
 }
 
 /// #9329: the hop from `caller` into the unique inherent method
@@ -982,7 +984,7 @@ fn is_plain_self_receiver(parameter: &str) -> bool {
 ///
 /// - the callee is the one function of that name, declared in an inherent
 ///   `impl <Type>` for a plain single-segment `Type` and taking exactly
-///   `self`, `&self` or `&mut self` first;
+///   `self` or `&self` first;
 /// - the caller mentions the callee exactly once, as `<ident>.<callee>(..)`
 ///   with `<ident>` a plain identifier not itself a field, path or call
 ///   result;
@@ -1300,7 +1302,6 @@ pub(crate) fn test_call_is_shadowed(
     callee: &str,
     call_line: usize,
 ) -> bool {
-    use crate::analysis::extract::ShadowAuthority;
     if !callee_is_unique(callee, index) {
         return true;
     }
@@ -1321,6 +1322,23 @@ pub(crate) fn test_call_is_shadowed(
     {
         return true;
     }
+    test_body_shadows_name(index, test, callee, call_line)
+}
+
+/// Whether a test-local closure, nested fn or binding named `name` is in
+/// scope at `call_line`. Unlike `test_call_is_shadowed` it does not require
+/// `name` to be a unique workspace function, so it also covers a tuple-struct
+/// constructor such as `Size(..)` rebound by `let Size = |n| ..`.
+pub(crate) fn test_body_shadows_name(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    name: &str,
+    call_line: usize,
+) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let callee = name;
+    let files = index.files();
+    let file_facts = files.get(&test.file);
     let parser_backed = file_facts
         .as_ref()
         .is_some_and(|facts| !facts.used_lexical_fallback);

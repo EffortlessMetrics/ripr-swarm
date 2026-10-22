@@ -66,8 +66,8 @@ exercised boundary from a missing one.
   string literals do not end an arm.
 
 - Method hop (#9329): a helper chain may cross one receiver call
-  `<ident>.<method>(args)` into a unique inherent method taking `self`,
-  `&self` or `&mut self`, when `<ident>` is a parameter of the calling
+  `<ident>.<method>(args)` into a unique inherent method taking `self` or
+  `&self` (never `&mut self`, which may change the field first), when `<ident>` is a parameter of the calling
   function declared exactly `Type`, `&Type` or `&mut Type` for the
   method's own plain single-segment `Type`, never rebound, with exactly
   one call site, and the file does not `use`-import `Type`. The hop

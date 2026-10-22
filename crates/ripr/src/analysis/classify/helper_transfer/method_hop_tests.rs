@@ -94,11 +94,16 @@ fn reference_parameter_and_every_self_receiver_form_resolve() -> Result<(), Stri
         let (hops, _) = chain_of(&crate_with("", METHOD, &helper))?;
         assert_eq!(hops.len(), 2, "{helper_signature}");
     }
-    for receiver in ["&self", "&mut self", "self"] {
+    for receiver in ["&self", "self"] {
         let method = METHOD.replace("&self", receiver);
         let (hops, _) = chain_of(&crate_with("", &method, HELPER))?;
         assert_eq!(hops.len(), 2, "{receiver}");
     }
+    // A `&mut self` method may change the field before the owner reads it.
+    assert_declined(
+        &crate_with("", &METHOD.replace("&self", "&mut self"), HELPER),
+        "&mut self receiver",
+    )?;
     Ok(())
 }
 
