@@ -34,9 +34,8 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function,
-    direct_collection_mutation_receiver,
-    owner_call_text, reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
+    reach_evidence as classify_reach_evidence, relation_establishes_reach,
     test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
