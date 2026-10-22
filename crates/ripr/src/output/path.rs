@@ -103,9 +103,12 @@ pub(crate) fn repository_relative_path_text_with(
 
 /// Component-wise, ASCII-case-insensitive root strip for an absolute
 /// non-Windows root. The remainder keeps the file's own spelling and must be
-/// non-empty and free of parent components.
+/// non-empty and free of parent components. Rootedness is the POSIX rule, not
+/// the native `Path::is_absolute`, which calls `/repo` relative on Windows.
 fn strip_case_insensitive_root(root: &Path, file: &Path) -> Option<PathBuf> {
-    if !root.is_absolute() || !file.is_absolute() {
+    if !is_absolute_on(&root.to_string_lossy(), false)
+        || !is_absolute_on(&file.to_string_lossy(), false)
+    {
         return None;
     }
     let mut file_components = file.components();
