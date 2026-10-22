@@ -649,6 +649,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     // every line number.
     if is_test_file(file)
         && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
     {
         return extract_source_facts(file, &inlined);
     }

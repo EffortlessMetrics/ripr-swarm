@@ -97,7 +97,23 @@ pub(super) fn inline_test_helpers(source: &str, body: &[Stmt]) -> Option<String>
     for (start, end, replacement) in edits {
         rewritten.replace_range(start..end, &replacement);
     }
-    Some(rewritten)
+    Some(finish(source, rewritten))
+}
+
+/// Test-only seam: a source carrying the marker gets a rewrite that cannot
+/// parse, to exercise the caller's fall-back to the original source.
+#[cfg(test)]
+fn finish(source: &str, rewritten: String) -> String {
+    if source.contains("ripr-test-force-parse-failure") {
+        format!("{rewritten}\n)(")
+    } else {
+        rewritten
+    }
+}
+
+#[cfg(not(test))]
+fn finish(_source: &str, rewritten: String) -> String {
+    rewritten
 }
 
 fn file_rebinds_dynamically(source: &str) -> bool {
@@ -180,13 +196,20 @@ fn collect_helpers(source: &str, body: &[Stmt]) -> BTreeMap<String, Helper> {
             .iter()
             .filter(|other| matches!(other, Stmt::FunctionDef(f) if f.name.as_str() == name))
             .count();
-        // Any other `def NAME` (conditional, nested, in a class) also rebinds.
+        // Any other `def NAME` or `class NAME` (conditional, nested, in a
+        // class) also rebinds the name.
         let spelled = source
             .match_indices(name)
             .filter(|(at, _)| {
                 let head = source[..*at].trim_end();
-                head.ends_with("def")
-                    && !head[..head.len() - 3].ends_with(word_char)
+                let keyword = if head.ends_with("def") {
+                    3
+                } else if head.ends_with("class") {
+                    5
+                } else {
+                    return false;
+                };
+                !head[..head.len() - keyword].ends_with(word_char)
                     && !source[*at + name.len()..].starts_with(word_char)
             })
             .count();
@@ -336,7 +359,14 @@ fn substitute(text: &str, parameters: &[String], arguments: &[String]) -> Option
                 // A numeric literal cannot be a member object (`5.bit_length()`
                 // is a syntax error that would drop the whole file's tests).
                 let numeric = argument.starts_with(|c: char| c.is_ascii_digit() || c == '(');
-                if before.ends_with('.') || keyword || (numeric && after.starts_with(['.', '('])) {
+                // A string-prefix letter (`b'abc'`) would fuse with the
+                // argument's own quote.
+                let prefixed = text[end..].starts_with(['\'', '"']);
+                if before.ends_with('.')
+                    || keyword
+                    || prefixed
+                    || (numeric && after.starts_with(['.', '(']))
+                {
                     return None;
                 }
                 out.push_str(argument);

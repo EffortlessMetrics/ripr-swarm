@@ -345,3 +345,29 @@ fn given_a_test_with_a_non_expression_statement_then_it_stays_unknown() {
         assert_eq!(assertion_count(&source), 0, "{first}");
     }
 }
+
+#[test]
+fn given_a_class_rebinding_the_helper_name_then_it_stays_unknown() {
+    let helper = format!("{HELPER}class check_pass:\n    pass\n\n\n");
+    let source = test_source(&helper, "    check_pass(50, True)\n");
+    assert_eq!(assertion_count(&source), 0);
+}
+
+#[test]
+fn given_a_parameter_followed_by_a_quote_then_it_stays_unknown() {
+    let helper = "def check_pass(b, want):\n    assert passes(b'abc') == want\n\n\n";
+    let source = test_source(helper, "    check_pass('x', True)\n");
+    assert_eq!(assertion_count(&source), 0);
+}
+
+#[test]
+fn given_a_rewrite_that_fails_to_parse_then_the_original_source_is_extracted() {
+    let source = format!(
+        "# ripr-test-force-parse-failure\n{}\n\ndef test_other():\n    assert passes(50) == True\n",
+        test_source(HELPER, "    check_pass(50, True)\n")
+    );
+    let tests = extract_tests(Path::new("tests/test_core.py"), &source);
+    let other = tests.iter().find(|test| test.name == "test_other");
+    assert_eq!(other.map(|test| test.assertions.len()), Some(1));
+    assert_eq!(assertion_count(&source), 0);
+}

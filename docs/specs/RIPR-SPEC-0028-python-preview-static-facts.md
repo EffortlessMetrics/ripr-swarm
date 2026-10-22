@@ -962,11 +962,12 @@ reads as the helper's `assert` statements with each parameter replaced by its
 literal argument, on the call's own line (every line number is unchanged). The
 rewrite is credit or unknown only: the substituted asserts pass through the
 ordinary oracle admission, so a weak or unrecognised assert is no stronger than
-when written inline, and no gap or repair signal is added. It applies only to
+when written inline; no new finding kind or repair rule is added and the
+ordinary classifier applies. It applies only to
 test files, and only when all of these hold; otherwise the call reads as before:
 
 - the helper is a module-level, undecorated, synchronous `def`, spelled
-  `def NAME` exactly once in the file, with plain positional parameters (no
+  `def NAME` exactly once in the file (and never also a `class NAME`), with plain positional parameters (no
   default, `*args`, keyword-only or `**kwargs`), whose body is only `assert`
   statements (and an optional leading docstring), one per line; every mention
   of its name is its definition or a direct call;
@@ -979,12 +980,13 @@ test files, and only when all of these hold; otherwise the call reads as before:
   literal (a signed number is parenthesised);
 - a parameter is used in the asserts only as a plain value: not as an
   attribute name, keyword, inside a string, or as the object of a member access
-  or call when the argument is a number; the asserts hold no `lambda`,
-  comprehension, walrus, `await`, `yield`, list or dict literal, or backslash.
+  or call when the argument is a number, or directly followed by a quote
+  (a string prefix); the asserts hold no `lambda`, comprehension, walrus,
+  `await`, `yield`, backslash, or any `[` or `{` (every one is refused). A
+  rewrite that does not parse is discarded and the original source is read.
 
 A helper in another file (#9419), a call under `if`/loop/`with`, a computed
 argument or a helper with control flow stays `no_static_path`.
-
 
 ## Metrics
 

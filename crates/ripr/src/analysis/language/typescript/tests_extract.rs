@@ -131,6 +131,12 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         if expand
             && let Some(inlined) =
                 super::helper_inline::inline_test_helpers(&ret.program.body, source)
+            // Defence in depth: a rewrite that fails to parse degrades to the
+            // original source (unknown), never to a file with no tests.
+            && Parser::new(allocator, &inlined.source, source_type_for(file))
+                .parse()
+                .errors
+                .is_empty()
         {
             return (Vec::new(), None, Some(inlined));
         }

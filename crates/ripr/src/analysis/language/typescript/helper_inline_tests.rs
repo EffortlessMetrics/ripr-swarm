@@ -217,7 +217,12 @@ fn ts_this_arguments_or_assertion_named_parameters_are_not_inlined() {
         "function checkPass(assert: number, want: boolean): void {\n  assert.equal(passes(1), want);\n}\n\n",
     ];
     for helper in cases {
-        let text = source(helper, "  checkPass(50, true);\n");
+        let call = if helper.contains("(expect:") || helper.contains("(assert:") {
+            "  checkPass(true, true);\n"
+        } else {
+            "  checkPass(50, true);\n"
+        };
+        let text = source(helper, call);
         assert_eq!(assertion_count(&text), 0, "{helper}");
     }
 }
@@ -316,4 +321,27 @@ fn ts_a_body_with_a_non_expression_statement_is_not_inlined() {
         let text = source(HELPER, &format!("  {first}\n  checkPass(50, true);\n"));
         assert_eq!(assertion_count(&text), 0, "{first}");
     }
+}
+
+#[test]
+fn ts_compound_shift_assignment_is_not_inlined() {
+    for operator in ["<<=", ">>=", ">>>="] {
+        let helper = format!(
+            "function checkPass(score: number, want: boolean): void {{\n  assert.ok(score {operator} 1);\n}}\n\n"
+        );
+        let text = source(&helper, "  checkPass(50, true);\n");
+        assert_eq!(assertion_count(&text), 0, "{operator}");
+    }
+}
+
+#[test]
+fn ts_a_rewrite_that_fails_to_parse_keeps_the_files_other_tests() {
+    let text = format!(
+        "// ripr-test-force-parse-failure\n{}\ntest(\"other\", () => {{\n  assert.equal(passes(50), true);\n}});\n",
+        source(HELPER, "  checkPass(50, true);\n")
+    );
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), &text);
+    let other = tests.iter().find(|test| test.local_name == "other");
+    assert_eq!(other.map(|test| test.assertions.len()), Some(1));
+    assert_eq!(assertion_count(&text), 0);
 }

@@ -98,10 +98,26 @@ pub(crate) fn inline_test_helpers(
         rewritten.replace_range(start..end, &replacement);
     }
     Some(SuiteFactoryExpansion {
-        source: rewritten,
+        source: finish(source, rewritten),
         call_lines: Vec::new(),
         covered: Vec::new(),
     })
+}
+
+/// Test-only seam: a source carrying the marker gets a rewrite that cannot
+/// parse, to exercise the caller's fall-back to the original source.
+#[cfg(test)]
+fn finish(source: &str, rewritten: String) -> String {
+    if source.contains("ripr-test-force-parse-failure") {
+        format!("{rewritten}\n)(")
+    } else {
+        rewritten
+    }
+}
+
+#[cfg(not(test))]
+fn finish(_source: &str, rewritten: String) -> String {
+    rewritten
 }
 
 /// The statements of a top-level `test(title, () => {...})` / `it(...)`
@@ -349,7 +365,7 @@ fn substitute(
     // capture a parameter name; none is read here.
     if text.len() != masked.len()
         || text.contains(['`', '{', '\\'])
-        || ["=>", "function", "++", "--"]
+        || ["=>", "function", "++", "--", "<<=", ">>="]
             .iter()
             .any(|needle| masked.contains(needle))
     {
