@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_already_observed/input --diff <cwd>/fixtures/ts_already_observed/diff.patch --mode fast probe:src_validator.ts:typescript_preview:1538ac63
   ripr context --root <cwd>/fixtures/ts_already_observed/input --diff <cwd>/fixtures/ts_already_observed/diff.patch --mode fast --at probe:src_validator.ts:typescript_preview:1538ac63
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_validator.ts:typescript_preview:1538ac63 --root <cwd>/fixtures/ts_already_observed/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

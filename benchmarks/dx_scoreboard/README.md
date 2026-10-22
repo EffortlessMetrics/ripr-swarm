@@ -13,7 +13,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 
 | Board | What a developer feels | Metrics |
 |---|---|---|
-| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, per corpus repository |
+| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), the oracle accuracy and overclaim rate on Rust corpus cases labeled with a spec-adopted related-test oracle kind and strength (targets 1.0 and 0; kept apart from the verdict rates, derived from the same rows), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
@@ -170,6 +170,28 @@ cargo xtask pilot-ranking score --ripr target/release/ripr
 cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ranking.json \
   --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate
 ```
+
+The ranking gate is advisory and compares pooled counts and rates with the
+committed baseline. The refuted counts (`ranking.pilot_refuted_top5` and
+`ranking.pilot_refuted_top10`) set `pick_growth_allowance` in
+`scoreboards.toml`: besides their zero worsening margin they may rise by the
+number of picks the run admitted beyond the baseline's, read from the
+`refuted of N picks` evidence of both rows. A bigger judged set adds picks of
+every verdict, so an absolute count alone turned the lane red on growth that
+improved precision (#7167; #8572 added three refuted picks, #8940 re-blessed
+the baseline, and a pull request whose merge ref predated that baseline
+still failed on the old counts). At a flat or smaller pick count the margin is
+zero, so one flipped or newly refuted pick still fails; precision, scored
+share, distinct-function share and pick count keep their own floors and judge
+the mix of the added picks. A baseline without the pick count (hand-written or
+legacy evidence) gets no margin. With several repository samples, each
+repository's own verdict decides these two rows (an unchanged repository does
+not revoke another's margin). The rule is RIPR-SPEC-0281. The baseline schema is unchanged. The margin
+is not a pick-level join: it cannot say which picks are new or whether a
+matched pick changed verdict, so a refuted pick that arrives with growth passes
+this row when precision holds. A matched-set comparison needs the baseline to
+record each pick's identity (repository pin, file, line, owner, tier and
+verdict) and the answer-key caveats of #6696 and #6913 resolved first.
 
 ### The corpus lane
 

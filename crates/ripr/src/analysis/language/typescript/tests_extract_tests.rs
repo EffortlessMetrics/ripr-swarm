@@ -366,6 +366,7 @@ test.only("discount boundary", () => {
         params: Vec::new(),
         exported_as_default: false,
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         arity: None,
         source_text: None,

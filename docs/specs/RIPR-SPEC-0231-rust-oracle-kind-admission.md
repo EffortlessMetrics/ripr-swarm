@@ -22,6 +22,7 @@ Linked issues:
 
 - #5513 (observer substrings grant medium `mock_expectation` credit)
 - #6991 (exact-equality `.any()` membership graded weak; rule 7)
+- #7638 (statements that never run credited as oracles; rule 8)
 
 Linked PRs:
 
@@ -330,7 +331,7 @@ Two pattern terms are used below.
    it wraps, and a boolean literal it wraps is that literal: a constructor
    (`Some(..)`, `Ok::<bool, ()>(..)`, `E::V(..)`), a `new` or `from` path
    call (`Box::new(..)`), a one-element or repeat array (`[..]`,
-   `[..; n]`), `vec![..]`, and `.unwrap()`, `.expect(..)`, `.clone()` or
+   `[..; 2]`), `vec![..]`, and `.unwrap()`, `.expect(..)`, `.clone()` or
    `.to_owned()` on one operand, so `assert_eq!(Some(r == Err(E::Bad)),
    Some(expected))` caps and `assert_eq!(Some(r == Err(E::Bad)),
    Some(true))` reads as the comparison asserted true (#8101); a wrapped
@@ -345,9 +346,16 @@ Two pattern terms are used below.
    or `Arc` may discard its argument, an empty or unknown-length repeat
    (`[..; 0]`, `[..; n]`) holds nothing, and a test paired with anything but
    `true` in an equal-length sequence caps (`assert_eq!([r == Err(E::Bad),
-   x == 1], [false, true])`). A struct literal, a statement block, or a field
-   or method on a wrapper is not yet read this way (#8615). Such a comparison
-   asserted by a
+   x == 1], [false, true])`). A struct literal (`Foo { ok: x == 1 }`) holds
+   its fields' tests like a call and caps whatever it is compared with; the
+   tail of a statement block (`{ let a = 1; a == b }`) is the value it holds;
+   and a field or method on a wrapper or struct literal that holds a test
+   (`Wrapper(x == 1).0`, `Some(x == 3).unwrap_or(false)`) caps, except that a
+   plain field read compared with `true` still pins the held test (#8615).
+   An index read (`vec![x == 1, y][0]`), a parenthesized or `&`-prefixed
+   wrapper and a bare tuple (`(x == 1, y).0`) are read the same way, and two
+   tuples pair their elements like two lists (#8654).
+   Such a comparison asserted by a
    boolean literal caps the same way (`assert_eq!((r == Err(E::Bad)) as u8
    == 0, true)`, `assert_eq!((r == Err(E::Bad)) == flag, true)`), and a
    path call to `not` negates like `!` (`assert_eq!(Not::not(r ==
@@ -556,6 +564,45 @@ Two pattern terms are used below.
      `static_unknown` under `rust_log_capture_unresolved` (see
      `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
      the log format.
+
+8. **Statements that never run are not oracles.** Before any step, both
+   adapters drop an oracle whose statement never executes (#7638). An
+   assertion macro, a custom helper, an `unwrap()` / `expect()` smoke
+   reading and an uncompared `unwrap_err()` / `expect_err()` reading are
+   all exposed to this, because each is extracted from the statement text
+   without its enclosing control flow. A line is never-executed only when
+   every code byte on it (comments and string contents masked) lies in one
+   of these regions:
+   - the block of an `if` or `while` whose whole condition is the literal
+     `false` or `!true` (example 34). An `else` block still runs, and no
+     other constant condition (`1 == 2`, `false || x`, a `const`) is read;
+   - a `let [mut] NAME = [move] |..| ..;` statement whose closure `NAME` is
+     never named again in the following text of the function (example 35).
+     A closure passed, called, or named in a macro's arguments stays
+     reached, and so does a closure that is not bound by a plain `let`;
+   - the statements after an unconditional `return`, `panic!`,
+     `unreachable!`, `todo!` or `unimplemented!` (bare, `std::` or
+     `core::` qualified), `std::process::exit(..)` or `process::exit(..)`
+     statement, up to the end of the same block (examples 36 and 37). The
+     region stops early at an item declaration or attribute at statement
+     start, because a nested `fn` stays callable from earlier code; a
+     divergence nested in a condition, a match arm or a closure ends only
+     its own block.
+
+   One oracle stays for the authority that already decides it: a strong
+   `assert_eq!` or `assert!` in a literal-false block, an uncalled closure
+   or after a `return`. RIPR-SPEC-0197 execution admission refuses that
+   assertion's owner pin and names why in the finding's "not credited"
+   note, so dropping it here would only hide that explanation and could
+   let a weaker sibling oracle stand as the test's evidence. That
+   admission reads no exit in a diverging macro or `process::exit(..)`, so
+   after one of those every oracle is dropped, a strong `assert_eq!`
+   included (example 37).
+
+   The reading is fail-closed toward the existing credit: unbalanced
+   delimiters, any region inside a macro invocation's input, and a line
+   that also holds a reached statement keep every oracle on that line. The
+   rule only removes oracles, so it never creates a new path to `exposed`.
 
 ### Reveal admission of an excluded sibling
 
@@ -841,6 +888,29 @@ rejected alternative. Any can be reversed later without touching the rest.
     `exact_value` / strong from `score(2) == 4` (both read
     `exact_error_variant` / strong before #7947, a kind the excluded variant
     never earns).
+34. `if false { check(300).unwrap_err(); }` and
+    `if !true { assert!(check(300).is_err()); }`: no oracle (rule 8;
+    `broad_error` / weak before #7638). `let value = score(2);
+    if false { assert_eq!(value, 4); }` keeps its `exact_value` / strong
+    oracle, whose owner pin RIPR-SPEC-0197 execution admission refuses
+    ("the assertion is inside an `if` branch"), so the finding reads its
+    named gap. `while false { .. }` reads the same. `if ready() { .. }` and
+    the `else` block of `if false { .. } else { .. }` keep every oracle.
+35. `let _never = || check(300).unwrap();`: no oracle (rule 8;
+    `smoke_only` / smoke before #7638). `let value = score(2);
+    let _never = || assert_eq!(value, 4);` keeps its oracle for the
+    RIPR-SPEC-0197 refusal and reads its named gap. The same closure
+    followed by `_never();`, or passed as `for_each(probe)`, keeps every
+    oracle.
+36. `return; check(300).unwrap_err();`: no oracle for the reading after the
+    `return` (rule 8). `let value = score(2); return; assert_eq!(value, 4);`
+    keeps its oracle for the RIPR-SPEC-0197 refusal ("an earlier `return`
+    can skip") and reads its named gap. `check(300).unwrap_err(); return;`
+    and `if done() { return; } check(300).unwrap_err();` keep their oracle.
+37. A `#[should_panic(expected = "stop")]` test
+    `let value = score(2); panic!("stop"); assert_eq!(value, 4);`: no oracle
+    (rule 8; `exact_value` / strong before #7638), so the finding reads
+    its named gap.
 
 ## Test Mapping
 
@@ -928,6 +998,38 @@ rejected alternative. Any can be reversed later without touching the rest.
   `cell-0096-log-info-captured` exercises the same assertion shape but
   pins only verdicts, not oracle grades.
 
+- Rule 8 (statements that never run, examples 34 to 37):
+  `crates/ripr/src/analysis/extract/oracles/reach_tests.rs`
+  `spec_0231_rule_8_literal_false_blocks_are_unreached`,
+  `spec_0231_rule_8_uncalled_closures_are_unreached` and
+  `spec_0231_rule_8_code_after_divergence_is_unreached` pin the negative
+  cases, with positive controls in
+  `spec_0231_rule_8_live_branches_keep_their_oracles`,
+  `spec_0231_rule_8_referenced_closures_keep_their_oracles` and
+  `spec_0231_rule_8_pre_divergence_and_conditional_divergence_keep_oracles`;
+  `spec_0231_rule_8_leaves_admission_governed_assertions_to_their_refusal`
+  pins the RIPR-SPEC-0197 deferral and its strength and spelling bounds;
+  `spec_0231_rule_8_fails_closed_on_unbalanced_and_macro_input` and
+  `spec_0231_rule_8_marks_only_lines_whose_code_is_all_unreached` pin the
+  fail-closed boundary. `rust_index.rs`
+  `parser_and_lexical_oracles_skip_statements_that_never_run` checks that
+  the parser and lexical adapters drop and keep the same lines.
+  `crates/ripr/tests/returned_element_field_pin.rs`
+  `a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap` shows an
+  assertion after `std::process::exit(0);` now leaves the field finding
+  `reachable_unrevealed` (`weakly_exposed` before #7638). The
+  RIPR-SPEC-0197 golden fixtures `predicate_oracle_execution_false_branch`,
+  `error_path_oracle_execution_uncalled`, `owner_return_pin_unknown_singleton`
+  and `match_arm_tuple_derived_return_before_assertion` keep their
+  "not credited" readings unchanged. Corpus:
+  `spec0231r8-oracle-dead-if-false-branch`, `spec0231r8-oracle-uncalled-closure`,
+  `spec0231r8-oracle-after-return` (examples 34 to 36, the deferred strong
+  `assert_eq!` forms) and `spec0231r8-oracle-after-panic` (example 37) are
+  `not_discriminated` by runtime mutants and read their gap. With the
+  reach filter disabled each still read a gap (other execution admissions
+  already refused the assertion), so these cases guard the verdict and the
+  unit tests above pin the oracle change itself.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/classify.rs`: precedence chain.
@@ -935,6 +1037,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   upgrade, unchanged.
 - `crates/ripr/src/analysis/extract/oracles/patterns.rs`: token-level
   matching for rules 1 and 4 to 7.
+- `crates/ripr/src/analysis/extract/oracles/reach.rs`: rule 8's
+  never-executed regions and the RIPR-SPEC-0197 deferral, applied by
+  `scan.rs` (`extract_assertions_in`) and `syntax/ra.rs`
+  (`extract_parser_oracles`).
 - `crates/ripr/src/analysis/extract/oracles/pattern_admission.rs`: the
   pattern reading for rules 2 and 3.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength

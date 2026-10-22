@@ -72,11 +72,11 @@ pub(crate) const WORKFLOW_TAGS: &[&str] = &[
 pub(crate) enum CommandOperation {
     /// Reads workspace state and writes nothing.
     ReadOnly,
-    /// Writes product artifacts, by default under `target/ripr/` or an
-    /// explicit `--out` path.
+    /// Writes product artifacts, including disposable analysis cache entries,
+    /// by default under `target/ripr/` or an explicit output/cache path.
     WritesArtifacts,
-    /// Mutates durable state outside a single product-artifact write (cache
-    /// entries, installed workflows, ledgers the next run consumes).
+    /// Mutates managed state beyond generating artifacts (cache eviction,
+    /// installed workflows, ledgers the next run consumes).
     StateChanging,
 }
 
@@ -157,16 +157,19 @@ pub(crate) enum CommandExitContract {
     /// `ripr receipt check`: `orphan_receipt` / `receipt_gap_mismatch` are
     /// could-not-complete (`2`), not a decision (`3`).
     ReceiptCheck,
+    /// `ripr doctor`: a completed diagnosis with failed checks is `3`
+    /// (#5102); usage/operational failures before a report are `2`.
+    DoctorFindings,
 }
 
 /// What stdout carries when a command exits `3`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RefusalStdout {
-    /// Artifact stream stays empty (`agent verify`, `agent card`, `agent stub`).
+    /// Artifact stream stays empty (`agent verify`).
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -197,6 +200,7 @@ const EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT: CommandExitContract =
         stdout_on_refusal: RefusalStdout::JsonOptional,
     };
 const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptCheck;
+const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFindings;
 
 /// Implemented mapping an orchestrator actually branches on. A metadata row
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
@@ -204,8 +208,12 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
-        "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
-            Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
+        "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // Unknown-seam and the other named refusals exit 3; under `--json`
+        // the refusal document is on stdout, prose on stderr. If that
+        // document cannot be rendered or written, the exit is 2, not 3.
+        "cmd:agent.card" | "cmd:agent.stub" | "cmd:agent.packet" => {
+            Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
         // with prose on stderr and an empty stdout, like the card family.
@@ -213,6 +221,7 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
+        "cmd:doctor" => Some(EXIT_DOCTOR_FINDINGS),
         _ => None,
     }
 }
@@ -277,6 +286,11 @@ const READS_ONLY: CommandEffects = CommandEffects {
     may_use_network: false,
     may_start_child_process: false,
 };
+
+/// Fresh explain/context analysis can populate this disposable cache. The
+/// stored-finding route may skip that work, so the output role is conditional.
+pub(crate) const INSPECTION_CACHE_OUTPUT: &str =
+    "fresh analysis may populate target/ripr/cache/ (RIPR_CACHE_DIR overrides)";
 
 /// Analysis rows recompute static facts and may start one bounded child
 /// process (Git revision resolution through `crate::git`, or a workspace
@@ -350,6 +364,28 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "prints text and, with --json, the versioned machine command catalog; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:capabilities",
+        summary: "Show per-language, framework and mode capability status.",
+        task: "Check configuration",
+        workflows: &["setup"],
+        operation: CommandOperation::ReadOnly,
+        cost: CommandCost::Small,
+        effects: READS_ONLY,
+        primary_inputs: &[],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr capabilities --json",
+        next_routes: &["doctor", "check"],
+        stop_states: &[],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "prints the static capability registry for this build; reads no repository, runs nothing, and does not report per-repository enablement or promote a support tier.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1852,7 +1888,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent packet --root . --seam-id ID --json",
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "--json is required until a human packet surface exists.",
         not_applicable_reason: None,
     },
@@ -1874,7 +1910,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent card --root . --seam-id ID",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
         not_applicable_reason: None,
     },
@@ -1898,7 +1934,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent stub --root . --at src/lib.rs:12",
         next_routes: &["agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
         not_applicable_reason: None,
     },
@@ -2107,7 +2143,7 @@ const METADATA: &[CommandMetadata] = &[
         summary: "Explain one finding against the current diff.",
         task: "Inspect a finding",
         workflows: &["inspect-change"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
@@ -2115,7 +2151,7 @@ const METADATA: &[CommandMetadata] = &[
             "the current diff (--base or --diff)",
         ],
         outputs: CommandOutputs {
-            default: None,
+            default: Some(INSPECTION_CACHE_OUTPUT),
             optional: &[],
         },
         state_target: None,
@@ -2124,7 +2160,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["context", "check"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "recomputes analysis context for the finding; it does not change analysis scope.",
+        limitations: "fresh analysis can populate the disposable cache; --from uses the saved finding without rerunning the full analysis.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2132,7 +2168,7 @@ const METADATA: &[CommandMetadata] = &[
         summary: "Collect the tests and seams related to one finding.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
@@ -2140,7 +2176,7 @@ const METADATA: &[CommandMetadata] = &[
             "the current diff (--base or --diff)",
         ],
         outputs: CommandOutputs {
-            default: None,
+            default: Some(INSPECTION_CACHE_OUTPUT),
             optional: &[],
         },
         state_target: None,
@@ -2149,7 +2185,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["explain", "repair"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "bounded by --max-related-tests; it is context collection, not a fix.",
+        limitations: "bounded by --max-related-tests; fresh analysis can populate the disposable cache; --from uses a saved finding.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2170,7 +2206,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr doctor",
         next_routes: &["init", "config validate"],
         stop_states: &["missing tools print as skipped with the reason and do not fail the run"],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_DOCTOR_FINDINGS,
         limitations: "reports environment readiness; it does not run verification.",
         not_applicable_reason: None,
     },
@@ -2977,8 +3013,8 @@ mod tests {
 
     #[test]
     fn readonly_row_declaring_a_product_write_is_rejected() -> Result<(), String> {
-        let rows = with_mutated_row("cmd:explain", |row| {
-            row.outputs.default = Some("target/ripr/reports/explain.json");
+        let rows = with_mutated_row("cmd:cache.status", |row| {
+            row.outputs.default = Some("target/ripr/reports/cache-status.json");
         })?;
         expect_single_violation(&rows, "read-only but declares product writes")
     }
@@ -2986,7 +3022,7 @@ mod tests {
     #[test]
     fn write_claim_without_an_output_role_is_rejected() -> Result<(), String> {
         let rows = with_mutated_row("cmd:explain", |row| {
-            row.operation = CommandOperation::WritesArtifacts;
+            row.outputs.default = None;
         })?;
         expect_single_violation(&rows, "writes artifacts but declares no output role")
     }

@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:0fc3c3da
   ripr context --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:0fc3c3da
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:0fc3c3da --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

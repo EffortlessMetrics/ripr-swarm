@@ -238,6 +238,10 @@ pub(crate) fn visit_workspace_with_handwritten(
                         out.push(relative);
                     }
                 }
+            } else if file_type.is_file() {
+                // A regular file the filters above refused (a `*.generated.*`
+                // source): excluded by policy, not a link-hidden entry, so it
+                // must not inflate the skipped-link disclosure.
             } else if is_special_non_link_file(&file_type) {
                 // FIFOs, sockets and devices (Unix) are neither directories,
                 // regular files, nor links and cannot carry TypeScript

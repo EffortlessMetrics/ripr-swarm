@@ -655,6 +655,7 @@ mod module_identity_tests {
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
+            default_object_member: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -800,7 +801,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 limitations.push(TypeScriptNamedLimitation {
                     name: "typescript_snapshot_discriminator_unresolved",
@@ -821,7 +822,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 let why = format!(
                     "the test uses an unrecognised matcher `.{}(...)`; the adapter cannot classify its oracle strength without knowing the matcher's semantics",
@@ -849,7 +850,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                     let sample = format!(
                         "{}:{}",
                         normalized_path(&candidate.test.file),
-                        assertion.line
+                        candidate.test.evidence_line(assertion)
                     );
                     let why = format!(
                         "the table-driven test `{}` uses a row-derived dynamic value in `.{}(...)`; the adapter cannot statically bind table rows to concrete expected values",
@@ -866,7 +867,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 let why = format!(
                     "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
@@ -901,7 +902,10 @@ fn oracle_helper_gated_call(
         let Some(helper_name) = assertion_helper_call_name(line, &owner.name) else {
             continue;
         };
-        return Some((helper_name, test.line + offset));
+        return Some((
+            helper_name,
+            test.factory_call_line.unwrap_or(test.line + offset),
+        ));
     }
     None
 }

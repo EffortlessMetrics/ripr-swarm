@@ -44,7 +44,7 @@ reading raw logs.
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The delivery owner completes this order
-before spending the Ready-triggered `Ripr Rust Small Result` qualification:
+before spending the `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
 1. Bind the exact candidate head and integration basis. Complete independent
    substantive review through `review-pr`, disposition every known finding, and
@@ -82,10 +82,11 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
    unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. Ready requests qualification;
+   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
+   qualification for the exact head; Ready alone requests nothing;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
@@ -93,12 +94,12 @@ the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observatio
 does not guarantee the checkout. If a material mismatch appears, retain the
 actual run/subject, return to Draft and resume only after the changed prerequisite
 or subject is verified; do not relabel that run as proof for the local tree or
-repeat Ready toggles to refresh it.
+re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before another Ready transition. Preserve unaffected
-evidence. Do not re-toggle an unchanged head with a queued or running required
-run: the toggle cancels it. Retain its run link and yield the remote wait.
+repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
+head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
+head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
 
 ### PR-native continuation record
 
@@ -344,6 +345,14 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 (environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
+
+The strict `check-fast` receipt consumer requires all six unconditional `Ran`
+receipts (`fmt --check`, static-language, command-catalog, generated,
+generated-clean and lint-policy), including for a valid empty diff. Policy and
+`.ripr/` changes additionally require covered-by, process-policy and
+network-policy receipts. A gate listed only under `Skipped` does not satisfy
+its execution obligation. This validates receipt completeness; it does not
+replace the gate execution or required hosted qualification.
 
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
@@ -918,6 +927,26 @@ appropriate.
 warns when a diff shape suggests missing evidence, such as analyzer code
 without specs/tests/fixtures, output code without output contract evidence, or
 policy changes without process docs.
+
+With a PR body supplied, `check-pr-shape` also validates the
+`.github/pull_request_template.md` Source-of-truth Links and Candidate
+Relationships lines offline, before the expensive Draft-to-Ready admission
+transit (#8601). It fails naming each missing or placeholder line, mirroring
+admission's `claim_identity_missing` detail. The check reads only the supplied
+input; it makes no `gh` or network call inside xtask. Feed it a body captured
+outside xtask, as raw Markdown or as `gh pr view --json body` JSON:
+
+```bash
+gh pr view <number> --json body > pr-body.json
+cargo xtask check-pr-shape --body-file pr-body.json
+# or: gh pr view <number> --json body --jq .body > pr-body.md
+cargo xtask check-pr-shape --body-file pr-body.md
+# or: RIPR_PR_BODY="$(gh pr view <number> --json body --jq .body)"
+cargo xtask check-pr-shape --body-env RIPR_PR_BODY
+```
+
+Without a body argument, the existing advisory diff-shape behavior is
+unchanged.
 
 ## Fix Kinds
 

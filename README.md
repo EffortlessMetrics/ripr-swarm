@@ -231,13 +231,16 @@ a promise that every surface is available from the published package.
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
-| TypeScript / JavaScript | Opt-in `preview` analysis. When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
+| TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
-TypeScript/JavaScript is enabled only through `[languages] enabled` in
-`ripr.toml`, and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off
+TypeScript preview is likewise enabled when it detects a root `tsconfig.json`
+or `jsconfig.json`, or TypeScript source under `src/` or `tests/`; otherwise
+TypeScript/JavaScript is enabled through `[languages] enabled` in `ripr.toml`,
+and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off (and
+TypeScript off too)
 (see [Configuration](docs/CONFIGURATION.md#languages)).
 
 Findings are static and advisory. An empty result does not establish test
