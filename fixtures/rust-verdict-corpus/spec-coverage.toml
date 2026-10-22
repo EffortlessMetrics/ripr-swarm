@@ -916,3 +916,18 @@ reason = "Rust exact pin read as gap (#9440)."
 case = "shape-async-fn-block-on"
 issue = 9443
 reason = "Async fn driven by block_on is not followed (#9443)."
+
+[[known_false]]
+case = "lib-rstest-fixture-injected-receiver"
+issue = 9676
+reason = "A rstest fixture-injected receiver is not bound by a visible declaration (#9676)."
+
+[[known_false]]
+case = "serde-derive-rename-field-upper"
+issue = 9676
+reason = "A loop-table receiver is not bound by a visible declaration (#9676)."
+
+[[known_false]]
+case = "serde-derive-rename-variant-lower"
+issue = 9676
+reason = "An imported bare unit variant receiver is not bound by a visible declaration (#9676)."
