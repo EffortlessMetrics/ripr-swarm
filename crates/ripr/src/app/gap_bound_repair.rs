@@ -29,6 +29,12 @@ pub(crate) const GAP_BOUND_REPAIR_GAP_PREFIX: &str = "gap:typescript:typescript_
 /// `ripr check --base <ref> --format check-findings-json`.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_FILE: &str = "before.check-findings.json";
 
+/// The workflow-side copy of a gap-bound attempt's repair packet. Distinct
+/// from the seam loop's `agent-packet.json` so a gap-bound start never
+/// overwrites a seam-bound projection nor makes `ripr agent status` read a
+/// gap id as a seam it can build `--seam-id` commands for.
+pub(crate) const GAP_BOUND_PACKET_ARTIFACT: &str = "target/ripr/workflow/gap-repair-packet.json";
+
 /// The manifest artifact role carrying that snapshot. Distinct from the
 /// seam-bound `before_snapshot` role (a repo-exposure document) so no
 /// consumer reads one artifact kind as the other.

@@ -2954,9 +2954,17 @@ pub(crate) fn diverged_head_recovery_for_subject(
             short_head(current_head),
             short_head(prepared_head),
         ),
-        reset: format!(
-            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
-        ),
+        reset: if gap_base.is_some() {
+            // #9103: the gap-bound after phase is not available yet, so no
+            // rerun of it is offered; the reset still restores the head.
+            format!(
+                "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; the gap-bound after phase is not available yet, so verify the repair by gap id (`ripr agent verify --gap-id`)."
+            )
+        } else {
+            format!(
+                "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
+            )
+        },
         restart: format!(
             "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `{start}` while the gap still exists, restore the edit, then run the new --attempt command it prints."
         ),
@@ -4036,6 +4044,134 @@ mod tests {
         }
         if edit_cage_policy_from_packet(&rendered, "missing-seam").is_ok() {
             return Err("packet policy accepted a missing seam".to_string());
+        }
+        Ok(())
+    }
+
+    const TS_GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+
+    fn typescript_gap_packet(edit_target: &str) -> Result<String, String> {
+        serde_json::to_string(&serde_json::json!({
+            "packets": [{
+                "seam_id": TS_GAP,
+                "allowed_edit_surface": [edit_target],
+                "forbidden_files": ["src/pricing.ts"],
+                "recommended_test": {"file": edit_target, "name": "test/pricing.test.ts::discounts"}
+            }]
+        }))
+        .map_err(|error| error.to_string())
+    }
+
+    /// #9103: a gap-bound TypeScript packet names the canonical gap as its
+    /// seam id; the cage binds to exactly that packet and its test file.
+    #[test]
+    fn cage_policy_binds_a_typescript_gap_packet_to_its_test_file() -> Result<(), String> {
+        for target in ["test/pricing.test.ts", "src/pricing.spec.ts"] {
+            let policy = edit_cage_policy_from_packet(&typescript_gap_packet(target)?, TS_GAP)?;
+            if policy.selected_target.path() != target || policy.inline_test_module_target {
+                return Err(format!("cage did not bind {target}: {policy:?}"));
+            }
+        }
+        // A different gap id selects no packet.
+        if edit_cage_policy_from_packet(
+            &typescript_gap_packet("test/pricing.test.ts")?,
+            "gap:typescript:typescript_preview:ffffffff",
+        )
+        .is_ok()
+        {
+            return Err("a foreign gap id selected the packet".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_policy_refuses_typescript_gap_packets_aimed_at_production_or_non_test_files()
+    -> Result<(), String> {
+        for target in ["src/pricing.ts", "docs/pricing.md", "package.json"] {
+            let error = match edit_cage_policy_from_packet(&typescript_gap_packet(target)?, TS_GAP)
+            {
+                Err(error) => error,
+                Ok(_) => return Err(format!("{target} constructed a cage policy")),
+            };
+            if !error.contains("is not a test surface") {
+                return Err(format!("{target}: unexpected refusal: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #9103: the gap marker is additive. A seam-bound manifest keeps its
+    /// exact bytes (no `gap_binding` key); a gap-bound one round-trips it.
+    #[test]
+    fn gap_binding_is_additive_and_round_trips_in_the_manifest() -> Result<(), String> {
+        let root = test_repo_root("gap-binding-round-trip")?;
+        let seam_bound = sample_manifest(&root)?;
+        let seam_json =
+            serde_json::to_string_pretty(&seam_bound).map_err(|error| error.to_string())?;
+        if seam_json.contains("gap_binding") {
+            return Err(format!(
+                "a seam-bound manifest grew a gap marker:\n{seam_json}"
+            ));
+        }
+        let reread: RepairAttemptManifest =
+            serde_json::from_str(&seam_json).map_err(|error| error.to_string())?;
+        if reread != seam_bound {
+            return Err("seam-bound manifest did not round-trip".to_string());
+        }
+
+        let mut gap_bound = seam_bound.clone();
+        gap_bound.seam_id = TS_GAP.to_string();
+        gap_bound.gap_binding = Some(RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+        });
+        let gap_json =
+            serde_json::to_string_pretty(&gap_bound).map_err(|error| error.to_string())?;
+        if !gap_json.contains("\"gap_binding\": {\n    \"base\": \"HEAD~1\"\n  }") {
+            return Err(format!("gap marker not serialized:\n{gap_json}"));
+        }
+        let reread: RepairAttemptManifest =
+            serde_json::from_str(&gap_json).map_err(|error| error.to_string())?;
+        if reread != gap_bound {
+            return Err("gap-bound manifest did not round-trip".to_string());
+        }
+        // The marker is part of the immutable before commitment.
+        if manifest_before_bytes(&seam_bound)? == manifest_before_bytes(&gap_bound)? {
+            return Err("the before commitment ignores the gap marker".to_string());
+        }
+        // Unknown marker fields stay refused.
+        let forged = gap_json.replace("\"base\"", "\"base\": \"HEAD~1\", \"extra\"");
+        if serde_json::from_str::<RepairAttemptManifest>(&forged).is_ok() {
+            return Err("an unknown gap marker field was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9103: recovery narration for a gap-bound attempt names `--gap-id` and
+    /// `--base`, never a `--seam-id` the Rust inventory cannot resolve.
+    #[test]
+    fn gap_bound_recovery_text_names_the_gap_start_not_a_seam() -> Result<(), String> {
+        let recovery = diverged_head_recovery_for_subject(
+            ".",
+            "attempt-1",
+            TS_GAP,
+            "aaaa",
+            "bbbb",
+            "",
+            Some("HEAD~1"),
+        );
+        let text = recovery.lines().join("\n");
+        if text.contains("--seam-id")
+            || !text.contains(&format!(
+                "--gap-id {TS_GAP} --base {} --root",
+                shell_arg("HEAD~1")
+            ))
+        {
+            return Err(format!("recovery is not gap-bound: {text}"));
+        }
+        // Seam-bound recovery is unchanged.
+        let seam = diverged_head_recovery(".", "attempt-1", "seam-1", "aaaa", "bbbb", "");
+        if !seam.restart.contains("--seam-id seam-1") || seam.restart.contains("--gap-id") {
+            return Err(format!("seam recovery changed: {}", seam.restart));
         }
         Ok(())
     }

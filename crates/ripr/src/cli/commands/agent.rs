@@ -3014,7 +3014,7 @@ fn run_gap_bound_before_phase(
         .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
     let before = workflow.join(GAP_BOUND_BEFORE_SNAPSHOT_FILE);
     write_text_file(&before, &snapshot.rendered)?;
-    let packet_path = workflow.join("agent-packet.json");
+    let packet_path = root.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT);
     write_text_file(&packet_path, &packet)?;
     for path in [&before, &packet_path] {
         eprintln!(

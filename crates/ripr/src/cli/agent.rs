@@ -1793,6 +1793,95 @@ mod tests {
         Ok(())
     }
 
+    const TS_GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+
+    #[test]
+    fn agent_repair_gap_id_parses_a_gap_bound_before_start() -> Result<(), String> {
+        let command = parse_agent_args(&args(&[
+            "repair", "--gap-id", TS_GAP, "--base", "HEAD~1", "--root", "repo", "--phase", "before",
+        ]))?;
+        let AgentCommand::Repair(options) = command else {
+            return Err("expected a repair command".to_string());
+        };
+        if options.gap_id.as_deref() != Some(TS_GAP)
+            || options.base.as_deref() != Some("HEAD~1")
+            || options.seam_id.is_some()
+            || options.phase != AgentRepairPhase::Before
+        {
+            return Err(format!("gap-bound options not parsed: {options:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_gap_id_is_exclusive_and_typescript_only() -> Result<(), String> {
+        let cases: [(Vec<&str>, &str); 7] = [
+            (
+                vec![
+                    "repair",
+                    "--seam-id",
+                    "seam:x",
+                    "--gap-id",
+                    TS_GAP,
+                    "--base",
+                    "b",
+                ],
+                "agent repair takes either --seam-id or --gap-id",
+            ),
+            (
+                vec!["repair", "--gap-id", "gap:rust:src/lib.rs:1", "--base", "b"],
+                "accepts only a canonical TypeScript preview gap",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--gap-id",
+                    "gap:python:python_preview:1a2b3c4d",
+                    "--base",
+                    "b",
+                ],
+                "covers Rust files only",
+            ),
+            (vec!["repair", "--gap-id", TS_GAP], "requires --base <ref>"),
+            (
+                vec!["repair", "--seam-id", "seam:x", "--base", "b"],
+                "--base is only valid with --gap-id",
+            ),
+            (
+                vec![
+                    "repair", "--gap-id", TS_GAP, "--base", "b", "--phase", "after",
+                ],
+                "only valid with --phase before",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--gap-id",
+                    TS_GAP,
+                    "--base",
+                    "b",
+                    "--python-repair-trust-manifest",
+                    "m.json",
+                    "--python-repair-trust-attempt",
+                    "repair-attempt-0123456789abcdef01234567",
+                    "--edit-authorized",
+                    "--edit-authority",
+                    "agent",
+                ],
+                "does not take the Python repair-trust flags",
+            ),
+        ];
+        for (argv, needle) in cases {
+            let err = parse_agent_args(&args(&argv))
+                .err()
+                .ok_or_else(|| format!("{argv:?} must be refused"))?;
+            if !err.contains(needle) {
+                return Err(format!("{argv:?}: expected `{needle}` in `{err}`"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn agent_repair_missing_seam_id_hint_names_the_selected_root() -> Result<(), String> {
         let err = parse_agent_args(&args(&[

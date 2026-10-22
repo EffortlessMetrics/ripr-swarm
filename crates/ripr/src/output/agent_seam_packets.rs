@@ -3841,6 +3841,102 @@ mod tests {
         Ok(record)
     }
 
+    fn typescript_gap_record(eligible: bool) -> Result<GapRecord, String> {
+        crate::output::gap_decision_ledger::parse_gap_records_json(&format!(
+            r#"{{"records":[{{
+              "gap_id": "probe:src/pricing.ts:typescript_preview:1a2b3c4d",
+              "canonical_gap_id": "gap:typescript:typescript_preview:1a2b3c4d",
+              "source_currentness": "candidate_current",
+              "kind":"typescript_preview_boundary",
+              "language":"typescript",
+              "language_status":"preview",
+              "scope":"diff",
+              "evidence_class":"weakly_exposed",
+              "gap_state":"advisory",
+              "policy_state":"preview",
+              "repairability":"repairable",
+              "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},
+              "repair_route":{{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"test/pricing.test.ts",
+                "related_test":"test/pricing.test.ts::discounts",
+                "missing_discriminator":"subtotal == DISCOUNT_THRESHOLD",
+                "assertion_shape":"expect(discountedTotal(10000)).toBe(expected)",
+                "stop_conditions":["Stop if the gap record is no longer present."]
+              }},
+              "verification_commands":["npx --no-install vitest run test/pricing.test.ts"],
+              "receipt_command":"ripr receipt write --gap-id gap:typescript:typescript_preview:1a2b3c4d",
+              "projection_eligibility":{{"agent_packet":{{"eligible":{eligible},"reason":"TypeScript preview complete-contract projection"}}}}
+            }}]}}"#
+        ))?
+        .pop()
+        .ok_or_else(|| "expected a TypeScript gap record".to_string())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam() -> Result<(), String> {
+        let record = typescript_gap_record(true)?;
+        let rendered = render_typescript_gap_repair_packet("before.check-findings.json", &record)?;
+        let value = serde_json::from_str::<serde_json::Value>(&rendered)
+            .map_err(|error| format!("packet JSON should parse: {error}"))?;
+        let packet = value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing packet: {rendered}"))?;
+        assert_eq!(
+            packet["seam_id"],
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d")
+        );
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["test/pricing.test.ts"])
+        );
+        assert_eq!(
+            packet["forbidden_files"],
+            serde_json::json!(["src/pricing.ts"])
+        );
+        assert_eq!(
+            packet["recommended_test"]["file"],
+            serde_json::json!("test/pricing.test.ts")
+        );
+        // Same builder, same envelope: the shared packet minus the seam alias.
+        let shared = render_agent_gap_record_packet_json("before.check-findings.json", &record)?;
+        let mut shared_value = serde_json::from_str::<serde_json::Value>(&shared)
+            .map_err(|error| format!("shared packet JSON should parse: {error}"))?;
+        let packet_mut = shared_value["packets"][0]
+            .as_object_mut()
+            .ok_or_else(|| "shared packet object".to_string())?;
+        packet_mut.insert(
+            "seam_id".to_string(),
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d"),
+        );
+        assert_eq!(shared_value, value);
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_stays_fail_closed() -> Result<(), String> {
+        // The shared validator is the only authority: an ineligible record
+        // yields no packet.
+        let refused = render_typescript_gap_repair_packet("p.json", &typescript_gap_record(false)?);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("not agent-packet eligible")),
+            "{refused:?}"
+        );
+        // A non-TypeScript record never renders through this entry.
+        let rust = typed_gap_record()?;
+        let refused = render_typescript_gap_repair_packet("p.json", &rust);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("TypeScript gaps only")),
+            "{refused:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn targeted_outline_accessor_identifies_limited_routes() {
         let limited = TargetedTestBriefOutline {

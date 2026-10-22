@@ -340,7 +340,11 @@ fn persist_before_repair_attempt(
     let commands_markdown = root.join(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT);
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
     let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
-    let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
+    let agent_packet = if options.gap_id.is_some() {
+        root.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT)
+    } else {
+        root.join(WORKFLOW_AGENT_PACKET_ARTIFACT)
+    };
     let packet_bytes = crate::bounded_input::read(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
     let packet_text = String::from_utf8(packet_bytes.clone())
@@ -526,8 +530,13 @@ fn persist_before_repair_attempt(
             "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that one test surface fails the attempt terminally."
         );
     }
+    let packet_location = if options.gap_id.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        "target/ripr/workflow/agent-packet.json"
+    };
     eprintln!(
-        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
+        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at {packet_location}; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
     if baseline_ambiguous {
         eprintln!(

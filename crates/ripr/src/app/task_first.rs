@@ -860,6 +860,24 @@ pub(crate) fn check_repair_route(
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
         );
+    // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
+    // canonical gap, but its GapRecord validates through the shared
+    // agent-packet validator and starts a gap-bound attempt. The canonical
+    // gap id and the base this run analyzed are the whole start. A finding
+    // that does not validate, a static-limited one, and a run without a base
+    // keep the refusals below. Python and the other routed languages are
+    // unchanged.
+    if non_rust_language(&finding.probe.location.file) == Some("TypeScript")
+        && !static_limited
+        && let Some(base) = output.base.as_deref()
+        && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
+    {
+        return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: record.canonical_gap_id,
+            base: base.to_string(),
+        });
+    }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
@@ -868,23 +886,6 @@ pub(crate) fn check_repair_route(
     // seam to bind, whatever its gap, test node and verify command say; name
     // that terminal state instead of the misleading "no seam binds" refusal.
     if let Some(language) = non_rust_language(Path::new(&gap.file)) {
-        // #9103 (RIPR-SPEC-0311): a TypeScript finding whose GapRecord
-        // validates through the shared agent-packet validator starts a
-        // gap-bound attempt instead. The gap id and the base this run
-        // analyzed are the whole start; a finding that does not validate,
-        // a static-limited one, and a run without a base keep the terminal
-        // reason below. Python and the other routed languages are unchanged.
-        if language == "TypeScript"
-            && !static_limited
-            && let Some(base) = output.base.as_deref()
-            && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
-        {
-            return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
-                finding_id: finding.id.clone(),
-                gap_id: record.canonical_gap_id,
-                base: base.to_string(),
-            });
-        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoSeamInventory {
             language: language.to_string(),
             file: gap.file.clone(),

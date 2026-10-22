@@ -4088,6 +4088,135 @@ mod tests {
         result
     }
 
+    /// #9103 (RIPR-SPEC-0311): a gap-bound attempt's recovery and restart text
+    /// names `--gap-id`/`--base`, never a `--seam-id`, and the Rust seam gate
+    /// does not withhold it.
+    #[test]
+    fn gap_bound_attempt_status_recovers_with_a_gap_start_not_a_seam_id() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
+            RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        const GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+        let root = unique_agent_status_test_dir("gap-bound-status");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let result = (|| {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "# test\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow)
+                .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+            let before = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            write_file(&before, "{}\n")?;
+            let packet_text = serde_json::json!({
+                "packets": [{
+                    "seam_id": GAP,
+                    "allowed_edit_surface": ["test/pricing.test.ts"],
+                    "forbidden_files": ["src/pricing.ts"]
+                }]
+            })
+            .to_string();
+            write_file(&packet, &packet_text)?;
+            let policy = edit_cage_policy_from_packet(&packet_text, GAP)?;
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
+            let identity = BeforeRepairAttemptIdentity::prepare(&root, GAP)?;
+            begin_gap_bound_repair_attempt_with_identity(
+                BeginRepairAttemptOptions {
+                    root: &root,
+                    root_argument: &root,
+                    seam_id: GAP,
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_check_findings",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                },
+                &identity,
+                RepairAttemptGapBinding {
+                    base: "HEAD~1".to_string(),
+                },
+            )?;
+            let attempt_id = only_attempt_id(&root, None)?;
+            run_git(
+                &root,
+                &[
+                    "commit",
+                    "--amend",
+                    "--allow-empty",
+                    "--no-gpg-sign",
+                    "-m",
+                    "rewritten history",
+                ],
+            )?;
+
+            let report = build_agent_attempt_status(&root, &root, None, &attempt_id)?;
+            let next = report
+                .next_action
+                .as_ref()
+                .ok_or_else(|| "a stale gap-bound attempt must name a recovery".to_string())?;
+            if next.step != "repair_attempt_before"
+                || !next
+                    .command
+                    .contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1")))
+                || !next.command.ends_with("--phase before")
+                || next.command.contains("--seam-id")
+            {
+                return Err(format!("gap-bound recovery is not a gap start: {next:?}"));
+            }
+            let inventory = render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            // The attempt's own routes (next command, per-attempt command and
+            // the reasons) never name `--seam-id`; the legacy-artifact loop's
+            // missing-artifact placeholders are a separate projection.
+            let document: serde_json::Value =
+                serde_json::from_str(&inventory).map_err(|error| error.to_string())?;
+            let attempt_routes = [
+                document["next_command"].to_string(),
+                document["repair_attempts"].to_string(),
+                document["seam"].to_string(),
+            ]
+            .join("\n");
+            if attempt_routes.contains("--seam-id") {
+                return Err(format!("attempt routes leak --seam-id:\n{attempt_routes}"));
+            }
+            if !inventory.contains(&format!("--gap-id {GAP} --base {}", shell_arg("HEAD~1"))) {
+                return Err(format!("inventory status names no gap start:\n{inventory}"));
+            }
+            // The seam-inventory gate has no verdict on a gap subject, while
+            // it still refuses a seam it cannot find.
+            let gate = RepairStartGate::preloaded(&root, Vec::new());
+            if gate.check(GAP).is_some() || gate.check("seam:missing").is_none() {
+                return Err(
+                    "the seam gate must pass a gap subject and refuse a missing seam".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     /// Normalized JSON is byte-stable: rendering the same report twice, and
     /// the inventory discovery document across repeated reads of the same
     /// store, produces identical bytes (the inventory is ordered by attempt
