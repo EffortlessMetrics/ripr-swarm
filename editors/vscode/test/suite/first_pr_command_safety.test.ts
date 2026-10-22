@@ -46,14 +46,40 @@ suite('First-PR command safety', () => {
 
   test('preserves single-quoted redirect paths while normalizing inter-token whitespace', () => {
     const root = path.resolve('first-pr  workspace').replace(/\\/g, '/');
-    // Exercise the currently admitted single-quote grammar on either host.
-    // Windows double-quote admission remains a separate owner obligation.
+    // Exercise the admitted single-quote grammar on either host; the Windows
+    // console form is pinned below with the host stubbed (#9526).
     for (const command of [
       `ripr agent packet --root . --gap-id 'gap:amount>=threshold' --json > '${root}/target/ripr/out.json'`,
       ` \tripr  agent\tpacket --root . --gap-id gap:pricing --json \t>\t '${root}/target/ripr/out.json'\t `
     ]) {
       assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
     }
+  });
+
+  test('admits the server\'s Windows console form only on a Windows host (#9526)', () => {
+    const root = path.resolve('first-pr  workspace').replace(/\\/g, '/');
+    const spaced = `ripr agent receipt --root "${root}" --json`;
+    const redirected = `ripr agent packet --root . --gap-id "gap:a  >b" --json > "${root}/target/ripr/out.json"`;
+    // Off Windows a double quote is refused, as before.
+    assert.strictEqual(firstPrCommandIsSafe(spaced, [root]), false);
+    withWindowsHost(() => {
+      for (const command of [spaced, redirected]) {
+        assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
+        const packet = packetStatus(command, root, 'selected');
+        assert.strictEqual(packet.state, 'topRepairableGap', command);
+        assert.strictEqual(packet.receiptCommand, command);
+      }
+      for (const command of [
+        // An odd backslash run escapes the quote for argv and Git Bash.
+        'ripr agent receipt --root "\\" x " ; calc ; \\" --json',
+        // cmd.exe expands %NAME% inside the quoted redirect target.
+        'ripr agent packet --root . --gap-id gap:pricing --json > "%TEMP%/out.json"',
+        'ripr agent receipt --root . --json ^& calc'
+      ]) {
+        assert.strictEqual(firstPrCommandIsSafe(command, [root]), false, command);
+        assert.strictEqual(packetStatus(command, root, 'selected').state, 'unsafeCommand', command);
+      }
+    });
   });
 
   test('retains rejection of operators, malformed quotes and escaping redirects', () => {
@@ -102,4 +128,17 @@ function packetStatus(command: string, workspaceRoot: string, placement: 'comman
     'target/ripr/first-pr/start-here.json', 'target/ripr/first-pr/start-here.md',
     path.join(workspaceRoot, 'target/ripr/first-pr/start-here.json'),
     path.join(workspaceRoot, 'target/ripr/first-pr/start-here.md'));
+}
+
+/** Run `body` as if the extension host ran on Windows (`isWindowsHost` reads `process.platform`). */
+function withWindowsHost(body: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    body();
+  } finally {
+    if (original) {
+      Object.defineProperty(process, 'platform', original);
+    }
+  }
 }
