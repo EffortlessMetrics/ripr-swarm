@@ -1,5 +1,9 @@
 {
   "schema_version": "0.1",
+  "analysis_scope": {
+    "scope": "gap_ledger_artifact",
+    "changed_files": ["src/gone.rs"]
+  },
   "tool": "ripr",
   "status": "advisory",
   "mode": "baseline-check",

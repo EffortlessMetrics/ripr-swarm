@@ -801,6 +801,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
+          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/gone.rs"]},
           "decisions": [
             {"decision": "advisory", "seam_id": "same", "static_class": "weakly_gripped", "placement": {"path": "src/same.rs", "line": 1}, "evidence": {}},
             {"decision": "blocking", "seam_id": "new", "static_class": "weakly_gripped", "placement": {"path": "src/new.rs", "line": 9}, "evidence": {}}
@@ -1031,6 +1032,7 @@ mod tests {
         let current = r#"{
           "schema_version": "0.1",
           "root": ".",
+          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/gone.rs"]},
           "decisions": [
             {
               "decision": "advisory",
@@ -1400,6 +1402,7 @@ mod tests {
             r#"{{
           "schema_version": "0.1",
           "subject": {{ "analyzer_version": {version} }},
+          "analysis_scope": {{"scope": "gap_ledger_artifact", "changed_files": ["src/pricing.rs"]}},
           "decisions": []
         }}"#
         )

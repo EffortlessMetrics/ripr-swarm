@@ -2007,6 +2007,7 @@ mod tests {
         }"#;
         let current = r#"{
           "schema_version": "0.1",
+          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/gone.rs"]},
           "decisions": [
             {
               "decision": "advisory",
@@ -2265,7 +2266,7 @@ mod tests {
             }
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": []}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/legacy.rs"]}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -2424,7 +2425,7 @@ mod tests {
             {"identity": {"seam_id": "identity-only"}}
           ]
         }"#;
-        let current = r#"{"schema_version": "0.1", "decisions": []}"#;
+        let current = r#"{"schema_version": "0.1", "decisions": [], "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/line.rs", "src/class.rs", "src/path.rs"]}}"#;
 
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
@@ -3521,11 +3522,13 @@ mod tests {
         assert!(baseline_with_version.contains("0.11.0+same"));
         let unversioned_current = r#"{
           "schema_version": "0.1",
+          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/fixed.rs"]},
           "decisions": []
         }"#;
         let versioned_current = r#"{
           "schema_version": "0.1",
           "subject": {"analyzer_version": "0.11.0+same"},
+          "analysis_scope": {"scope": "gap_ledger_artifact", "changed_files": ["src/fixed.rs"]},
           "decisions": []
         }"#;
 
