@@ -257,6 +257,10 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// calls, so a caller that evaluates seams in stages builds the test
 /// context once. Its caches are keyed memoization, so a seam's evidence
 /// does not depend on which seams the pass evaluated before it.
+/// Fewest seams in a stage for which the whole-index tables are built up
+/// front.
+const WARM_MIN_SEAMS: usize = 1_000;
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
@@ -309,25 +313,14 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
-        // #9211: the first worker to need one of the whole-index tables below
-        // builds it in line while its siblings wait on the cell, so each is
-        // paid here before any seam is queued, where the macro scan and the
-        // unseen-reach scan fan out over the pool.
-        self.shared_tables_warmed.call_once(|| {
-            cancellation::with_optional_token(token.as_ref(), || {
-                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
-                    let started = Instant::now();
-                    context.prime_pin_syntax_scan();
-                    trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
-                    let started = Instant::now();
-                    context.unseen_reach_names();
-                    trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
-                    let started = Instant::now();
-                    context.type_mentions();
-                    trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
-                });
-            });
-        });
+        // #9211: a stage large enough to need the whole-index tables pays
+        // for them here, before any seam is queued, instead of the first
+        // worker to ask building one in line while its siblings wait. A first
+        // review stage of a few dozen seams reads none of them, and the warm
+        // costs tens of seconds on a workspace the size of ripr-swarm.
+        if seams.len() >= WARM_MIN_SEAMS {
+            self.warm_shared_tables(context, token.as_ref(), &overlay);
+        }
         let processed = AtomicUsize::new(0);
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
@@ -353,6 +346,32 @@ impl<'index> EvidencePass<'index> {
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
+    }
+
+    /// Pay the macro-site scan, the unseen-reach names and the type-mention
+    /// index once per pass, on the caller, where the scans fan out over the
+    /// pool.
+    fn warm_shared_tables(
+        &self,
+        context: &CompactGripContext<'_>,
+        token: Option<&cancellation::AnalysisCancellationToken>,
+        overlay: &Option<std::sync::Arc<crate::analysis::committed_source::CommittedSourceOverlay>>,
+    ) {
+        self.shared_tables_warmed.call_once(|| {
+            cancellation::with_optional_token(token, || {
+                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                    let started = Instant::now();
+                    context.prime_pin_syntax_scan();
+                    trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                    let started = Instant::now();
+                    context.unseen_reach_names();
+                    trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
+                    let started = Instant::now();
+                    context.type_mentions();
+                    trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+                });
+            });
+        });
     }
 }
 

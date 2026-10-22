@@ -3122,33 +3122,39 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     Ok(())
 }
 
-/// #9211 for the seam walk: the workspace macro-site scan is paid once on the
-/// caller before any seam is queued, not by whichever worker asks first while
-/// the others wait on a shared lock.
+/// #9211 for the seam walk: a stage big enough to need the whole-index tables
+/// pays the workspace macro-site scan once on the caller before any seam is
+/// queued, not whichever worker asks first while the others wait. A small
+/// stage reads none of them and pays nothing.
 #[test]
-fn evidence_pass_pays_the_workspace_macro_scan_before_its_workers_start() -> Result<(), String> {
+fn evidence_pass_warms_the_workspace_scan_once_and_only_for_large_stages() -> Result<(), String> {
     let (index, seams) = parallel_evidence_fixture()?;
     let pass = EvidencePass::new(&index);
     let context = pass
         .context
         .as_ref()
         .ok_or("the fixture must build a context")?;
-    if context.workspace_scan_passes() != 0 {
-        return Err("no scan may be paid before the pass runs".into());
+    if seams.len() >= WARM_MIN_SEAMS {
+        return Err("the fixture must be a small stage".into());
     }
     let evidence = pass.evidence_for(&seams);
     if evidence.len() != seams.len() {
         return Err("every seam must produce evidence".into());
     }
-    // At most the ambiguity pass plus one completion, whether or not a seam
-    // asked: this fixture has no consumer, so only priming can have paid it.
+    if context.workspace_scan_passes() != 0 {
+        return Err("a small stage must not pay the whole-index scan".into());
+    }
+    pass.warm_shared_tables(context, None, &None);
+    // At most the ambiguity pass plus one completion; the fixture has no
+    // macro-site consumer, so only the warm can have paid it.
     let paid = context.workspace_scan_passes();
     if !(1..=2).contains(&paid) {
         return Err(format!("expected the primed scan, got {paid} passes"));
     }
+    pass.warm_shared_tables(context, None, &None);
     pass.evidence_for(&seams);
     if context.workspace_scan_passes() != paid {
-        return Err("a second stage must not rescan the workspace".into());
+        return Err("a later stage must not rescan the workspace".into());
     }
     Ok(())
 }
