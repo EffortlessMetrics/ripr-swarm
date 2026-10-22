@@ -10449,7 +10449,7 @@ fn repo_exposure_file_fact_cache_from_stderr(
                             .split('/')
                             .any(|part| part == "." || part == ".." || part.is_empty())
                         || path.contains('\\')
-                        || path.contains(':')
+                        || has_windows_drive_prefix(path)
                         || path.chars().any(char::is_control)
                 })
         })
@@ -10459,7 +10459,66 @@ fn repo_exposure_file_fact_cache_from_stderr(
     (Some(value), None)
 }
 
+/// A Windows drive-qualified path (letter, colon, slash) is an absolute, non-portable
+/// receipt identity. A `:` elsewhere is an ordinary Unix file-name character
+/// (`a:b.rs`) and must not invalidate the whole receipt (#9503).
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Output parity (cache-served output equal to a cold recomputation) is not
+/// observed by this report: it runs each format once. Until a cold-vs-served
+/// comparison exists, no run set can earn `pass` (#9503).
+const REPO_EXPOSURE_OUTPUT_PARITY: &str = "not_checked";
+const REPO_EXPOSURE_OUTPUT_PARITY_CHECKED: bool = false;
+
+/// Named reasons a completed run set cannot be called `pass`. Empty means
+/// every completed run carried a clean cache receipt and parity was checked.
+fn repo_exposure_latency_status_reasons(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for run in runs {
+        match &run.file_fact_cache {
+            Some(cache) => {
+                if cache.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_store_errors={}",
+                        run.format, cache.store_errors
+                    ));
+                }
+                if cache.corrupt_ignored > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_corrupt_ignored={}",
+                        run.format, cache.corrupt_ignored
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: file_fact_cache_{}",
+                run.format,
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("not_observed")
+            )),
+        }
+    }
+    if !parity_checked {
+        reasons.push("output_parity_not_checked".to_string());
+    }
+    reasons
+}
+
 fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
+    repo_exposure_latency_status_with_parity(runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED)
+}
+
+fn repo_exposure_latency_status_with_parity(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> String {
     if runs.iter().any(|run| run.status == "fail") {
         return "fail".to_string();
     }
@@ -10467,6 +10526,12 @@ fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
         .iter()
         .any(|run| run.status == "timeout" || run.status == "skipped_after_json_timeout")
     {
+        return "warn".to_string();
+    }
+    // `pass` is evidence about the cache path and output, not only exit codes:
+    // cache store errors, ignored corrupt entries, an unobserved cache phase
+    // or unchecked output parity are all `warn`.
+    if !repo_exposure_latency_status_reasons(runs, parity_checked).is_empty() {
         return "warn".to_string();
     }
     "pass".to_string()
@@ -10503,13 +10568,24 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     body.push_str("{\n");
     // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
     // because the JSON gained fields a 0.2 reader does not know; nothing in
-    // the 0.2 shape changed.
-    body.push_str("  \"schema_version\": \"0.3\",\n");
+    // the 0.2 shape changed. 0.4 adds `output_parity` and `status_reasons`
+    // (#9503); no 0.3 field changed.
+    body.push_str("  \"schema_version\": \"0.4\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
         "  \"status\": \"{}\",\n",
         json_escape(&report.status)
+    ));
+    body.push_str(&format!(
+        "  \"output_parity\": \"{REPO_EXPOSURE_OUTPUT_PARITY}\",\n"
+    ));
+    body.push_str(&format!(
+        "  \"status_reasons\": {},\n",
+        serde_json::json!(repo_exposure_latency_status_reasons(
+            &report.runs,
+            REPO_EXPOSURE_OUTPUT_PARITY_CHECKED
+        ))
     ));
     body.push_str(&format!("  \"timeout_ms\": {},\n", report.timeout_ms));
     body.push_str(&format!(
@@ -10583,6 +10659,18 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
     let mut body = String::new();
     body.push_str("# Repo Exposure Latency Report\n\n");
     body.push_str(&format!("Status: `{}`\n\n", report.status));
+    body.push_str(&format!(
+        "Output parity: `{REPO_EXPOSURE_OUTPUT_PARITY}`\n\n"
+    ));
+    let reasons =
+        repo_exposure_latency_status_reasons(&report.runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED);
+    if !reasons.is_empty() {
+        body.push_str("Status reasons (`pass` requires none):\n\n");
+        for reason in &reasons {
+            body.push_str(&format!("- `{reason}`\n"));
+        }
+        body.push('\n');
+    }
     body.push_str(&format!(
         "Timeout: `{}` ms per format\n\n",
         report.timeout_ms

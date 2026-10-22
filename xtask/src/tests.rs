@@ -85,11 +85,12 @@ use super::{
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
-    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureLatencyReport,
-    RepoExposureLatencyRun, RepoExposureLatencyTrace, RepoExposureMeasurement, ReportIndexEntry,
-    ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, RoutedRustEventRoute,
-    SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
-    StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
+    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureFileFactCache,
+    RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
+    RepoExposureMeasurement, ReportIndexEntry, ReportIndexRepoOpsArtifact,
+    RiprSwarmReadinessNextActionSources, RoutedRustEventRoute, SUPPORT_TIERS_PATH, SarifPolicyMode,
+    SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+    TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
     UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
@@ -182,6 +183,7 @@ use super::{
     repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
     repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
+    repo_exposure_latency_status_reasons, repo_exposure_latency_status_with_parity,
     repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
     repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -50701,7 +50703,7 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
     let json = repo_exposure_latency_json(&report);
     let value: Value =
         serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(value["report"], "repo-exposure-latency");
     assert_eq!(value["status"], "warn");
     assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
@@ -50875,7 +50877,7 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
     };
     let value: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(
         value["runs"][0]["resource_cost"]["observer"],
         "ripr_process_self"
@@ -51201,7 +51203,8 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
             "repo-exposure-md".to_string()
         ]
     );
-    assert_eq!(report.status, "pass");
+    // Both formats exited 0, but output parity is unchecked: not `pass` (#9503).
+    assert_eq!(report.status, "warn");
     assert_eq!(report.runs.len(), 2);
     assert_eq!(report.runs[0].duration_ms, 30_000);
     assert_eq!(report.runs[1].duration_ms, 30_000);
@@ -51294,9 +51297,11 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     let timeout = latency_run_with_status("repo-exposure-json", "timeout");
     let skipped = latency_run_with_status("repo-exposure-md", "skipped_after_json_timeout");
 
+    // `pass` needs exit codes AND a clean observed cache AND checked parity
+    // (#9503); an exit-code-only run is `warn`.
     assert_eq!(
         repo_exposure_latency_status(std::slice::from_ref(&pass)),
-        "pass"
+        "warn"
     );
     assert_eq!(repo_exposure_latency_status(&[timeout]), "warn");
     assert_eq!(repo_exposure_latency_status(&[skipped]), "warn");
@@ -51316,6 +51321,100 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     };
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(markdown.contains("No analyzer trace lines were captured"));
+}
+
+fn clean_cache(store_errors: usize, corrupt_ignored: usize) -> RepoExposureFileFactCache {
+    RepoExposureFileFactCache {
+        schema_version: "0.1".to_string(),
+        hits: 1,
+        misses: 0,
+        invalidated: 0,
+        corrupt_ignored,
+        stores: 0,
+        store_errors,
+        store_failures: Vec::new(),
+        store_failures_dropped: store_errors,
+    }
+}
+
+fn observed_run(cache: Option<RepoExposureFileFactCache>) -> RepoExposureLatencyRun {
+    RepoExposureLatencyRun {
+        file_fact_cache_limitation: cache
+            .is_none()
+            .then(|| "cache_phase_not_observed".to_string()),
+        file_fact_cache: cache,
+        ..latency_run_with_status("repo-exposure-json", "pass")
+    }
+}
+
+/// #9503 negative experiments: the same exit-code-clean runs flip from `pass`
+/// to `warn` for each degraded dimension, and only the fully observed, clean,
+/// parity-checked set stays `pass`.
+#[test]
+fn repo_exposure_latency_status_is_not_pass_with_cache_errors_or_unchecked_parity() {
+    let clean = observed_run(Some(clean_cache(0, 0)));
+    // Positive control: this is the only shape allowed to say `pass`.
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&clean), true),
+        "pass"
+    );
+    // Unchecked output parity alone blocks `pass` (the production default).
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&clean)),
+        "warn"
+    );
+    // Cache store errors block `pass` even with parity checked.
+    let store_errors = observed_run(Some(clean_cache(2, 0)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&store_errors), true),
+        "warn"
+    );
+    // Ignored corrupt entries block `pass`.
+    let corrupt = observed_run(Some(clean_cache(0, 1)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&corrupt), true),
+        "warn"
+    );
+    // An unobserved cache phase blocks `pass`.
+    let unobserved = observed_run(None);
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&unobserved), true),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(&[store_errors, unobserved], false);
+    assert!(reasons.contains(&"repo-exposure-json: file_fact_cache_store_errors=2".to_string()));
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: file_fact_cache_cache_phase_not_observed".to_string())
+    );
+    assert!(reasons.contains(&"output_parity_not_checked".to_string()));
+}
+
+/// #9503: a legitimate Unix file name containing `:` is a valid receipt row
+/// path; a Windows drive-qualified path is still refused.
+#[test]
+fn cache_receipt_accepts_colon_in_unix_row_paths_but_not_drive_paths() {
+    let receipt = |path: &str| {
+        let value = serde_json::json!({
+            "schema_version": "0.1", "hits": 0, "misses": 1, "invalidated": 0,
+            "corrupt_ignored": 0, "stores": 0, "store_errors": 1,
+            "store_failures": [{"path": path, "stage": "write", "error": "boom"}],
+            "store_failures_dropped": 0
+        });
+        repo_exposure_file_fact_cache_from_stderr(&format!(
+            "ripr_file_fact_cache_receipt {value}\n"
+        ))
+    };
+    let (cache, limitation) = receipt("src/a:b.rs");
+    assert!(cache.is_some(), "colon path rejected: {limitation:?}");
+    let (cache, limitation) = receipt("a:b.rs");
+    assert!(
+        cache.is_some(),
+        "top-level colon path rejected: {limitation:?}"
+    );
+    let (cache, limitation) = receipt(&format!("{}:/work/src/lib.rs", "C"));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
 }
 
 /// One observed resource-cost receipt body, in the exact wire shape the

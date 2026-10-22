@@ -106,6 +106,10 @@ struct TargetedRerunCache {
     corrupt_ignored: usize,
     stores: usize,
     store_errors: usize,
+    /// Bounded `{path, stage, error}` rows behind `store_errors` (#9503);
+    /// retained rows plus `store_failures_dropped` equal `store_errors`.
+    store_failures: Vec<serde_json::Value>,
+    store_failures_dropped: usize,
     recomputation_reasons: Vec<String>,
     invalidation_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1789,6 +1793,8 @@ fn limited_report(
             corrupt_ignored: 0,
             stores: 0,
             store_errors: 0,
+            store_failures: Vec::new(),
+            store_failures_dropped: 0,
             recomputation_reasons: Vec::new(),
             invalidation_status: "not_available".to_string(),
             input_fingerprint: None,
@@ -1846,6 +1852,8 @@ fn cache_from(
         corrupt_ignored: cache.corrupt_ignored,
         stores: cache.stores,
         store_errors: cache.store_errors,
+        store_failures: crate::analysis::file_fact_store_failure_rows(cache),
+        store_failures_dropped: cache.store_failures_dropped,
         recomputation_reasons,
         invalidation_status: if cache.invalidated_files.is_empty() {
             "not_available".to_string()
@@ -2993,6 +3001,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: String::new(),
                 input_fingerprint: None,
@@ -3881,6 +3891,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: "not_available".to_string(),
                 input_fingerprint: None,
@@ -3941,6 +3953,8 @@ mod tests {
                 corrupt_ignored: 0,
                 stores: 0,
                 store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
                 recomputation_reasons: Vec::new(),
                 invalidation_status: "not_available".to_string(),
                 input_fingerprint: None,

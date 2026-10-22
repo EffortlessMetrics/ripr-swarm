@@ -87,9 +87,9 @@ Setup:
   ripr doctor
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
-  ripr cache status [--json]
+  ripr cache status [--root PATH] [--json]
   ripr cache export [--root PATH] --out NEW_DIRECTORY
-  ripr cache clear [--dry-run] [--force]
+  ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Analysis:
   ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000] [--format json]
