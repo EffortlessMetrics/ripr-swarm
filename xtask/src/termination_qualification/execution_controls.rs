@@ -33,7 +33,7 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
     use std::fs;
     use std::time::Duration;
 
-    use super::corpus::Route;
+    use super::corpus::{Expect, Route};
     use super::exec::{self, Binary, CHILD_PATH, ROOT_TOKEN};
     use super::model::RowResult;
     use crate::blind_journey::sha256_hex;
@@ -157,5 +157,55 @@ pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Contro
         Err(error) => snapshot_control.detail = error,
     }
     out.push(snapshot_control);
+
+    let mut cleanup_control = control(
+        "execution-cleanup-failure",
+        "a row whose workspace cannot be removed does not pass",
+    );
+    if let Some(supported) = cases
+        .iter()
+        .find(|case| case.route == Route::Check && matches!(case.expect, Expect::Supported))
+    {
+        let json = format!(
+            "{{\"findings\":[{{\"canonical_gap\":{{\"file\":\"{}\"}}}}],\"analysis_outcome\":{{\"analysis_complete\":true}}}}",
+            supported.changed
+        );
+        match write(
+            "clean-probe",
+            &format!("#!/bin/sh\nprintf '%s\\n' '{json}'\n"),
+        ) {
+            Ok(binary) => {
+                let (baseline, _) =
+                    exec::run_case(&binary, &work_root.join("clean-ok"), supported, deadline);
+                // The remover fails the way a permission error would; a root
+                // user ignores directory mode bits, so it is injected.
+                let denied = |root: &Path| {
+                    exec::cleanup_with(root, &|_| {
+                        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                    })
+                };
+                let (failed, _) = exec::run_case_with(
+                    &binary,
+                    &work_root.join("clean-denied"),
+                    supported,
+                    deadline,
+                    &denied,
+                );
+                cleanup_control.observed = Some(format!(
+                    "baseline={}, denied={} ({})",
+                    baseline.result.as_str(),
+                    failed.result.as_str(),
+                    failed.cleanup
+                ));
+                cleanup_control.discriminated = baseline.result.is_pass()
+                    && failed.result == RowResult::InstrumentFailure
+                    && failed.cleanup.starts_with("retained");
+            }
+            Err(error) => cleanup_control.detail = error,
+        }
+    } else {
+        cleanup_control.detail = "no supported check row in the selected corpus".to_string();
+    }
+    out.push(cleanup_control);
     out
 }
