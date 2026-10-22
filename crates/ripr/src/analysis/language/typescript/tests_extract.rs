@@ -100,6 +100,24 @@ pub(crate) fn extract_tests_with_expansion(
     Option<TypeScriptConditionalCreditGap>,
     Option<super::suite_factory::SuiteFactoryExpansion>,
 ) {
+    // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
+    // replaced by its assertion, on the same line, before extraction. One pass
+    // only, so self-referential or mutually recursive helpers cannot loop.
+    if source.contains("function ")
+        && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
+            let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+            if !ret.errors.is_empty() {
+                return None;
+            }
+            super::assertion_helper::expand_assertion_helpers(&ret.program.body, source)
+        })
+        && expanded != source
+    {
+        let extraction = extract_tests_expanding_suite_factories(file, &expanded, true);
+        if !extraction.0.is_empty() {
+            return extraction;
+        }
+    }
     extract_tests_expanding_suite_factories(file, source, true)
 }
 

@@ -1679,20 +1679,18 @@ fn parse_stat_pgrp(stat: &str) -> Option<ProcStatPgrp> {
     Some(ProcStatPgrp::Live { state, pgrp })
 }
 
-fn read_stream<T: Read>(mut stream: T) -> Result<String, String> {
-    let mut bytes = Vec::new();
-    stream
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("failed to read process output: {err}"))?;
+/// Ceiling on a drain whose caller set no budget. Far above any real tool
+/// output (a full `cargo test` log is a few megabytes); it bounds memory when a
+/// child floods a pipe, and overflow is an error rather than a truncation.
+pub(crate) const UNBUDGETED_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
+
+fn read_stream<T: Read>(stream: T) -> Result<String, String> {
+    let bytes = read_stream_bytes(stream)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn read_stream_bytes<T: Read>(mut stream: T) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    stream
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("failed to read process output: {err}"))?;
-    Ok(bytes)
+fn read_stream_bytes<T: Read>(stream: T) -> Result<Vec<u8>, String> {
+    read_stream_bytes_limited(stream, "process output", UNBUDGETED_OUTPUT_BYTES)
 }
 
 fn read_stream_bytes_limited(
@@ -1731,6 +1729,10 @@ fn stream_to_file<T: Read>(mut stream: T, mut file: fs::File) -> Result<usize, S
 }
 
 fn read_stream_with_latency_progress<T: Read>(stream: T) -> Result<String, String> {
+    read_latency_stream_limited(stream, UNBUDGETED_OUTPUT_BYTES)
+}
+
+fn read_latency_stream_limited<T: Read>(stream: T, limit: usize) -> Result<String, String> {
     let mut reader = BufReader::new(stream);
     let mut out = String::new();
     let mut line = String::new();
@@ -1744,6 +1746,11 @@ fn read_stream_with_latency_progress<T: Read>(stream: T) -> Result<String, Strin
         }
         if line.starts_with("ripr_repo_exposure_latency ") {
             eprint!("{line}");
+        }
+        if out.len().saturating_add(line.len()) > limit {
+            return Err(format!(
+                "process output exceeds its {limit}-byte output budget"
+            ));
         }
         out.push_str(&line);
     }
@@ -1911,6 +1918,32 @@ mod tests {
         assert_eq!(
             super::poll_interval(false),
             super::Duration::from_millis(100)
+        );
+    }
+
+    #[test]
+    fn a_drain_refuses_output_past_its_budget_instead_of_truncating() {
+        let flood = std::io::repeat(b'x').take(1_000);
+        assert_eq!(
+            super::read_stream_bytes_limited(flood, "stdout", 100),
+            Err("stdout exceeds its 100-byte output budget".to_string())
+        );
+
+        let within =
+            super::read_stream_bytes_limited(std::io::repeat(b'x').take(100), "stdout", 100);
+        assert_eq!(within.map(|bytes| bytes.len()), Ok(100));
+    }
+
+    #[test]
+    fn the_latency_drain_refuses_output_past_its_budget() {
+        let lines = "ripr_repo_exposure_latency a=1\nplain\n".repeat(10);
+        assert_eq!(
+            super::read_latency_stream_limited(Cursor::new(lines.as_bytes()), 40),
+            Err("process output exceeds its 40-byte output budget".to_string())
+        );
+        assert_eq!(
+            super::read_latency_stream_limited(Cursor::new(lines.as_bytes()), lines.len()),
+            Ok(lines.clone())
         );
     }
 

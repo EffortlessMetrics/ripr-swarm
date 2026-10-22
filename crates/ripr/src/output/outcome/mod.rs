@@ -20,7 +20,8 @@ pub(crate) use markdown::render_targeted_test_outcome_md;
 pub(crate) use path::display_path;
 use path::normalize_report_path;
 pub(crate) use render_json::{
-    render_agent_verify_json_with_currentness, render_targeted_test_outcome_json,
+    render_agent_verify_json_with_bound_gap, render_agent_verify_json_with_currentness,
+    render_targeted_test_outcome_json,
 };
 use review::review_attention_class;
 
@@ -45,6 +46,17 @@ pub(crate) const AGENT_VERIFY_SCHEMA_VERSION: &str = "0.3";
 pub(crate) struct AgentVerifyArtifactBinding {
     pub(crate) before_content_sha256: String,
     pub(crate) after_content_sha256: String,
+}
+
+/// The one gap an `agent verify --gap-id` run bound its result to: open in
+/// `before_classification`, `exposed` in the after artifact (RIPR-SPEC-0310).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentVerifyBoundGap {
+    pub(crate) gap_id: String,
+    pub(crate) before_classification: String,
+    pub(crate) after_classification: String,
+    pub(crate) file: String,
+    pub(crate) line: u64,
 }
 
 const SEAM_GRIP_CLASS_ORDER: &[&str] = &[

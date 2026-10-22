@@ -337,7 +337,7 @@ entry and value flow; #5503 stays open for it.
 
 ### Framework oracles ripr does not evaluate
 
-Four test idioms check a changed value through machinery ripr reads only at
+Six test idioms check a changed value through machinery ripr reads only at
 the surface, and each used to leave a certain `weakly_exposed` claim.
 `framework_oracle::withhold_framework_oracle_gap` withholds a
 `weakly_exposed` or `reachable_unrevealed` finding with no
@@ -394,6 +394,24 @@ non-ignored related test matches one of these shapes:
   keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
   keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
   does a redacted field (`lib-insta-json-redacted-id`).
+- **fixture receiver** (#9609): a `return_value` probe whose changed line
+  holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
+  with a strong assertion: an `assert_eq!` with a literal (number, string,
+  `true`, `false`; a bare token, not an expression such as `1 + n`) on one side and `helper().owner(..)` on the other, or
+  `x.owner(..)` for a `let [mut] x = helper();` earlier in the test. `helper`
+  is a function of the test's file other than the owner. An inline struct
+  literal receiver, a non-literal expectation and `assert_ne!` keep the
+  finding. The closure runs over data the helper builds, which ripr does not
+  read; the exact pin may still miss the change, so nothing is credited.
+- **recording double** (#9610): a `call_deletion` or `side_effect` probe
+  whose changed line calls a method on a parameter typed `&mut dyn Trait`,
+  and a `direct_owner_call` test that declares `let mut rec = Type { .. }`
+  (an uppercase struct literal), passes `&mut rec` to the owner and, after the
+  call, compares `rec.field` (a field, not a method call and not only its `.len()`, `.is_empty()` or `.count()`) in an `assert_eq!`.
+  A concrete `&mut` parameter, a std collection, a constructor call, a method
+  read or a comparison before the call keep the finding. The recorded value
+  reaches the assertion through the double's own method, which ripr does not
+  follow.
 
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the
@@ -411,7 +429,9 @@ and writes the finding the same way. Nothing is credited. Corpus effect:
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
-`abstained`, which their cases accept.
+`abstained`, which their cases accept. `idiom-fixture-builder-total` (#9609)
+and `idiom-hand-mock-exact-line` (#9610) move from `gap` to `limited`, which
+their cases accept.
 
 ### Methods the language calls implicitly (#9441)
 
@@ -581,6 +601,11 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
+  `a_fixture_receiver_shape_that_differs_keeps_the_finding`
+- `a_hand_written_recorder_compared_by_field_is_withheld`,
+  `a_recorder_shape_that_differs_keeps_the_finding` and
+  `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
 
 Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
 `crates/ripr/tests/implicit_call_limit.rs`:

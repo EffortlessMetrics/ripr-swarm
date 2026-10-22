@@ -62,6 +62,7 @@ mod bounded_read;
 mod bun_bridge;
 #[cfg(test)]
 mod capability_disposition_tests;
+mod catch_arm_guard;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -86,6 +87,7 @@ mod module_entries;
 mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
+mod nullish_chain_guard;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -111,15 +113,18 @@ mod repo;
 #[cfg(test)]
 mod repo_tests;
 mod returned_state_guard;
+mod rounding_mode_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
+mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+mod assertion_helper;
 mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
@@ -161,6 +166,7 @@ pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
+pub(crate) use nullish_chain_guard::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -169,9 +175,11 @@ pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use returned_state_guard::*;
+pub(crate) use rounding_mode_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
+pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
