@@ -2669,7 +2669,7 @@ pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
 /// The trait named by a trait-impl owner's symbol id, generic or not
 /// (`impl From<f64> for Meters::from` → `From`). `None` for inherent impls and
 /// free functions.
-fn owner_trait_name(owner_id: &str) -> Option<String> {
+pub(in crate::analysis) fn owner_trait_name(owner_id: &str) -> Option<String> {
     let impl_rest = owner_id.split("::impl ").nth(1)?;
     let impl_body = impl_rest.rsplit_once("::")?.0;
     let (trait_ty, _) = impl_body.rsplit_once(" for ")?;

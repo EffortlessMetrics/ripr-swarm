@@ -144,6 +144,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseServerManifest(args) => {
             super::reports::release_server::release_server_manifest(&args)
         }
+        XtaskCommand::ReleaseBindServerDescriptor(args) => {
+            super::reports::release_server::release_bind_server_descriptor(&args)
+        }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)
         }
@@ -244,6 +247,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
+        XtaskCommand::TerminationQualification(args) => {
+            super::termination_qualification::run(&args)
+        }
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),

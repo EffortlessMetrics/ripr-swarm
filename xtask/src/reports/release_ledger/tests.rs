@@ -244,6 +244,7 @@ fn selected_claim_totals_must_match_rows_and_packet() -> Result<(), String> {
             .iter()
             .map(|id| PacketClaim {
                 claim_id: (*id).to_string(),
+                owner_issue: 0,
                 resolution: "accepted_defer_with_non_claim".to_string(),
             })
             .collect(),
@@ -344,6 +345,7 @@ fn packet_roster_and_final_capture_commit_are_compared() -> Result<(), String> {
         digest: "sha256:packet".to_string(),
         claims: vec![PacketClaim {
             claim_id: "claim-a".to_string(),
+            owner_issue: 0,
             resolution: "accepted_defer_with_non_claim".to_string(),
         }],
         open_prs: PacketOpenPrs {
@@ -471,4 +473,34 @@ fn markdown_with_a_conflicting_second_digest_line_is_rejected() -> Result<(), St
         .any(|reason| reason.contains("first-parent digest"))
         .then_some(())
         .ok_or_else(|| format!("expected a digest reason, got {found:?}"))
+}
+
+#[test]
+fn merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[3].release_disposition = "included_accepted_product".to_string();
+    require_reason(
+        &ledger,
+        "requires disposition included_historical_reachable_only",
+    )?;
+    // Ownership through a renamed path: owned lines, no alive touched path.
+    let mut ledger = valid();
+    ledger.records[0].effect_basis = EffectBasis {
+        alive_paths: 0,
+        absent_paths: 1,
+        last_toucher_paths: 0,
+        blamed_lines: 3,
+    };
+    redigest(&mut ledger);
+    let found = reasons(&ledger);
+    found
+        .is_empty()
+        .then_some(())
+        .ok_or_else(|| format!("rename-owned lines must validate: {found:?}"))?;
+    ledger.records[0].effect_basis.blamed_lines = 0;
+    redigest(&mut ledger);
+    require_reason(
+        &ledger,
+        "present_effective needs a last-toucher path or a blamed line",
+    )
 }

@@ -1,0 +1,10 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -19,5 +19,5 @@
+ }
+ 
+ export function fullName(first: string, last: string): string {
+-  return first + " " + last;
++  return [first, last].join(" ");
+ }

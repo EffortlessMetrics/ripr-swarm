@@ -294,7 +294,9 @@ fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String>
         "self.sink.set(1)",
         "call_deletion",
     )?;
-    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    // Main's implicit-call gap (#9466) withholds `weakly_exposed` when a
+    // trait-impl method is only implicitly called; discrimination stays `yes`.
+    assert_eq!(finding["classification"], "static_unknown", "{finding}");
     assert_eq!(finding["ripr"]["reach"]["state"], "weak", "{finding}");
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     Ok(())

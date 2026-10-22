@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: a changed line inside a multi-line replacement block now pairs with its own old line, not only the block's first line. Previously, a clamped `return` under a rewritten comment read every token as changed, so a test that only observed an unchanged operand earned a false `exposed`. The new-declaration guard now treats a `def` header as changed when its paired old line is a `def` header or looks like it, and the annotation-only guards no longer fire across an indentation change (#7556).

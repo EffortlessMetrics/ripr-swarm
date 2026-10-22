@@ -1,0 +1,12 @@
+diff --git a/shapes/models.py b/shapes/models.py
+--- a/shapes/models.py
++++ b/shapes/models.py
+@@ -18,7 +18,7 @@
+ 
+     @classmethod
+     def free(cls):
+-        return cls(0, 0.0)
++        return cls(0, 0.2)
+ 
+     @staticmethod
+     def parse_amount(text):

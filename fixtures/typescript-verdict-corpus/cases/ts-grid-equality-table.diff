@@ -1,0 +1,12 @@
+diff --git a/src/equality.ts b/src/equality.ts
+--- a/src/equality.ts
++++ b/src/equality.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function isSaturday(day: number): boolean {
+-  return day % 7 === 6;
++  return 6 === day % 7;
+ }
+ 
+ export function samePair(a: number, b: number): boolean {

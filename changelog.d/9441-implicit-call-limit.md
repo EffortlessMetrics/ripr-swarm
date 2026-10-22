@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A weak gap on a trait-impl method the language calls implicitly (an operator impl such as `Add`, `Drop`, `Iterator::next`, `Deref`, `Index`, `PartialOrd`, or a `dyn Trait` method called on an untyped receiver) now reads `static_unknown` with the new `rust_implicit_call_unresolved` limit instead of `weakly_exposed`, when a test names the impl's type. Nothing is credited; a test that never names the type, a gated std trait and a finding whose reach is not weak keep their class (RIPR-SPEC-0240, #9441).

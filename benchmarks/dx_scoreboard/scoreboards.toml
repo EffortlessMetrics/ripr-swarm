@@ -627,6 +627,21 @@ source = "ingest:first-run"
 review_on_change = true
 
 [[metric]]
+id = "first_run.decisive_verdicts"
+board = "first_run"
+title = "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)"
+unit = "cases"
+direction = "higher_is_better"
+# #9276 acceptance: at least 2 of the 3 first-run crates. "Agrees" is the
+# walk's `verdict_reading`, so an `*_unknown` verdict never counts and neither
+# does false credit or a false gap. Any drop from the baseline regresses.
+target = 2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
 id = "first_run.friction_events"
 board = "first_run"
 title = "Friction events logged during the scripted first run"

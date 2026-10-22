@@ -15,6 +15,7 @@ mod gap_admission;
 mod helper_transfer;
 mod implicit_effect;
 pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
+mod implicit_call;
 mod infection;
 mod macro_item_names;
 mod match_transfer;
@@ -73,6 +74,7 @@ pub(in crate::analysis) use helper_transfer::{
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
+pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
