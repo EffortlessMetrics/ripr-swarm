@@ -544,6 +544,8 @@ pub(crate) fn validate_check_findings_artifact(
         schema_version,
         artifact: identity,
         analysis_outcome,
+        analysis_scope,
+        run_limitations,
         findings,
     } = document;
     if schema_version.trim().is_empty() {
@@ -553,8 +555,30 @@ pub(crate) fn validate_check_findings_artifact(
     }
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
     let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
     Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+/// A run that analyzed only a partition of the diff, or disclosed any run
+/// limitation, cannot show a gap's absence as closure: the gap may sit in the
+/// part that was not analyzed.
+fn check_findings_run_is_whole(
+    label: &str,
+    analysis_scope: Option<&Value>,
+    run_limitations: Option<&[Value]>,
+) -> Result<(), String> {
+    if analysis_scope.is_some() {
+        return Err(format!(
+            "agent verify {label} artifact analyzed only a partial diff scope (analysis_scope), so a missing gap cannot be read as closed; regenerate it over the whole diff"
+        ));
+    }
+    if run_limitations.is_some_and(|limitations| !limitations.is_empty()) {
+        return Err(format!(
+            "agent verify {label} artifact discloses run limitations, so a missing gap cannot be read as closed; regenerate it without limitations"
+        ));
+    }
+    Ok(())
 }
 
 /// The completeness and shape rules a validated findings document must meet
@@ -970,6 +994,8 @@ struct CheckFindingsDocument {
     schema_version: String,
     artifact: ArtifactIdentity,
     analysis_outcome: Option<CheckFindingsOutcome>,
+    analysis_scope: Option<Value>,
+    run_limitations: Option<Vec<Value>>,
     findings: Vec<CheckFindingsFinding>,
 }
 
@@ -1593,7 +1619,6 @@ fn replace_content_commitment(
 
 #[cfg(test)]
 mod tests {
-
     fn findings_fixture(
         document: serde_json::Value,
     ) -> Result<(Option<CheckFindingsOutcome>, Vec<CheckFindingsFinding>), String> {
@@ -1645,6 +1670,21 @@ mod tests {
             if check_findings_gaps("after", outcome, &findings).is_ok() {
                 return Err("an unproven-complete findings document was accepted".to_string());
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_refuse_a_partial_scope_or_any_run_limitation() -> Result<(), String> {
+        let scope = serde_json::json!({ "run_status": "limited_partial_scope" });
+        let limitation = serde_json::json!({ "category": "diff_scope" });
+        check_findings_run_is_whole("after", None, None)?;
+        check_findings_run_is_whole("after", None, Some(&[]))?;
+        if check_findings_run_is_whole("after", Some(&scope), None).is_ok() {
+            return Err("a partial diff scope was accepted".to_string());
+        }
+        if check_findings_run_is_whole("after", None, Some(&[limitation])).is_ok() {
+            return Err("a run limitation was accepted".to_string());
         }
         Ok(())
     }

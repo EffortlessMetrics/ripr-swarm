@@ -58,8 +58,9 @@ could not be verified without trusting hand-authored JSON.
    Git-provenance validator.
 3. The findings kind additionally requires `analysis_outcome.analysis_complete`
    to be `true`, rejects `document_complete: false`, requires a non-empty
-   classification, file and line for each gap-identified finding, and rejects a
-   repeated gap id.
+   classification, file and line for each gap-identified finding, rejects a
+   repeated gap id, and rejects a document carrying `analysis_scope` (a
+   partitioned diff) or any non-empty `run_limitations`.
 4. The analysis format is part of the input identity, so a findings artifact
    and a repo-exposure artifact are incomparable.
 
@@ -67,10 +68,26 @@ could not be verified without trusting hand-authored JSON.
 
 - Positive: a TypeScript before/after pair produced by the binary verifies and
   names the gap.
-- Negative: a hand-edited artifact fails the commitment; an unenveloped
-  `--format json` document is not accepted; a reversed pair is incomparable;
-  an incomplete analysis, a bounded document, a duplicate gap id and a
-  repo-exposure/findings kind mix are each refused.
+- Binary negatives: a hand-edited artifact fails the commitment; an
+  unenveloped `--format json` document is not accepted; a reversed pair is
+  incomparable.
+- Unit negatives (on the findings rules after the shared envelope check): an
+  incomplete analysis, a bounded document, a partial scope, run limitations,
+  a duplicate gap id and a malformed finding are each refused. A
+  repo-exposure/findings kind mix is refused by the shared input identity
+  (the analysis format is part of it).
+
+## Known Limits
+
+- Input identity pins mode and base, not the diff. A gap that disappears
+  because the diff shrank (production lines reverted, or a base that moved)
+  reads as absent in the after artifact. This slice only makes the snapshots
+  trustworthy; a gap-bound receipt (#9103 slice C) must require the gap to be
+  present in the after artifact as `exposed`, never infer closure from
+  absence.
+- The outcome parser keys findings by a wider set of gap-id spellings than
+  `CheckFindingsFinding::gap_id`; the producer is the only source of these
+  artifacts, so the two agree on its output.
 
 ## Non-Goals
 
