@@ -11344,6 +11344,27 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
     );
 }
 
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    let tail = "xs.iter().copied().sum::<i32>() as usize";
+    let lib = adaptor_lib(
+        tail,
+        &adaptor_test(
+            "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 7);",
+        ),
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count_positive", tail);
+    assert!(pin.is_some(), "the walking tail must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(count_positive(&[3, 4]), 7);".to_string()]
+    );
+}
+
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
 /// non-empty sequence.
 #[test]

@@ -95,6 +95,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
     call: PinCall,
     path: ReturnPathGate,
+    /// Argument positions of slice-like parameters the changed expression
+    /// walks; a pinned call passing only an empty literal there never
+    /// reaches the change (#9444).
+    walked_positions: Vec<usize>,
     /// Where the owner `fn` starts. It serves the #6957 exemption, where a
     /// same-name type declaration in the owner's own enclosing module is the
     /// production declaration, not a test-local shadow. It also places the
@@ -2735,10 +2739,13 @@ impl OwnerReturnPin {
         if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
             return None;
         }
+        let walked_positions =
+            closure_adaptor::iterated_slice_positions(&owner.body, &probe.expression);
         Some(Self {
             name: name.to_string(),
             call,
             path,
+            walked_positions,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
             returns_integer: returns_primitive_scalar(owner, index)
@@ -2866,6 +2873,7 @@ impl OwnerReturnPin {
                 trait_scope: None,
             },
             path: ReturnPathGate::CloneReceiver,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -2967,6 +2975,7 @@ impl OwnerReturnPin {
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -3060,6 +3069,7 @@ impl OwnerReturnPin {
             name: owner.name.clone(),
             call,
             path,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -3692,6 +3702,20 @@ impl OwnerReturnPin {
                         )
                     })
                 {
+                    return false;
+                }
+                // #9444: a walk over an empty literal visits nothing.
+                if self.walked_positions.iter().any(|position| {
+                    call_text.is_some_and(|text| {
+                        closure_adaptor::pinned_call_passes_only_empty(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                        )
+                    })
+                }) {
                     return false;
                 }
                 // RIPR-SPEC-0197 rule 3: a short-circuit tail pins only on a
