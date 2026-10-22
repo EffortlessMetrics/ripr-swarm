@@ -323,15 +323,35 @@ suite('Managed Server Installation', () => {
     }
   });
 
-  test('release does not delete a lock taken over by another owner mid-install (#9304)', async () => {
+  test('an installer that lost its lock mid-stage does not promote or release the new owner (#9304)', async () => {
     const request = installRequest(root, '8.7.0');
     const finalDir = path.join(request.serversRoot, request.version, request.platformTarget);
     const lockPath = `${finalDir}.install.lock`;
     const takeover = operations('takeover', '8.7.0', async () => {
       await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:other\n`);
     });
-    await installManagedServer(request, takeover);
+    await assert.rejects(installManagedServer(request, takeover), /lock was lost/);
     assert.strictEqual((await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim(), `${process.pid}:other`);
+    assert.strictEqual(fs.existsSync(finalDir), false, 'no promotion without the lock');
+  });
+
+  test('a valid cache hit clears a leftover .replaced-* unless the lock is held (#9304)', async () => {
+    const request = installRequest(root, '8.8.0');
+    const installed = await installManagedServer(request, operations('hit', '8.8.0'));
+    const finalDir = path.dirname(installed.executablePath);
+    const leftover = `${finalDir}.replaced-1-q`;
+    const lockPath = `${finalDir}.install.lock`;
+    await fs.promises.mkdir(leftover);
+    await fs.promises.mkdir(lockPath);
+    await fs.promises.writeFile(path.join(lockPath, 'owner'), `${process.pid}:live\n`);
+    await installManagedServer(request, operations('hit', '8.8.0'));
+    assert.strictEqual(fs.existsSync(leftover), true, 'busy lock: left alone');
+    assert.strictEqual(fs.existsSync(lockPath), true, 'busy lock is not disturbed');
+    await fs.promises.rm(lockPath, { recursive: true });
+    await installManagedServer(request, operations('hit', '8.8.0'));
+    assert.strictEqual(fs.existsSync(leftover), false);
+    assert.strictEqual(fs.existsSync(lockPath), false);
+    assert.ok(await readManagedServerInstallation(request));
   });
 
   test('prerelease requests admit the generation-keyed manifest version through staging and cache read-back', async () => {

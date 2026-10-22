@@ -128,6 +128,7 @@ export async function installManagedServer(
   for (;;) {
     const completed = await readManagedServerInstallation(request);
     if (completed) {
+      await sweepReplacedOnCacheHit(request, finalDir, lockPath);
       return completed;
     }
 
@@ -170,7 +171,7 @@ export async function installManagedServer(
         return converged;
       }
       await sweepOrphanInstallDirs(request.serversRoot, finalDir);
-      const installed = await stageAndPromote(request, operations, finalDir);
+      const installed = await stageAndPromote(request, operations, finalDir, () => ownsLock(lockPath, lockToken));
       // A displaced `.replaced-*` directory may be the only recoverable copy
       // until a new install succeeds, so it is swept only now.
       await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
@@ -181,6 +182,39 @@ export async function installManagedServer(
         await fs.promises.rm(lockPath, { recursive: true, force: true });
       }
     }
+  }
+}
+
+/**
+ * A valid cache hit can still have a `.replaced-*` sibling left by a kill
+ * between promote and cleanup (#9304). Clear it under the target lock with a
+ * single non-blocking attempt; a busy lock or any failure is skipped silently.
+ */
+async function sweepReplacedOnCacheHit(
+  request: ManagedServerInstallRequest,
+  finalDir: string,
+  lockPath: string
+): Promise<void> {
+  try {
+    const base = path.basename(finalDir);
+    const entries = await fs.promises.readdir(path.dirname(finalDir));
+    if (!entries.some((entry) => entry.startsWith(`${base}.replaced-`))) {
+      return;
+    }
+    const token = `${process.pid}:${crypto.randomUUID()}`;
+    await fs.promises.mkdir(lockPath);
+    try {
+      await fs.promises.writeFile(path.join(lockPath, 'owner'), `${token}\n`, { flag: 'wx' });
+      if (await readManagedServerInstallation(request)) {
+        await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
+      }
+    } finally {
+      if (await ownsLock(lockPath, token)) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Busy lock or filesystem error: the leftover is retried on a later hit.
   }
 }
 
@@ -342,8 +376,16 @@ function installDir(request: ManagedServerInstallRequest): string {
 async function stageAndPromote(
   request: ManagedServerInstallRequest,
   operations: ManagedServerInstallOperations,
-  finalDir: string
+  finalDir: string,
+  holdsLock: () => Promise<boolean>
 ): Promise<ManagedServerInstallation> {
+  // Fence promotion on lock ownership (#9304). The check-to-rename window is
+  // not atomic, so this is best-effort, not mutual exclusion.
+  const assertLockHeld = async (): Promise<void> => {
+    if (!(await holdsLock())) {
+      throw new Error('Managed server install lock was lost to another installer; retry the install.');
+    }
+  };
   const unique = `${process.pid}-${crypto.randomUUID()}`;
   const stagingDir = `${finalDir}.install-${unique}`;
   const displacedDir = `${finalDir}.replaced-${unique}`;
@@ -422,6 +464,7 @@ async function stageAndPromote(
       throw new Error('Staged managed server failed completed-receipt validation.');
     }
 
+    await assertLockHeld();
     try {
       await fs.promises.rename(finalDir, displacedDir);
       displaced = true;
@@ -431,6 +474,7 @@ async function stageAndPromote(
       }
     }
     try {
+      await assertLockHeld();
       await fs.promises.rename(stagingDir, finalDir);
     } catch (error) {
       if (displaced) {
@@ -440,8 +484,13 @@ async function stageAndPromote(
       throw error;
     }
     if (displaced) {
-      await fs.promises.rm(displacedDir, { recursive: true, force: true });
-      displaced = false;
+      // Without the lock, leave the displaced copy for a later holder's sweep.
+      if (await holdsLock()) {
+        await fs.promises.rm(displacedDir, { recursive: true, force: true });
+        displaced = false;
+      } else {
+        displaced = false;
+      }
     }
 
     const promoted = await readManagedServerInstallation(request);

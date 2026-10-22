@@ -6,4 +6,4 @@
   offline-trusted until then). A stale `.install.lock` left by a dead process or a heartbeat
   older than five minutes (including a suspended live owner) is reclaimed
   best-effort, lock release and heartbeat are owner-checked, and orphaned `.install-*` and
-  `.replaced-*` directories are swept under the lock (#9304).
+  `.replaced-*` directories are swept under the lock Promotion is fenced on lock ownership (best-effort, not atomic), and a cache hit clears leftover `.replaced-*` directories when the lock is free (#9304).

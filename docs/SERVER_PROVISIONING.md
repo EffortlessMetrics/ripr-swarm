@@ -100,7 +100,7 @@ missing or unparseable owner is reclaimed only on a stale heartbeat. The holder
 heartbeats and releases only while the lock still carries its own token. The
 holder sweeps `.install-*` and `.install.lock.stale-*` siblings of its own
 target before installing, and `.replaced-*` only after a successful install,
-never the active install directory. Reclaim by pid
+never the active install directory. Promotion is fenced on the holder still owning the lock: it is re-checked before the displace and promote renames and before the displaced copy is removed, and a lost lock aborts with a retryable error. The check-to-rename window is not atomic, so this is best-effort rather than mutual exclusion. A valid cache hit that finds a leftover `.replaced-*` sibling clears it under a single non-blocking attempt at the lock, skipping silently when the lock is busy. Reclaim by pid
 probe is local-host only; the Windows branch relies on Node's `process.kill(pid, 0)`
 and has no Windows-capable proof here.
 
