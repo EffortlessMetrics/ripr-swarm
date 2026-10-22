@@ -251,17 +251,89 @@ mod tests {
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 
+    fn home_authority_fixture_root(stamp: u128) -> Result<PathBuf, String> {
+        use std::sync::atomic::AtomicU64;
+
+        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+        claim_home_authority_root(stamp, &NEXT_ROOT)
+    }
+
+    fn claim_home_authority_root(
+        stamp: u128,
+        next_suffix: &std::sync::atomic::AtomicU64,
+    ) -> Result<PathBuf, String> {
+        use std::sync::atomic::Ordering;
+
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        // Parallel controls can observe the same timestamp, and an interrupted
+        // earlier process may have left a same-PID root behind. Claim each root
+        // exclusively, moving to the next suffix when the name is taken.
+        for _ in 0..1024 {
+            let root = parent.join(format!(
+                "ripr-home-authority-{}-{stamp}-{}",
+                std::process::id(),
+                next_suffix.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&root) {
+                Ok(()) => return Ok(root),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err("no free cargo-home authority fixture root after 1024 attempts".to_string())
+    }
+
+    #[test]
+    fn cargo_home_authority_fixture_skips_a_stale_leftover_root() -> Result<(), String> {
+        // A private counter and stamp make the occupied name deterministic: the
+        // first suffix (0) is a leftover from an "interrupted" run.
+        let stamp = 7_u128 << 100;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        let stale = std::env::temp_dir().join(format!(
+            "ripr-home-authority-{}-{stamp}-0",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&stale);
+        std::fs::create_dir_all(&stale).map_err(|error| error.to_string())?;
+        let live = claim_home_authority_root(stamp, &counter);
+        let cleanup = std::fs::remove_dir_all(&stale).map_err(|error| error.to_string());
+        let live = live?;
+        assert_ne!(live, stale, "a taken name must not be reused");
+        assert!(live.is_dir());
+        std::fs::remove_dir_all(live).map_err(|error| error.to_string())?;
+        cleanup
+    }
+
+    #[test]
+    fn cargo_home_authority_fixtures_stay_isolated_at_the_same_timestamp() -> Result<(), String> {
+        let first = home_authority_fixture_root(0)?;
+        let second = home_authority_fixture_root(0)?;
+        assert_ne!(first, second, "live fixtures need distinct roots");
+        std::fs::write(first.join("config.toml"), "[build]\njobs=1\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(second.join("config.toml"), "[build]\njobs=2\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(first.join("config.toml"), "[build]\njobs=3\n")
+            .map_err(|error| error.to_string())?;
+        let read_second = || {
+            std::fs::read_to_string(second.join("config.toml")).map_err(|error| error.to_string())
+        };
+        assert_eq!(read_second()?, "[build]\njobs=2\n");
+        std::fs::remove_dir_all(first).map_err(|error| error.to_string())?;
+        assert_eq!(read_second()?, "[build]\njobs=2\n");
+        std::fs::remove_dir_all(second).map_err(|error| error.to_string())
+    }
+
     fn check_home_directory_authority(
         aliases: impl FnOnce(&Path) -> Result<Vec<PathBuf>, String>,
     ) -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-home-authority-{}-{}",
-            std::process::id(),
+        let root = home_authority_fixture_root(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|error| error.to_string())?
-                .as_nanos()
-        ));
+                .as_nanos(),
+        )?;
         for directory in ["home", "other-home", "anchor"] {
             std::fs::create_dir_all(root.join(directory)).map_err(|error| error.to_string())?;
         }
