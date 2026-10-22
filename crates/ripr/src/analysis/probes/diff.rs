@@ -770,6 +770,9 @@ fn dedup_probe_ids(probes: &mut [SeededProbe]) {
 /// associated constant (`core::i32::MAX` -> `i32::MAX`). Anything else,
 /// including a line that differs elsewhere, stays probed.
 fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
+    // A line that differs only in leading or trailing whitespace is a pure
+    // reformat, which is also neutral; a byte-identical pair is not an edit.
+    let raw_differs = after != before;
     let (after, before) = (after.trim(), before.trim());
     // String and comment text is output or prose, so a line holding either is
     // never a respelling.
@@ -778,7 +781,7 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
     };
     !prose(after)
         && !prose(before)
-        && after != before
+        && raw_differs
         && neutral_spelling(after) == neutral_spelling(before)
 }
 
@@ -786,9 +789,9 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
 /// removed lines it replaced: the same statement joined or split across a
 /// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
 /// onto one line as `isize::MAX`). Each side is joined with whitespace
-/// normalized, and some respelling must actually differ, so a pure reformat
-/// is left to the rest of the analysis. Blocks beyond `MAX_REWRAP_LINES` stay
-/// probed.
+/// normalized. A pure reformat whose joined token streams are identical is
+/// behavior-neutral too, as is a rewrap that only respells. Blocks beyond
+/// `MAX_REWRAP_LINES` stay probed.
 fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
     const MAX_REWRAP_LINES: usize = 8;
     if after.len() > MAX_REWRAP_LINES || before.len() > MAX_REWRAP_LINES {
@@ -800,9 +803,38 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
     if after.iter().any(prose) || before.iter().any(prose) {
         return false;
     }
+    // Bracket-adjacent spacing inside a line (`{ a + b }` on one line, split
+    // as `{` / `a + b` / `}` across three) is formatting too, but a space can
+    // be content inside a character literal, so the squeezed comparison
+    // below fails closed when any line holds a single quote.
+    let quoted = after
+        .iter()
+        .chain(before.iter())
+        .any(|line| line.contains('\''));
     let (after, before) = (join_tokens(after), join_tokens(before));
-    let respelled = neutral_spelling(&before) != before || neutral_spelling(&after) != after;
-    respelled && neutral_spelling(&after) == neutral_spelling(&before)
+    neutral_spelling(&after) == neutral_spelling(&before)
+        || (!quoted
+            && neutral_spelling(&squeeze_bracket_spaces(&after))
+                == neutral_spelling(&squeeze_bracket_spaces(&before)))
+}
+
+/// `text` with spaces beside a bracket, angle bracket, comma or semicolon
+/// removed, where spacing never separates Rust tokens (`{ a }` and `{a}`
+/// read alike). Interior spacing elsewhere is kept, so `a & &b` and
+/// `a && b` stay different, as do separated range dots.
+fn squeeze_bracket_spaces(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ' '
+            && (matches!(out.chars().last(), Some('(' | '[' | '{' | '<' | ',' | ';'))
+                || matches!(chars.peek(), Some(')' | ']' | '}' | '>' | ',' | ';')))
+        {
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `lines` joined into one statement: whitespace runs collapse to one space,
@@ -2667,6 +2699,92 @@ mod tests {
         assert!(!changed.is_empty(), "a changed value keeps its probe");
     }
 
+    /// #9450: a pure reformat — one line split across lines, the reverse
+    /// join, or a reindent — holds the same tokens, so it seeds no probe,
+    /// while the same split with one token changed still does.
+    #[test]
+    fn a_pure_reformat_rewrap_seeds_no_probe_but_a_changed_token_does() {
+        let split_source = "fn add(a: i32, b: i32) -> i32 {\n    let total =\n        a +\n        b;\n    total\n}\n";
+        let split = block_probes(
+            split_source,
+            &[
+                (2, "    let total ="),
+                (3, "        a +"),
+                (4, "        b;"),
+            ],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(split.is_empty(), "{split:?}");
+        let joined_source =
+            "fn add(a: i32, b: i32) -> i32 {\n    let total = a + b;\n    total\n}\n";
+        let joined = block_probes(
+            joined_source,
+            &[(2, "    let total = a + b;")],
+            &[
+                (2, 2, "    let total ="),
+                (3, 2, "        a +"),
+                (4, 2, "        b;"),
+            ],
+        );
+        assert!(joined.is_empty(), "{joined:?}");
+        let changed_source = "fn add(a: i32, b: i32) -> i32 {\n    let total =\n        a +\n        c;\n    total\n}\n";
+        let changed = block_probes(
+            changed_source,
+            &[
+                (2, "    let total ="),
+                (3, "        a +"),
+                (4, "        c;"),
+            ],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(!changed.is_empty(), "a changed token keeps its probe");
+        let reindented_source =
+            "fn add(a: i32, b: i32) -> i32 {\n        let total = a + b;\n    total\n}\n";
+        let reindented = block_probes(
+            reindented_source,
+            &[(2, "        let total = a + b;")],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(reindented.is_empty(), "{reindented:?}");
+    }
+
+    /// #9450 witness shape: a one-line function body split at its braces.
+    #[test]
+    fn a_function_body_split_at_its_braces_seeds_no_probe() {
+        let source = "pub fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n";
+        let split = block_probes(
+            source,
+            &[
+                (1, "pub fn add(a: i64, b: i64) -> i64 {"),
+                (2, "    a + b"),
+                (3, "}"),
+            ],
+            &[(1, 1, "pub fn add(a: i64, b: i64) -> i64 { a + b }")],
+        );
+        assert!(split.is_empty(), "{split:?}");
+    }
+
+    /// #9450: a one-line body split at its braces (`{ a + b }` over three
+    /// lines) joins at wrap points only; the bracket-adjacent spaces inside
+    /// the one-line side need the squeezed comparison.
+    #[test]
+    fn rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes() {
+        assert!(is_behavior_neutral_rewrap(
+            &["pub fn add(a: i64, b: i64) -> i64 {", "    a + b", "}"],
+            &["pub fn add(a: i64, b: i64) -> i64 { a + b }"]
+        ));
+        assert_eq!(squeeze_bracket_spaces("{ a + b }"), "{a + b}");
+        assert_eq!(squeeze_bracket_spaces("a & &b"), "a & &b");
+        assert_eq!(squeeze_bracket_spaces("a && b"), "a && b");
+        // A single quote anywhere in the block disables the squeezed
+        // comparison: a space can be literal content (`' '`), so a
+        // bracket-spacing difference beside a quote stays probed.
+        assert!(!is_behavior_neutral_rewrap(
+            &["let c = 'x'; f(a, b);"],
+            &["let c = 'x'; f(a,b);"]
+        ));
+    }
+
     #[test]
     fn rewrap_normalization_keeps_word_boundaries() {
         assert!(is_behavior_neutral_rewrap(
@@ -2678,8 +2796,9 @@ mod tests {
             &["letmax = i32::MAX;"],
             &["let", "max = core::i32::MAX;"],
         ));
-        // A pure reformat holds no respelling.
-        assert!(!is_behavior_neutral_rewrap(
+        // A pure reformat holds no respelling, but its joined token stream
+        // is identical, so it is behavior-neutral too.
+        assert!(is_behavior_neutral_rewrap(
             &["let a = b;"],
             &["let a =", "b;"]
         ));

@@ -17738,6 +17738,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0310"
+name = "Pure reformats seed no probes"
+spec = "docs/specs/RIPR-SPEC-0310-pure-reformats-seed-no-probes.md"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_pure_reformat_rewrap_seeds_no_probe_but_a_changed_token_does",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_function_body_split_at_its_braces_seeds_no_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_normalization_keeps_word_boundaries",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/probes/diff.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0310-pure-reformats-seed-no-probes.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0296"
 name = "First-run over-budget steps count step occurrences"
 spec = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
