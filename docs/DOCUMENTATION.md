@@ -122,6 +122,8 @@ Current how-to docs:
 - [Lane 3 editor/LSP tracker](lanes/LANE_3_EDITOR_LSP.md)
 - [Lane 4 PR / CI review cockpit tracker](lanes/LANE_4_PR_CI_REVIEW.md)
 - [Release](RELEASE.md)
+- [0.11.0 roadmap](releases/0.11.0-roadmap.md) - ranked path to the 0.11 hard
+  cut, linked to its issues (tracking issue #9271)
 - [Live-history release transaction runbook](RELEASE_TRANSACTION.md) - exact
   two-repository release lifecycle, J/K transport, receipts, and stop rules
 - [Source-promotion preflight](SOURCE_PROMOTION_PREFLIGHT.md)
@@ -131,6 +133,8 @@ Current how-to docs:
   candidate Windows CLI and VSIX rehearsal with Actions-only receipts
 - [Python wheelhouse qualification](PYTHON_WHEELHOUSE_QUALIFICATION.md) - exact
   candidate local-wheelhouse pip/uv rehearsal with a fail-closed aggregate
+- [Termination qualification](TERMINATION_QUALIFICATION.md) - exact-binary
+  adversarial corpus for Rust and Python nesting
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [First successful PR demo](demo/first-successful-pr.md)
 - [Start-here convergence receipts](handoffs/2026-05-22-start-here-surface-convergence-receipts.md)
@@ -299,6 +303,7 @@ Current explanation docs:
 - [Support tiers](status/SUPPORT_TIERS.md)
 - [Learnings](LEARNINGS.md)
 - [Friction log](FRICTION_LOG.md)
+- [Experience roadmap](roadmap/experience.md)
 - [Agent-as-user runs](AGENT_AS_USER_RUNS.md)
 - [Deferred decisions](DEFERRED.md)
 - [Agent handoff protocol](reference/AGENT_HANDOFF_PROTOCOL.md)

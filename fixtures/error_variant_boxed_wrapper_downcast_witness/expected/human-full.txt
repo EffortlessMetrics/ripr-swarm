@@ -151,7 +151,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -204,7 +204,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source, parse_summary_fails_closed_on_malformed_source
+  - reach yes: Related tests appear to reach parse_summary: parse_summary_boxed_variant_propagates_malformed_source
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: try_parse_summary(raw).map_err(Into::into)
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -644,7 +644,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches error variant: try_theme_summary(raw).map_err(Into::into) (line 123)
-  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses none unknown oracle; misses: has no assertion
+  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses no oracle; misses: has no assertion
   - source function argument value raw = "&theme" at line 83
 
 Weakness
@@ -681,7 +681,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: try_theme_summary(raw).map_err(Into::into) (line 123)
-  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses none unknown oracle; misses: has no assertion
+  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses no oracle; misses: has no assertion
   - source function argument value raw = "&theme" at line 83
 
 Weakness
