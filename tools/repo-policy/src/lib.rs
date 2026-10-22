@@ -827,9 +827,9 @@ pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec
             if let Some(flow) = value.strip_prefix('{') {
                 let flow = flow.trim_end_matches('}');
                 let grants_write = flow.split(',').any(|entry| {
-                    entry
-                        .split_once(':')
-                        .is_some_and(|(key, v)| yaml_scalar(key) == "contents" && yaml_scalar(v) == "write")
+                    entry.split_once(':').is_some_and(|(key, v)| {
+                        yaml_scalar(key) == "contents" && yaml_scalar(v) == "write"
+                    })
                 });
                 if grants_write {
                     violations.push(format!(

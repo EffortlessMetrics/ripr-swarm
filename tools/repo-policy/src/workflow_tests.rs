@@ -1614,11 +1614,20 @@ fn workflow_level_contents_write_is_rejected_but_job_level_is_allowed() -> Resul
 #[test]
 fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
     for (label, text) in [
-        ("trailing comment", "permissions:\n  contents: write # release\n"),
-        ("tab comment", "permissions:\n  contents: write\t# release\n"),
+        (
+            "trailing comment",
+            "permissions:\n  contents: write # release\n",
+        ),
+        (
+            "tab comment",
+            "permissions:\n  contents: write\t# release\n",
+        ),
         ("quoted value", "permissions:\n  contents: \"write\"\n"),
         ("flow style", "permissions: { contents: write }\n"),
-        ("flow style with others", "permissions: { issues: read, contents: write }  # x\n"),
+        (
+            "flow style with others",
+            "permissions: { issues: read, contents: write }  # x\n",
+        ),
         ("write-all", "permissions: write-all\n"),
         ("write-all with comment", "permissions: write-all # note\n"),
     ] {
@@ -1631,7 +1640,10 @@ fn workflow_level_write_rejects_comment_flow_and_write_all_bypasses() {
     for (label, text) in [
         ("read", "permissions:\n  contents: read # no write here\n"),
         ("flow read", "permissions: { contents: read }\n"),
-        ("job level", "permissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: write\n"),
+        (
+            "job level",
+            "permissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: write\n",
+        ),
         ("other scope", "permissions:\n  pull-requests: write\n"),
     ] {
         assert!(
