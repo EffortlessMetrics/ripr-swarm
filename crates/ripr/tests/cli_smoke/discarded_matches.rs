@@ -43,10 +43,10 @@ fn strip_bounded_evidence_legend(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut offset = 0;
     let mut selected_end = None;
     for line in value.split_inclusive('\n') {
-        if line.starts_with("  Evidence: reach ") {
-            if !line.ends_with('\n') || selected_end.replace(offset + line.len()).is_some() {
-                return Err("expected exactly one complete selected Evidence line".to_string());
-            }
+        if line.starts_with("  Evidence: reach ")
+            && (!line.ends_with('\n') || selected_end.replace(offset + line.len()).is_some())
+        {
+            return Err("expected exactly one complete selected Evidence line".to_string());
         }
         offset += line.len();
     }
