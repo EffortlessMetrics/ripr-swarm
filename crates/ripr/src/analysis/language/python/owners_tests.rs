@@ -76,6 +76,7 @@ pub(super) fn collect_owners_from_statements(
                     || class.name.to_string(),
                     |outer| format!("{outer}.{}", class.name),
                 );
+                let first = out.len();
                 collect_owners_from_statements(
                     file,
                     source,
@@ -85,6 +86,25 @@ pub(super) fn collect_owners_from_statements(
                     module_constants,
                     out,
                 );
+                // Class-level facts a dunder binding relies on (#9421): a class
+                // with decorators, a metaclass, odd body statements or a second
+                // definition of the same path may run another method than the
+                // one the owner names.
+                let duplicate = out[..first]
+                    .iter()
+                    .any(|owner| owner.class_path == class_path && owner.file == file);
+                let plain = !duplicate
+                    && class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && class_body_is_plain(&class.body);
+                let no_bases = class.bases.is_empty();
+                for owner in out
+                    .iter_mut()
+                    .filter(|owner| owner.class_path == class_path && owner.file == file)
+                {
+                    owner.class_facts.plain = plain;
+                    owner.class_facts.no_bases = no_bases;
+                }
                 out.push(owner_from_class(
                     PythonOwnerContext {
                         file,
@@ -158,6 +178,16 @@ fn owner_from_function(
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
+    let unplain_decorators = called_decorator_names(decorators);
+    let decorator_lines = decorators
+        .first()
+        .zip(decorators.last())
+        .map(|(first, last)| {
+            (
+                line_for_range_start(context.source, first.range()),
+                line_for_range_end(context.source, last.range()),
+            )
+        });
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -192,9 +222,13 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         dynamic_route_decorators,
+        unplain_decorators,
+        decorator_lines,
         parameters,
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
             context.module_constants,
             args,
@@ -205,7 +239,47 @@ fn owner_from_function(
         module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
+        class_facts: super::related_tests::PythonClassFacts {
+            direct_statements: direct_expression_statements(context.source, body),
+            ..Default::default()
+        },
     }
+}
+
+/// The trimmed text of each single-line expression statement written directly
+/// in a function body (not under an `if`, `try`, loop or `with`), so a changed
+/// line can be told apart from a guarded one (#9421).
+fn direct_expression_statements(source: &SourceText<'_>, body: &[Stmt]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(expr) => Some(text_for_range(source, expr.range)),
+            Stmt::Assign(assign) => Some(text_for_range(source, assign.range)),
+            Stmt::AugAssign(assign) => Some(text_for_range(source, assign.range)),
+            _ => None,
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.contains('\n'))
+        .collect()
+}
+
+/// Whether the class body holds only method definitions, a docstring, `pass`
+/// and plain non-dunder attributes, so no dunder is assigned, regenerated or
+/// defined conditionally in it.
+fn class_body_is_plain(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::Pass(_) | Stmt::ClassDef(_) => {
+            true
+        }
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .all(|target| matches!(target, Expr::Name(name) if !name.id.as_str().starts_with("__"))),
+        Stmt::AnnAssign(assign) => {
+            matches!(assign.target.as_ref(), Expr::Name(name) if !name.id.as_str().starts_with("__"))
+        }
+        _ => false,
+    })
 }
 
 /// Declared parameters in binding order: positional-only, then regular, then
@@ -255,14 +329,19 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
+        unplain_decorators: called_decorator_names(decorators),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -284,20 +363,40 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
 #[cfg(test)]
 pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
     extract_source_facts(file, source).tests
+}
+
+/// Whether a sibling class lists `class_name` among its bases.
+fn class_is_listed_as_base(statements: &[Stmt], class_name: &str) -> bool {
+    statements.iter().any(|stmt| {
+        let Stmt::ClassDef(other) = stmt else {
+            return false;
+        };
+        other.name.as_str() != class_name
+            && other.bases.iter().any(|base| match base {
+                Expr::Name(name) => name.id.as_str() == class_name,
+                Expr::Attribute(attribute) => attribute.attr.as_str() == class_name,
+                _ => false,
+            })
+    })
 }
 
 /// Python decorators and method bodies use different binding scopes.
@@ -307,6 +406,9 @@ pub(super) struct TestImportContext<'a> {
     pub(super) definition: &'a [PythonImport],
     pub(super) admission: &'a PythonAdmissionContext,
     pub(super) standard_unittest_list: bool,
+    /// Another local class lists this one as a base, so a subclass may replace
+    /// its setup hooks.
+    pub(super) subclassed: bool,
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -325,6 +427,16 @@ pub(super) fn collect_tests_from_statements(
     let admission = import_context.admission;
     let mut definition_imports = import_context.definition.to_vec();
     let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
+    let setup_receivers = if class_context.is_some() {
+        super::setup_receivers::setup_receivers(
+            source,
+            statements,
+            import_context.subclassed,
+            in_unittest_class,
+        )
+    } else {
+        Vec::new()
+    };
     for stmt in statements {
         apply_definition_import(file, stmt, &mut definition_imports);
         match stmt {
@@ -394,8 +506,14 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
+                    setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
@@ -470,8 +588,14 @@ pub(super) fn collect_tests_from_statements(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
+                    setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     parametrized: is_parametrized(&function.decorator_list),
@@ -512,6 +636,7 @@ pub(super) fn collect_tests_from_statements(
                                     class,
                                     &definition_imports,
                                 ),
+                            subclassed: class_is_listed_as_base(statements, class_name),
                         },
                         out,
                     );
@@ -540,6 +665,8 @@ pub(super) fn collect_tests_from_statements(
                                     .unwrap_or(&definition_imports),
                                 admission,
                                 standard_unittest_list: false,
+                                // A consumer class runs the mixin's tests under its own hooks.
+                                subclassed: true,
                             },
                             &mut from_mixin,
                         );
@@ -1094,6 +1221,16 @@ fn test_member_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
     }
     names.retain(|name| name.starts_with("test"));
     names
+}
+
+/// Names of decorators written as a call, whose result (not the named
+/// function) wraps the owner.
+fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter(|decorator| matches!(decorator, Expr::Call(_)))
+        .filter_map(expr_full_name)
+        .collect()
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

@@ -333,3 +333,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (29)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (30)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (31)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

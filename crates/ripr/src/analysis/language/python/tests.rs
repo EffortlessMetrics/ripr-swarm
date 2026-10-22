@@ -4135,6 +4135,167 @@ fn classify_field_assertion_as_exposed() -> Result<(), String> {
     Ok(())
 }
 
+fn classify_area_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change(
+        Path::new("src/geometry.py"),
+        2,
+        "    return 3.1416 * radius * radius",
+        &extract_owners(
+            Path::new("src/geometry.py"),
+            "def circle_area(radius):\n    return 3.1416 * radius * radius\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_geometry.py"),
+            &format!(
+                "import pytest\nfrom src.geometry import circle_area\n\n\
+                 def test_circle_area():\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "numeric edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+#[test]
+fn approx_with_an_explicit_band_abstains_for_a_numeric_edit() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 12 for `approx`: the band may admit the old value.
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
+        "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
+        "assert circle_area(2) == pytest.approx(12.566, **band)",
+        "assert circle_area(2) == pytest.approx(*values)",
+        "assert circle_area(2) == pytest.approx(**values)",
+    ] {
+        assert_eq!(
+            classify_area_edit(assertion)?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result<(), String> {
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.5664)",
+        "assert circle_area(2) == pytest.approx(12.5664, rel=None)",
+        "assert circle_area(2) == pytest.approx(12.5664, nan_ok=True)",
+        "assert circle_area(2) == 12.5664",
+    ] {
+        assert_eq!(
+            classify_area_edit(assertion)?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    classify_log_edit_message("balance low: %s", assertion)
+}
+
+fn classify_log_edit_message(
+    message: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change(
+        Path::new("src/audit.py"),
+        4,
+        &format!("        log.warning(\"{message}\", balance)"),
+        &extract_owners(
+            Path::new("src/audit.py"),
+            "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+             def check_balance(balance):\n    if balance < 10:\n        log.warning(\"balance low: %s\", balance)\n        return False\n    return True\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_audit.py"),
+            &format!(
+                "from src.audit import check_balance\n\n\
+                 def test_low_balance(caplog):\n    assert check_balance(5) is False\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "log edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+#[test]
+fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
+    assert_eq!(
+        classify_log_edit("assert \"low balance: 5\" in caplog.text")?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_is_read_from_the_parsed_expression_not_the_layout() -> Result<(), String> {
+    // Spacing, parentheses, line breaks and implicit literal concatenation
+    // all spell the same membership check (RIPR-SPEC-0238 rule 22).
+    for assertion in [
+        "assert  \"low balance: 5\"   in   caplog.text",
+        "assert (\"low balance: 5\" in caplog.text)",
+        "assert (\n        \"low balance: 5\"\n        in caplog.text\n    )",
+        "assert \"low \" \"balance: 5\" in caplog.text",
+        "assert \"low balance: 5\" in caplog.text, \"log was not written\"",
+        "assert check_balance(5) is False and \"low balance: 5\" in caplog.text",
+    ] {
+        assert_eq!(
+            classify_log_edit(assertion)?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_layouts_about_unrelated_text_keep_their_verdict() -> Result<(), String> {
+    for assertion in [
+        "assert (\n        \"payment accepted\"\n        in caplog.text\n    )",
+        "assert  \"payment accepted\"   in   caplog.text",
+        "assert \"low balance: 5\" in other.text",
+    ] {
+        let (class, limit) = classify_log_edit(assertion)?;
+        assert_ne!(class, ExposureClass::StaticUnknown, "{assertion}");
+        assert_eq!(limit, None, "{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_about_unrelated_text_keeps_its_verdict() -> Result<(), String> {
+    let (class, limit) = classify_log_edit("assert \"payment accepted\" in caplog.text")?;
+    assert_ne!(class, ExposureClass::StaticUnknown);
+    assert_eq!(limit, None);
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_ignores_the_assertion_scaffolding_words() -> Result<(), String> {
+    // "text" and "assert" appear in every `assert .. in caplog.text` line; only
+    // the checked literal may supply an overlapping word.
+    let (class, limit) = classify_log_edit_message(
+        "assert text: %s",
+        "assert \"payment accepted\" in caplog.text",
+    )?;
+    assert_ne!(class, ExposureClass::StaticUnknown);
+    assert_eq!(limit, None);
+    Ok(())
+}
+
 #[test]
 fn classify_output_assertion_as_exposed() -> Result<(), String> {
     let finding = classify_change(
@@ -7200,7 +7361,7 @@ fn empty_sink_tokens_keep_ordinary_module_imports_conservative() -> Result<(), S
             finding.related_tests[0].oracle_strength,
             OracleStrength::Unknown
         );
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(finding.oracle_alignment.as_deref(), Some("unknown"));
         assert_eq!(
             finding.alignment_reason.as_deref(),
@@ -7294,6 +7455,197 @@ fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), 
     Ok(())
 }
 
+const REVERSED_OWNER: &str = "class numeric_range:\n    def __init__(self, stop):\n        self.stop = stop\n\n    def __reversed__(self):\n        if not self.stop:\n            return iter(())\n        return iter(range(self.stop - 1, -1, -1))\n\n    def __len__(self):\n        return self.stop\n";
+
+type ReversedGuard = (crate::domain::Finding, Vec<(String, &'static str)>);
+
+/// Classify the `if not self.stop:` guard of `numeric_range.__reversed__`.
+fn classify_reversed_guard(test_src: &str) -> Result<ReversedGuard, String> {
+    let file = Path::new("src/nr.py");
+    let owners = extract_owners(file, REVERSED_OWNER);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "__reversed__")
+        .ok_or_else(|| "the __reversed__ owner must be extracted".to_string())?;
+    let tests = extract_tests(Path::new("tests/test_nr.py"), test_src);
+    assert_eq!(tests.len(), 1, "the fixture must parse exactly one test");
+    let relations = candidate_relations(owner, &tests);
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        if not self.stop:",
+        Some("        if self.stop:"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the reversed guard change must yield a finding".to_string())?;
+    Ok((finding, relations))
+}
+
+#[test]
+fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
+    for test_src in [
+        "import src.nr as mi\n\n\ndef test_empty_reversed():\n    assert list(reversed(mi.numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    r = numeric_range(0)\n    assert list(reversed(r)) == []\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_empty_reversed(self):\n        r = numeric_range(0)\n        self.assertEqual(list(reversed(r)), [])\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_empty_reversed".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+        assert_eq!(
+            finding.alignment_reason.as_deref(),
+            Some("strong_oracle_observes_owner_protocol_entry")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
+    for test_src in [
+        // Another dunder's entry point does not reach `__reversed__`.
+        "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
+        // An unrelated receiver.
+        "from src.nr import numeric_range\n\n\ndef test_other():\n    assert list(reversed([1, 2])) == [2, 1]\n    numeric_range(0)\n",
+        // The receiver is rebound before the entry.
+        "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    r = [1]\n    assert list(reversed(r)) == [1]\n",
+        // The class is not imported from the owner's module.
+        "def test_unimported():\n    assert list(reversed(numeric_range(0))) == []\n",
+        // Extra, keyword, starred and trailing-comma arguments are not the sole-argument entry.
+        "from src.nr import numeric_range\n\n\ndef test_extra():\n    assert list(reversed(numeric_range(0), 1)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_kw():\n    assert list(reversed(seq=numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_star():\n    assert list(reversed(*numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_comma():\n    assert list(reversed(numeric_range(0),)) == []\n",
+        // Attribute-chained or suffixed names are not the builtin.
+        "from src.nr import numeric_range\n\n\ndef test_attr():\n    assert list(helpers.reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_suffix():\n    assert list(my_reversed(numeric_range(0))) == []\n",
+        // The receiver is rebound by a loop target or a `with ... as` target.
+        "from src.nr import numeric_range\n\n\ndef test_loop():\n    r = numeric_range(0)\n    for r in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with():\n    r = numeric_range(0)\n    with open_it() as r :\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_walrus():\n    r = numeric_range(0)\n    (r := [1])\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_augmented():\n    r = numeric_range(0)\n    r += [1]\n    assert list(reversed(r)) == [1]\n",
+        // The receiver is rebound through a tuple target, an annotation or a loop tuple.
+        "from src.nr import numeric_range\n\n\ndef test_tuple_target():\n    r = numeric_range(0)\n    x, r = 1, [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated():\n    r = numeric_range(0)\n    r: list = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_loop_tuple():\n    r = numeric_range(0)\n    for i, r in enumerate([[1]]):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with_tuple():\n    r = numeric_range(0)\n    with a as (b, r):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_def_local():\n    r = numeric_range(0)\n    def r():\n        return [1]\n    assert list(reversed(r)) == [1]\n",
+        // The construction is only part of the bound value.
+        "from src.nr import numeric_range\n\n\ndef test_chained():\n    r = numeric_range(0).as_list()\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_or():\n    r = numeric_range(0) or [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_conditional():\n    r = numeric_range(0) if c else [1]\n    assert list(reversed(r)) == [1]\n",
+        // The entry name is replaced at module level.
+        "from src.nr import numeric_range\n\n\ndef reversed(x):\n    return iter([])\n\n\ndef test_module_def_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\nimport helpers\n\nreversed = helpers.my_reversed\n\n\ndef test_module_assign_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from helpers import *\nfrom src.nr import numeric_range\n\n\ndef test_star_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        // The entry name is replaced by an import or a local definition.
+        "from helpers import reversed\nfrom src.nr import numeric_range\n\n\ndef test_imported_entry():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_local_entry():\n    def reversed(x):\n        return x\n    assert list(reversed(numeric_range(0))) == []\n",
+        // The class is a same-named class from another module.
+        "from other import numeric_range\n\n\ndef test_foreign():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from other import numeric_range as Foreign\n\n\ndef test_foreign_alias():\n    assert list(reversed(Foreign(0))) == []\n",
+        // The entry sits in a comment (also a trailing one) or a string.
+        "from src.nr import numeric_range\n\n\ndef test_trailing_comment():\n    x = 1  # reversed(numeric_range(0))\n    assert x\n",
+        "from src.nr import numeric_range\n\n\ndef test_comment():\n    # reversed(numeric_range(0))\n    assert True\n",
+        // Chained and single-element rebinding of the receiver.
+        "from src.nr import numeric_range\n\n\ndef test_chained_assign():\n    r = numeric_range(0)\n    x = r = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_list_target():\n    r = numeric_range(0)\n    [r] = [[1]]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_paren_target():\n    r = numeric_range(0)\n    (r) = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_paren():\n    r = numeric_range(0)\n    for (r) in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with_list():\n    r = numeric_range(0)\n    with a as [r]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Test-local shadowing of the entry or a wrapper by a tuple or annotated binding.
+        "from src.nr import numeric_range\n\n\ndef test_tuple_entry():\n    a, reversed = 1, f\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated_wrapper():\n    list: Callable = f\n    assert list(reversed(numeric_range(0))) == []\n",
+        // An unasserted entry does not relate the test to the dunder.
+        "from src.nr import numeric_range\n\n\ndef test_unasserted_entry():\n    x = list(reversed(numeric_range(3)))\n    assert numeric_range(3).stop == 3\n",
+        // The owner class name itself is replaced.
+        "from src.nr import numeric_range\nnumeric_range = Fake\n\n\ndef test_module_class():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_tuple_class():\n    numeric_range, y = Fake, 1\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated_class():\n    numeric_range: type = Fake\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_walrus_class():\n    (numeric_range := Fake)\n    assert list(reversed(numeric_range(0))) == []\n",
+        // A bracketed single element followed by a comma rebinds the receiver.
+        "from src.nr import numeric_range\n\n\ndef test_paren_comma():\n    r = numeric_range(0)\n    (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_list_comma():\n    r = numeric_range(0)\n    [r], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_paren_comma():\n    r = numeric_range(0)\n    for (r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_outside_the_assertion_or_under_an_unordered_wrapper_is_not_credited()
+-> Result<(), String> {
+    for test_src in [
+        // The entry is bound outside the assertion.
+        "from src.nr import numeric_range\n\n\ndef test_outside():\n    x = reversed(numeric_range(0))\n    assert always_true(x)\n",
+        // Ordering-erasing wrappers hide what `__reversed__` determines.
+        "from src.nr import numeric_range\n\n\ndef test_sorted():\n    assert sorted(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_set():\n    assert set(reversed(numeric_range(0))) == set()\n",
+        "from src.nr import numeric_range\n\n\ndef test_frozenset():\n    assert frozenset(reversed(numeric_range(0))) == frozenset()\n",
+        // A replaced wrapper is not the order-preserving builtin.
+        "from src.nr import numeric_range\n\n\ndef list(x):\n    return []\n\n\ndef test_module_def_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\nimport helpers\n\nlist = helpers.my_list\n\n\ndef test_module_assign_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from helpers import *\nfrom src.nr import numeric_range\n\n\ndef test_star_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from helpers import list\nfrom src.nr import numeric_range\n\n\ndef test_imported_wrapper():\n    assert list(reversed(numeric_range(0))) == []\n",
+    ] {
+        let (finding, _) = classify_reversed_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_ne!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{test_src}"
+        );
+    }
+    let (finding, _) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_tuple():\n    assert tuple(reversed(numeric_range(0))) == ()\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_inside_an_opaque_wrapper_stays_uncertain_and_uncredited() -> Result<(), String> {
+    let (finding, relations) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_wrapped():\n    assert always_true(reversed(numeric_range(0))) == True\n",
+    )?;
+    assert_eq!(
+        relations,
+        vec![("test_wrapped".to_string(), "dunder_protocol")],
+        "an entry that is not an asserted operand does not relate as protocol_entry_call"
+    );
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_owner_protocol_entry"),
+        "the wrapper loses the entry, so no protocol-entry credit reason"
+    );
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_nested_in_a_multi_argument_call_is_not_credited() -> Result<(), String> {
+    let (finding, _) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_nested():\n    assert list(reversed(max(numeric_range(0), numeric_range(0)))) == []\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 /// Classifies a changed `x > 5` predicate of `price(x, k)` against one pytest
 /// test whose body is `body`, importing `price` from its package.
 fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::Finding, String> {
@@ -7324,6 +7676,32 @@ fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String>
         "an ordinary line is shown whole: {:?}",
         finding.activation.observed_values
     );
+    Ok(())
+}
+
+#[test]
+fn every_protocol_entry_relates_only_its_own_dunder() -> Result<(), String> {
+    let src = "class Box:\n    def __init__(self, n):\n        self.n = n\n".to_string()
+        + &related_tests::PROTOCOL_ENTRIES
+            .iter()
+            .map(|(_, dunder)| format!("\n    def {dunder}(self):\n        return self.n\n"))
+            .collect::<String>();
+    let file = Path::new("src/box.py");
+    let owners = extract_owners(file, &src);
+    for (builtin, dunder) in related_tests::PROTOCOL_ENTRIES {
+        let test_src = format!(
+            "from src.box import Box\n\n\ndef test_entry():\n    assert {builtin}(Box(0))\n"
+        );
+        let tests = extract_tests(Path::new("tests/test_box.py"), &test_src);
+        assert_eq!(tests.len(), 1, "{test_src}");
+        for owner in owners.iter().filter(|owner| owner.name.starts_with("__")) {
+            let relations = candidate_relations(owner, &tests);
+            let entry = relations
+                .iter()
+                .any(|(_, kind)| *kind == "protocol_entry_call");
+            assert_eq!(entry, owner.name == dunder, "{builtin} vs {}", owner.name);
+        }
+    }
     Ok(())
 }
 
@@ -7420,5 +7798,292 @@ fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String>
             .any(|fact| fact.text.contains(&call)),
         "the excerpt keeps the whole call"
     );
+    Ok(())
+}
+
+const FILTER_BOUNDARY_OWNER: &str = "import asyncio\n\n\nasync def fetch_total(prices):\n    await asyncio.sleep(0)\n    return sum(p for p in prices if p > 1)\n";
+
+/// Classifies the `p > 0` -> `p > 1` filter change in `fetch_total` against a
+/// strong exact-value test whose assertion is `assert {call} == 7` (#9414).
+fn classify_filter_boundary(call: &str) -> Result<crate::domain::Finding, String> {
+    let owners = extract_owners(Path::new("src/agg.py"), FILTER_BOUNDARY_OWNER);
+    let tests = extract_tests(
+        Path::new("tests/test_agg.py"),
+        &format!(
+            "import asyncio\n\nfrom src.agg import fetch_total\n\n\ndef test_total():\n    assert {call} == 7\n"
+        ),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse one test for `{call}`");
+    classify_change(
+        Path::new("src/agg.py"),
+        6,
+        "    return sum(p for p in prices if p > 1)",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| format!("filter change should classify for `{call}`"))
+}
+
+#[test]
+fn a_coroutine_runner_is_transparent_and_the_filter_bound_decides_the_verdict() -> Result<(), String>
+{
+    // The list holds a 1, the element where `p > 0` and `p > 1` disagree.
+    for call in [
+        "asyncio.run(fetch_total([3, 1, 4]))",
+        "asyncio.get_event_loop().run_until_complete(fetch_total([3, 1, 4]))",
+        "loop.run_until_complete(fetch_total([3, 1, 4]))",
+        "self.loop.run_until_complete(fetch_total([3, 1, 4]))",
+        "asyncio.new_event_loop().run_until_complete(fetch_total([3, 1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{call}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{call}"
+        );
+    }
+    // Discriminating control: no element meets the bound, so the strong oracle
+    // reaches the owner (the runner is transparent, alignment stays direct)
+    // but cannot see the cutoff move.
+    for call in [
+        "asyncio.run(fetch_total([3, -1, 4]))",
+        "asyncio.get_event_loop().run_until_complete(fetch_total([3, -1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{call}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("direct"),
+            "{call}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_runner_lookalike_wrapper_stays_opaque() -> Result<(), String> {
+    // A bare `run(...)` or another receiver's `.run(...)` is any function: it
+    // can drop the awaited value, so the assertion does not observe the owner.
+    for call in [
+        "run(fetch_total([3, 1, 4]))",
+        "task.run(fetch_total([3, 1, 4]))",
+        // `run_until_complete` on a receiver that is not an event loop is that
+        // object's own method; a fake can return the asserted constant and
+        // drop the coroutine (#9662).
+        "runner.run_until_complete(fetch_total([3, 1, 4]))",
+        "FakeRunner().run_until_complete(fetch_total([3, 1, 4]))",
+        "make_runner(loop).run_until_complete(fetch_total([3, 1, 4]))",
+    ] {
+        let finding = classify_filter_boundary(call)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{call}");
+    }
+    Ok(())
+}
+
+#[test]
+fn only_a_single_simple_comprehension_filter_is_a_predicate_line() {
+    for (line, family) in [
+        (
+            "    return sum(p for p in prices if p > 1)",
+            ProbeFamily::Predicate,
+        ),
+        (
+            "    return [p for p in prices if p >= limit]",
+            ProbeFamily::Predicate,
+        ),
+        (
+            "    return sum(p for p in prices if p > 1 and p < 9)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in prices if len(p) > 1)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in load() if p > 1)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in prices)",
+            ProbeFamily::ReturnValue,
+        ),
+        (
+            "    return sum(p for p in prices if p > 1 and False)",
+            ProbeFamily::ReturnValue,
+        ),
+    ] {
+        assert_eq!(classify_probe_shape(line).0, family, "{line}");
+    }
+}
+
+#[test]
+fn an_unchanged_comprehension_filter_keeps_the_return_value_shape() {
+    let old = "    return sum(p * 2 for p in prices if p > 1)";
+    // Only the yielded element changed: the filter bound did not move.
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 3 for p in prices if p > 1)", Some(old))
+            .0,
+        ProbeFamily::ReturnValue
+    );
+    // The filter itself changed (and with no old line the filter is all we know).
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 2 for p in prices if p > 2)", Some(old))
+            .0,
+        ProbeFamily::Predicate
+    );
+    assert_eq!(
+        classify_probe_shape_with_old("    return sum(p * 2 for p in prices if p > 1)", None).0,
+        ProbeFamily::Predicate
+    );
+}
+
+#[test]
+fn an_edit_under_an_unchanged_filter_is_credited_by_any_exact_result() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/agg.py"),
+        "def total(prices):\n    return sum(p * 3 for p in prices if p > 1)\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_agg.py"),
+        "from src.agg import total\n\n\ndef test_total():\n    assert total([3, 4]) == 14\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/agg.py"),
+        2,
+        "    return sum(p * 3 for p in prices if p > 1)",
+        Some("    return sum(p * 2 for p in prices if p > 1)"),
+        &owners,
+        &tests,
+    )
+    .ok_or("the yield change must classify")?;
+    // No element sits at the bound, which would matter had the filter changed.
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), String> {
+    let owners = extract_owners(Path::new("src/agg.py"), FILTER_BOUNDARY_OWNER);
+    for (cases, class) in [
+        ("[[3, 1, 4]]", ExposureClass::Exposed),
+        ("[[3, -1, 4]]", ExposureClass::WeaklyExposed),
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/test_agg.py"),
+            &format!(
+                "import asyncio\nimport pytest\n\nfrom src.agg import fetch_total\n\n\n@pytest.mark.parametrize(\"prices\", {cases})\ndef test_total(prices):\n    assert asyncio.run(fetch_total(prices)) == 7\n"
+            ),
+        );
+        assert_eq!(tests.len(), 1, "fixture must parse one test for {cases}");
+        let finding = classify_change(
+            Path::new("src/agg.py"),
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| format!("filter change should classify for {cases}"))?;
+        assert_eq!(finding.class, class, "{cases}");
+    }
+    Ok(())
+}
+
+const MONEY_SRC: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __add__(self, other):\n        return Money(self.cents - other.cents)\n";
+
+#[test]
+fn dunder_operator_edit_with_a_reflected_receiver_abstains_instead_of_gap() -> Result<(), String> {
+    // #9421: `5 + Money(7)` runs the reflected `__radd__`, so the receiver is not
+    // certain and the test relates only as `dunder_protocol`.
+    // The adapter cannot read that assertion against `__add__`, so it abstains
+    // (the certain `Money(5) + Money(7)` form is credited, see `dunder_entry_tests`).
+    let file = Path::new("shapes/money.py");
+    let owners = extract_owners(file, MONEY_SRC);
+    let tests = extract_tests(
+        Path::new("tests/test_money.py"),
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert 5 + Money(7) == Money(12)\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let owner = flat_owner(&owners, "Money.__add__")?;
+    assert_eq!(
+        candidate_relations(owner, &tests),
+        vec![("test_add_sums_cents".to_string(), "dunder_protocol")]
+    );
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        return Money(self.cents - other.cents)",
+        Some("        return Money(self.cents + other.cents)"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "dunder edit must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn dunder_edit_with_explicit_call_keeps_its_ordinary_verdict() -> Result<(), String> {
+    // Discriminating negative: a syntactic `__add__` call is oracle-eligible, so
+    // the heuristic-only abstention does not apply.
+    let file = Path::new("shapes/money.py");
+    let owners = extract_owners(file, MONEY_SRC);
+    let tests = extract_tests(
+        Path::new("tests/test_money.py"),
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5).__add__(Money(7)).cents == 12\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_change_with_old(
+        file,
+        6,
+        "        return Money(self.cents - other.cents)",
+        Some("        return Money(self.cents + other.cents)"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "dunder edit must produce a finding".to_string())?;
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn module_level_edit_with_importing_test_abstains_instead_of_gap() -> Result<(), String> {
+    // #9423: `LIMIT = 10` -> `12` has no callable owner; the importing test is
+    // linked only by filename stem.
+    let file = Path::new("hostile/settings.py");
+    let owners = extract_owners(
+        file,
+        "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_settings.py"),
+        "from hostile.settings import over_limit\n\n\ndef test_above():\n    assert over_limit(11)\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding =
+        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests)
+            .ok_or_else(|| "module-level edit must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), String> {
+    // Discriminating negative: with no import of the module the abstention's
+    // guard fails; the verdict is never the new abstention or `exposed`.
+    let file = Path::new("hostile/settings.py");
+    let owners = extract_owners(file, "LIMIT = 12\n");
+    let tests = extract_tests(
+        Path::new("tests/test_settings.py"),
+        "def test_above():\n    assert 11 > 10\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding =
+        classify_change_with_old(file, 1, "LIMIT = 12", Some("LIMIT = 10"), &owners, &tests)
+            .ok_or_else(|| "module-level edit must still produce a finding".to_string())?;
+    assert!(!matches!(
+        finding.class,
+        ExposureClass::StaticUnknown | ExposureClass::Exposed
+    ));
     Ok(())
 }

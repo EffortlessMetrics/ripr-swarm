@@ -611,3 +611,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_owner_kinds (20)
+
+Reason:
+A column-zero module scalar const edit (DEFAULT_RATE = 0.09) is now a return_value/value probe instead of the ambiguous predicate fallback (RIPR-SPEC-0027).
+
+Command:
+`cargo xtask goldens bless typescript_owner_kinds --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

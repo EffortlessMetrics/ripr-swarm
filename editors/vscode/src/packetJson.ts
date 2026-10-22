@@ -40,13 +40,47 @@ export function stringValues(value: Record<string, unknown> | undefined): string
  * and process substitution (`$(cmd)`, `<(cmd)`, `>(cmd)`; #4225). The server
  * quotes all three, so a quoted gap id such as `'len(x)>0'` still passes.
  * An unterminated span is refused.
+ *
+ * With `windowsQuoting` (the server runs on Windows, #9659) the console
+ * double-quoted spans `windows_console_quote` writes are accepted as well,
+ * and a bare `^` (cmd.exe's escape character) is refused outside every span.
+ * Callers pass `isWindowsHost()`: the server quotes for its own host.
  */
-export function hasUnsafeShellMetacharacter(command: string): boolean {
-  if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(command)) {
+export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = false): boolean {
+  // Single-quoted spans are skipped as a whole so a `"` inside one is still
+  // refused and cannot pair up with a later `"` as a console-quoted span.
+  const checked = windowsQuoting
+    ? command.replace(WINDOWS_QUOTED_OR_SINGLE_SPAN, (span) => (span.startsWith("'") ? span : 'X'))
+    : command;
+  if (/[\r\n\0`;&|\\"\u2018-\u201f]/.test(checked) || (windowsQuoting && checked.includes('^'))) {
     return true;
   }
-  const spans = command.split("'");
+  const spans = checked.split("'");
   return spans.length % 2 === 0 || spans.some((span, index) => index % 2 === 0 && /[$()]/.test(span));
+}
+
+/**
+ * One span in the Windows console form the server's `windows_console_quote`
+ * writes (`crates/ripr/src/agent/loop_commands.rs`): double quotes, interior
+ * `"` doubled. The server never emits this form for a value holding `$` or a
+ * backtick, which PowerShell and Git Bash expand inside double quotes. Line
+ * breaks, NUL and the typographic quotes PowerShell reads as quotes are refused
+ * as in the POSIX form. A backslash run is literal inside the span only where
+ * no `"` follows it; before the closing quote the run must be even (the server
+ * doubles a trailing run), since an odd run escapes that quote for native argv
+ * and Git Bash and would hide what follows from this check. `%` and `!` are
+ * accepted: they are literal in PowerShell (the VS Code terminal default) and
+ * native argv. cmd.exe `%NAME%` expansion and interactive Git Bash history
+ * expansion of `!` are the documented limits of the server's console form
+ * (#9659), the same quoting decision the CLI makes; they rewrite the argument
+ * inside its quotes but cannot start another command.
+ */
+const WINDOWS_QUOTED_OR_SINGLE_SPAN =
+  /'[^']*'|"(?:[^"\\$`\r\n\0\u2018-\u201f]|""|\\+(?=[^"\\]))*(?:\\\\)*"/g;
+
+/** Whether this extension host runs the server on Windows, where `shell_arg` quotes for the console. */
+export function isWindowsHost(): boolean {
+  return process.platform === 'win32';
 }
 
 /**
@@ -98,10 +132,19 @@ export function testRunnerCommandLeavesScope(normalized: string): boolean {
 /**
  * Quote one argument exactly as the server's `shell_arg`
  * (`crates/ripr/src/agent/loop_commands.rs`): bare when every character is in
- * `[A-Za-z0-9._/:-]`, otherwise single-quoted with `'` written as `'\''`.
+ * `[A-Za-z0-9._/:-]`; on Windows, double-quoted with `"` doubled and a trailing
+ * backslash run doubled, unless the value holds `$` or a backtick; otherwise
+ * single-quoted with `'` written as `'\''`.
  */
-export function serverShellArg(value: string): string {
-  return /^[A-Za-z0-9._/:-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+export function serverShellArg(value: string, windows: boolean = isWindowsHost()): string {
+  if (/^[A-Za-z0-9._/:-]+$/.test(value)) {
+    return value;
+  }
+  if (windows && !/[$`]/.test(value)) {
+    const trailing = /\\*$/.exec(value)?.[0] ?? '';
+    return `"${value.replace(/"/g, '""')}${trailing}"`;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -118,9 +161,10 @@ export function serverShellArg(value: string): string {
 export function redirectTargetMatches(
   tail: string,
   artifact: string,
-  roots: readonly string[]
+  roots: readonly string[],
+  windowsQuoting = false
 ): boolean {
-  const target = redirectTailPath(tail);
+  const target = redirectTailPath(tail, windowsQuoting);
   if (target === undefined) {
     return false;
   }
@@ -136,16 +180,21 @@ export function redirectTargetMatches(
 
 /**
  * The path a redirect tail names: one bare `shell_arg` token, or one
- * single-quoted span. The quoted span may hold a workspace path's `&`, `;` or
+ * single-quoted span (or, with `windowsQuoting`, one console double-quoted
+ * span, which never needs an interior `""` for a Windows path, and refuses
+ * `%` and `!` there). The quoted span may hold a workspace path's `&`, `;` or
  * `$`, since callers compare it with a local root (#4225). Line breaks,
  * backslashes and typographic quotes are refused, since they end or escape
  * the span in some shell (fish reads `\'` inside single quotes as an escape;
  * PowerShell closes a span on U+2018..U+201B).
  */
-function redirectTailPath(tail: string): string | undefined {
-  const quoted = /^'([^']*)'$/.exec(tail);
+function redirectTailPath(tail: string, windowsQuoting = false): string | undefined {
+  const quoted = /^'([^']*)'$/.exec(tail) ?? (windowsQuoting ? /^"([^"$`]*)"$/.exec(tail) : null);
   const target = quoted ? quoted[1] : /^[A-Za-z0-9._/:-]+$/.test(tail) ? tail : undefined;
+  // cmd.exe expands `%NAME%` (and delayed `!NAME!`) even inside quotes, so on
+  // Windows such a target could name a path outside the workspace.
   return target === undefined || target === '' || /[\r\n\0\\\u2018-\u201f]/.test(target)
+    || (windowsQuoting && /[%!]/.test(target))
     ? undefined
     : target;
 }
@@ -161,15 +210,24 @@ function redirectTailPath(tail: string): string | undefined {
  * and followed by exactly one final token: no `>>`, `2>`, second redirect or
  * trailing argument. The target is either relative with no `..` segment and
  * no `:` (a drive-relative `C:x` leaves the directory), or absolute under
- * one of `roots`.
+ * one of `roots`. With `windowsQuoting`, a console double-quoted span is
+ * literal too (call it on a command `hasUnsafeShellMetacharacter` accepts
+ * with the same flag, so the two span kinds cannot interleave).
  */
-export function redirectStaysInWorkspace(command: string, roots: readonly string[]): boolean {
+export function redirectStaysInWorkspace(
+  command: string,
+  roots: readonly string[],
+  windowsQuoting = false
+): boolean {
   let at = -1;
-  let quoted = false;
+  let quote: string | undefined;
   for (let index = 0; index < command.length && at < 0; index += 1) {
     const character = command[index];
-    if (character === "'") {
-      quoted = !quoted;
+    const quoted = quote !== undefined;
+    if (character === quote) {
+      quote = undefined;
+    } else if (!quoted && (character === "'" || (windowsQuoting && character === '"'))) {
+      quote = character;
     } else if (!quoted && character === '<') {
       return false;
     } else if (!quoted && character === '>') {
@@ -183,7 +241,7 @@ export function redirectStaysInWorkspace(command: string, roots: readonly string
   if (command[at - 1] !== ' ' || command[at + 1] !== ' ') {
     return false;
   }
-  const target = redirectTailPath(command.slice(at + 2));
+  const target = redirectTailPath(command.slice(at + 2), windowsQuoting);
   if (target === undefined || target.split('/').includes('..')) {
     return false;
   }

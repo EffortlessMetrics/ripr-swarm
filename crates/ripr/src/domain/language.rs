@@ -434,6 +434,12 @@ pub enum StaticLimitKind {
     /// expects. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0240.
     RustPanicOutcomeUnresolved,
+    /// A related test that calls the owner directly pins its result with
+    /// `debug_assert_eq!(owner(..), expected)`. That runs under the default
+    /// `cargo test` profile but is compiled out under `--release`, so ripr
+    /// neither credits nor denies the discriminator. The gap is withheld and
+    /// the class is `static_unknown`. See RIPR-SPEC-0240 / #8051.
+    RustDebugAssertionProfileUnresolved,
     /// A related Rust test has a source line holding as many distinct callees
     /// as the per-line call-fact budget keeps (256), so additional callees
     /// may have been omitted. Any negative or uniqueness claim over that
@@ -448,6 +454,20 @@ pub enum StaticLimitKind {
     /// snapshot of a field no redaction names. The gap is withheld and the
     /// class is `static_unknown`. See RIPR-SPEC-0240.
     RustFrameworkOracleUnresolved,
+    /// A Rust test names the type of a trait impl whose method the language
+    /// calls without spelling it (an operator, `Drop`, an iterator, `Deref`,
+    /// `Index`, `PartialOrd`) or calls a same-named method on a receiver ripr
+    /// does not type (`dyn Trait`, a second impl). ripr does not follow that
+    /// call to the changed method. The gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0240 / #9441.
+    RustImplicitCallUnresolved,
+    /// The changed match arm's selector is fed to its owner by a bounded `for`
+    /// loop inside an `Iterator::next`, and a related test collects the
+    /// iterator and compares the whole collection. ripr reads the loop's
+    /// selector domain but does not prove the loop runs for the test's input
+    /// or that the arm's value reaches the compared items. The gap is
+    /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #5503.
+    RustCallerLoopSelectorUnresolved,
 }
 
 impl StaticLimitKind {
@@ -505,8 +525,15 @@ impl StaticLimitKind {
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
             StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
+            StaticLimitKind::RustDebugAssertionProfileUnresolved => {
+                "rust_debug_assertion_profile_unresolved"
+            }
             StaticLimitKind::RustCallFactBudget => "rust_call_fact_budget",
             StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
+            StaticLimitKind::RustImplicitCallUnresolved => "rust_implicit_call_unresolved",
+            StaticLimitKind::RustCallerLoopSelectorUnresolved => {
+                "rust_caller_loop_selector_unresolved"
+            }
         }
     }
 
@@ -628,6 +655,13 @@ impl StaticLimitKind {
                  earlier call. ripr does not claim a gap; this is a named limitation, not a \
                  coverage claim."
             }
+            StaticLimitKind::RustDebugAssertionProfileUnresolved => {
+                "A related Rust test calls this code and checks its result with \
+                 `debug_assert_eq!`, which runs under the default test profile but is compiled out \
+                 when tests run with `--release`. ripr does not resolve which profile runs the \
+                 tests, so it does not claim a gap; this is a named limitation, not a coverage \
+                 claim."
+            }
             StaticLimitKind::RustCallFactBudget => {
                 "A related Rust test has a source line with as many distinct calls as ripr \
                  keeps per line (256), so more calls on that line may have been omitted. \
@@ -638,10 +672,25 @@ impl StaticLimitKind {
             StaticLimitKind::RustFrameworkOracleUnresolved => {
                 "A related Rust test checks this code through a test-framework idiom that ripr \
                  does not evaluate (an environment variable the test sets or removes, a mockall \
-                 closure that reads the call's arguments, an expect-test debug literal, or an \
-                 insta snapshot kept outside the source), so ripr cannot say whether the check \
+                 closure that reads the call's arguments, an expect-test debug literal, an \
+                 insta snapshot kept outside the source, a helper-built receiver under a changed \
+                 closure, or a hand-written recording double), so ripr cannot say whether the check \
                  notices the change. ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustImplicitCallUnresolved => {
+                "A Rust test names the type of the changed trait-impl method and may run that \
+                 method through an operator, scope exit, loop, index or a method call on a \
+                 receiver whose type ripr does not infer (`dyn Trait`, a second impl of the \
+                 trait), but ripr does not follow that call to the changed method. ripr does \
+                 not claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustCallerLoopSelectorUnresolved => {
+                "This match arm is selected by a bounded loop inside an iterator's `next`, and a \
+                 related Rust test collects that iterator and compares the whole collection. \
+                 ripr reads the loop's selector range but does not prove the loop runs for the \
+                 test's input or that the arm's value reaches the compared items, so it does not \
+                 claim a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -650,6 +699,26 @@ impl StaticLimitKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_is_a_gap_free_ordinal_sequence() {
+        // The exhaustive match below forces an ordinal arm for a new variant.
+        // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
+        // enum: a variant added to the match but to neither `COUNT` nor `ALL`
+        // is not detected, only forced to be classified here.
+        const COUNT: usize = 5;
+        fn ordinal(language: LanguageId) -> usize {
+            match language {
+                LanguageId::Rust => 0,
+                LanguageId::TypeScript => 1,
+                LanguageId::JavaScript => 2,
+                LanguageId::Python => 3,
+                LanguageId::Perl => 4,
+            }
+        }
+        let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
+        assert_eq!(ordinals, (0..COUNT).collect::<Vec<_>>());
+    }
 
     /// #4323: a lost string-literal continuation left ~18-space runs inside
     /// this gloss, which rendered as mid-sentence gaps in human and JSON output.
@@ -955,12 +1024,20 @@ mod tests {
             "rust_panic_outcome_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustDebugAssertionProfileUnresolved.as_str(),
+            "rust_debug_assertion_profile_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustCallFactBudget.as_str(),
             "rust_call_fact_budget"
         );
         assert_eq!(
             StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
             "rust_framework_oracle_unresolved"
+        );
+        assert_eq!(
+            StaticLimitKind::RustImplicitCallUnresolved.as_str(),
+            "rust_implicit_call_unresolved"
         );
     }
 
@@ -990,8 +1067,11 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
             StaticLimitKind::RustPanicOutcomeUnresolved,
+            StaticLimitKind::RustDebugAssertionProfileUnresolved,
             StaticLimitKind::RustCallFactBudget,
             StaticLimitKind::RustFrameworkOracleUnresolved,
+            StaticLimitKind::RustImplicitCallUnresolved,
+            StaticLimitKind::RustCallerLoopSelectorUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

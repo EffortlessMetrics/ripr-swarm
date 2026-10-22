@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-deposit-lives-only.json",
-    "sha256": "a2ca89791552c7ff2992a49d56014ca387f76dbd4027f223eb5b1934dd957769",
+    "sha256": "8966e19cfb4187c547fce161f00351df243eb40751771bca660da5384f51c8d0",
     "provenance": "producer"
   },
   "spec_examples": [

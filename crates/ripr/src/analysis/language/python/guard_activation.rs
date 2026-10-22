@@ -39,6 +39,9 @@ pub(super) struct GuardedArmGap {
     pub(super) observed_values: Vec<ValueFact>,
     /// Why every observed input leaves the guard untaken.
     pub(super) reason: String,
+    /// The gap is not an untaken arm: every strong assertion reads the owner
+    /// only through a further method call (`arm_activation.rs`, #9429).
+    pub(super) chained_receiver: bool,
 }
 
 /// Evidence that a changed line sits inside guarding arm(s) no strong
@@ -52,7 +55,11 @@ pub(super) fn python_guarded_arm_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<GuardedArmGap> {
-    let conditions = guarding_conditions(owner, owner_source, changed_line)?;
+    let conditions = guarding_conditions(owner, owner_source, changed_line).unwrap_or_default();
+    let early_exits = early_exit_conditions(owner, owner_source, changed_line);
+    if conditions.is_empty() && early_exits.is_empty() {
+        return None;
+    }
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
@@ -85,6 +92,17 @@ pub(super) fn python_guarded_arm_gap(
                 owner_source,
                 owner.start_line,
             ) == Some(false)
+        }) || early_exits.iter().any(|(condition_line, condition)| {
+            // A row that satisfies an earlier `if X: return ...` leaves the
+            // owner before the changed line, so the line never runs for it.
+            condition_holds(
+                condition,
+                *condition_line,
+                row,
+                &constants,
+                owner_source,
+                owner.start_line,
+            ) == Some(true)
         })
     });
     if !every_row_excluded {
@@ -115,6 +133,31 @@ pub(super) fn python_guarded_arm_gap(
     observed_values.dedup();
 
     let mut parts = Vec::new();
+    if !early_exits.is_empty() {
+        let names = early_exits
+            .iter()
+            .map(|(_, condition)| format!("`{condition}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut observed: Vec<String> = early_exits
+            .iter()
+            .flat_map(|(_, condition)| {
+                condition_observed_values(condition, &rows)
+                    .into_iter()
+                    .map(|value| format!("{} = {value}", condition_lhs(condition)))
+            })
+            .collect();
+        observed.sort();
+        observed.dedup();
+        parts.push(format!(
+            "each strong related test input satisfies at least one preceding early-exit condition ({names}) and exits the owner before the changed line{}",
+            if observed.is_empty() {
+                String::new()
+            } else {
+                format!("; observed {}", observed.join(", "))
+            }
+        ));
+    }
     for (_, condition) in &conditions {
         let observed = condition_observed_values(condition, &rows);
         parts.push(format!(
@@ -135,13 +178,15 @@ pub(super) fn python_guarded_arm_gap(
         parts.join(" and ")
     );
     Some(GuardedArmGap {
-        discriminator: conditions
+        discriminator: early_exits
             .iter()
-            .map(|(_, condition)| condition.as_str())
+            .map(|(_, condition)| format!("not ({condition})"))
+            .chain(conditions.iter().map(|(_, condition)| condition.clone()))
             .collect::<Vec<_>>()
             .join(" and "),
         observed_values,
         reason,
+        chained_receiver: false,
     })
 }
 
@@ -239,7 +284,140 @@ pub(super) fn guarding_conditions(
     (!conditions.is_empty()).then_some(conditions)
 }
 
-fn leading_whitespace(text: &str) -> usize {
+/// Per line, whether it starts inside (or is wholly part of) a triple-quoted
+/// string, so docstring text that looks like `if X:` / `return` is not read as
+/// code. A line that closes a string and then holds code counts as inside;
+/// the callers only skip such lines, which fails open.
+fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
+    let mut open: Option<&str> = None;
+    let mut mask = Vec::with_capacity(lines.len());
+    for line in lines {
+        let mut inside = open.is_some();
+        let mut rest: &str = line;
+        loop {
+            match open {
+                Some(delimiter) => match rest.find(delimiter) {
+                    Some(position) => {
+                        rest = &rest[position + delimiter.len()..];
+                        open = None;
+                    }
+                    None => break,
+                },
+                None => {
+                    // Earliest triple quote outside a comment; single-line
+                    // quotes are not tracked, so a quote character inside
+                    // another string can only make the mask larger.
+                    let comment = rest.find('#').unwrap_or(rest.len());
+                    let double = rest.find("\"\"\"");
+                    let single = rest.find("'''");
+                    let start = match (double, single) {
+                        (Some(d), Some(s)) if d <= s => Some((d, "\"\"\"")),
+                        (Some(d), None) => Some((d, "\"\"\"")),
+                        (_, Some(s)) => Some((s, "'''")),
+                        (None, None) => None,
+                    };
+                    match start {
+                        Some((position, delimiter)) if position < comment => {
+                            inside = true;
+                            rest = &rest[position + delimiter.len()..];
+                            open = Some(delimiter);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+        }
+        mask.push(inside);
+    }
+    mask
+}
+
+/// Conditions of simple `if X:` statements in the changed line's own block
+/// that precede it and always leave the owner (`return`/`raise` as the last
+/// body statement, no `elif`/`else` chain). The changed line runs only for
+/// inputs that fail every such condition. Anything the reader cannot place
+/// honestly yields no entry, which keeps the existing verdict.
+fn early_exit_conditions(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let Some(changed_index) = changed_line.checked_sub(1) else {
+        return Vec::new();
+    };
+    let Some(changed) = lines.get(changed_index) else {
+        return Vec::new();
+    };
+    if owner.start_line == 0 || changed.trim().is_empty() {
+        return Vec::new();
+    }
+    let block_indent = leading_whitespace(changed);
+    let in_string = lines_inside_triple_quotes(&lines);
+    if in_string.get(changed_index).copied().unwrap_or(true) {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for index in (owner.start_line..changed_index).rev() {
+        if in_string[index] {
+            // Docstring or multi-line string text is not code.
+            continue;
+        }
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = leading_whitespace(raw);
+        if indent < block_indent {
+            // Left the changed line's block; enclosing levels are not read.
+            break;
+        }
+        if indent > block_indent {
+            continue;
+        }
+        let Some(condition) = trimmed
+            .strip_prefix("if ")
+            .and_then(|rest| rest.trim_end().strip_suffix(':'))
+        else {
+            continue;
+        };
+        let mut body: Vec<&str> = Vec::new();
+        let mut chain_continues = false;
+        for line in &lines[index + 1..] {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') {
+                continue;
+            }
+            if leading_whitespace(line) > block_indent {
+                body.push(line);
+                continue;
+            }
+            chain_continues = t.starts_with("elif ") || t.starts_with("else");
+            break;
+        }
+        // The last body statement must sit at the body's own top level; a
+        // nested `return` under an inner `if` does not always exit.
+        let terminates = match (body.first(), body.last()) {
+            (Some(first), Some(last)) => {
+                let t = last.trim();
+                leading_whitespace(first) == leading_whitespace(last)
+                    && (t == "return"
+                        || t.starts_with("return ")
+                        || t == "raise"
+                        || t.starts_with("raise "))
+            }
+            _ => false,
+        };
+        if terminates && !chain_continues {
+            found.push((index, condition.trim().to_string()));
+        }
+    }
+    found.reverse();
+    found
+}
+
+pub(super) fn leading_whitespace(text: &str) -> usize {
     text.chars().take_while(|ch| ch.is_whitespace()).count()
 }
 
@@ -369,7 +547,7 @@ fn line_is_assignment(line: &str) -> bool {
 /// never awards credit. Requires identifier-bounded occurrences so `totals`
 /// or `subtotal` never match, and skips attribute access (`self.total`)
 /// which names a different binding.
-fn line_rebinds_parameter(line: &str, name: &str) -> bool {
+pub(super) fn line_rebinds_parameter(line: &str, name: &str) -> bool {
     let bytes = line.as_bytes();
     let mut search = 0;
     while let Some(offset) = line[search..].find(name) {
@@ -437,7 +615,7 @@ fn indent_width(raw: &str) -> usize {
 /// changes what the guard reads on the next iteration, and linear scanning
 /// cannot prove execution order there (#7874 follow-up). Deliberately
 /// conservative; anything subtler keeps the existing limitation.
-fn parameter_rebound_before(
+pub(super) fn parameter_rebound_before(
     owner_source: &str,
     owner_start: usize,
     guard_line: usize,
@@ -469,27 +647,55 @@ fn parameter_rebound_before(
         if line_rebinds_parameter(trimmed, name) {
             return true;
         }
-        if let Some(targets) = trimmed
-            .strip_prefix("for ")
-            .and_then(|rest| rest.split(" in ").next())
-        {
-            // `for name in ..` / `for a, name in ..` rebinds the name, and
-            // so do parenthesized or bracketed tuple targets and star
-            // targets: Python binds every target before the body runs, so
-            // decoration around the name must not hide it
-            // (`for (other, total) in ..`).
-            if targets.split(',').any(|target| {
+        if for_target_rebinds(trimmed, name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when a `for` header's targets bind `name`: `for name in ..`,
+/// `for a, name in ..`, and parenthesized, bracketed or star targets. Python
+/// binds every target before the body runs, so decoration around the name
+/// must not hide it (`for (other, total) in ..`).
+fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
+    trimmed
+        .strip_prefix("for ")
+        .and_then(|rest| rest.split(" in ").next())
+        .is_some_and(|targets| {
+            targets.split(',').any(|target| {
                 let normalized = target
                     .trim()
                     .trim_start_matches(['(', '[', '*'])
                     .trim_end_matches([')', ']']);
                 normalized == name
-            }) {
-                return true;
+            })
+        })
+}
+
+/// True when the owner body (after the `def` header, nested scopes
+/// included) binds `name` anywhere. A comparison operand rebound inside the
+/// owner (a loop counter such as `start -= 1`) no longer holds the value the
+/// call bound, so a call-argument boundary read is unknown. Over-refuses by
+/// design; it never awards credit.
+pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
+    owner_source
+        .lines()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .map(str::trim)
+        .any(|line| {
+            // A condition header ends in `:`, which the annotated-assignment
+            // reading of `name:` would take for a rebinding; only a walrus
+            // can bind inside one.
+            let condition = ["if ", "elif ", "while "]
+                .iter()
+                .any(|keyword| line.starts_with(keyword));
+            if condition && !line.contains(":=") {
+                return false;
             }
-        }
-    }
-    false
+            line_rebinds_parameter(line, name) || for_target_rebinds(line, name)
+        })
 }
 
 /// One `left <op> right` comparison under a row's literal bindings, or None
@@ -602,7 +808,7 @@ fn is_integer_literal(text: &str) -> bool {
 /// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
-fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
+pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
     let (left_text, right_text) = (left, right);
     match op {
         "==" => Some(guard_literals_equal(left, right)),
@@ -689,6 +895,7 @@ mod tests {
         CallRow {
             line: 1,
             text: "quote(..)".to_string(),
+            elements: std::collections::BTreeMap::new(),
             bindings: bindings
                 .iter()
                 .map(|(parameter, value)| {

@@ -100,6 +100,24 @@ pub(crate) fn extract_tests_with_expansion(
     Option<TypeScriptConditionalCreditGap>,
     Option<super::suite_factory::SuiteFactoryExpansion>,
 ) {
+    // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
+    // replaced by its assertion, on the same line, before extraction. One pass
+    // only, so self-referential or mutually recursive helpers cannot loop.
+    if source.contains("function ")
+        && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
+            let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+            if !ret.errors.is_empty() {
+                return None;
+            }
+            super::assertion_helper::expand_assertion_helpers(&ret.program.body, source)
+        })
+        && expanded != source
+    {
+        let extraction = extract_tests_expanding_suite_factories(file, &expanded, true);
+        if !extraction.0.is_empty() {
+            return extraction;
+        }
+    }
     extract_tests_expanding_suite_factories(file, source, true)
 }
 
@@ -164,6 +182,21 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
         let code = blank_ranges(source, &masked);
+        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let unstable_member_roots: Vec<String> = imports
+            .iter()
+            .filter(|import| {
+                !enum_member_guard::enum_member_root_is_read_only(
+                    &enum_code,
+                    &import.local,
+                    import.namespace,
+                )
+            })
+            .map(|import| import.local.clone())
+            .collect();
+        for test in &mut tests {
+            test.unstable_member_roots_in_file = unstable_member_roots.clone();
+        }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
             for test in &mut tests {
@@ -2596,6 +2629,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         // per file before the test is returned to the caller.
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
+        unstable_member_roots_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         default_member_only_locals_in_file: Vec::new(),
@@ -3608,6 +3642,7 @@ impl UnextractedTestFinder<'_> {
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
                 if self.gap.is_none()
+                    && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
                     self.visit_statements(&handler.body.body);
@@ -4120,6 +4155,13 @@ fn find_conditional_assertion_credit(
     if sample.is_some() {
         return;
     }
+    // Statements after an unconditional exit are dead; the collector withholds
+    // their assertions, so no live conditional credit can sit there.
+    let live_len = statements
+        .iter()
+        .position(super::oracle::statement_completes_abruptly)
+        .map_or(statements.len(), |index| index + 1);
+    let statements = &statements[..live_len];
     for stmt in statements {
         match stmt {
             Statement::BlockStatement(block) => {

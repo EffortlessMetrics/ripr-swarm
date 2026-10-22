@@ -109,8 +109,13 @@ fn run_result(
         env.insert(name.to_string(), value.to_string());
     }
     let summary = scratch.0.join("summary");
+    // Passed as a file, not `-c <script>`: Windows argv quoting mangles a
+    // multi-line script before bash sees it (#9272).
+    let script = scratch.0.join("result.sh");
+    fs::write(&script, result_shell(step)?).map_err(|e| e.to_string())?;
     let output = Command::new("bash")
-        .args(["-e", "-c", &result_shell(step)?])
+        .arg("-e")
+        .arg(&script)
         .env_clear()
         .envs(env)
         .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
@@ -150,6 +155,11 @@ fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(),
 fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
     for (event, reference, status) in [
         ("pull_request", "refs/pull/10/merge", "admitted"),
+        (
+            "merge_group",
+            "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
+            "admitted",
+        ),
         ("workflow_dispatch", "refs/heads/main", "not_applicable"),
         ("workflow_dispatch", "refs/heads/master", "not_applicable"),
         ("push", "refs/heads/main", "not_applicable"),
@@ -210,6 +220,59 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
 }
 
 #[test]
+fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
+    let detail = "missing or placeholder PR body line(s): Governing issue or accepted claim:, Acceptance delta (one sentence):";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "refused",
+        &[
+            ("ADMISSION_REASON", "claim_identity_missing"),
+            ("ADMISSION_DETAIL", detail),
+        ],
+    )?;
+    assert!(!success, "refused admission must fail the result: {report}");
+    assert!(
+        report.contains("claim_identity_missing") && report.contains(detail),
+        "result summary must name the single concrete refusal reason, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), String> {
+    let cut_detail = "the active hard-cut freeze refuses ordinary qualification";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_DETAIL", ""),
+            ("ADMISSION_CUT_STATUS", "refused"),
+            ("ADMISSION_CUT_REASON", "cut_frozen"),
+            ("ADMISSION_CUT_DETAIL", cut_detail),
+        ],
+    )?;
+    assert!(!success, "hard-cut refusal must fail the result: {report}");
+    assert!(
+        report.contains("hard-cut admission refused: cut_frozen")
+            && report.contains(cut_detail)
+            && report.contains("- admission cut reason: `cut_frozen`"),
+        "result must carry the hard-cut refusal reason, got: {report}"
+    );
+    assert!(
+        !report.contains("candidate_current_unique_bounded —"),
+        "result must not pair the success reason with the cut detail, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
 fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
     let scratch = Scratch::new()?;
     let action = root().join(".github/actions/pr-candidate-admission");
@@ -223,8 +286,11 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
         .collect::<Vec<_>>()
         .join("\n");
     let outputs = scratch.0.join("outputs");
+    let script = scratch.0.join("action.sh");
+    fs::write(&script, &shell).map_err(|e| e.to_string())?;
     let output = Command::new("bash")
-        .args(["-e", "-c", &shell])
+        .arg("-e")
+        .arg(&script)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
         .env("GITHUB_ACTION_PATH", action)

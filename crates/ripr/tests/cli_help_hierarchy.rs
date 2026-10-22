@@ -72,6 +72,64 @@ fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String
 }
 
 #[test]
+fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        for (value, suggestion) in [
+            ("befor", " Did you mean `before`?"),
+            ("aftr", " Did you mean `after`?"),
+            ("verfy", " Did you mean `verify`?"),
+            ("", ""),
+            ("zzzzzzzzzzzz", ""),
+            ("packet", ""),
+        ] {
+            // A later valid occurrence must not hide an earlier invalid one.
+            for repeated in [false, true] {
+                let mut args = vec![
+                    "agent",
+                    "repair",
+                    "--store",
+                    "must-not-exist",
+                    "--phase",
+                    value,
+                ];
+                if repeated {
+                    args.extend(["--phase", "before"]);
+                }
+                let output = run_ripr_in(&args, Some(root))?;
+                assert_eq!(output.status.code(), Some(2), "{args:?}");
+                assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                    format!(
+                        "ripr: unknown --phase {value:?}.{suggestion} Accepted: before, after, verify.\n"
+                    ),
+                    "{args:?}"
+                );
+            }
+        }
+        let missing = run_ripr_in(&["agent", "repair", "--phase"], Some(root))?;
+        assert_eq!(missing.status.code(), Some(2));
+        assert!(missing.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
+            "ripr: missing value for --phase\n"
+        );
+        let help = run_ripr_in(
+            &["agent", "repair", "--phase", "befor", "--help"],
+            Some(root),
+        )?;
+        assert!(help.status.success());
+        assert!(help.stderr.is_empty());
+        assert_contains(
+            "repair help",
+            &String::from_utf8_lossy(&help.stdout),
+            "Usage: ripr agent repair",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
 fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
     let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
     for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
@@ -1056,6 +1114,65 @@ fn outcome_help_matches_the_enforced_canonical_gap_contract() -> Result<(), Stri
     Ok(())
 }
 
+/// #9033: `--phase before` resolves a `ripr check` finding ID, so neither the
+/// group help nor the missing-`--seam-id` refusal may say those IDs are not
+/// seam IDs, and the group help points a newcomer at `ripr repair` first.
+#[test]
+fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "--help"])?);
+    assert_contains(
+        "agent help",
+        &stdout,
+        "Repair path (start here): ripr repair [<item>] # edit one focused test ripr continue The same transaction with explicit phases:",
+    )?;
+    assert_contains(
+        "agent help",
+        &stdout,
+        "`--phase before` also accepts a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+    )?;
+    if stdout.contains("are not seam IDs") {
+        return Err("agent help still says finding IDs are not seam IDs".to_string());
+    }
+    // The inspect-change catalog entry carries the same claim in its repair
+    // handoff step and stop condition.
+    let catalog = normalized(&rendered_help(&["help", "workflow", "inspect-change"])?);
+    assert_contains(
+        "inspect-change workflow",
+        &catalog,
+        "`ripr repair` also accepts a probe: finding ID, a canonical gap ID or a file:line naming one repair-eligible seam",
+    )?;
+    for stale in ["finding ID is not a seam ID", "repair refuses a probe:"] {
+        if catalog.contains(stale) {
+            return Err(format!(
+                "inspect-change workflow still says {stale:?}: {catalog}"
+            ));
+        }
+    }
+    in_help_workspace(|root| {
+        let output = run_ripr_in(
+            &["agent", "repair", "--phase", "before", "--root", "."],
+            Some(root),
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "requires --seam-id <id>",
+        )?;
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+        )?;
+        if stderr.contains("are not seam IDs") {
+            return Err(format!(
+                "refusal still says finding IDs are not seam IDs: {stderr}"
+            ));
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {
@@ -1123,7 +1240,9 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
         "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
-        "Inline `#[cfg(test)]` modules don't qualify their file: a repository whose only tests are inline in non-test-surface files is permanently out of repair scope",
+        "One exception: when a seam's only tests live in one inline `#[cfg(test)]`",
+        "production code outside the module stays",
+        "the file must be committed before the start",
     ] {
         assert_contains(
             "agent repair help (`ripr agent repair --help`)",

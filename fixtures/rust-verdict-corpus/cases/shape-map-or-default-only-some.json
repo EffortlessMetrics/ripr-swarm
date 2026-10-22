@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-map-or-default-only-some",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-map-or-default-only-some.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 51
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "option_return",
+  "test_shape": "map_or_default_arm_unreached",
+  "hard_case": "The default of `map_or` is never taken because the test passes `Some`.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n.map_or(1, |s| s.len())",
+        "mutated_line": "n.map_or(1, |s| s.len())",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `n.map_or(0usize, |s| s.len())` becomes `n.map_or(1, |s| s.len())`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "n.map_or(0, |s| s.len() + 1)",
+        "mutated_line": "n.map_or(0, |s| s.len() + 1)",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::name_len_of_some",
+        "equivalence_review": "not equivalent: `n.map_or(0usize, |s| s.len())` becomes `n.map_or(0, |s| s.len() + 1)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "name_len_of_some passes Some(\"abc\"), so `map_or(1, ..)` is unobserved and only the closure mutant fails. Shape: `Option::map_or`.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

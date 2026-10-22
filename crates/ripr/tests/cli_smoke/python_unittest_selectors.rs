@@ -19,7 +19,13 @@ fn python_unittest_selectors_preserve_literal_file_identity() -> TestResult {
             (
                 "apostrophe",
                 "tests/o'brien.py",
-                Some("python -m unittest 'tests.o'\\''brien'.CheckoutTests.test_same"),
+                // `shell_arg`'s host form (#7729): POSIX quotes the module
+                // segment, the Windows console form quotes the selector.
+                Some(if cfg!(windows) {
+                    "python -m unittest \"tests.o'brien.CheckoutTests.test_same\""
+                } else {
+                    "python -m unittest 'tests.o'\\''brien'.CheckoutTests.test_same"
+                }),
             ),
             (
                 "pytest-dotted-file",

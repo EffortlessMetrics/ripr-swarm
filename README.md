@@ -60,6 +60,10 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
+> This section uses the published 0.10 release. The output at the top of this
+> page, `--worktree`, and the repair flow come from the 0.11 development
+> build, installed further down this page.
+
 Install the published CLI, then run it in a Rust repository on a branch with
 committed changes. The 0.10 release resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
@@ -82,6 +86,11 @@ echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar x
   && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ripr check
 ```
+
+The `export PATH` change lasts only for the current shell. To keep `ripr`
+available in future sessions, move the extracted binary onto your permanent
+PATH (for example `mv ripr ~/.local/bin/`, adding `~/.local/bin` to PATH in
+your shell profile if it is not already there).
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -107,7 +116,8 @@ base branch itself there are no changed files, and ripr says so. A result with
 no findings or limited evidence is not a clean bill of health.
 
 Use `ripr doctor` to diagnose setup when a check cannot complete; it is not a
-required step before analysis. For whole-repository exploration when there is
+required step before analysis. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) For whole-repository exploration when there is
 no active diff, use `ripr pilot --root .` with the development build below.
 
 Cargo installation requires Rust 1.95 or newer; the diff workflow needs Git.
@@ -231,13 +241,16 @@ a promise that every surface is available from the published package.
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
-| TypeScript / JavaScript | Opt-in `preview` analysis. When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
+| TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
-TypeScript/JavaScript is enabled only through `[languages] enabled` in
-`ripr.toml`, and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off
+TypeScript preview is likewise enabled when it detects a root `tsconfig.json`
+or `jsconfig.json`, or TypeScript source under `src/` or `tests/`; otherwise
+TypeScript/JavaScript is enabled through `[languages] enabled` in `ripr.toml`,
+and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off (and
+TypeScript off too)
 (see [Configuration](docs/CONFIGURATION.md#languages)).
 
 Findings are static and advisory. An empty result does not establish test

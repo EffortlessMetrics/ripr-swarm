@@ -13,9 +13,9 @@ use crate::app::agent_brief::{
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
 use crate::cli::agent::{
-    AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
-    AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
-    AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
+    AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
+    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     agent_identity_path, build_agent_receipt_provenance, read_agent_verify_snapshot,
@@ -24,6 +24,7 @@ use crate::cli::commands_agent_support::{
 };
 use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+    refuse_json_envelope_checked,
 };
 use crate::config::{RiprConfig, load_for_root};
 use crate::core_error::CoreError;
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
+use super::check::{bind_member_selector_file, resolve_implicit_command_root};
 use super::write_text_file;
 
 /// Schema version of the `ripr agent repair --phase after` success envelope
@@ -88,7 +90,6 @@ pub(in crate::cli) fn resolve_agent_repair_root(
 /// `verify` snapshot paths typed from a member directory stay bound to that
 /// directory. Runs after the help short-circuit so `--help` stays inert.
 fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
-    use super::check::{bind_member_selector_file, resolve_implicit_command_root};
     match command {
         AgentCommand::Start(options) => {
             resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
@@ -100,6 +101,72 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
             resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
+        // #8902: the artifact-consuming siblings. A `--json` run that fails to
+        // resolve the root is a post-argv failure, so it still writes the
+        // #7331 refusal envelope (keyed to the root as typed) before stderr.
+        AgentCommand::Brief(options) => {
+            let base = match &options.working_set {
+                AgentBriefWorkingSet::Base(base) => Some(base.clone()),
+                _ => None,
+            };
+            let prefix = resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+                base.as_deref(),
+                options.json,
+            )?;
+            // `--diff` and `--files` are root-relative inputs of the brief:
+            // an existing member-relative file binds to the invocation
+            // directory; a missing one is passed through so the brief's own
+            // confinement/read diagnostics stay reachable.
+            match &mut options.working_set {
+                AgentBriefWorkingSet::Diff(path) => {
+                    bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                }
+                AgentBriefWorkingSet::Files(paths) => {
+                    for path in paths {
+                        bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                    }
+                }
+                AgentBriefWorkingSet::Base(_) | AgentBriefWorkingSet::SeamId(_) => {}
+            }
+        }
+        AgentCommand::Packet(options) => {
+            resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+                None,
+                options.json,
+            )?;
+            // `--gap-ledger` is read as typed from the invocation directory,
+            // the same file the operator named, so it needs no rebinding.
+        }
+        AgentCommand::VerifyExecute(options) => {
+            let prefix =
+                match resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+                    Ok(prefix) => prefix,
+                    Err(error) => {
+                        // The typed disposition is the contract on every
+                        // terminal state, so an unresolvable root answers in
+                        // that shape.
+                        print!(
+                            "{}",
+                            app::verification_execution::render_unusable_root(&error)
+                        );
+                        return Err(error);
+                    }
+                };
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.packet);
+        }
+        AgentCommand::Receipt(options) => {
+            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.verify_json);
+        }
+        AgentCommand::ReviewSummary(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
         AgentCommand::Verify(options) => {
             let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
             for path in [&mut options.before, &mut options.after] {
@@ -116,6 +183,41 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
     Ok(())
 }
 
+/// #8902: bind a member-relative input file to the invocation directory when
+/// it exists there; a file that does not exist is left as typed so the
+/// command's own read/confinement diagnostic names it.
+fn bind_existing_member_file(prefix: Option<&str>, root: &Path, path: &mut PathBuf) {
+    if let Ok(bound) = bind_member_selector_file(prefix, root, &path.to_string_lossy()) {
+        *path = PathBuf::from(bound);
+    }
+}
+
+/// Resolve the implicit root for a command whose `--json` mode answers a
+/// root-resolution failure with the #7331 refusal envelope (root-unusable
+/// family), keyed to the root as typed; prose runs return the bare error.
+fn resolve_json_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+    schema_version: &'static str,
+    base: Option<&str>,
+    json: bool,
+) -> Result<Option<String>, String> {
+    let typed_root = root.clone();
+    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+        if !json {
+            return error;
+        }
+        refuse_json_envelope(
+            schema_version,
+            "repo",
+            None,
+            &typed_root,
+            base,
+            CoreError::repository_root_unusable(error),
+        )
+    })
+}
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let mut command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
@@ -126,10 +228,11 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
-        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
         // adapter classifies deliberate named refusals (rendering the
-        // versioned `agent_card_refusal` envelope on stderr under `--json`)
+        // versioned `agent_card_refusal` envelope on stdout under `--json`,
+        // with the prose on stderr)
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),
@@ -392,14 +495,15 @@ fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSel
     }
 }
 
-fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
+fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
     let json = options.json;
     // #7331 review: the root check is below argv parsing, so a `--json`
     // packet run with an unusable `--root` refuses through the same
     // envelope instead of exiting 2 with empty stdout.
     if let Err(err) = ensure_command_root(&options.root, "agent packet") {
         let error = CoreError::repository_root_unusable(err);
-        return Err(refuse_agent_packet(&options, error, json));
+        let message = refuse_agent_packet(&options, error, json).unwrap_or_else(|failure| failure);
+        return Err(CommandError::Failure(message));
     }
     match render_agent_packet(&options) {
         Ok(rendered) => {
@@ -411,17 +515,36 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
         // before the prose error reaches stderr. This is the exact step
         // `agent brief`'s documented `next.inspect_packet` loop drives, so
         // the machine channel survives the failure.
-        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+        //
+        // An unknown `--seam-id` is a typed refusal, not a could-not-complete
+        // failure: exit 3, like `agent card` and `agent stub` for the same
+        // cause. Every other packet failure stays exit 2.
+        Err(error) => {
+            let unknown_seam = error.check_failure_kind()
+                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            match refuse_agent_packet(&options, error, json) {
+                Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
+                Ok(message) | Err(message) => Err(CommandError::Failure(message)),
+            }
+        }
     }
 }
 
 /// The refusal envelope context for `agent packet --json` (#7331): the
 /// packet schema version and repo scope.
-fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+///
+/// `Err` means the envelope could not be rendered or written to stdout, so no
+/// machine answer was delivered (an operational failure even for an unknown
+/// seam); `Ok` is the prose error for stderr.
+fn refuse_agent_packet(
+    options: &AgentPacketOptions,
+    error: CoreError,
+    json: bool,
+) -> Result<String, String> {
     if !json {
-        return error.to_string();
+        return Ok(error.to_string());
     }
-    refuse_json_envelope(
+    refuse_json_envelope_checked(
         app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
         "repo",
         None,
@@ -493,6 +616,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
         Ok(RepairSubjectOutcome::Ineligible {
             seam_id: resolved,
             reason,
+            ..
         }) => {
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
@@ -534,7 +658,14 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
-            let message = if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+            let message = if let Some(language) =
+                crate::app::task_first::non_rust_item_language(seam_id)
+            {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
+                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                )
+            } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )
@@ -641,22 +772,30 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let after_path = validate_agent_verify_snapshot_path(&options.root, &options.after, "--after")?;
     let before_json = read_agent_verify_snapshot(&before_path, "before")?;
     let after_json = read_agent_verify_snapshot(&after_path, "after")?;
-    let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &before_json,
-        "before",
-    )?;
-    let after_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &after_json,
-        "after",
-    )?;
+    let before_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &before_json, "before")?;
+    let after_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &after_json, "after")?;
     crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_pair_lineage(&options.root, &before_identity, &after_identity)
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_verify_movement(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify {error}"))?;
+    // `--gap-id` adds a positive closure requirement on top of the pair
+    // checks: the named gap must be open before and `exposed` after.
+    let bound_gap = options
+        .gap_id
+        .as_deref()
+        .map(|gap_id| {
+            crate::agent::artifact::verify_gap_closure(
+                &options.root,
+                &before_json,
+                &after_json,
+                gap_id,
+            )
+        })
+        .transpose()?;
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -679,10 +818,18 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
     };
-    output::outcome::render_agent_verify_json_with_currentness(
+    let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
+        gap_id: closure.gap_id,
+        before_classification: closure.before_classification,
+        after_classification: closure.after_classification,
+        file: closure.file,
+        line: closure.line,
+    });
+    output::outcome::render_agent_verify_json_with_bound_gap(
         &report,
         Some(artifact_currentness),
         &binding,
+        bound_gap.as_ref(),
     )
 }
 
@@ -700,7 +847,9 @@ const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
 /// never a substring: path-bearing operational errors echo user-supplied
 /// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR
+        || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+        || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -1020,13 +1169,20 @@ pub(super) fn repair_attempt_input_error(
 pub(in crate::cli) fn run_before_repair_with_identity(
     options: AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), CommandError> {
+) -> Result<(), crate::cli::BeforePhaseError> {
     if options.phase != AgentRepairPhase::Before {
         return Err(CommandError::Failure(
             "prepared before identity requires the before phase".to_string(),
-        ));
+        )
+        .into());
     }
-    run_agent_repair_with_identity(options, Some(identity))
+    let (result, start_refused) = run_agent_repair_with_identity_ctx(options, Some(identity));
+    match result {
+        Err(error) if start_refused => Err(crate::cli::BeforePhaseError::Refused(
+            error.message().to_string(),
+        )),
+        other => other.map_err(Into::into),
+    }
 }
 
 /// Shared with the task-first `ripr continue` façade (#6305): both
@@ -1036,6 +1192,16 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {
+    run_agent_repair_with_identity_ctx(options, identity).0
+}
+
+/// [`run_agent_repair_with_identity`] plus whether a before phase refused to
+/// start with nothing written (#9033), so the façade can map that refusal to
+/// the decision exit code while the advanced spelling keeps its failure code.
+fn run_agent_repair_with_identity_ctx(
+    options: AgentRepairOptions,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
+) -> (Result<(), CommandError>, bool) {
     let json = options.json;
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal, identity);
@@ -1086,11 +1252,13 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
-    if refusal.selected_attempt.is_some() && refusal.typed {
+    let start_refused = refusal.start_refused;
+    let result = if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
-    }
+    };
+    (result, start_refused)
 }
 
 /// Records a refused after phase on its attempt, choosing the authority by the
@@ -1174,6 +1342,10 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set when a before phase refused to start because the selected inline
+    /// target is an uncommitted production file (#9033), before any
+    /// workflow artifact or attempt existed.
+    start_refused: bool,
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
@@ -1486,6 +1658,20 @@ fn run_agent_repair_phase(
                 },
             )
             .map_err(|error| error.to_string())?;
+            // #9033: the selected inline target must be the committed file.
+            // Checked on the inventory loaded above, before the cage policy,
+            // the lock-protected publication or any workflow artifact, so a
+            // refused start leaves nothing for `ripr status` to read.
+            if let Some(file) = crate::app::task_first::held_inline_start_file(
+                &root,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                refusal.start_refused = true;
+                return Err(crate::app::task_first::uncommitted_start_refusal_message(
+                    &root, &seam_id, &file,
+                ));
+            }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
@@ -1748,6 +1934,7 @@ fn run_agent_repair_phase(
                 root_explicit: true,
                 before,
                 after,
+                gap_id: None,
                 json: true,
             };
 
@@ -1895,6 +2082,7 @@ fn run_agent_repair_phase(
                 let receipt_result = run_agent_receipt_for_attempt(
                     AgentReceiptOptions {
                         root: root.clone(),
+                        root_explicit: true,
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
                         attempt_id: None,
@@ -2193,9 +2381,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),

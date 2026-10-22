@@ -183,18 +183,106 @@ pub(crate) fn collect_callback_assertions(
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
+    let table_consts = table_loop_consts(statements, source);
     let context = AssertionContext {
         receiver,
         bindings,
         returns_to_runner,
         literal_consts: &literal_consts,
         match_object_consts: &match_object_consts,
+        table_consts: &table_consts,
     };
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
     out
+}
+
+/// `true` when control can never fall through `stmt` to the statement after it:
+/// an unconditional `return`, `throw`, `break` or `continue`, or a block whose
+/// own statements contain one, or a
+/// `try` whose finalizer exits or whose block and catch (if any) both exit (#9138). Statements after it in the same list are dead
+/// code, so an assertion there never runs and cannot discriminate; collection
+/// withholds it, fail closed like a constant-falsy branch (#8714). Conditional
+/// exits (`if (x) return;`) are not decidable and keep the later credit.
+pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_) => true,
+        Statement::BlockStatement(block) => block.body.iter().any(statement_completes_abruptly),
+        // A decidable `if` runs exactly one branch; an undecidable one exits
+        // only when both branches provably do.
+        Statement::IfStatement(if_stmt) => match constant_condition_value(&if_stmt.test) {
+            Some(true) => statement_completes_abruptly(&if_stmt.consequent),
+            Some(false) => if_stmt
+                .alternate
+                .as_ref()
+                .is_some_and(statement_completes_abruptly),
+            None => {
+                statement_completes_abruptly(&if_stmt.consequent)
+                    && if_stmt
+                        .alternate
+                        .as_ref()
+                        .is_some_and(statement_completes_abruptly)
+            }
+        },
+        // A finalizer that exits replaces the try completion. Otherwise the
+        // block must exit and so must any catch (the catch is the only other
+        // way out of the try), unless the block's first statement is a
+        // non-throwing exit, which makes the catch unreachable (#9150). A
+        // loop or `switch` is never decided here.
+        Statement::TryStatement(try_stmt) => {
+            try_stmt
+                .finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
+                || (try_stmt.block.body.iter().any(statement_completes_abruptly)
+                    && (try_catch_is_unreachable(try_stmt)
+                        || try_stmt.handler.as_ref().is_none_or(|handler| {
+                            handler.body.body.iter().any(statement_completes_abruptly)
+                        })))
+        }
+        _ => false,
+    }
+}
+
+/// `true` when the `try` block's first statement is a non-throwing exit, so
+/// nothing can throw into its `catch` and the handler body is dead code
+/// (#9150). Collection and the conditional-credit walker skip such a handler.
+pub(crate) fn try_catch_is_unreachable(try_stmt: &oxc_ast::ast::TryStatement<'_>) -> bool {
+    try_stmt
+        .block
+        .body
+        .first()
+        .is_some_and(statement_is_non_throwing_exit)
+}
+
+/// `true` for a statement that leaves its block without throwing and without
+/// evaluating anything that could throw: a bare `return;`, a `return` of a
+/// plain literal, `break` or `continue` (#9150). As the FIRST statement of a
+/// `try` block nothing can throw into the `catch` first, so the `catch` can
+/// never run. Anything else (`return f();`, `throw`, a call before the exit)
+/// stays undecidable and keeps the fail-closed catch requirement.
+fn statement_is_non_throwing_exit(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
+        Statement::ReturnStatement(ret) => ret.argument.as_ref().is_none_or(|argument| {
+            matches!(
+                argument,
+                Expression::BooleanLiteral(_)
+                    | Expression::NumericLiteral(_)
+                    | Expression::StringLiteral(_)
+                    | Expression::NullLiteral(_)
+            )
+        }),
+        _ => false,
+    }
 }
 
 /// `true` when the statement list collects at least one assertion under
@@ -217,10 +305,14 @@ pub(crate) fn statements_collect_assertion_probe(
         returns_to_runner: false,
         literal_consts: &[],
         match_object_consts: &[],
+        table_consts: &[],
     };
     let mut probe = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut probe);
+        if statement_completes_abruptly(stmt) && probe.is_empty() {
+            return false;
+        }
         if !probe.is_empty() {
             return true;
         }
@@ -242,6 +334,9 @@ pub(crate) struct AssertionContext<'a> {
     /// The test body's top-level object `const`s a `toMatchObject` argument
     /// may read (RIPR-SPEC-0250 rule 1). Empty inside a nested statement.
     match_object_consts: &'a [MatchObjectConst],
+    /// The test body's top-level literal table `const`s a `for...of` loop may
+    /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
+    table_consts: &'a [TableConst],
 }
 
 impl<'a> AssertionContext<'a> {
@@ -254,6 +349,7 @@ impl<'a> AssertionContext<'a> {
             returns_to_runner: self.returns_to_runner,
             literal_consts: &[],
             match_object_consts: &[],
+            table_consts: &[],
         }
     }
 }
@@ -400,7 +496,17 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_in_statement(&for_in.body, source, &nested, out);
         }
         Statement::ForOfStatement(for_of) => {
-            collect_expect_assertions_in_statement(&for_of.body, source, &nested, out);
+            if let Some(rows) = table_loop_assertions(
+                for_of,
+                source,
+                context.bindings,
+                context.returns_to_runner,
+                context.table_consts,
+            ) {
+                out.extend(rows);
+            } else {
+                collect_expect_assertions_in_statement(&for_of.body, source, &nested, out);
+            }
         }
         Statement::LabeledStatement(labeled) => {
             collect_expect_assertions_in_statement(&labeled.body, source, &nested, out);
@@ -437,6 +543,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
             if let Some(handler) = &try_stmt.handler
                 && !finalizer_replaces
+                && !try_catch_is_unreachable(try_stmt)
             {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,
@@ -713,6 +820,36 @@ fn collect_nested_callback_assertions(
                 out.extend(assertions);
             }
         }
+        // RIPR-SPEC-0243 rule 16: an awaited or returned Playwright
+        // `test.step(name, [options,] body)` runs `body` inside the test and
+        // rejects with its failure.
+        "step" if awaited || returned => {
+            let Expression::Identifier(object) = member.object().get_inner_expression() else {
+                return;
+            };
+            if !context
+                .bindings
+                .playwright_tests
+                .iter()
+                .any(|local| local == object.name.as_str())
+            {
+                return;
+            }
+            let Some((callback, leading)) = call.arguments.split_last() else {
+                return;
+            };
+            if leading.is_empty() || leading.len() > 2 || callback_is_generator(callback) {
+                return;
+            }
+            if let Some(statements) = function_body_statements_from_argument(callback) {
+                collect_expect_assertions_from_statement_vec(
+                    statements,
+                    source,
+                    &context.nested(),
+                    out,
+                );
+            }
+        }
         "test" if awaited => {
             let Expression::Identifier(object) = member.object().get_inner_expression() else {
                 return;
@@ -739,12 +876,14 @@ fn collect_nested_callback_assertions(
             };
             let literal_consts = loose_literal_consts(statements, source);
             let match_object_consts = match_object_consts(statements, source);
+            let table_consts = table_loop_consts(statements, source);
             let subtest = AssertionContext {
                 receiver: first_plain_parameter(callback),
                 bindings: context.bindings,
                 returns_to_runner: true,
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
+                table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }
@@ -874,6 +1013,9 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 ) {
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, context, out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
 }
 
@@ -1032,6 +1174,13 @@ pub(crate) fn expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            outer_call
+                .arguments
+                .first()
+                .filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call,
         loose_number_expected: false,
@@ -1102,6 +1251,10 @@ pub(crate) fn ava_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
@@ -1164,6 +1317,10 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Identifiers bound to `node:test`'s default export, `test` or `it`,
     /// whose test context carries `t.assert` (RIPR-SPEC-0252).
     node_test_locals: Vec<String>,
+    /// Identifiers bound to Playwright Test's `test`, whose awaited
+    /// `test.step(name, body)` runs `body` inside the test (RIPR-SPEC-0243
+    /// rule 16).
+    playwright_tests: Vec<String>,
     /// Whether the test being read was registered through one of
     /// `node_test_locals`; set only by `for_registration`, so any other
     /// path reads no context assert.
@@ -1283,6 +1440,9 @@ impl TypeScriptAssertionBindings {
         if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
             self.node_test_locals.push(local.clone());
         }
+        if module == "@playwright/test" && imported == Some("test") && !namespace {
+            self.playwright_tests.push(local.clone());
+        }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
                 AssertFlavor::NodeStrict
@@ -1360,6 +1520,12 @@ impl TypeScriptAssertionBindings {
             },
             node_test_locals: self
                 .node_test_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            playwright_tests: self
+                .playwright_tests
                 .iter()
                 .filter(|local| !is_shadowed(local))
                 .cloned()
@@ -1750,6 +1916,10 @@ fn assert_call_assertion(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
@@ -1891,6 +2061,13 @@ fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
             .is_some_and(|id| id.name.as_str() == "expect"),
         _ => false,
     }
+}
+
+/// The source text of a dynamic matcher argument (`None` for a literal or
+/// no argument), kept so the classifier can read what the expected side is
+/// built from.
+fn dynamic_argument_text(argument: Option<&Argument<'_>>, source: &str) -> Option<String> {
+    argument.and_then(|arg| source_text_for_argument(arg, source))
 }
 
 /// `(expected literal text, is dynamic)` for an optional expected argument.
@@ -2049,6 +2226,10 @@ pub(crate) fn chai_expect_assertion_from_expression(
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
+        dynamic_expected_text: dynamic_argument_text(
+            expected_arg.filter(|_| has_dynamic_matcher_arg),
+            source,
+        ),
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,
@@ -2127,11 +2308,22 @@ fn negated_oracle_cap(matcher: &str) -> (OracleKind, OracleStrength) {
     }
 }
 
+/// `expect(...)` or the soft form `expect.soft(...)` (Playwright and
+/// Vitest): a soft assertion records its failure and fails the test when
+/// it ends, so it separates the same versions as a hard one
+/// (RIPR-SPEC-0243 rule 16).
 pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    matches!(
-        &call.callee,
-        Expression::Identifier(ident) if ident.name.as_str() == "expect"
-    )
+    match &call.callee {
+        Expression::Identifier(ident) => ident.name.as_str() == "expect",
+        Expression::StaticMemberExpression(member) => {
+            member.property.name.as_str() == "soft"
+                && matches!(
+                    &member.object,
+                    Expression::Identifier(ident) if ident.name.as_str() == "expect"
+                )
+        }
+        _ => false,
+    }
 }
 
 /// Static value of a branch or loop condition made of constant literals
@@ -2300,7 +2492,12 @@ pub(crate) fn error_payload_from_assertion(
             let arg = matcher_call.arguments.first()?;
             // Priority: string literal > object literal > class/constructor ref.
             // Fail-closed: any form we can't confirm is exact stays None (→ BroadError).
-            if let Some(expected) = safe_error_literal_payload_text(arg, source) {
+            if let Some(expected) = anchored_regex_payload_text(arg, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::ThrowsRegex,
+                })
+            } else if let Some(expected) = safe_error_literal_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::ThrowsLiteral,
@@ -2319,7 +2516,12 @@ pub(crate) fn error_payload_from_assertion(
         }
         (Some("rejects"), "toThrow" | "toThrowError") if matcher_call.arguments.len() == 1 => {
             let arg = matcher_call.arguments.first()?;
-            if let Some(expected) = safe_error_literal_payload_text(arg, source) {
+            if let Some(expected) = anchored_regex_payload_text(arg, source) {
+                Some(TypeScriptErrorPayload {
+                    expected,
+                    kind: TypeScriptErrorPayloadKind::RejectsThrowRegex,
+                })
+            } else if let Some(expected) = safe_error_literal_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::RejectsThrowLiteral,

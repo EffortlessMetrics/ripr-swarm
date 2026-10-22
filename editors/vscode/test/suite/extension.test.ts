@@ -115,6 +115,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -292,6 +295,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -1581,10 +1587,12 @@ suite('Extension Smoke', () => {
     const context = createControllerTestContext({});
     try {
       await context.controller.start();
+      // The free-text log line never selects the baseRef step by wording.
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
       });
-      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Show Output'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -1596,7 +1604,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+        failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
@@ -1604,7 +1612,32 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+        failure: { kind: 'base_unresolvable', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Legacy servers send analysis_error for a missing base: only that
+      // kind keeps the old wording fallback (documented in client.ts).
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Wording under any other kind is never reclassified.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'base_unresolvable', message: 'x' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
@@ -1763,6 +1796,61 @@ suite('Extension Smoke', () => {
         'The run input was incomplete',
         'Next safe action: Run ripr: Refresh Diagnostics'
       ]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed unavailable_languages status names the language in the status bar, not message text (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emit = (extra: Record<string, unknown>) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: 'limited_incomplete_input',
+          attempt_id: 'run-lang',
+          snapshot_id: 'snapshot:run-lang',
+          ...extra
+        });
+      };
+
+      emit({
+        unavailable_languages: [
+          {
+            language: 'python',
+            file_count: 2,
+            recovery: 'add "python" to [languages] enabled in ripr.toml, then restart the language server'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('$(warning) ripr: language off'), context.status.text);
+      assert.ok(!context.status.text.includes('ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python (2 files)'), tooltip);
+      assert.ok(tooltip.includes('not an all-clear'), tooltip);
+      assert.ok(tooltip.includes('Add "python" to [languages] enabled in ripr.toml'), tooltip);
+
+      // Without the typed row the same run status keeps the generic
+      // incomplete-input presentation: nothing is parsed out of message text.
+      emit({ unavailable_languages: [], limitations: ['python changed 2 file(s), but the preview adapter was not enabled'] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('language off'), context.status.text);
+
+      // A malformed row fails closed to the generic presentation.
+      emit({ unavailable_languages: [{ language: 7 }] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+
+      // Stale evidence keeps its own presentation over the language row.
+      emit({
+        run_status: 'stale',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
     } finally {
       await context.dispose();
     }
@@ -4001,6 +4089,7 @@ suite('Extension Smoke', () => {
       analysisRunning: true,
       analysisReady: true,
       analysisLimited: true,
+      languageNotEnabled: true,
       gapActionable: true,
       gapNoAction: true,
       gapArtifactWarning: true,
@@ -4259,6 +4348,65 @@ suite('Extension Smoke', () => {
       assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
       assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing an unsaved buffer restores the typed language-not-enabled status (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-lang-close', snapshot_id: 'snapshot:run-lang-close',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+
+      context.controller.markWorkspaceStale(document);
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      context.controller.markWorkspaceClosed(document);
+      // The restored status is the typed one, not a log-derived form that
+      // carries no unavailable-language rows.
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      assert.ok(String(context.status.tooltip).includes('did not analyze changed python'));
+      assert.ok(String(context.status.tooltip).includes('without saving'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('language-not-enabled status keeps degraded component recovery and trust warning (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-mixed', snapshot_id: 'snapshot:run-mixed',
+        unavailable_languages: [{ language: 'python', file_count: 1, recovery: 'enable python in ripr.toml' }],
+        components: [
+          {
+            component: 'gap_ledger',
+            state: 'failed',
+            kind: 'artifact_derived',
+            message: 'gap ledger unreadable',
+            findings_trustworthy: false,
+            recovery: 'run ripr check to regenerate the gap decision ledger',
+            snapshot_identity: 'snapshot:run-mixed'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python'), tooltip);
+      assert.ok(tooltip.includes('Enable python in ripr.toml'), tooltip);
+      assert.ok(tooltip.includes('Run ripr check to regenerate the gap decision ledger'), tooltip);
+      assert.ok(tooltip.includes('not trustworthy evidence'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -4606,7 +4754,7 @@ suite('Extension Smoke', () => {
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          `ripr check --root ${rootArg} --base 'origin/main with space' --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
+          `ripr check --root ${rootArg} --base ${serverShellArg('origin/main with space')} --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
           'target/ripr/pilot/after.repo-exposure.json',
           { base: 'origin/main with space', mode: 'ready' }
         ),
@@ -4721,6 +4869,68 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('serverShellArg and the metacharacter check mirror the Windows console quoting (#2769)', () => {
+    // crates/ripr/src/agent/loop_commands.rs: shell_arg_for(value, windows = true).
+    assert.strictEqual(serverShellArg('origin/main', true), 'origin/main');
+    assert.strictEqual(serverShellArg('HEAD~1', true), '"HEAD~1"');
+    assert.strictEqual(serverShellArg('a"b', true), '"a""b"');
+    assert.strictEqual(serverShellArg('sub\\dir\\', true), '"sub\\dir\\\\"');
+    // `$` and backtick are expanded inside double quotes by PowerShell and Git
+    // Bash, so the server keeps the single-quote form for them.
+    assert.strictEqual(serverShellArg('a$b', true), "'a$b'");
+    assert.strictEqual(serverShellArg('a`b', true), "'a`b'");
+    assert.strictEqual(serverShellArg('HEAD~1', false), "'HEAD~1'");
+
+    const body = (arg: string) => `ripr check --root . --base ${arg} --mode draft --format repo-exposure-json`;
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD~1"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"origin/main with space"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"it\'s"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('""'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"sub\\dir\\\\"'), true));
+    // `%` and `!` are literal in PowerShell, Git Bash and native argv; cmd.exe
+    // expansion is the console form's documented limit, the same decision the
+    // CLI makes (#9659). A `^` inside a span is literal too.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"100% done!"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD^"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"%PATH%"'), true));
+    // An even run then `""`, and adjacent spans, stay one quoted word.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body(`"a"'b'`), true));
+    // A backslash run not followed by a quote is literal mid-span.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\\\b\\\\"'), true));
+    // Not Windows: a double quote is refused, as before.
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"'), false));
+    // Windows: only a complete console-quoted span passes.
+    for (const bad of [
+      body('"HEAD~1'),
+      body('"a"b"'),
+      body('"$(calc)"'),
+      body('"`calc`"'),
+      // cmd.exe's escape character outside every span.
+      body('HEAD^'),
+      `${body('"HEAD~1"')} ^& calc`,
+      body('"a\u201db"'),
+      body('"a\nb"'),
+      `${body('"HEAD~1"')} ; calc`,
+      `${body('"HEAD~1"')} & calc`,
+      `${body('"HEAD~1"')} | calc`,
+      body('"a" ; "b"') + ' --x "c',
+      body('abc\\def'),
+      // A `"` inside a single-quoted span cannot pair with a later `"`.
+      body(`'a" & calc & "b$'`),
+      // An odd backslash run escapes the quote for native argv and Git Bash,
+      // so the "span" would end elsewhere and `; calc ;` runs unquoted.
+      body('"\\" x " ; calc ; \\"'),
+      body('"a\\"'),
+      body('"a\\\\\\"'),
+      body('"a\\""b"')
+    ]) {
+      assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
+    }
+  });
+
   test('redirectTargetMatches mirrors the server redirect quoting (#4220)', () => {
     const artifact = 'target/ripr/agent/agent-packet.json';
     const root = path.resolve('/work/repo');
@@ -4739,6 +4949,17 @@ suite('Extension Smoke', () => {
     assert.ok(!redirectTargetMatches(`${slash(root)}/sub/../${artifact}`, artifact, [root]));
     assert.ok(!redirectTargetMatches(`${slash(root)}/${artifact} extra`, artifact, [root]));
     assert.ok(!redirectTargetMatches('target/ripr/agent/../agent/agent-packet.json', artifact, [root]));
+
+    // The server's console double-quoted tail on Windows (#9659), only when
+    // the caller says the server quotes for Windows.
+    const consoleTail = `"${slash(spaced)}/${artifact}"`;
+    assert.ok(redirectTargetMatches(consoleTail, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(consoleTail, artifact, [spaced]));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/$x/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/${artifact}`, artifact, [spaced], true));
+    // cmd.exe expands `%NAME%` and `!NAME!` inside quotes.
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/%x%/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/!x!/${artifact}"`, artifact, [spaced], true));
   });
 
   test('redirectStaysInWorkspace keeps every redirect inside the workspace (#4265)', () => {
@@ -4770,6 +4991,20 @@ suite('Extension Smoke', () => {
     ]) {
       assert.ok(!accepts(command), command);
     }
+
+    // Windows console quoting (#9659): a double-quoted span is literal, so its
+    // `>` is an argument and a double-quoted in-root tail is accepted; the
+    // POSIX reading still refuses the double-quoted tail.
+    const acceptsWindows = (command: string) => redirectStaysInWorkspace(command, [root], true);
+    assert.ok(acceptsWindows(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(acceptsWindows('ripr agent packet --gap-id "gap:a>b" --json > target/ripr/agent-packet.json'));
+    assert.ok(!accepts(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(!acceptsWindows(`ripr first-pr --json > "${path.resolve('/work/repo-other').replace(/\\/g, '/')}/out.json"`));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/../../outside.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "%TEMP%/out.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "!TEMP!/out.json"'));
+    assert.ok(!acceptsWindows("ripr first-pr --json > '%TEMP%/out.json'"));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/ripr/out.json'));
   });
 
   test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
@@ -4841,13 +5076,15 @@ suite('Extension Smoke', () => {
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
-    // The double-quoted base the client used to expect, and a base the payload
-    // does not carry.
-    assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
+    // The Windows console spelling of the base is the server's form on Windows
+    // only; elsewhere a double quote stays refused. And a base the payload does
+    // not carry.
+    assert.strictEqual(accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')), process.platform === 'win32');
     assert.ok(!accepts(snapshot(' --base origin/main', null)));
     assert.ok(!accepts(snapshot(' --base other', 'origin/main')));
     // `'\\''` needs a backslash, which fish reads differently: still refused.
-    assert.ok(!accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")));
+    // On Windows the server writes `"it's"` instead, which has none.
+    assert.strictEqual(accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")), process.platform === 'win32');
     // The quoted redirect span may not carry a line break, a backslash, or a
     // typographic quote that PowerShell reads as the end of the span.
     for (const bad of ['\n', '\\', '\u2019']) {
@@ -5594,6 +5831,23 @@ function firstPrReadFile(
     }
     return value;
   };
+}
+
+/**
+ * In the untrusted host the repair actions must stay refused: the clipboard keeps
+ * its previous text for each diagnostic-scoped copy. Returns true when that was asserted, so the caller skips the
+ * copy expectations that only hold for a trusted workspace (#2769).
+ */
+async function repairPacketRefusedInUntrustedHost(): Promise<boolean> {
+  if (!shouldSkipTrustedTestHost(process.env.RIPR_TEST_WORKSPACE_TRUST)) {
+    return false;
+  }
+  await writeClipboardText('untrusted-repair-sentinel');
+  for (const command of ['ripr.copyFirstPrRepairPacket', 'ripr.copyFirstPrVerifyCommand', 'ripr.copyFirstPrReceiptCommand']) {
+    await vscode.commands.executeCommand(command);
+    assert.strictEqual(await currentClipboardText(), 'untrusted-repair-sentinel', command);
+  }
+  return true;
 }
 
 async function withCurrentFirstPrDiagnostic(
