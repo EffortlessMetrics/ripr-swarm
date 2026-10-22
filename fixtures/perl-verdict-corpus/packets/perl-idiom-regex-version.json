@@ -3,14 +3,14 @@
     {
       "behavior_hint": "return_value",
       "change_id": "change:file:lib/Toolkit.pm:29:29",
-      "changed_observable": "$s =~ /^v?([0-9]+)\\.([0-9]+)$/ ? [$1, $2] : undef",
-      "changed_text_digest": "fnv64:ddfeed9485dda465",
+      "changed_observable": "$s =~ /^v?(\\d+)[.](\\d+)$/ ? [$1, $2] : undef",
+      "changed_text_digest": "fnv64:d7d3d76789530241",
       "file_id": "file:lib/Toolkit.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-485",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-480",
       "provenance_refs": [],
       "range": {
-        "end_column": 61,
+        "end_column": 56,
         "end_line": 29,
         "start_column": 0,
         "start_line": 29
@@ -23,7 +23,7 @@
       "confidence": "high",
       "file_id": "file:lib/Toolkit.pm",
       "kind": "eval_or_string_code",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:487-591",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:482-586",
       "provenance_refs": [],
       "range": {
         "end_column": 18,
@@ -35,7 +35,7 @@
   ],
   "files": [
     {
-      "digest": "sha256:35cb27181855d39096dc8089ffe4269781bb5bae8fee1f0930d0f91d350bbc6d",
+      "digest": "sha256:f4eb0821b4e730e5cc6c1314d870bf5158a4e323e146197c1c08dd99f5116f73",
       "file_id": "file:lib/Toolkit.pm",
       "package_names": [
         "Toolkit"
@@ -81,7 +81,7 @@
   "limitations": [
     {
       "evidence_refs": [
-        "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:487-591"
+        "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:482-586"
       ],
       "kind": "eval_or_string_code",
       "limitation_id": "limitation:boundary:lib/Toolkit.pm:eval_or_string_code:1",
@@ -244,7 +244,7 @@
       "expected_expression": null,
       "expression": "is_deeply(Toolkit::parse_version('v1.2'), [1, 2], 'parses a version')",
       "kind": "exact_return_assertion",
-      "observed_sink": "$s =~ /^v?([0-9]+)\\.([0-9]+)$/ ? [$1, $2] : undef",
+      "observed_sink": "$s =~ /^v?(\\d+)[.](\\d+)$/ ? [$1, $2] : undef",
       "oracle_id": "oracle:t/toolkit.t:is_deeply:426-495",
       "provenance_refs": [
         "prov:oracle_extraction:file:t/toolkit.t"
@@ -256,7 +256,7 @@
         "start_line": 16
       },
       "strength": "strong_exact",
-      "target_owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-485",
+      "target_owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-480",
       "test_id": "test:t/toolkit.t"
     },
     {
@@ -451,7 +451,7 @@
       "file_id": "file:lib/Toolkit.pm",
       "kind": "sub",
       "name": "parse_version",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-485",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-480",
       "package": "Toolkit",
       "provenance_refs": [
         "prov:syntax:file:lib/Toolkit.pm"
@@ -468,7 +468,7 @@
       "file_id": "file:lib/Toolkit.pm",
       "kind": "sub",
       "name": "safe_div",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:487-591",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:482-586",
       "package": "Toolkit",
       "provenance_refs": [
         "prov:syntax:file:lib/Toolkit.pm"
@@ -485,7 +485,7 @@
       "file_id": "file:lib/Toolkit.pm",
       "kind": "sub",
       "name": "slugify",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::slugify:593-685",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::slugify:588-680",
       "package": "Toolkit",
       "provenance_refs": [
         "prov:syntax:file:lib/Toolkit.pm"
@@ -502,7 +502,7 @@
       "file_id": "file:lib/Toolkit.pm",
       "kind": "sub",
       "name": "banner",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::banner:687-748",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::banner:682-743",
       "package": "Toolkit",
       "provenance_refs": [
         "prov:syntax:file:lib/Toolkit.pm"
@@ -515,7 +515,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:4b074b9e0478248a39e62ecb8862e451e971bf97f9180345ce982dacc6ddda8a",
+  "packet_fingerprint": "sha256:f7219d5106d572ba8d98136dba0dce3cb0c527f1f5ac6d531359f9d63ee642a4",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -573,10 +573,10 @@
       "change_id": "change:unresolved",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::banner:687-748",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::banner:682-743",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__banner_687-748",
+      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__banner_682-743",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/toolkit.t"
     },
@@ -628,10 +628,10 @@
       "change_id": "change:file:lib/Toolkit.pm:29:29",
       "confidence": "medium",
       "oracle_id": "oracle:t/toolkit.t:is_deeply:426-495",
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-485",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::parse_version:384-480",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__parse_version_384-485:change:file:lib/Toolkit.pm:29:29",
+      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__parse_version_384-480:change:file:lib/Toolkit.pm:29:29",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/toolkit.t"
     },
@@ -639,10 +639,10 @@
       "change_id": "change:unresolved",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:487-591",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::safe_div:482-586",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__safe_div_487-591",
+      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__safe_div_482-586",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/toolkit.t"
     },
@@ -650,10 +650,10 @@
       "change_id": "change:unresolved",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::slugify:593-685",
+      "owner_id": "owner:lib/Toolkit.pm:sub:Toolkit::slugify:588-680",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__slugify_593-685",
+      "relation_id": "relation:file:t/toolkit.t:lib/Toolkit.pm:owner_lib/Toolkit.pm_sub_Toolkit__slugify_588-680",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/toolkit.t"
     }

@@ -17,22 +17,22 @@
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
     "mutants": [
       {
-        "replacement": "/^v?([0-9]+)\\.([0-9])$/",
-        "mutated_line": "return $s =~ /^v?([0-9]+)\\.([0-9])$/ ? [$1, $2] : undef;",
+        "replacement": "/^v?(\\d+)[.](\\d)$/",
+        "mutated_line": "return $s =~ /^v?(\\d+)[.](\\d)$/ ? [$1, $2] : undef;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the minor version loses its extra digits"
       },
       {
-        "replacement": "/^v?([0-9]+)\\.([0-9]+)/",
-        "mutated_line": "return $s =~ /^v?([0-9]+)\\.([0-9]+)/ ? [$1, $2] : undef;",
+        "replacement": "/^v?(\\d+)[.](\\d+)/",
+        "mutated_line": "return $s =~ /^v?(\\d+)[.](\\d+)/ ? [$1, $2] : undef;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the end anchor is dropped"
       },
       {
-        "replacement": "/^([0-9]+)\\.([0-9]+)$/",
-        "mutated_line": "return $s =~ /^([0-9]+)\\.([0-9]+)$/ ? [$1, $2] : undef;",
+        "replacement": "/^(\\d+)[.](\\d+)$/",
+        "mutated_line": "return $s =~ /^(\\d+)[.](\\d+)$/ ? [$1, $2] : undef;",
         "outcome": "tests_failed",
         "failing_test": "t/toolkit.t: parses a version",
         "equivalence_review": "not equivalent: the v prefix is rejected"
@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-regex-version.json",
-    "sha256": "4e844882e2e0e8d2b9c3b24c7e410d36695419eaaae01f9d6f33fc0ad5c8ce02",
+    "sha256": "0aea9186bc3de656462e6811be490fd75588bb13b493c27aae15c411c0128276",
     "provenance": "producer"
   }
 }
