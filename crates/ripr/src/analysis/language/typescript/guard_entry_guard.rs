@@ -119,7 +119,8 @@ pub(crate) fn enclosing_conditions(
                     let segment: String = masked_chars[segment_start..at].iter().collect();
                     let segment_original: String = original[segment_start..at].iter().collect();
                     let rest = absorb_clause(block, &segment, &segment_original);
-                    block.terminal = ends_clause(segment[rest..].trim_start());
+                    let rest = segment[rest..].trim_start();
+                    block.terminal = !has_label_word(rest) && ends_clause(rest);
                 }
                 chain = None;
                 segment_start = at + 1;
@@ -168,7 +169,7 @@ pub(crate) fn enclosing_conditions(
         // A label on the changed line itself opens a clause the scan has not
         // seen, so the clause in hand is not the line's.
         let line = masked.lines().nth(index).unwrap_or_default();
-        if contains_word(line, "case") || contains_word(line, "default") {
+        if has_label_word(line) {
             return None;
         }
         let rest = absorb_clause(block, &pending, &pending_original);
@@ -273,6 +274,14 @@ fn absorb_clause(block: &mut Block, masked: &str, original: &str) -> usize {
         }
         at = colon + 1;
     }
+    // Without `;` several clauses share one segment (`case 'a': foo() case
+    // 'b': bar()`); a label past the first statement opens a clause this scan
+    // cannot place, so nothing is known about the clause in hand.
+    if has_label_word(&masked[at..]) {
+        block.case_cond = None;
+        block.terminal = false;
+        return at;
+    }
     if labels == 0 {
         return 0;
     }
@@ -284,6 +293,10 @@ fn absorb_clause(block: &mut Block, masked: &str, original: &str) -> usize {
     };
     block.terminal = false;
     at
+}
+
+fn has_label_word(text: &str) -> bool {
+    contains_word(text, "case") || contains_word(text, "default")
 }
 
 fn is_literal_label(text: &str) -> bool {
@@ -2286,6 +2299,50 @@ mod tests {
         let computed = "function run(mode, other) {\n  let total = 1;\n  switch (mode + 1) {\n    case 'x':\n      total = 2;\n      break;\n  }\n  switch (mode) {\n    case other:\n      total = 3;\n      break;\n  }\n  return total;\n}\n";
         assert_eq!(conditions(computed, 5, "total = 2;"), None);
         assert_eq!(conditions(computed, 10, "total = 3;"), None);
+    }
+
+    #[test]
+    fn semicolon_free_clauses_share_a_segment_and_read_nothing() {
+        let body = |text: &str, line: usize, changed: &str| {
+            let source = format!("function run(m, t) {{\n  switch (m) {{\n{text}  }}\n}}\n");
+            enclosing_conditions(&source, 1, line, changed)
+        };
+        assert_eq!(
+            body(
+                "    case 'a':\n      foo()\n    case 'b':\n      bar()\n",
+                6,
+                "bar()"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break\n    case 'b':\n      bar()\n",
+                6,
+                "bar()"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break;\n    case 'b':\n      foo()\n    case 'c':\n      bar();\n",
+                8,
+                "bar();"
+            ),
+            None
+        );
+        assert_eq!(
+            body(
+                "    case 'a':\n      break\n    default:\n      t = 3;\n",
+                6,
+                "t = 3;"
+            ),
+            None
+        );
+        // One semicolon-free clause with a single label is still read.
+        let single = body("    case 'a':\n      bar()\n", 4, "bar()")
+            .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>());
+        assert_eq!(single, Some(vec!["m === 'a'".to_string()]));
     }
 
     #[test]
