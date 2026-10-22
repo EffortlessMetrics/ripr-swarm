@@ -743,13 +743,21 @@ fn approx_call_has_band(assertion: &str) -> bool {
         .any(|(_, arglist)| {
             super::no_behavior::split_top_level_args(arglist)
                 .into_iter()
-                .skip(1)
                 .map(str::trim)
-                .any(|argument| {
+                .enumerate()
+                .any(|(index, argument)| {
+                    // A spread may supply the expected value and the band, so
+                    // it counts in any position, the first included.
+                    if argument.starts_with('*') {
+                        return true;
+                    }
+                    if index == 0 {
+                        return false;
+                    }
                     if let Some((name, value)) = argument.split_once('=') {
                         matches!(name.trim(), "rel" | "abs") && value.trim() != "None"
                     } else {
-                        argument.starts_with('*') || argument != "None"
+                        argument != "None"
                     }
                 })
         })
@@ -790,7 +798,7 @@ fn related_candidates_have_log_membership_limit(
 ) -> bool {
     let words = |text: &str| -> Vec<String> {
         text.split(|ch: char| !ch.is_alphanumeric())
-            .filter(|word| word.len() >= 3)
+            .filter(|word| word.chars().count() >= 3)
             .map(str::to_lowercase)
             .collect()
     };
@@ -802,9 +810,16 @@ fn related_candidates_have_log_membership_limit(
             select_relevant_assertion(&candidate.test.assertions, Some(focus))
                 .assertion()
                 .is_some_and(|assertion| {
-                    let text = &assertion.gate_text;
-                    text.contains(" in caplog.text")
-                        && words(text).iter().any(|word| changed.contains(word))
+                    // Only the checked literal (left of the membership operator)
+                    // may overlap; `assert` and `caplog.text` are scaffolding.
+                    assertion
+                        .gate_text
+                        .split_once(" in caplog.text")
+                        .is_some_and(|(checked, _)| {
+                            let checked = checked.trim_start();
+                            let checked = checked.strip_prefix("assert").unwrap_or(checked);
+                            words(checked).iter().any(|word| changed.contains(word))
+                        })
                 })
         })
 }

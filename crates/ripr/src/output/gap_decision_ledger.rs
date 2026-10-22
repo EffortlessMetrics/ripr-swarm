@@ -4867,7 +4867,9 @@ mod tests {
         // longer related, so `python_adversarial_free_function_module_collision`
         // and the `legacy.py` finding of `python_src_layout_package_import`
         // read `no_static_path` and drop their two orthogonal cards.
-        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 14, 1) {
+        // #9424: the `python_pytest_oracle_shapes` caplog finding now abstains
+        // (`static_unknown`), so it no longer carries a no-strong-oracle card.
+        if (direct, no_strong, orthogonal, family_selection) != (6, 26, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

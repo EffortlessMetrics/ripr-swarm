@@ -4164,6 +4164,8 @@ fn approx_with_an_explicit_band_abstains_for_a_numeric_edit() -> Result<(), Stri
         "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
         "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
         "assert circle_area(2) == pytest.approx(12.566, **band)",
+        "assert circle_area(2) == pytest.approx(*values)",
+        "assert circle_area(2) == pytest.approx(**values)",
     ] {
         assert_eq!(
             classify_area_edit(assertion)?,
@@ -4182,6 +4184,7 @@ fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result
     for assertion in [
         "assert circle_area(2) == pytest.approx(12.5664)",
         "assert circle_area(2) == pytest.approx(12.5664, rel=None)",
+        "assert circle_area(2) == pytest.approx(12.5664, nan_ok=True)",
         "assert circle_area(2) == 12.5664",
     ] {
         assert_eq!(
@@ -4194,10 +4197,17 @@ fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result
 }
 
 fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    classify_log_edit_message("balance low: %s", assertion)
+}
+
+fn classify_log_edit_message(
+    message: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     let finding = classify_change(
         Path::new("src/audit.py"),
         4,
-        "        log.warning(\"balance low: %s\", balance)",
+        &format!("        log.warning(\"{message}\", balance)"),
         &extract_owners(
             Path::new("src/audit.py"),
             "import logging\nlog = logging.getLogger(\"audit\")\n\n\
@@ -4230,6 +4240,19 @@ fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
 #[test]
 fn caplog_membership_about_unrelated_text_keeps_its_verdict() -> Result<(), String> {
     let (class, limit) = classify_log_edit("assert \"payment accepted\" in caplog.text")?;
+    assert_ne!(class, ExposureClass::StaticUnknown);
+    assert_eq!(limit, None);
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_ignores_the_assertion_scaffolding_words() -> Result<(), String> {
+    // "text" and "assert" appear in every `assert .. in caplog.text` line; only
+    // the checked literal may supply an overlapping word.
+    let (class, limit) = classify_log_edit_message(
+        "assert text: %s",
+        "assert \"payment accepted\" in caplog.text",
+    )?;
     assert_ne!(class, ExposureClass::StaticUnknown);
     assert_eq!(limit, None);
     Ok(())
