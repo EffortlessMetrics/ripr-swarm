@@ -16,7 +16,7 @@ Start here:
   Changed behavior: if a >= b {
   Missing discriminator (1 of 4): a == b
   Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro (has no assertion)
-  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  Next step: Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics
   Evidence: reach yes · infection weak · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach inner: test_inner_with_custom_assertion_macro
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing

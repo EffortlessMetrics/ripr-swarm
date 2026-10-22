@@ -80,7 +80,10 @@ weak recognized oracle, while every test that calls or reaches the owner has
 none. The same limit applies to that finding when all of these hold:
 
 - the finding is `weakly_exposed` and has no static limit yet;
-- the related-test window is complete (no matched test was truncated away);
+- the related-test window is complete (no matched test was truncated away),
+  or the reveal producer established the following oracle-scope conditions
+  from its complete admitted rows before the display cap. The latter is an
+  internal limitation fact: hidden rows never supply a witness or oracle;
 - at least one related test has a direct relation (not proximity and not
   name-only: `same_test_file`, `same_module`, `weak_token_substring` and
   `owner_named_test` do not count), and no such test, nor any test without a
@@ -92,8 +95,13 @@ none. The same limit applies to that finding when all of these hold:
   with comments and strings masked. A path- or method-qualified call
   (`Bar::new(`, `x.len(`) may name another item with the same last segment
   and does not count, nor does an argument list that runs past a `;` or holds
-  a `'` (char literals are not masked and can unbalance the delimiters) or a
-  nested macro invocation (`stringify!(owner(1))` never evaluates its tokens);
+  a `'` (char literals are not masked and can unbalance the delimiters).
+  A call inside a nested macro input does not count
+  (`stringify!(owner(1))` never evaluates its tokens). A bare owner call
+  outside nested macro inputs still counts beside an opaque expected-value
+  macro, as in `assert_data_eq!(render_float(-0.0), snap_str![["-0.0"]])`
+  (#9644). Neither that expected text nor the helper's name supplies oracle
+  credit: resolving its actual comparison semantics remains separate;
 - the parser established the owner as a free function. For a method owner
   (`impl Cart::total`) or a trait default method a bare `total(` can only be
   another item, so the path does not run; the lexical fallback leaves the
@@ -102,6 +110,8 @@ none. The same limit applies to that finding when all of these hold:
 The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
 or a direct test that also holds a recognized oracle, keeps the gap.
+The next step is to inspect the macro definition and run the existing test;
+unresolved semantics do not justify telling the user to add an assertion.
 
 ### Same-file macro whose arms show a recognized assertion (#9122)
 
@@ -146,6 +156,10 @@ arguments (`!x`, `a != b`) do not change this grade.
   discriminates the changed behavior.
 - Known assertion macros such as `assert_eq!` remain handled by the existing
   oracle extractor, not by this limitation.
+- No-op or shadowed helpers and mismatched expected values gain no exposure
+  credit from the nested-expected-macro rule. Under the proximity-oracle
+  rule, a different owner in the assertion, a bound owner value, and an
+  owner mentioned only inside an opaque nested macro retain the existing gap.
 
 ## Wire Format
 
@@ -177,8 +191,8 @@ arguments (`!x`, `a != b`) do not change this grade.
    `static_limit_kind: rust_macro_wrapped_assertion_unresolved`. With
    `let flag = bulk(100); assert_flag!(flag, true);` the gap stays.
    Corpus: `checkout-bulk-custom-assert-macro`. `strsim-sorensen-dice-equal`
-   keeps its gap: its related-test window is truncated, so a hidden direct
-   test's oracle cannot be ruled out.
+   keeps its gap unless complete producer evidence rules out a hidden direct
+   oracle and a retained direct macro witness satisfies every condition above.
 
 ## Required Evidence
 

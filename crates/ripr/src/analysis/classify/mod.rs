@@ -112,7 +112,6 @@ pub(in crate::analysis) use related_tests::{
     module_stem, owner_call_text, owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
-pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
@@ -122,6 +121,7 @@ pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

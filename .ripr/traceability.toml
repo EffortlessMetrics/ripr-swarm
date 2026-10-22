@@ -9680,6 +9680,12 @@ id = "RIPR-SPEC-0120"
 name = "rust macro-wrapped assertion limitation"
 spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
 tests = [
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::nested_expected_macro_keeps_the_local_helper_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::helper_and_expected_names_cannot_supply_exposed_credit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::only_owner_calls_outside_nested_macro_inputs_supply_the_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::a_literal_expected_operand_retains_its_existing_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::complete_proximity_evidence_survives_the_display_cap",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_ignores_known_assertion_macros",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::owner_scoped_assertion_scan_requires_an_owner_call_in_the_arguments",
