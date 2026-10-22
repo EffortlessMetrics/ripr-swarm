@@ -31432,6 +31432,17 @@ fn declined_rust_file_is_a_limitation_in_check_and_pilot_json() -> Result<(), St
             exposure["limitations"][0]["category"],
             "rust_files_declined"
         );
+        assert_eq!(
+            summary["actionable_seams_total_is_lower_bound"], true,
+            "{run}: {summary}"
+        );
+        let packets: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))
+                .map_err(|err| format!("read packets {run}: {err}"))?,
+        )
+        .map_err(|err| format!("packets {run} JSON: {err}"))?;
+        assert_eq!(packets["run_status"], "limited_declined_files", "{run}");
+        assert_eq!(packets["limitations"][0]["category"], "rust_files_declined");
     }
     ignore_remove_dir_all(&root);
     Ok(())

@@ -364,7 +364,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         !rust_files.is_empty(),
     )
     .with_rust_exclusion(rust_excluded)
-    .with_declined_rust_files(declined_rust_files);
+    .with_declined_rust_files(declined_rust_files.clone());
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -422,6 +422,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            &declined_rust_files,
         ),
     )?;
 

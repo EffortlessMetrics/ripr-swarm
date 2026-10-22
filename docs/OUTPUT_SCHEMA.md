@@ -15802,7 +15802,11 @@ Field contract:
   contract, not a second packet schema.
 - `run_status` — `"complete"` when neither cap bounded the pilot artifact,
   or `"seam_limit_applied"` when the inventory cap or pilot artifact budget
-  fired. Packet admission remains independent of this status.
+  fired, or `"limited_declined_files"` when a parse limit declined Rust files
+  and no cap fired (#9308), with a `category: "rust_files_declined"` entry in
+  `limitations[]` (`declined_file_count`, up to three `declined_files[]` of
+  `{path, reason}`, `repair_route`). Packet admission remains independent of
+  this status.
 - `limitations[]` — present for a pilot artifact cap, with one object carrying
   `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
   `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
@@ -16672,7 +16676,8 @@ Field contract:
 - `actionable_seams_total_is_lower_bound` — complete summaries only. `true`
   when a seam limit cut the classified seams before ranking, so
   `actionable_seams_total` counts only the kept seams and seams past the cut
-  may hold more; `false` when no limit applied and the total is exact. The
+  may hold more, or when `declined_rust_files` is present (#9308); `false` when
+  no limit applied and the total is exact. The
   Markdown summary says "at least N" in the same case.
 - `seam_limit` — complete summaries only. `null` when no limit applied;
   otherwise `{"analyzed": <kept>, "total": <available>, "source":

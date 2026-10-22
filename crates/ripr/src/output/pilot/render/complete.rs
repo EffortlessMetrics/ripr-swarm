@@ -130,7 +130,7 @@ pub(crate) fn render_pilot_summary_json(
     // total above covers only the kept seams and is a lower bound.
     out.push_str(&format!(
         "  \"actionable_seams_total_is_lower_bound\": {},\n",
-        context.seam_limit.is_some()
+        context.seam_limit.is_some() || !declined_rust_files(context).is_empty()
     ));
     match context.seam_limit {
         Some(limit) => out.push_str(&format!(
