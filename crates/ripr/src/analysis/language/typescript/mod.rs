@@ -14,7 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -71,6 +72,7 @@ mod deleted_lines;
 mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
+mod enum_member_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
@@ -80,6 +82,7 @@ mod helper_inline_tests;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_eval;
 mod literal_matcher_guard;
 mod lookup_table_guard;
 mod loop_bound_guard;
@@ -118,6 +121,9 @@ mod repo;
 mod repo_tests;
 mod returned_state_guard;
 mod rounding_mode_guard;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -136,6 +142,7 @@ mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod rethrow_wrapper;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
@@ -151,7 +158,9 @@ mod workspace_packages;
 pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
-pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use assertion_selection::{
+    TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
+};
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
@@ -180,6 +189,7 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use returned_state_guard::*;
 pub(crate) use rounding_mode_guard::*;
+pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;

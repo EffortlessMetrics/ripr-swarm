@@ -227,11 +227,14 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v2`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v3`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
-`filtered` and `filters` fields require this version change. Strict v1 readers
-must rediscover `tools/list`, accept v2 explicitly and validate against the
-advertised `outputSchema`; callers may still omit all filter arguments.
+`filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
+typed `outcome` block (`kind`, a plain label, and the outcome limitation
+kinds), so a `partial_with_limitations` run never reads as clean. Strict v1
+readers must rediscover `tools/list`, accept v3 explicitly and validate
+against the advertised `outputSchema`; callers may still omit all filter
+arguments.
 
 All MCP document `schema_version` identifiers, so a client can route and
 validate every document the server emits:
@@ -242,7 +245,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v2` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v3` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |

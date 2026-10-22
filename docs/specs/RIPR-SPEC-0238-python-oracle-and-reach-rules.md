@@ -616,6 +616,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     the changed effect could run, on both sides of the change. An
     assertion with no known source line does not credit here.
     Rule 6 still applies on the error path.
+    A comparison supplied by bounded assertion-helper resolution does not
+    establish that an `async def` or generator owner's body ran. Such an
+    owner receives no helper-derived credit, including through a method-name
+    branch when the changed effect has no modeled channel. Generator refusal
+    conservatively reads a whole `yield` identifier in the owner's source,
+    including f-string expressions, strings and nested scopes; it does not
+    claim precise generator execution. Raw assertions and mock expectations
+    keep their existing rules. Synchronous function-result helpers retain
+    the ordinary substituted-assertion reading.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level
@@ -677,19 +686,31 @@ mutant calibrates the rule; ripr reports only the static shape.
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
 
-21. **An explicit `approx` band abstains on a numeric edit.** Rule 12
-    reads `pytest.approx(expected)` at its default tolerance as pinning
-    the value. When the assertion the row selects passes an explicit band,
-    `approx(expected, rel=...)`, `abs=...`, a positional second or third
-    argument, or a `*` or `**` spread that may carry one (a literal `None`
-    counts as absent), static evidence cannot tell whether the band
-    excludes the pre-change value. On a changed line that contains a
-    digit the finding is `static_unknown` with the static limit
-    `unsupported_syntax` naming the band. ripr does not evaluate the band,
-    so a change outside it (`py-idioms-approx-constant-outside-tolerance`)
-    abstains as well as one inside it
+21. **An explicit `approx` band is evaluated where it is decidable, else
+    abstains on a numeric edit.** Rule 12 reads `pytest.approx(expected)`
+    at its default tolerance as pinning the value. When the assertion the
+    row selects passes an explicit band, `approx(expected, rel=...)`,
+    `abs=...`, a positional second or third argument, or a `*` or `**`
+    spread that may carry one (a literal `None` counts as absent), the
+    band may admit the pre-change value. One shape is evaluated: the owner
+    is an undecorated one-statement function whose changed line is
+    `return <expr>` over numeric literals, its own parameters and
+    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
+    approx(<number>, rel=<number>, abs=<number>)` in either operand order
+    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
+    compared with pytest's tolerance (`abs` alone, else the larger of
+    `rel * |expected|` and `abs`, default `1e-12`). An old result inside
+    the band and a new result outside it is `exposed`
+    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    every selected strong assertion and with no unbanded strong
+    assertion, is `weakly_exposed` naming the band
     (`py-idioms-approx-constant-within-tolerance`, whose old reading as
-    `exposed` was a false exposed).
+    `exposed` was a false exposed). Everything else stays
+    `static_unknown` with the static limit `unsupported_syntax` naming the
+    band: an old result already outside the band, a result within `1e-9`
+    (relative) of the band edge, a non-literal argument, a positional
+    band, `**`, a longer body, a method or decorated owner, and a run
+    without the old line (repo mode).
 22. **A `caplog.text` membership check on a changed log call abstains.**
     When the changed line is a logging call (`<receiver>.debug`, `.info`,
     `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
@@ -722,12 +743,24 @@ mutant calibrates the rule; ripr reports only the static shape.
     unconditional module-level `pytest.importorskip(...)`,
     `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
     a recognized skip, skipif or xfail mark control every affected test the
-    same way a `@pytest.mark.skip` decorator does (a condition is never
-    evaluated, so a `skipif` that is false on the host still abstains): the finding is
-    `static_unknown` with `decorator_indirection`. The adapter does not
-    evaluate whether the module is installed, so `importorskip` of a present
-    module also abstains (`py-trap-module-skipped`, `py-trap-empty-table`,
-    `py-trap-module-loaded`, #9691).
+    same way a `@pytest.mark.skip` decorator does (a condition is not
+    evaluated, so a `skipif` on a name or comparison that is false on the
+    host still abstains): the finding is `static_unknown` with
+    `decorator_indirection`. Two things are decidable from the source and
+    leave the test active: a condition that is itself the boolean literal
+    that never triggers the mark and is the only condition, given with the
+    string `reason` the runner requires for a boolean
+    (`skipif(False, reason="...")`, `xfail(False, reason="...")`,
+    `unittest.skipIf(False, "...")`, `unittest.skipUnless(True, "...")`).
+    A missing or non-string reason, a second positional condition, a
+    `condition=` that overrides the positional one and a `*` spread keep
+    the control, because the runner then errors, skips or xfails. The
+    second decidable case is `pytest.importorskip` of one bare module name that
+    every interpreter ships (`json`, `math`, `re`, ...). The adapter does
+    not evaluate whether any other module is installed, so `importorskip`
+    of it, or with `minversion` or `reason`, still abstains
+    (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
 
 ### Verdict ladder
 

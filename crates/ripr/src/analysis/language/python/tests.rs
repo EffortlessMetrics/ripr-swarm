@@ -4196,6 +4196,162 @@ fn approx_at_its_default_tolerance_and_exact_equality_keep_crediting() -> Result
     Ok(())
 }
 
+/// Classify the edit `old_return` -> `new_return` of `circle_area` under a
+/// one-line test, with the old line so an explicit `approx` band can be read.
+fn classify_band_edit(
+    owner_source: &str,
+    old_return: &str,
+    new_return: &str,
+    assertion: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let finding = classify_change_with_old(
+        Path::new("src/geometry.py"),
+        owner_source.lines().count(),
+        &format!("    return {new_return}"),
+        Some(&format!("    return {old_return}")),
+        &extract_owners(Path::new("src/geometry.py"), owner_source),
+        &extract_tests(
+            Path::new("tests/test_geometry.py"),
+            &format!(
+                "import pytest\nfrom src.geometry import circle_area\n\n\
+                 def test_circle_area():\n    {assertion}\n"
+            ),
+        ),
+    )
+    .ok_or_else(|| "numeric edit should classify".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const AREA_OWNER: &str = "def circle_area(radius):\n    return 3.14159 * radius * radius\n";
+
+#[test]
+fn approx_band_the_edit_leaves_is_credited_and_one_it_stays_inside_is_a_gap() -> Result<(), String>
+{
+    // RIPR-SPEC-0238 rule 21: the band is evaluated for a one-statement
+    // arithmetic owner under a literal-argument call.
+    let band = "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)";
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            band
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    assert_eq!(
+        classify_band_edit(
+            AREA_OWNER,
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            band
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    // `abs=` alone, the swapped operand order and a parenthesized layout read the same.
+    for assertion in [
+        "assert circle_area(2) == pytest.approx(12.566, abs=0.05)",
+        "assert pytest.approx(12.566, abs=0.05) == circle_area(2)",
+        "assert (circle_area(2) == pytest.approx(12.566, abs=0.05))",
+        "assert circle_area(radius=2) == pytest.approx(12.566, abs=0.05)",
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                AREA_OWNER,
+                "3.14159 * radius * radius",
+                "3.1416 * radius * radius",
+                assertion
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    // The old value was already outside the band, a non-literal argument, a
+    // positional band, an operator the evaluation does not model and a value on
+    // the band edge are not decided.
+    for (old, new, assertion) in [
+        (
+            "3.0 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.2 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
+        ),
+        (
+            "3.14159 * radius ** 2",
+            "3.2 * radius ** 2",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)",
+        ),
+        (
+            "3.14159 * radius * radius",
+            "3.14159 * radius * radius + 0.00964",
+            "assert circle_area(2) == pytest.approx(12.566, abs=0.01)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", old),
+                old,
+                new,
+                assertion
+            )?,
+            unread,
+            "{old} -> {new} under {assertion}"
+        );
+    }
+    // An integer beyond what `f64` holds exactly, a nested call as the asserted
+    // operand and `rel=None` with no `abs` (no band at all) are not decided.
+    for (new, assertion) in [
+        (
+            "9007199254740993 * radius",
+            "assert circle_area(2) == pytest.approx(18014398509481986, rel=1e-3)",
+        ),
+        (
+            "3.2 * radius * radius",
+            "assert circle_area(abs(2)) == pytest.approx(12.566, rel=1e-3)",
+        ),
+    ] {
+        assert_eq!(
+            classify_band_edit(
+                &AREA_OWNER.replace("3.14159 * radius * radius", "9007199254740992 * radius"),
+                "9007199254740992 * radius",
+                new,
+                assertion
+            )?,
+            unread,
+            "{new} under {assertion}"
+        );
+    }
+    // A longer body or a method receiver is not the bounded shape either.
+    assert_eq!(
+        classify_band_edit(
+            "def circle_area(radius):\n    radius = abs(radius)\n    return 3.14159 * radius * radius\n",
+            "3.14159 * radius * radius",
+            "3.1416 * radius * radius",
+            "assert circle_area(2) == pytest.approx(12.566, rel=1e-3)"
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 fn classify_log_edit(assertion: &str) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     classify_log_edit_message("balance low: %s", assertion)
 }
@@ -7992,14 +8148,16 @@ fn a_parametrized_list_argument_is_read_for_the_filter_bound() -> Result<(), Str
 const MONEY_SRC: &str = "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __add__(self, other):\n        return Money(self.cents - other.cents)\n";
 
 #[test]
-fn dunder_operator_edit_with_constructed_operands_abstains_instead_of_gap() -> Result<(), String> {
-    // #9421: `Money(5) + Money(7) == Money(12)` relates only as `dunder_protocol`.
-    // The adapter cannot read that assertion against `__add__`, so it abstains.
+fn dunder_operator_edit_with_a_reflected_receiver_abstains_instead_of_gap() -> Result<(), String> {
+    // #9421: `5 + Money(7)` runs the reflected `__radd__`, so the receiver is not
+    // certain and the test relates only as `dunder_protocol`.
+    // The adapter cannot read that assertion against `__add__`, so it abstains
+    // (the certain `Money(5) + Money(7)` form is credited, see `dunder_entry_tests`).
     let file = Path::new("shapes/money.py");
     let owners = extract_owners(file, MONEY_SRC);
     let tests = extract_tests(
         Path::new("tests/test_money.py"),
-        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert Money(5) + Money(7) == Money(12)\n",
+        "from shapes.money import Money\n\n\ndef test_add_sums_cents():\n    assert 5 + Money(7) == Money(12)\n",
     );
     assert_eq!(tests.len(), 1);
     let owner = flat_owner(&owners, "Money.__add__")?;
@@ -8083,5 +8241,141 @@ fn module_level_edit_without_importing_test_does_not_abstain() -> Result<(), Str
         finding.class,
         ExposureClass::StaticUnknown | ExposureClass::Exposed
     ));
+    Ok(())
+}
+
+/// #6466: a capped Python run reports typed selected/omitted/total counts and
+/// the shared working-set cap as the first limiting stage; an uncapped run
+/// reports a measured zero and no cap.
+#[test]
+fn analyze_repo_reports_typed_file_accounting_for_a_capped_run() -> Result<(), String> {
+    use crate::analysis::language::{RepoCapFired, RepoLimitingStage};
+    let root = unique_repo_test_root("accounting-capped");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+
+    let capped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2))?;
+    let uncapped = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(800))?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let accounting = capped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(2));
+    assert_eq!(accounting.skipped, Some(1), "vendor excluded by role");
+    assert_eq!(accounting.omitted, Some(1));
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 2,
+        })
+    );
+    let accounting = uncapped.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3));
+    assert_eq!(accounting.omitted, Some(0));
+    assert_eq!(accounting.first_cap_fired, None);
+    Ok(())
+}
+
+/// #6466: at exactly the limit nothing is omitted; one past it omits one.
+#[test]
+fn analyze_repo_accounting_boundary_at_the_working_set_limit() -> Result<(), String> {
+    let limit = 3;
+    for (count, omitted) in [(limit - 1, 0), (limit, 0), (limit + 1, 1)] {
+        let root = unique_repo_test_root("accounting-boundary");
+        for index in 0..count {
+            write_repo_file(
+                &root.join(format!("m{index}.py")),
+                "def run():\n    return 1\n",
+            )?;
+        }
+        let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(limit));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        let accounting = result?.file_accounting;
+        assert_eq!(accounting.discovered, Some(count), "count {count}");
+        assert_eq!(accounting.selected, Some(count.min(limit)), "count {count}");
+        assert_eq!(accounting.omitted, Some(omitted), "count {count}");
+        assert_eq!(
+            accounting.first_cap_fired.is_some(),
+            omitted > 0,
+            "count {count}"
+        );
+    }
+    Ok(())
+}
+
+/// #6466: evidence (test) files share the combined cap; production wins.
+#[test]
+fn analyze_repo_accounting_counts_evidence_files_in_the_combined_cap() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-evidence");
+    for name in ["a.py", "b.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    for name in ["test_a.py", "test_b.py"] {
+        write_repo_file(
+            &root.join("tests").join(name),
+            "def test_run():\n    assert True\n",
+        )?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(3));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let accounting = result.file_accounting;
+    assert_eq!(accounting.discovered, Some(4));
+    assert_eq!(accounting.selected, Some(3), "two production plus one test");
+    assert_eq!(accounting.omitted, Some(1), "one test file beyond the cap");
+    assert_eq!(accounting.skipped, Some(0));
+    assert_eq!(result.production_files, 2);
+    Ok(())
+}
+
+/// #6466: unreadable subtrees make skipped and omitted lower bounds, so they
+/// are unknown, while the exact selected count survives.
+#[test]
+fn accounting_with_unreadable_subtrees_leaves_lower_bounds_unknown() -> Result<(), String> {
+    let root = unique_repo_test_root("accounting-unreadable");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    write_repo_file(&root.join("vendor/dep.py"), "VALUE = 2\n")?;
+    let mut input = repo::select_repo_input_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let complete = repo::file_accounting(&input);
+    assert_eq!(complete.skipped, Some(1));
+    assert_eq!(complete.omitted, Some(1));
+
+    input.counts.unreadable_subtrees = 1;
+    let accounting = repo::file_accounting(&input);
+    assert_eq!(accounting.discovered, None);
+    assert_eq!(accounting.skipped, None);
+    assert_eq!(accounting.omitted, None);
+    assert_eq!(accounting.selected, Some(2));
+    assert!(accounting.first_cap_fired.is_some(), "cap still fired");
+    Ok(())
+}
+
+/// #6466: a real Python `analyze_repo` result flows into the outcome verbatim.
+#[test]
+fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), String> {
+    use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+    let root = unique_repo_test_root("accounting-outcome");
+    for name in ["a.py", "b.py", "c.py"] {
+        write_repo_file(&root.join(name), "def run():\n    return 1\n")?;
+    }
+    let result = PythonAdapter::analyze_repo_with_limit(&root, repo_working_set_limit(2));
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let result = result?;
+    let outcome = LanguageAnalysisOutcomeV1::from_repo_result(
+        crate::domain::LanguageId::Python,
+        &result,
+        None,
+    );
+    assert_eq!(outcome.resources.files, result.file_accounting);
+    assert_eq!(outcome.resources.files.omitted, Some(1));
     Ok(())
 }

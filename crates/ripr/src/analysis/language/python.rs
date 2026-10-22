@@ -56,6 +56,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
@@ -187,6 +188,39 @@ fn mentions_python_name(text: &str, name: &str) -> bool {
         })
 }
 
+/// Whether `line` is a decorator in a run of added decorator lines that ends
+/// at an added `def` or `class` line: the decorators of a newly added
+/// definition. A decorator added above an existing definition, or beside
+/// unrelated added lines, is an edit of that definition and keeps its probe.
+fn opens_added_definition(
+    added_lines: &[crate::analysis::diff::ChangedLine],
+    line: &crate::analysis::diff::ChangedLine,
+) -> bool {
+    let is_decorator = |text: &str| {
+        text.trim_start()
+            .strip_prefix('@')
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
+    };
+    if !is_decorator(&line.text) {
+        return false;
+    }
+    let mut next = line.line;
+    loop {
+        next += 1;
+        let Some(following) = added_lines.iter().find(|added| added.line == next) else {
+            return false;
+        };
+        let text = following.text.trim_start();
+        if is_decorator(text) {
+            continue;
+        }
+        return text.starts_with("def ")
+            || text.starts_with("async def ")
+            || text.starts_with("class ");
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
     name: String,
@@ -254,6 +288,10 @@ struct PythonOwner {
     /// guarded-return shape as a callee, and whether its parameters hold
     /// their call-site values as a caller (`term_activation.rs`, #6733).
     term_facts: term_activation::PythonTermFacts,
+    /// Facts about the owner's class that a dunder-protocol binding needs
+    /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
+    /// which keeps every consumer fail-closed.
+    class_facts: related_tests::PythonClassFacts,
 }
 
 /// One declared parameter of a Python function owner.
@@ -382,6 +420,9 @@ struct PythonAssertion {
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
     callable_call: Option<String>,
+    /// The existing helper-resolution pass supplied this assertion. Its
+    /// comparison alone does not establish a deferred owner's execution.
+    helper_derived: bool,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
@@ -812,6 +853,7 @@ impl PythonAdapter {
             workspace_files.iter().filter(|file| !is_test_file(file)),
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
+        related_tests::apply_class_facts(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -974,6 +1016,12 @@ impl PythonAdapter {
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
+                    // A decorator that opens a newly added function is part of
+                    // its definition; the function's own lines carry the change.
+                    // A decorator that replaces an old line is an edit and keeps
+                    // its probe (#9756).
+                    || (!counterparts.contains_key(&added.line)
+                        && opens_added_definition(&changed.added_lines, added))
             });
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
@@ -1121,6 +1169,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
@@ -1147,6 +1196,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod dunder_entry_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;

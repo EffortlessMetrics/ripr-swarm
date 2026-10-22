@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: `asyncio.run(...)`, `anyio.run(...)`, `trio.run(...)` and `loop.run_until_complete(...)` around an owner call no longer hide the awaited result from a strong exact assertion, so a test that pins an async owner's output is credited instead of reported as not observing it. A changed comprehension filter (`sum(p for p in prices if p > 1)`) is now read as a predicate boundary: it is `exposed` only when a test passes a literal list holding an element at the bound (#9414).

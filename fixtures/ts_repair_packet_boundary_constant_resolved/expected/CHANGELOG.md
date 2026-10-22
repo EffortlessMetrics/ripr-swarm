@@ -205,3 +205,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (18)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (19)
+
+Reason:
+RIPR-SPEC-0224: typescript row-local miss narrowed after review (#5495): no_assertion, missing_input and assertion_not_observing withheld; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (20)
+
+Reason:
+RIPR-SPEC-0224: TypeScript row-miss narrowed to proven paths (#5495)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
