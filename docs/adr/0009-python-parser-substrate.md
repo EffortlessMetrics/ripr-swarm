@@ -358,8 +358,10 @@ all of these hold:
    and 5 (an unparsed or over-budget closure is open), and every top level in
    them is **declarative** in this strict sense: `import` statements; undecorated
    `def` with literal-only defaults and annotations that are plain names;
-   `class` with plain-name bases, no keywords or metaclass, no decorators and a
-   body of such `def`s or literal assignments; and assignments of literals
+   `class` with **no bases at all** (not even a plain name, because creating a
+   subclass runs the base's `__init_subclass__`, which can execute arbitrary
+   code), no keywords or metaclass, no decorators and a body of such `def`s or
+   literal assignments; and assignments of literals
    (numbers, strings, tuples/lists/dicts of literals). A top-level call, `with`,
    loop, `if`, decorator, default-argument expression, metaclass or base-class
    expression, or attribute assignment is not declarative, because each of them
@@ -381,7 +383,13 @@ single-line string literal target `pkg.mod.name` in a form the scanner
 recognizes through the file's own imports (`patch`, `mock.patch`,
 `unittest.mock.patch`, `mocker.patch`, `monkeypatch.setattr("pkg.mod.name",
 ...)`, including aliased names such as `from unittest.mock import patch as p`)
-whose target is isolated. The effective scope is the test body, its decorators
+whose target is isolated **and whose call signature is safe**: the replacement
+value is absent, a literal, or a bare `Mock`/`MagicMock`/`AsyncMock` /
+`mocker.Mock()`-style constructor call with literal arguments, and `new_callable`,
+`autospec`, `side_effect`, `return_value` and `wraps` arguments are either
+absent or literal-only. Any other argument expression, including `new_callable=owner.reset`
+or a call inside the replacement value, can run workspace code when the patch
+starts, without adding an import edge to `T`; such a site stays limited. The effective scope is the test body, its decorators
 and class decorators, `pytestmark`, `setUp`/`setUpClass`, every fixture in the
 transitive set above, the `conftest.py` chain, and any patch-family call shape
 anywhere in `S`. Every other shape stays limited: `patch.object`,
@@ -476,10 +484,12 @@ import owner.
    current detector marks `mocked_module`; for each, decide on paper, using the
    roots the adapter already infers (src layout, exact-path matching), whether
    conditions 1 to 9 hold; count only rows where dropping the limit would
-   change the verdict. Run each qualifying row's test once with and without the patch's target
-imported to confirm the verdict-relevant behavior does not change (a runtime
-label for the row), so a wrong "qualifies" is caught here. Attach the table to
-the PR. Go only if at least five
+   change the verdict. For each qualifying row, run the test three ways and record all three results
+in the table: as written, with the patch's target pre-imported, and with the
+patch removed entirely while the surrounding stimulus and assertion are
+preserved (the unpatched comparison is the one that catches patch-dependent
+behavior, since the pre-import run still applies the patch). The row counts
+only if the three agree. Attach the table to the PR. Go only if at least five
    distinct such rows qualify, none of them by a condition the measurement had
    to guess. Otherwise record the count in this ADR, keep the status quo, and
    stop: slices 2 to 7 are not built and no spec or doc changes land.
@@ -502,7 +512,9 @@ the PR. Go only if at least five
    target, a package `__init__` that rebinds an intermediate hop
    (`import json as mod`), a target whose top level is decorated by a function
    that mutates `decimal` state, a metaclass or default-argument call, a test
-   whose only oracle is an assertion on the mock itself, and a target matching
+   whose only oracle is an assertion on the mock itself, a subclass whose
+   base defines `__init_subclass__`, a `new_callable=owner.reset` or
+   call-in-replacement-value patch, and a target matching
    `python_files`). Issue #9098's acceptance text
    is rewritten at this slice to this rule, since its `os.getcwd` example is
    deferred.
@@ -557,4 +569,5 @@ the conservative vocabulary of [ADR 0002](0002-static-exposure-language.md).
   [implementation campaigns ledger](../IMPLEMENTATION_CAMPAIGNS.md)).
 
 The Python adapter scaffold work item is tracked separately. This ADR
-only records the parser pick.
+records the parser pick and, in the Amendment, the gated rules for a bounded
+workspace import-edge index.
