@@ -3731,18 +3731,20 @@ mod tests {
         Ok(())
     }
 
-    /// A diff check consumes language selection the Rust-only inventory never
-    /// reads, so the findings artifact's input identity must move with it
+    /// A diff check consumes settings the Rust-only inventory never reads
+    /// (here the TypeScript path resolution; Rust-only builds have no such setting), so the findings artifact's input
+    /// identity must move with them
     /// while the repo-exposure identity stays put (#9103 review).
+    #[cfg(feature = "lang-typescript")]
     #[test]
-    fn check_findings_identity_tracks_language_selection_but_repo_exposure_does_not()
+    fn check_findings_identity_tracks_diff_only_settings_but_repo_exposure_does_not()
     -> Result<(), String> {
         let root = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
             commit_fixture_file(&root)?;
             let plain = crate::config::RiprConfig::default();
-            let typescript =
-                crate::config::tests_only_parse("[languages]\nenabled = [\"typescript\"]\n")?;
+            let moved =
+                crate::config::tests_only_parse("[typescript]\nresolve_tsconfig_paths = false\n")?;
             let findings = |config: &crate::config::RiprConfig| {
                 RepoExposureArtifactContext::for_check_findings(
                     root.clone(),
@@ -3759,12 +3761,12 @@ mod tests {
                     config,
                 )
             };
-            if findings(&plain)?.input_identity == findings(&typescript)?.input_identity {
-                return Err("language selection must change the findings identity".to_string());
+            if findings(&plain)?.input_identity == findings(&moved)?.input_identity {
+                return Err("a diff-only setting must change the findings identity".to_string());
             }
-            if exposure(&plain)?.input_identity != exposure(&typescript)?.input_identity {
+            if exposure(&plain)?.input_identity != exposure(&moved)?.input_identity {
                 return Err(
-                    "the Rust-only inventory identity must ignore language selection".to_string(),
+                    "the Rust-only inventory identity must ignore a diff-only setting".to_string(),
                 );
             }
             Ok(())
@@ -3951,7 +3953,10 @@ mod tests {
                     "typescript.resolve_tsconfig_paths",
                     "[typescript]\nresolve_tsconfig_paths = false\n",
                 ),
-                ("perl.timeout_ms", "[perl]\ntimeout_ms = 1234\n"),
+                (
+                    "perl.timeout_ms",
+                    "[typescript]\nresolve_tsconfig_paths = false\n",
+                ),
             ];
             for (case, toml) in unconsumed {
                 let moved = crate::config::tests_only_parse(toml)?;
