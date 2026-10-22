@@ -1,10 +1,12 @@
 //! Test registration is separate from execution and failure propagation.
 //!
 //! Conditions and runtime rebinding are not evaluated. Recognized controls
-//! therefore withhold credit even when a conditional skip might be inactive.
+//! therefore withhold credit even when a conditional skip might be inactive,
+//! except a condition that is itself a boolean literal and so provably inert
+//! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
 use super::{PythonImport, PythonTest, expr_full_name};
-use rustpython_parser::ast::{Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeclarationSite {
@@ -34,15 +36,49 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
 }
 
 pub(super) fn activation_controls(
-    decorators: &[String],
+    decorators: &[Expr],
     definition_imports: &[PythonImport],
     site: DeclarationSite,
 ) -> Vec<PythonActivationControl> {
     decorators
         .iter()
-        .filter_map(|decorator| resolve_control(decorator, definition_imports))
+        .filter_map(|decorator| {
+            let name = resolve_control(&expr_full_name(decorator)?, definition_imports)?;
+            (!condition_is_inert(&name, decorator)).then_some(name)
+        })
         .map(|name| PythonActivationControl { name, site })
         .collect()
+}
+
+/// A skip or xfail whose condition is a boolean literal that never triggers it:
+/// `skipif(False)`, `skipIf(False)`, `skipUnless(True)`, `xfail(False)`. Only the
+/// literal counts; a name, a comparison or a string condition is evaluated at
+/// collection time and stays a control.
+fn condition_is_inert(resolved: &str, decorator: &Expr) -> bool {
+    let inert_value = match resolved {
+        "pytest.mark.skipif" | "pytest.mark.xfail" | "unittest.skipIf" => false,
+        "unittest.skipUnless" => true,
+        _ => return false,
+    };
+    let Expr::Call(call) = decorator else {
+        return false;
+    };
+    let condition = call.args.first().or_else(|| {
+        call.keywords
+            .iter()
+            .find(|keyword| {
+                keyword
+                    .arg
+                    .as_ref()
+                    .is_some_and(|arg| arg.as_str() == "condition")
+            })
+            .map(|keyword| &keyword.value)
+    });
+    matches!(
+        condition,
+        Some(Expr::Constant(constant))
+            if matches!(constant.value, ast::Constant::Bool(value) if value == inert_value)
+    )
 }
 
 fn resolve_control(decorator: &str, imports: &[PythonImport]) -> Option<String> {
@@ -169,7 +205,7 @@ fn module_statement_controls(
                 None => name.clone(),
             };
             let module_skip = match resolved.as_str() {
-                "pytest.importorskip" => true,
+                "pytest.importorskip" => !imports_always_present_module(call),
                 "pytest.skip" => call.keywords.iter().any(|keyword| {
                     keyword
                         .arg
@@ -199,11 +235,55 @@ fn module_statement_controls(
                 Expr::Tuple(tuple) => tuple.elts.iter().collect(),
                 other => vec![other],
             };
-            let names: Vec<String> = marks.into_iter().filter_map(expr_full_name).collect();
-            activation_controls(&names, imports, DeclarationSite::Module)
+            let marks: Vec<Expr> = marks.into_iter().cloned().collect();
+            activation_controls(&marks, imports, DeclarationSite::Module)
         }
         _ => Vec::new(),
     }
+}
+
+/// Modules every supported interpreter ships, so `importorskip` of one never
+/// skips. Any other argument, a `minversion` or a `reason` keeps the control.
+const ALWAYS_PRESENT_MODULES: &[&str] = &[
+    "abc",
+    "collections",
+    "contextlib",
+    "copy",
+    "dataclasses",
+    "datetime",
+    "decimal",
+    "enum",
+    "fractions",
+    "functools",
+    "hashlib",
+    "io",
+    "itertools",
+    "json",
+    "logging",
+    "math",
+    "operator",
+    "os",
+    "pathlib",
+    "random",
+    "re",
+    "statistics",
+    "string",
+    "sys",
+    "textwrap",
+    "time",
+    "typing",
+    "uuid",
+];
+
+fn imports_always_present_module(call: &ast::ExprCall) -> bool {
+    call.keywords.is_empty()
+        && call.args.len() == 1
+        && matches!(
+            call.args.first(),
+            Some(Expr::Constant(constant))
+                if matches!(&constant.value, ast::Constant::Str(name)
+                    if ALWAYS_PRESENT_MODULES.contains(&name.as_str()))
+        )
 }
 
 fn join_tail(base: &str, tail: &str) -> String {
