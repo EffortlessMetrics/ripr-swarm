@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/users.py:build_user:field_value:field_construction:return_user_active=true
   Changed behavior: return User(active=True)
   Missing discriminator (1 of 2): Related Python test reaches `build_user` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value
-  Related test: tests/test_users.py:4 test_build_user_smoke
+  Related test: tests/test_users.py:4 test_build_user_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_users.py
   Suggested test: test_build_user_smoke
   Test node: tests/test_users.py::test_build_user_smoke

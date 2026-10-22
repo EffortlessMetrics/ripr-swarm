@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-delete",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_delete/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_delete/core.py",
+      "sha256": "03d3b82d9ff0197a012a616175ff608b5a8ba23161d71c1d6a8f92b027d9c033"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "7177e1121b5bd8049dabea7b2a960e70076179a4fa618541320c83379bd24500"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "863a3e582705996ce124b034cdaebb60774b569a2fa2242078afa62c0115c40e"
+    }
+  ]
+}

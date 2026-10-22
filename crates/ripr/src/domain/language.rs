@@ -454,6 +454,13 @@ pub enum StaticLimitKind {
     /// snapshot of a field no redaction names. The gap is withheld and the
     /// class is `static_unknown`. See RIPR-SPEC-0240.
     RustFrameworkOracleUnresolved,
+    /// A Rust test names the type of a trait impl whose method the language
+    /// calls without spelling it (an operator, `Drop`, an iterator, `Deref`,
+    /// `Index`, `PartialOrd`) or calls a same-named method on a receiver ripr
+    /// does not type (`dyn Trait`, a second impl). ripr does not follow that
+    /// call to the changed method. The gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0240 / #9441.
+    RustImplicitCallUnresolved,
 }
 
 impl StaticLimitKind {
@@ -516,6 +523,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustCallFactBudget => "rust_call_fact_budget",
             StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
+            StaticLimitKind::RustImplicitCallUnresolved => "rust_implicit_call_unresolved",
         }
     }
 
@@ -658,6 +666,13 @@ impl StaticLimitKind {
                  insta snapshot kept outside the source), so ripr cannot say whether the check \
                  notices the change. ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustImplicitCallUnresolved => {
+                "A Rust test names the type of the changed trait-impl method and may run that \
+                 method through an operator, scope exit, loop, index or a method call on a \
+                 receiver whose type ripr does not infer (`dyn Trait`, a second impl of the \
+                 trait), but ripr does not follow that call to the changed method. ripr does \
+                 not claim a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1002,6 +1017,10 @@ mod tests {
             StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
             "rust_framework_oracle_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustImplicitCallUnresolved.as_str(),
+            "rust_implicit_call_unresolved"
+        );
     }
 
     #[test]
@@ -1033,6 +1052,7 @@ mod tests {
             StaticLimitKind::RustDebugAssertionProfileUnresolved,
             StaticLimitKind::RustCallFactBudget,
             StaticLimitKind::RustFrameworkOracleUnresolved,
+            StaticLimitKind::RustImplicitCallUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
