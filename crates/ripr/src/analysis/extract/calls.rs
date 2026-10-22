@@ -403,7 +403,21 @@ mod tests {
             "fn t() { ignored! { let f: fn(u32) -> u32 = target; f(2); } }",
             "fn t() { let _: fn(u32) -> u32 = target; _(2); }",
         ] {
-            assert!(alias_fact_text(body, "target").is_empty(), "{body}");
+            let body = body.replace("f(2);", "assert_eq!(f(2), 6);");
+            // The general lexical scanner may also record the declaration
+            // `fn target(..)`. This refusal is about added alias projections.
+            let mut projected = Vec::new();
+            function_alias::add_local_alias_calls(
+                &mask_comments_and_strings(&body),
+                &body,
+                1,
+                &mut projected,
+            );
+            assert!(projected.is_empty(), "{body}: {projected:?}");
+            assert!(
+                local_fn_pointer_call(&body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
         }
     }
 
