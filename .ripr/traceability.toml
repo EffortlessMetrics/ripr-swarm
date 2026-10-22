@@ -17388,6 +17388,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::only_an_unconditional_dict_literal_is_read_as_the_table",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_rebound_builtin_class_is_not_read_as_the_builtin",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_that_masks_the_edited_field_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_rule_fails_open_when_the_result_is_read_otherwise",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
