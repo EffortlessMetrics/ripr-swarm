@@ -2677,6 +2677,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,

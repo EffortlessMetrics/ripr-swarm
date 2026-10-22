@@ -11379,6 +11379,8 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_equality_fact_names_the_integer_a_local_evaluated_to",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
+  "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/method_hop_tests.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
@@ -16181,6 +16183,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::owner_tie_reads_multi_line_chains_and_member_or_generic_calls",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::multi_line_then_chain_reads_static_unknown_through_the_classifier",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -16972,6 +16976,15 @@ tests = [
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::a_mock_closure_counts_only_when_it_reads_a_named_argument",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::literal_call_names_read_the_first_literal_of_whole_callees",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::redaction_selectors_are_the_path_literals_of_the_argument_list",
+  "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::the_domain_bound_is_exact",
+  "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::unreadable_loops_are_refused",
+  "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::only_a_direct_collect_compared_whole_is_a_consumer",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::an_arm_fed_by_a_bounded_caller_loop_is_withheld",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::the_limit_names_the_loop_domain_and_its_provenance",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::the_domain_bound_is_exact",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::an_arm_outside_the_domain_keeps_the_gap",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::a_loop_shape_ripr_cannot_read_keeps_the_gap",
+  "crates/ripr/tests/caller_loop_selector_limit.rs::a_consumer_that_is_not_an_exhausting_exact_collect_keeps_the_gap",
   "crates/ripr/tests/implicit_call_limit.rs::a_drop_impl_reached_at_scope_exit_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_iterator_impl_reached_through_collect_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_reached_through_the_operator_is_withheld",
@@ -17307,8 +17320,18 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_input_missing_the_early_exit_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_disjoint_early_exits_words_at_least_one",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_ignores_early_exit_text_inside_a_docstring",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_wildcard_arm_no_observed_input_reaches_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_literal_arm_is_unreached_by_a_different_literal_only",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::an_unreadable_match_subject_or_pattern_fails_open",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_every_observed_key_misses_does_not_credit",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_get_default_stays_credited_when_the_table_can_change",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_table_the_owner_shadows_is_not_read",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::only_an_unconditional_dict_literal_is_read_as_the_table",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_rebound_builtin_class_is_not_read_as_the_builtin",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::string_escape_spellings_are_not_compared_as_text",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/arm_activation.rs",
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
   "crates/ripr/src/analysis/language/python/boundary.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
@@ -17507,6 +17530,7 @@ tests = [
   "xtask/src/reports/release_ledger/capture_tests.rs::lines_written_under_a_renamed_path_are_attributed_by_blame",
   "xtask/src/reports/release_ledger/tests.rs::merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
+  "xtask/src/reports/release_ledger/tests.rs::markdown_projection_shows_every_records_theme",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
 ]

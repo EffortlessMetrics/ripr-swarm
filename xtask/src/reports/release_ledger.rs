@@ -388,15 +388,20 @@ fn report_markdown(ledger: &Ledger, status: &str, reasons: &[String]) -> String 
     for (name, count) in counts(ledger.records.iter().map(|r| r.final_tree_effect.as_str())) {
         markdown.push_str(&format!("| `{}` | {count} |\n", escape_cell(name)));
     }
-    markdown.push_str("\n## Records\n\n| Position | Commit | Disposition | Tree effect | Subject |\n| ---: | --- | --- | --- | --- |\n");
+    markdown.push_str("\n| Theme | Count |\n| --- | ---: |\n");
+    for (name, count) in counts(ledger.records.iter().map(|r| r.theme.as_str())) {
+        markdown.push_str(&format!("| `{}` | {count} |\n", escape_cell(name)));
+    }
+    markdown.push_str("\n## Records\n\n| Position | Commit | Disposition | Theme | Tree effect | Subject |\n| ---: | --- | --- | --- | --- | --- |\n");
     for record in &ledger.records {
         let position = record
             .first_parent_position
             .map_or_else(|| "-".to_string(), |position| position.to_string());
         markdown.push_str(&format!(
-            "| {position} | `{}` | `{}` | `{}` | {} |\n",
+            "| {position} | `{}` | `{}` | `{}` | `{}` | {} |\n",
             record.commit_sha,
             escape_cell(&record.release_disposition),
+            escape_cell(&record.theme),
             escape_cell(&record.final_tree_effect),
             escape_cell(&record.subject),
         ));
