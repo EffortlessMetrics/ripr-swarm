@@ -195,9 +195,9 @@ return value apart.
 **Rule 2. An operator whose right operand is its identity in every tested
 call is not pinned.** The rule applies on a `return_value` probe when the
 changed line only rewrites the operands of a commutative operator in place:
-`return qty * unit;` against `return unit * qty;`. Only `*` and `/` are read:
-`+` also concatenates strings, so neither its operand order nor a zero operand
-shows that a test cannot tell the edit apart. A changed operator or operand, or a dropped term, keeps the credit, because the identity
+`return qty * unit;` against `return unit * qty;`. Only `*` is read:
+`+` also concatenates strings, and `/` is not commutative, so a swap there is
+not an in-place rewrite of the same value. A changed operator or operand, or a dropped term, keeps the credit, because the identity
 input can still pin that edit. The new line reads `return <operand> <op>
 <param>;`, with a plain identifier or number on the left and an owner
 parameter on the right that the body never rebinds. An `exposed` result then
