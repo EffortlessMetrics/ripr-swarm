@@ -3179,4 +3179,39 @@ mod tests {
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn review_comments_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let base = unique_command_test_dir("review-comments-review-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            let _ = std::fs::remove_dir_all(&base);
+            return Ok(());
+        }
+        let result = review_comments(&args(&[
+            "--root",
+            &root.display().to_string(),
+            "--base",
+            "main",
+            "--head",
+            "HEAD",
+        ]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
+        Ok(())
+    }
 }

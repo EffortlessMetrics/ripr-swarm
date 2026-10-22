@@ -318,8 +318,11 @@ impl PacketRun {
     }
 
     fn copy(&self, from: &str, to: &str) -> StageResult {
-        fs::copy(self.path(from), self.path(to))
-            .map(|_| ())
+        // Read, then write through the symlink-refusing advisory writer: a
+        // plain `fs::copy` follows a planted destination link.
+        let bytes = fs::read(self.path(from))
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+        crate::output::file_write::write(&self.path(to), &bytes)
             .map_err(|err| format!("cannot copy {from} to {to}: {err}"))
     }
 
@@ -2308,6 +2311,136 @@ mod tests {
             run.failed,
             vec!["Required".to_string(), "Gate input".to_string()]
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn recording_run(root: &Path) -> PacketRun {
+        PacketRun {
+            root: root.to_path_buf(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings::default(),
+            only: Vec::new(),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: Some(std::cell::RefCell::new(Vec::new())),
+        }
+    }
+
+    #[cfg(unix)]
+    fn link_scratch(label: &str) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let root = base.join("root");
+        fs::create_dir_all(root.join("target/ripr/reports")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("target/ci")).map_err(|e| e.to_string())?;
+        let sentinel = base.join("outside.txt");
+        fs::write(&sentinel, "ORIG").map_err(|e| e.to_string())?;
+        Ok((base, root, sentinel))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_to_refuses_a_planted_leaf_link_and_truncates_a_regular_file() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("ripr-to")?;
+        let run = recording_run(&root);
+        // Positive control: a regular file is truncated and recreated.
+        fs::write(root.join("target/ripr/reports/out.json"), "stale").map_err(|e| e.to_string())?;
+        run.ripr_to(&[], "target/ripr/reports/out.json")?;
+        let control =
+            fs::read(root.join("target/ripr/reports/out.json")).map_err(|e| e.to_string());
+        // Hostile: a planted leaf link.
+        std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports/link.json"))
+            .map_err(|e| e.to_string())?;
+        let refused = run.ripr_to(&[], "target/ripr/reports/link.json");
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(control?, b"".to_vec());
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_refuses_a_planted_destination_link() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("copy")?;
+        let run = recording_run(&root);
+        fs::write(root.join("target/ripr/reports/src.json"), "NEW").map_err(|e| e.to_string())?;
+        // Positive control.
+        run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/dst.json",
+        )?;
+        let control = fs::read_to_string(root.join("target/ripr/reports/dst.json"))
+            .map_err(|e| e.to_string());
+        std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports/link.json"))
+            .map_err(|e| e.to_string())?;
+        let refused = run.copy(
+            "target/ripr/reports/src.json",
+            "target/ripr/reports/link.json",
+        );
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(control?, "NEW");
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn labels_write_refuses_a_planted_leaf_link() -> Result<(), String> {
+        let (base, root, sentinel) = link_scratch("labels")?;
+        let mut run = recording_run(&root);
+        run.settings.labels = Ok(Vec::new());
+        std::os::unix::fs::symlink(&sentinel, root.join(LABELS_JSON)).map_err(|e| e.to_string())?;
+        let refused = run.capture_labels();
+        let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert!(refused.is_err(), "planted link was followed");
+        assert_eq!(kept?, "ORIG");
+        Ok(())
+    }
+
+    /// `pr.diff` and its receipt are both written through the advisory writer.
+    #[cfg(unix)]
+    #[test]
+    fn pr_diff_and_receipt_refuse_planted_leaf_links() -> Result<(), String> {
+        for planted in ["pr.diff", "pr-diff.receipt.json"] {
+            let (base, root, sentinel) = link_scratch("pr-diff")?;
+            let run_git = |args: &[&str]| -> Result<String, String> {
+                crate::git::run_git(&root, args).map_err(|err| err.to_string())
+            };
+            run_git(&["init", "--initial-branch=main"])?;
+            run_git(&["config", "user.email", "ripr@example.invalid"])?;
+            run_git(&["config", "user.name", "ripr test"])?;
+            run_git(&["config", "commit.gpgSign", "false"])?;
+            fs::write(root.join("a.txt"), "one\n").map_err(|e| e.to_string())?;
+            run_git(&["add", "a.txt"])?;
+            run_git(&["commit", "-m", "base"])?;
+            let base_sha = run_git(&["rev-parse", "HEAD"])?;
+            run_git(&["update-ref", "refs/remotes/origin/main", &base_sha])?;
+            fs::write(root.join("a.txt"), "two\n").map_err(|e| e.to_string())?;
+            run_git(&["commit", "-am", "change"])?;
+            std::os::unix::fs::symlink(&sentinel, root.join("target/ripr/reports").join(planted))
+                .map_err(|e| e.to_string())?;
+            let mut run = recording_run(&root);
+            run.recorded = None;
+            run.settings.base_ref = "main".to_string();
+            let refused = run.capture_pull_request_diff();
+            let kept = fs::read_to_string(&sentinel).map_err(|e| e.to_string());
+            let _ = fs::remove_dir_all(&base);
+            assert!(refused.is_err(), "{planted}: planted link was followed");
+            assert_eq!(kept?, "ORIG", "{planted}");
+        }
         Ok(())
     }
 }

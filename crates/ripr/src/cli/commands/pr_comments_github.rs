@@ -264,12 +264,7 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
         ));
     }
     let manifest_path = out_dir.join(REQUESTS_MANIFEST);
-    crate::output::file_write::write(&manifest_path, manifest.as_bytes()).map_err(|err| {
-        format!(
-            "{REQUESTS} could not write {}: {err}",
-            manifest_path.display()
-        )
-    })?;
+    write_manifest(&manifest_path, &manifest, REQUESTS)?;
     for note in &planned.notes {
         println!("{note}");
     }
@@ -373,12 +368,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     }
     let manifest_path = out_dir.join(SUMMARY_MANIFEST);
     let Some(request) = request else {
-        crate::output::file_write::write(&manifest_path, b"").map_err(|err| {
-            format!(
-                "{SUMMARY} could not write {}: {err}",
-                manifest_path.display()
-            )
-        })?;
+        write_manifest(&manifest_path, "", SUMMARY)?;
         println!("No findings and no earlier RIPR summary comment: nothing to post.");
         return Ok(());
     };
@@ -391,12 +381,13 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
         manifest_field(&file.display().to_string()),
         manifest_field(&request.message)
     );
-    crate::output::file_write::write(&manifest_path, line.as_bytes()).map_err(|err| {
-        format!(
-            "{SUMMARY} could not write {}: {err}",
-            manifest_path.display()
-        )
-    })
+    write_manifest(&manifest_path, &line, SUMMARY)
+}
+
+/// Write a request manifest through the symlink-refusing advisory writer.
+fn write_manifest(path: &Path, text: &str, command: &str) -> Result<(), String> {
+    crate::output::file_write::write(path, text.as_bytes())
+        .map_err(|err| format!("{command} could not write {}: {err}", path.display()))
 }
 
 /// The lexical check in the parser keeps `--out-dir` under `--root` only if
@@ -1041,6 +1032,12 @@ mod tests {
         fs::write(root.join("pages.json"), "[]").map_err(|err| err.to_string())?;
         std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
             .map_err(|err| err.to_string())?;
+        // The guard is skipped under an explicit RIPR_CACHE_DIR (the documented
+        // opt-in); the env cannot be cleared here without unsafe code.
+        if std::env::var("RIPR_CACHE_DIR").is_ok_and(|value| !value.trim().is_empty()) {
+            let _ = fs::remove_dir_all(&base);
+            return Ok(());
+        }
         let result = pr_comments_existing(&strings(&[
             "--root",
             &root.display().to_string(),
@@ -1053,6 +1050,32 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
         assert!(result.is_err_and(|err| err.contains("refusing to write ripr output")));
         assert_eq!(leaked, 0, "output escaped through target/ripr/review");
+        Ok(())
+    }
+
+    /// The summary and requests manifests are written through the advisory
+    /// writer; a planted manifest link is replaced/refused, never followed.
+    #[cfg(unix)]
+    #[test]
+    fn manifest_writes_never_follow_a_planted_link() -> Result<(), String> {
+        use std::fs;
+        let base = scratch("manifest-link");
+        let root = base.join("root");
+        let out = root.join("target/ripr/review/summary");
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let sentinel = base.join("outside.tsv");
+        fs::write(&sentinel, "ORIG").map_err(|err| err.to_string())?;
+        // Positive control: a regular manifest is written.
+        super::write_manifest(&out.join("ok.tsv"), "row\n", "test")?;
+        let control = fs::read_to_string(out.join("ok.tsv")).map_err(|err| err.to_string());
+        std::os::unix::fs::symlink(&sentinel, out.join("summary.tsv"))
+            .map_err(|err| err.to_string())?;
+        let refused = super::write_manifest(&out.join("summary.tsv"), "row\n", "test");
+        let kept = fs::read_to_string(&sentinel).map_err(|err| err.to_string());
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(control?, "row\n");
+        assert!(refused.is_err(), "planted manifest link was followed");
+        assert_eq!(kept?, "ORIG");
         Ok(())
     }
 }
