@@ -62,14 +62,36 @@ jobs:
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.
-      # `timeout` ends a run nextest cannot: shard 4 of run 39843731107 hit the
-      # 60-minute job cap with no log. Exit 124 is recorded like any other status,
-      # and any SLOW rows already in the log usually name the stuck tests.
+      #
+      # nextest runs in the background with a native watchdog. Shard 3 of run
+      # 39854834481 outlived both GNU `timeout` (an MSYS signal does not reach a
+      # native process tree) and the 50-minute step cap, and the job was cancelled
+      # at 60 minutes with no log. After 44 minutes the watchdog records the
+      # running processes (their command lines name the stuck test binary) and
+      # force-kills the tree with taskkill, so the log and status always upload.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 50
         shell: bash
         run: |
-          mkdir -p target; set +e; timeout -k 30 2640 cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:${{ matrix.shard }}/4 > target/shard-${{ matrix.shard }}.log 2>&1; status=$?; printf '%s\n' "$status" > target/shard-${{ matrix.shard }}.status; cat target/shard-${{ matrix.shard }}.log; exit "$status"
+          mkdir -p target
+          shard=${{ matrix.shard }}
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
+          nextest_pid=$!
+          (
+            sleep 2640
+            echo fired > target/shard-$shard.watchdog
+            powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
+            taskkill //F //T //IM cargo-nextest.exe > /dev/null 2>&1
+            taskkill //F //T //IM cargo.exe > /dev/null 2>&1
+          ) &
+          watchdog_pid=$!
+          set +e
+          wait "$nextest_pid"; status=$?
+          kill "$watchdog_pid" 2> /dev/null
+          if [ -f target/shard-$shard.watchdog ]; then status=124; fi
+          printf '%s\n' "$status" > target/shard-$shard.status
+          cat target/shard-$shard.log
+          exit "$status"
 
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
@@ -87,6 +109,8 @@ jobs:
           path: |
             target/shard-${{ matrix.shard }}.log
             target/shard-${{ matrix.shard }}.status
+            target/shard-${{ matrix.shard }}.watchdog
+            target/shard-${{ matrix.shard }}.processes
           if-no-files-found: warn
           retention-days: 7
 
