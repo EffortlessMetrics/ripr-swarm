@@ -1517,3 +1517,16 @@ mod unix_stubs {
         Ok(())
     }
 }
+
+#[test]
+fn the_child_never_inherits_a_variable_that_redirects_git() {
+    // The parent environment cannot be set here (`unsafe` is forbidden), so this
+    // pins what `launch` hands the runner to remove, whatever the caller exports.
+    let removed = super::exec::removed_env();
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(
+            removed.iter().any(|removed| removed == name),
+            "{name} must be removed from every child"
+        );
+    }
+}

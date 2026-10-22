@@ -478,3 +478,78 @@ fn changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit() -> Result<
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn blank_separators_beside_a_test_module_do_not_hide_a_test_only_edit() -> Result<(), String> {
+    let root = new_repo("inline-blank")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let path = "crates/ripr/src/blank.rs";
+        let product = "pub fn one() -> u8 {\n    1\n}\n\npub fn two() -> u8 {\n    2\n}\n";
+        let module = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {}\n}\n";
+        let base = commit(&root, &[(path, Some(product))], "base")?;
+        // A blank separator line comes with the new module in the same hunk.
+        let with_module = format!("{product}\n{module}");
+        let added = commit(
+            &root,
+            &[(path, Some(&with_module))],
+            "test: add tests (#71)",
+        )?;
+        // Removing the module takes its separator with it.
+        let removed = commit(&root, &[(path, Some(product))], "test: drop tests (#72)")?;
+        // A blank line between two product functions is not beside any test module.
+        let spaced = commit(
+            &root,
+            &[(
+                path,
+                Some(&product.replacen("}\n\npub fn two", "}\n\n\npub fn two", 1)),
+            )],
+            "style: space (#73)",
+        )?;
+        // A product edit next to a blank separator stays product.
+        let edited = commit(
+            &root,
+            &[(
+                path,
+                Some(&format!(
+                    "{}\n{module}",
+                    product.replacen("    2\n", "    3\n", 1)
+                )),
+            )],
+            "fix: two returns 3 (#74)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &edited,
+            main: &edited,
+        })?;
+        let inline = |sha: &str| -> Result<Vec<String>, String> {
+            facts
+                .commits
+                .iter()
+                .find(|commit| commit.commit_sha == sha)
+                .map(|commit| commit.inline_test_paths.clone())
+                .ok_or_else(|| format!("{sha} missing from facts"))
+        };
+        require(
+            inline(&added)? == [path.to_string()],
+            "a new module with a blank separator is a test-only change",
+        )?;
+        require(
+            inline(&removed)? == [path.to_string()],
+            "removing a module with its separator is a test-only change",
+        )?;
+        require(
+            inline(&spaced)?.is_empty(),
+            "a blank line between product functions is not test evidence",
+        )?;
+        require(
+            inline(&edited)?.is_empty(),
+            "a product edit beside a blank separator stays product",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}

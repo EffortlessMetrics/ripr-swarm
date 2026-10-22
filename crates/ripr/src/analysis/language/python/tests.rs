@@ -4238,6 +4238,44 @@ fn caplog_membership_on_the_changed_message_abstains() -> Result<(), String> {
 }
 
 #[test]
+fn caplog_membership_is_read_from_the_parsed_expression_not_the_layout() -> Result<(), String> {
+    // Spacing, parentheses, line breaks and implicit literal concatenation
+    // all spell the same membership check (RIPR-SPEC-0238 rule 22).
+    for assertion in [
+        "assert  \"low balance: 5\"   in   caplog.text",
+        "assert (\"low balance: 5\" in caplog.text)",
+        "assert (\n        \"low balance: 5\"\n        in caplog.text\n    )",
+        "assert \"low \" \"balance: 5\" in caplog.text",
+        "assert \"low balance: 5\" in caplog.text, \"log was not written\"",
+        "assert check_balance(5) is False and \"low balance: 5\" in caplog.text",
+    ] {
+        assert_eq!(
+            classify_log_edit(assertion)?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_membership_layouts_about_unrelated_text_keep_their_verdict() -> Result<(), String> {
+    for assertion in [
+        "assert (\n        \"payment accepted\"\n        in caplog.text\n    )",
+        "assert  \"payment accepted\"   in   caplog.text",
+        "assert \"low balance: 5\" in other.text",
+    ] {
+        let (class, limit) = classify_log_edit(assertion)?;
+        assert_ne!(class, ExposureClass::StaticUnknown, "{assertion}");
+        assert_eq!(limit, None, "{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
 fn caplog_membership_about_unrelated_text_keeps_its_verdict() -> Result<(), String> {
     let (class, limit) = classify_log_edit("assert \"payment accepted\" in caplog.text")?;
     assert_ne!(class, ExposureClass::StaticUnknown);
