@@ -833,6 +833,15 @@ reason = "Stdlib Python decision logic extracted from the pre-allocation admissi
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
 
 [[allow]]
+glob = "policy/release-ledger-overrides.json"
+kind = "release_ledger_overrides"
+owner = "release/control"
+surface = "release"
+classification = "config"
+reason = "Reviewed per-commit disposition overrides for the rows disposition rule v1 cannot judge (two-parent first-parent merges, empty diffs, unclassified paths); read by `cargo xtask release-ledger derive` (#2768)."
+covered_by = ["cargo test -p xtask release_ledger", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "policy/release-hard-cut-admission.json"
 kind = "release_hard_cut_packet"
 owner = "release/control"
