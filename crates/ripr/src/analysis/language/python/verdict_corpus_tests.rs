@@ -1744,3 +1744,37 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// A star import names every public owner of its module, so a strong exact
+/// assertion on the starred name observes the owner. Private names stay out
+/// of a star import, and an import from another module never binds it.
+#[test]
+fn star_import_binds_a_public_owner_for_the_strong_oracle() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    for (import, expected) in [
+        ("from src.shop import fee", ExposureClass::Exposed),
+        ("from src.shop import *", ExposureClass::Exposed),
+        ("from src.other import *", ExposureClass::WeaklyExposed),
+    ] {
+        assert_eq!(
+            classify(FEE, 2, FEE_OLD, &test_module(import, body))?,
+            expected,
+            "{import}"
+        );
+    }
+    let private = "def _fee(amount):\n    return amount * 3\n";
+    assert_eq!(
+        classify(
+            private,
+            2,
+            FEE_OLD,
+            &test_module(
+                "from src.shop import *",
+                "def test_fee():\n    assert _fee(2) == 6\n"
+            )
+        )?,
+        ExposureClass::WeaklyExposed,
+        "a private name is not exported by a star import"
+    );
+    Ok(())
+}
