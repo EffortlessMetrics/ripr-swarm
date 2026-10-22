@@ -766,6 +766,31 @@ prove its condition costs an abstention or a gap, never a credit.
    an extra iteration of a search or accumulation need not change the
    result.
 
+**Rule 16. Playwright Test specs of pure functions (#9434).** A spec that
+imports `expect` and `test` from `@playwright/test` reads like its plain
+form in four places:
+
+1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
+   records its failure and fails the test when it ends.
+2. An `await test.step(name, [options,] body)` (or a returned one) whose
+   `test` is the named import runs `body` inside the test and rejects with
+   its failure, so the assertions in `body` are the test's own. A step that
+   is not awaited or returned floats, and a `test` bound elsewhere has no
+   such `step`.
+3. `toThrow(/^message$/)` (and `.rejects.toThrow`) with a pattern anchored
+   by `^` and `$`, no top-level `|` and no flag but `u` pins the whole
+   message, like rule 10's `node:assert` regex. Jest and Vitest test the
+   regex against `error.message`, so `/^blank$/` matches `blank`.
+4. A moved threshold of an unchanged returned conditional
+   (`weightKg > 5 ? 900 : 400` becoming `> 25`: same parameter, same
+   comparison, one number differing, arms distinct constants) is a
+   return-value change. It is credited when a strong exact assertion of an
+   oracle relation observes the whole owner call with a literal argument the
+   old and new threshold put on opposite sides of the comparison (`20`), and
+   the expected value is one of the two arms. An argument outside that
+   interval, an expected value equal to neither arm, a wrapped call and
+   equal arms keep the old reading.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -1188,7 +1213,17 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `exact_error_variant` / strong, `exposed` (today `broad_error` / weak,
     `weakly_exposed`; rule 10). With `{ name: "Error" }`: `broad_error` /
     weak (unchanged; no `message`).
-36. `const rows = [[0, false], [4999, false], [5000, true], [12000,
+36. `src/steps.ts` returns `weightKg > 25 ? 900 : 400` where it returned
+    `weightKg > 5 ? 900 : 400`, and the Playwright spec runs `await
+    test.step("heavy", async () => { expect(shipping(20)).toBe(900); })`:
+    `exact_value` / strong, `exposed` (`20` is between 5 and 25). The same
+    with `shipping(30)`, `shipping(1)`, `toBe(123)`, `shipping(20) > 0`, a
+    step that is not awaited or a `test` not imported from
+    `@playwright/test`: `weakly_exposed`. `expect.soft(area(3, 4)).toBe(24)`
+    reads as `expect(area(3, 4)).toBe(24)`, and `toThrow(/^not a count$/)`
+    pins a literal `throw new Error("not a count")` message that became
+    `"not a number"` (`/not a/` and `/^not a count$/i` stay broad).
+37. `const rows = [[0, false], [4999, false], [5000, true], [12000,
     true]]; for (const [cents, want] of rows) { assert.equal(
     freeShipping(cents), want); }` against a changed `cents >= 5000`
     boundary: `exact_value` / strong, `exposed` through the rows 4999 and
@@ -1314,7 +1349,20 @@ to `amount - 20`, and `tests/lib.test.ts` has
   the asserted parsed subject (registered test, collected assertion,
   relation) checked before the class.
 
+- #9434 (rule 16): `crates/ripr/src/analysis/language/typescript/tests/playwright_unit_tests.rs`
+  pins example 36. Corpus row `pw-step-heavy-parcel-threshold` moves from
+  `gap` to `credited`; `pw-expect-soft-second-term`,
+  `pw-tothrow-anchored-regex` and `pw-loop-registered-rounding-mode` keep
+  their `known_false` entries under #9651, #9652 and #9653.
+
 ## Implementation Mapping
+
+- #9434 (rule 16): `oracle.rs` (`call_expression_is_expect` for
+  `expect.soft`, the `step` arm of `collect_nested_callback_assertions` with
+  `TypeScriptAssertionBindings::playwright_tests`, and the `ThrowsRegex` /
+  `RejectsThrowRegex` payloads read by `error_payload_credits`),
+  `ternary_arm_guard.rs` (`ts_ternary_threshold_move`) and
+  `ts_threshold_move_witnessed` in `classifier.rs`.
 
 - #9435 (rule 15): `probe_shape.rs` (`declared_arrow_value_body`),
   `returned_state_guard.rs` (`ts_returned_state_change`),

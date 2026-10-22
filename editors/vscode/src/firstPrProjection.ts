@@ -408,9 +408,15 @@ const FIRST_PR_PACKET_SELECTED_STATES = new Set([
 ]);
 
 export function firstPrCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  const normalized = command.trim().replace(/\s+/g, ' ');
+  if (hasUnsafeShellMetacharacter(command)) {
+    return false;
+  }
+  // The admitted grammar has only single-quoted spans. Preserve their bytes
+  // for redirect containment; normalize whitespace only between tokens.
+  const normalized = command.trim().replace(/'[^']*'|\s+/g, (span) =>
+    span.startsWith("'") ? span : ' '
+  );
   return normalized !== ''
-    && !hasUnsafeShellMetacharacter(normalized)
     && !testRunnerCommandLeavesScope(normalized)
     && redirectStaysInWorkspace(normalized, redirectRoots)
     && FIRST_PR_SAFE_COMMAND_PREFIXES.some((prefix) =>

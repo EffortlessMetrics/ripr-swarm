@@ -1,7 +1,8 @@
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
-    PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
-    line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
+    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
+    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    test_may_reach_owner_class,
 };
 use super::source_utils::SourceText;
 use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
@@ -877,6 +878,63 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
         }
         _ => false,
     }
+}
+
+/// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
+///
+/// - A dunder method owner whose related tests all relate only through
+///   `dunder_protocol`: the test builds an instance of the owner class and
+///   Python runs the dunder through operator or `with` syntax, but syntax alone
+///   cannot bind the protocol use to that instance, so the oracle is unread.
+/// - A module-level statement (`<module>` owner: a constant, a decorator
+///   argument, a conditional definition) related only by name proximity while a
+///   test imports the module: importing runs the top-level statements, which
+///   this adapter does not model, so a filename-stem link must not read as a gap.
+///
+/// Both abstain (`static_unknown`) instead of reporting `weakly_exposed`. The
+/// guard needs related tests and no oracle-eligible relation, so a direct call
+/// keeps its ordinary verdict.
+pub(super) fn heuristic_only_relation_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty()
+        || related_candidates
+            .iter()
+            .any(|candidate| candidate.relation.uses_oracle())
+    {
+        return None;
+    }
+    if let Some(class) = dunder_method_class(owner)
+        && related_candidates
+            .iter()
+            .all(|candidate| candidate.relation == PythonRelationKind::DunderProtocol)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: format!(
+                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax on a constructed instance",
+                owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through operator or `with` syntax; related tests build `{class}` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap.",
+                owner.qualified_name
+            ),
+        });
+    }
+    if owner.qualified_name == "<module>"
+        && related_candidates
+            .iter()
+            .any(|candidate| test_imports_owner_module(candidate.test, owner))
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: "static_limit missing_import_graph: module-level statement run at import time"
+                .to_string(),
+            missing: "Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap.".to_string(),
+        });
+    }
+    None
 }
 
 #[cfg(test)]
