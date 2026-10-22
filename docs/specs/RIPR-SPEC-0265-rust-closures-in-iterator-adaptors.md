@@ -104,6 +104,11 @@ and every condition below holds. Anything else keeps the pre-0265 reading.
     tail only while the owner's file binds no other item to `Vec` (a `use`
     renaming or naming it, a glob outside `std`/`core`/`alloc`, or a
     `type`, `struct`, `enum`, `union` or `trait` named `Vec`);
+  - `map` + `collect()` into a `Result<Vec<..>, ..>` (same spelling rules,
+    #9490): the first `Err` is the owner's result, and otherwise every
+    closure value is kept in order. Rules 1 and 2 read such a tail only
+    while the owner's file binds no other item to `Vec` or `Result`. A
+    `filter` + `collect` into a `Result` is not read;
   - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
     arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
   - `any` or `all` with no `T`.
@@ -132,10 +137,12 @@ The binding read as an element of `P` is the binding with at most as many
 
 A **literal sequence** is an argument `&[a, b]`, `[a, b]`, `vec![a, b]` or
 `&vec![a, b]` whose every element is one unsuffixed integer or float
-literal (optionally negated), `true`, `false`, or a char literal. `&[]`
-is the empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a
-range, a call, a suffixed element (`3u32`), a string or a slice of a
-literal (`&[1, 2][..]`) is not one.
+literal (optionally negated), `true`, `false`, a char literal, or (#9490)
+a plain string literal with no escape and no inner quote; a string is a
+run element only: it never serves as a comparison boundary. `&[]` is the
+empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a range,
+a call, a suffixed element (`3u32`), an escaped or raw string or a slice of
+a literal (`&[1, 2][..]`) is not one.
 
 A **run** of an owner call is the sequence the call passes `P`: the
 argument itself when it is a literal sequence, or, when the argument is a
@@ -284,6 +291,11 @@ this edge's.
    `let ages = vec![40; n]` in a `for n in 1..10` loop: the rule does not
    apply; the predicate stays `infection_unknown`.
 
+7. `xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()`
+   with `assert_eq!(parse_all(&["1", "2"]), Ok(vec![1, 2]))`: the return
+   value reads `exposed`. With `&[]`, or when the owner's file declares
+   its own `Result`, it keeps the pre-0265 reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -299,7 +311,8 @@ this edge's.
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
-  5 (`trap-iter-empty-slice`) and 6 (`grid-iter-property`).
+  5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
+  (`shape-collect-result-short-circuit`).
 
 ## Implementation Mapping
 
