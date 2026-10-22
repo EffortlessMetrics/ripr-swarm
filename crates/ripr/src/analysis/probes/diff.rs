@@ -827,8 +827,10 @@ fn canonical_integer_literals(text: &str) -> String {
     let mut at = 0;
     while at < bytes.len() {
         let byte = bytes[at];
-        let free_start = at == 0
-            || !(bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'_' | b'.'));
+        let free_start = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|prev| !(prev.is_alphanumeric() || matches!(prev, '_' | '.')));
         if !(byte.is_ascii_digit() && free_start) {
             let ch = text[at..].chars().next().unwrap_or(' ');
             out.push(ch);
@@ -3507,6 +3509,7 @@ mod tests {
         assert!(!is_integer_respelling("1e3", "1000"));
         assert!(!is_integer_respelling("x.0x1", "x.1"));
         assert!(!is_integer_respelling("v0x15", "v21"));
+        assert!(!is_integer_respelling("na\u{ef}ve0x1", "na\u{ef}ve1"));
         // Text that can observe its spelling is never a respelling.
         assert!(!is_integer_respelling("f(\"a\", 0x15)", "f(\"a\", 21)"));
         assert!(!is_integer_respelling("stringify!(0x15)", "stringify!(21)"));
