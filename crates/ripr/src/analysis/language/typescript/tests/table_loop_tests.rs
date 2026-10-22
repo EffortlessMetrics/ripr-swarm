@@ -212,3 +212,18 @@ fn a_non_block_body_or_a_redeclared_name_keeps_the_loop_assertion() {
         &format!("    const tier = \"x\";\n{ASSERT}"),
     ));
 }
+
+#[test]
+fn an_empty_literal_table_asserts_nothing() -> Result<(), String> {
+    let source = loop_test("", ASSERT);
+    assert_eq!(observed(&source), Vec::new());
+    let class = tier_class("empty-table", &source)?;
+    assert_ne!(class, ExposureClass::Exposed, "an empty table pins nothing");
+    Ok(())
+}
+
+#[test]
+fn a_non_empty_table_still_reads_every_row_after_the_empty_rule() {
+    let source = loop_test("    [999, \"silver\"],", ASSERT);
+    assert_eq!(observed(&source).len(), 1);
+}

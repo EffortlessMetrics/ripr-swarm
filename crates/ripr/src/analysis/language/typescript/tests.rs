@@ -17430,6 +17430,7 @@ mod literal_matcher_tests;
 mod lookup_table_tests;
 mod loop_declared_tests;
 mod match_object_tests;
+mod mock_call_count_tests;
 mod mock_form_tests;
 mod mock_object_argument_tests;
 mod mock_spread_source_tests;

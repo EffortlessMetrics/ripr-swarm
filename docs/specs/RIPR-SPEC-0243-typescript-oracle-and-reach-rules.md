@@ -970,6 +970,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     the expected side (`ts-grid-delete-table`, `ts-grid-delete-helper` stay
     gaps until the adapter resolves literal tables and same-file helper
     assertions, #9534). A getter-backed field is not detected.
+19. **Empty tables and mock call counts (2026-10-22, #9683, #9684).**
+    Adopted: a `for...of` loop over a top-level test-local `const` that is
+    an empty array literal and is named only in its declaration and that
+    loop runs the body zero times, so it reads as no assertions (rule 11's
+    loop form). Adopted: an assertion whose observed expression is
+    `<path>.mock.callCount()` or `<path>.mock.calls.length` counts calls
+    and reads `mock_expectation` / weak, like `toHaveBeenCalledTimes`,
+    under any matcher. Rejected: crediting the count as an exact value of
+    the arguments the changed call sends; pinning `mock.calls[0].arguments`
+    is a different expression and keeps its reading.
 
 ## Required Evidence
 
@@ -1230,6 +1240,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
     `break`, stay `weakly_exposed` (rule 11).
+38. `const rows: Array<[number, number, number]> = []; for (const [a, b,
+    want] of rows) { assert.equal(f(a, b), want); }` against a changed
+    `return a * b`: the loop runs zero times and asserts nothing, so the
+    test names no assertion and the change is not `exposed` (decision 19).
+39. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+    `const send = mock.fn(); mockedSend(4, { send });
+    assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
+    `weakly_exposed` (the count does not see the argument; today
+    `exact_value` / strong, `exposed`). `assert.deepEqual(
+    send.mock.calls[0].arguments, [8])` keeps its reading.
 
 ## Test Mapping
 
@@ -1238,6 +1258,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
   cell, a table read elsewhere, a `let` or late table, a row of the wrong
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
+
+- #9683, #9684 (decision 19): `table_loop_tests.rs`
+  (`an_empty_literal_table_asserts_nothing`) and
+  `tests/mock_call_count_tests.rs` pin the empty-table and call-count
+  readings and their controls. Corpus rows `ts-trap-empty-table` and
+  `ts-trap-mocked-send` move from credited to gap, and the trap kit's
+  `false_credit_ceiling` drops from 2 to 0.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
