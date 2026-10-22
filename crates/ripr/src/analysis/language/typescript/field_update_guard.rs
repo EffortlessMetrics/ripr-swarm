@@ -58,6 +58,13 @@ pub(crate) fn ts_field_update_change(
     if !depth_zero || body.contains("=>") || !identifier_offsets(&body, "function").is_empty() {
         return None;
     }
+    // An earlier `return` or `throw` can skip the statement.
+    if ["return", "throw"]
+        .iter()
+        .any(|exit| identifier_offsets(&body, exit).iter().any(|x| *x < at))
+    {
+        return None;
+    }
     // A single write: another update of the field could hide this one.
     let target = format!("this.{field}");
     let writes = body
@@ -204,6 +211,34 @@ pub(crate) fn ts_field_update_precedes_read(
     {
         return None;
     }
+    // Nothing else may write the field through the receiver, and the owner
+    // call must not be a no-op by argument (`bump(0)`, `bump("")`).
+    for at in identifier_offsets(body, receiver) {
+        let Some(member) = body[at + receiver.len()..].strip_prefix('.') else {
+            continue;
+        };
+        let name_len = member
+            .find(|c: char| !is_identifier_part(c))
+            .unwrap_or(member.len());
+        let (name, rest) = member.split_at(name_len);
+        let rest = rest.trim_start();
+        let assigned = rest.starts_with("++")
+            || rest.starts_with("--")
+            || COMPOUND_OPERATORS.iter().any(|op| rest.starts_with(op))
+            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
+        if (rest.starts_with('(') && name != owner_name) || (name == change.field && assigned) {
+            return None;
+        }
+        if name == owner_name && rest.starts_with('(') {
+            let args = rest[1..].split(')').next().unwrap_or("").trim();
+            if matches!(
+                args,
+                "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+            ) {
+                return None;
+            }
+        }
+    }
     let call = format!("{receiver}.{owner_name}(");
     let read_scopes = open_scopes(body, read_offset)?;
     let ran = body.match_indices(&call).any(|(at, _)| {
@@ -239,6 +274,55 @@ mod tests {
         ts_field_update_precedes_read(&change(), "recordHit", body, read)
     }
 
+    fn method(source: &str) -> TypeScriptOwner {
+        TypeScriptOwner {
+            name: "recordHit".to_string(),
+            file: std::path::PathBuf::from("src/stats.ts"),
+            start_line: 1,
+            end_line: 1,
+            owner_kind: OwnerKind::Method,
+            class_name: Some("Stats".to_string()),
+            decorated: false,
+            exported_as_default: false,
+            imports: Vec::new(),
+            method_kind: TypeScriptMethodKind::Ordinary,
+            class_default_export: false,
+            default_object_member: false,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: Some(0),
+            source_text: Some(source.to_string()),
+        }
+    }
+
+    fn changed(source: &str, new: &str, old: &str) -> Option<FieldUpdateChange> {
+        ts_field_update_change(&method(source), new, Some(old))
+    }
+
+    #[test]
+    fn change_requires_one_straight_line_write_of_the_same_field() {
+        let new = "this.hits += 1;";
+        let old = "this.hits = this.hits + 1;";
+        let plain = "recordHit() {\n  this.hits += 1;\n}";
+        assert_eq!(
+            changed(plain, new, old).map(|c| c.field).as_deref(),
+            Some("hits")
+        );
+        let branch = "recordHit() {\n  if (this.on) {\n    this.hits += 1;\n  }\n}";
+        assert_eq!(changed(branch, new, old), None);
+        let twice = "recordHit() {\n  this.hits += 1;\n  this.hits += 1;\n}";
+        assert_eq!(changed(twice, new, old), None);
+        let early_return = "recordHit() {\n  if (this.on) return;\n  this.hits += 1;\n}";
+        assert_eq!(changed(early_return, new, old), None);
+        let early_throw =
+            "recordHit() {\n  if (this.on) throw new Error('x');\n  this.hits += 1;\n}";
+        assert_eq!(changed(early_throw, new, old), None);
+        let callback = "recordHit() {\n  this.hits += 1;\n  items.forEach((i) => i);\n}";
+        assert_eq!(changed(callback, new, old), None);
+        assert_eq!(changed(plain, new, "this.misses = this.misses + 1;"), None);
+        assert_eq!(changed(plain, "this.hits = other;", old), None);
+    }
+
     #[test]
     fn updated_field_reads_compound_and_respelled_forms() {
         assert_eq!(updated_field("this.hits += 1;").as_deref(), Some("hits"));
@@ -258,6 +342,22 @@ mod tests {
         assert_eq!(precedes(body).as_deref(), Some("stats"));
         let looped = "{ const stats = new Stats(); for (let i = 0; i < 3; i++) { stats.recordHit(); } expect(stats.hits).toBe(3); }";
         assert_eq!(precedes(looped).as_deref(), Some("stats"));
+    }
+
+    #[test]
+    fn other_writers_and_neutral_arguments_are_not_witnessed() {
+        let reset = "{ const stats = new Stats(); stats.reset(); stats.recordHit(); expect(stats.hits).toBe(7); }";
+        assert_eq!(precedes(reset), None);
+        let assigned = "{ const stats = new Stats(); stats.hits = 7; stats.recordHit(); expect(stats.hits).toBe(7); }";
+        assert_eq!(precedes(assigned), None);
+        let neutral =
+            "{ const stats = new Stats(); stats.recordHit(0); expect(stats.hits).toBe(0); }";
+        assert_eq!(precedes(neutral), None);
+        let empty =
+            "{ const stats = new Stats(); stats.recordHit(\"\"); expect(stats.hits).toBe(\"\"); }";
+        assert_eq!(precedes(empty), None);
+        let real = "{ const stats = new Stats(); stats.recordHit(2); expect(stats.hits).toBe(2); }";
+        assert_eq!(precedes(real).as_deref(), Some("stats"));
     }
 
     #[test]

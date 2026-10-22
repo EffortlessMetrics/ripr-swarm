@@ -835,9 +835,14 @@ rejected alternative. Any can be reversed later without touching the rest.
     `this.f += e` / `this.f = this.f + e` in a class method is a
     return-value change when the method has one write to `this.f`, the
     statement sits at the top level of the method body, and a strong,
-    pinned, exact-value assertion reads `recv.f` from a `const recv = new
+    pinned, exact-value assertion reads `recv.f` from a `const`/`let recv = new
     Class(..)` the test called the method on before the read, with only
-    counting loops between the test callback and the call. Rejected:
+    `for`/`while` loops between the test callback and the call. The method
+    body has no `return` or `throw` before the statement and no nested
+    function or arrow, the old line updated the same field, the receiver is
+    not otherwise written or mutated through another method call, and the
+    owner call's argument is not a neutral literal (`0`, `""`, `false`,
+    `null`). Rejected: early exits, other mutators, neutral arguments,
     reads before the call, calls inside a branch or callback, rebound or
     factory-made receivers, and tables or helpers as the expected side
     (`ts-grid-delete-table`, `ts-grid-delete-helper` stay gaps until the
