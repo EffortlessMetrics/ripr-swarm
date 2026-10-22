@@ -131,6 +131,11 @@ fn unvaried_arithmetic_operand(
 ) -> Option<UnvariedTableOperand> {
     let old_line = old_line_text?;
     let (old_arith, new_arith) = changed_simple_arithmetic(old_line, line_text)?;
+    // Reordering the factors of a product changes no value, so rows that
+    // agree on both sides say nothing about an unvaried operand.
+    if is_factor_reorder(&old_arith, &new_arith) {
+        return None;
+    }
     let operand = arithmetic_operand_name(&old_arith)?;
     let mut saw_table = false;
     for candidate in related_candidates {
@@ -293,6 +298,37 @@ fn arithmetic_rows_agree(
             _ => false,
         }
     })
+}
+
+/// `a * b` -> `b * a` over plain names and integer literals. Multiplication
+/// commutes for every builtin operand type (`3 * "ab"` equals `"ab" * 3`), which
+/// is why `+` is not accepted here: `a + b` -> `b + a` reorders strings.
+fn is_factor_reorder(old: &Expr, new: &Expr) -> bool {
+    let (Expr::BinOp(old), Expr::BinOp(new)) = (old, new) else {
+        return false;
+    };
+    if !matches!(old.op, ast::Operator::Mult) || !matches!(new.op, ast::Operator::Mult) {
+        return false;
+    }
+    let (Some(old_left), Some(old_right), Some(new_left), Some(new_right)) = (
+        factor_key(&old.left),
+        factor_key(&old.right),
+        factor_key(&new.left),
+        factor_key(&new.right),
+    ) else {
+        return false;
+    };
+    old_left == new_right && old_right == new_left
+}
+
+fn factor_key(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(format!("name:{}", name.id)),
+        Expr::Constant(constant) => {
+            constant_i128(&constant.value).map(|value| format!("int:{value}"))
+        }
+        _ => None,
+    }
 }
 
 fn changed_simple_arithmetic(old_line: &str, new_line: &str) -> Option<(Expr, Expr)> {

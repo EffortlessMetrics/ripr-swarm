@@ -1,3 +1,4 @@
+use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
@@ -164,7 +165,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
+    if related_candidates_have_opaque_custom_assertion_limit(owner, related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -826,6 +827,7 @@ fn related_candidates_have_log_membership_limit(
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(
+    owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> bool {
@@ -841,6 +843,14 @@ fn related_candidates_have_opaque_custom_assertion_limit(
             .assertions
             .iter()
             .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            // No assertion was read, but the admission scan found assertion-like
+            // code it cannot resolve and the owner is called inside a `lambda`
+            // handed to another call (`logged(lambda: must_equal(f(3), 9))`):
+            // the callback may well assert, so a gap that asks for an assertion
+            // is not honest. A bare call with no assertion keeps its gap.
+            || (candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == PythonAssertionAdmission::Unresolved
+                && owner_called_inside_lambda(&candidate.test.body_text, owner))
         {
             has_opaque_helper = true;
         }
@@ -850,6 +860,20 @@ fn related_candidates_have_opaque_custom_assertion_limit(
     }
 
     has_opaque_helper && !has_known_strong_oracle
+}
+
+/// Whether a line of the test body calls the owner after a `lambda` keyword.
+/// Same-line only: a lambda body spanning lines is not read.
+fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
+    body_text.lines().any(|line| {
+        line.match_indices("lambda").any(|(index, _)| {
+            let before = line[..index].chars().next_back();
+            let after = line[index + "lambda".len()..].chars().next();
+            before.is_none_or(|ch| !is_python_identifier_char(ch))
+                && after.is_none_or(|ch| !is_python_identifier_char(ch))
+                && body_calls_owner(&line[index + "lambda".len()..], owner)
+        })
+    })
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
