@@ -65,13 +65,18 @@ export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = fa
  * `"` doubled. The server never emits this form for a value holding `$` or a
  * backtick, which PowerShell and Git Bash expand inside double quotes. Line
  * breaks, NUL and the typographic quotes PowerShell reads as quotes are refused
- * as in the POSIX form. Backslashes are literal inside the span (a trailing run
- * is doubled). `%` and `!` are accepted: they are literal in PowerShell (the
- * VS Code terminal default), Git Bash and native argv; cmd.exe `%NAME%`
- * expansion is the documented limit of the server's console form (#9659), the
- * same quoting decision the CLI makes.
+ * as in the POSIX form. A backslash run is literal inside the span only where
+ * no `"` follows it; before the closing quote the run must be even (the server
+ * doubles a trailing run), since an odd run escapes that quote for native argv
+ * and Git Bash and would hide what follows from this check. `%` and `!` are
+ * accepted: they are literal in PowerShell (the VS Code terminal default) and
+ * native argv. cmd.exe `%NAME%` expansion and interactive Git Bash history
+ * expansion of `!` are the documented limits of the server's console form
+ * (#9659), the same quoting decision the CLI makes; they rewrite the argument
+ * inside its quotes but cannot start another command.
  */
-const WINDOWS_QUOTED_OR_SINGLE_SPAN = /'[^']*'|"(?:[^"$`\r\n\0\u2018-\u201f]|"")*"/g;
+const WINDOWS_QUOTED_OR_SINGLE_SPAN =
+  /'[^']*'|"(?:[^"\\$`\r\n\0\u2018-\u201f]|""|\\+(?=[^"\\]))*(?:\\\\)*"/g;
 
 /** Whether this extension host runs the server on Windows, where `shell_arg` quotes for the console. */
 export function isWindowsHost(): boolean {
@@ -176,7 +181,8 @@ export function redirectTargetMatches(
 /**
  * The path a redirect tail names: one bare `shell_arg` token, or one
  * single-quoted span (or, with `windowsQuoting`, one console double-quoted
- * span, which never needs an interior `""` for a Windows path). The quoted span may hold a workspace path's `&`, `;` or
+ * span, which never needs an interior `""` for a Windows path, and refuses
+ * `%` and `!` there). The quoted span may hold a workspace path's `&`, `;` or
  * `$`, since callers compare it with a local root (#4225). Line breaks,
  * backslashes and typographic quotes are refused, since they end or escape
  * the span in some shell (fish reads `\'` inside single quotes as an escape;
@@ -185,7 +191,10 @@ export function redirectTargetMatches(
 function redirectTailPath(tail: string, windowsQuoting = false): string | undefined {
   const quoted = /^'([^']*)'$/.exec(tail) ?? (windowsQuoting ? /^"([^"$`]*)"$/.exec(tail) : null);
   const target = quoted ? quoted[1] : /^[A-Za-z0-9._/:-]+$/.test(tail) ? tail : undefined;
+  // cmd.exe expands `%NAME%` (and delayed `!NAME!`) even inside quotes, so on
+  // Windows such a target could name a path outside the workspace.
   return target === undefined || target === '' || /[\r\n\0\\\u2018-\u201f]/.test(target)
+    || (windowsQuoting && /[%!]/.test(target))
     ? undefined
     : target;
 }
