@@ -136,7 +136,7 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "poll ripr_workspace_status until attempt_state leaves in_flight",
+                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
@@ -203,6 +203,31 @@ impl McpServer {
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
+        // An unknown class token would narrow to an empty page that reads like
+        // "no such gaps"; name the vocabulary instead (a typo like `weak`).
+        if let Some(token) = class.as_deref()
+            && !crate::domain::ExposureClass::ALL
+                .iter()
+                .any(|known| known.as_str() == token)
+        {
+            let allowed = crate::domain::ExposureClass::ALL
+                .iter()
+                .map(crate::domain::ExposureClass::as_str)
+                .collect::<Vec<_>>();
+            // The echoed token is caller-controlled and unbounded; cap it so
+            // the error stays well under the writer's response bound.
+            const ECHO_CHARS: usize = 32;
+            let echoed: String = token.chars().take(ECHO_CHARS).collect();
+            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
+                "..."
+            } else {
+                ""
+            };
+            return Err(ErrorData::invalid_params(
+                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                None,
+            ));
+        }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
         if let Some(language) = language.as_deref()
             && crate::domain::LanguageId::display_name_for_wire(language).is_none()

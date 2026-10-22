@@ -111,6 +111,32 @@ runner_dependent = true
 source = "measured"
 per_repo = true
 
+[[metric]]
+id = "speed.editor_refresh_ms"
+board = "speed"
+title = "Editor refresh after an edited save, from `ripr lsp --stdio`"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_unanswered_progress_ms"
+board = "speed"
+title = "Editor refresh when the client never answers progress creation"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
 # ------------------------------------------------------------ ci adoption --
 
 [[metric]]

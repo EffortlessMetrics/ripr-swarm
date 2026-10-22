@@ -102,8 +102,11 @@ jobs:
       - name: Fetch the server manifest
         run: |
           version="${RAW_VERSION#v}"
+          # The manifest is keyed by distribution generation (X.Y.Z), while an
+          # RC places it under its own tag (the editor's rcManifestUrl).
+          generation="${version%%[-+]*}"
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
-          manifest="ripr-server-manifest-v${version}.json"
+          manifest="ripr-server-manifest-v${generation}.json"
           mkdir -p server
           for attempt in $(seq 1 90); do
             curl -fsSL -o "server/$manifest" "$base/$manifest" && exit 0
@@ -116,19 +119,21 @@ jobs:
       - name: Verify the manifest against the receipted digest
         run: |
           version="${RAW_VERSION#v}"
-          file="server/ripr-server-manifest-v${version}.json"
+          generation="${version%%[-+]*}"
+          file="server/ripr-server-manifest-v${generation}.json"
           actual="$(sha256sum "$file" | cut -d' ' -f1)"
           [ "$actual" = "$MANIFEST_SHA256" ] \
             || { echo "::error::manifest SHA-256 $actual does not match the receipted $MANIFEST_SHA256"; exit 1; }
-          jq -e --arg v "$version" '.version == $v and (.assets | length) > 0' "$file" >/dev/null
+          jq -e --arg v "$generation" '.version == $v and (.assets | length) > 0' "$file" >/dev/null
 
       - name: Verify every archive the manifest names
         run: |
           set -euo pipefail
           version="${RAW_VERSION#v}"
+          generation="${version%%[-+]*}"
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
           jq -r '.assets | to_entries[] | [.key, .value.url, .value.sha256] | @tsv' \
-            "server/ripr-server-manifest-v${version}.json" \
+            "server/ripr-server-manifest-v${generation}.json" \
             | while IFS=$'\t' read -r target url sha; do
                 case "$url" in
                   *..*) echo "::error::asset $target url $url contains '..'"; exit 1 ;;
@@ -216,9 +221,11 @@ jobs:
         working-directory: .
         run: |
           version="${RAW_VERSION#v}"
+          # The descriptor and manifest are keyed by distribution generation.
+          generation="${version%%[-+]*}"
           cargo xtask release-bind-server-descriptor \
-            --version "$version" \
-            --manifest "server/ripr-server-manifest-v${version}.json" \
+            --version "$generation" \
+            --manifest "server/ripr-server-manifest-v${generation}.json" \
             --manifest-sha256 "$MANIFEST_SHA256"
 
       - name: Compile

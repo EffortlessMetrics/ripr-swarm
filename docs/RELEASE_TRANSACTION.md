@@ -574,12 +574,24 @@ test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SO
 git -C "$SOURCE_ROOT" switch --detach "$SOURCE_RELEASE_HEAD"
 test -z "$(git -C "$SOURCE_ROOT" status --short)"
 (cd "$SOURCE_ROOT" && cargo xtask release-readiness --version "$VERSION")
+(cd "$SOURCE_ROOT" && cargo xtask release-negative-corpus --version "$VERSION")
+# zero-case guard: a green exit with no executed or with failed cases is not proof
+jq -e '.summary.total_cases > 0 and .summary.failed == 0' \
+  "$SOURCE_ROOT/target/ripr/reports/release-negative-corpus.json"
 ```
+
+The version-only `release-negative-corpus` run is legacy smoke
+(`qualification_mode: legacy_smoke_unqualified`). For the #1609-qualified path
+add the complete `--controller-root`, `--candidate-source-root`,
+`--candidate-artifact` group described in [`RELEASE.md`](RELEASE.md) and record
+`qualification_mode` in the packet; the qualified form writes the report under `<controller-root>/target/ripr/reports/`, so point the `jq` guard there. Do not claim controlled negative injections
+for the candidate from the unqualified form (#2792).
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
 | Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `(cd "$SOURCE_ROOT" && cargo package -p ripr --list)`; `(cd "$SOURCE_ROOT" && cargo publish -p ripr --dry-run)` | Package/publishability, not publication |
 | Installed CLI | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke)` plus version/doctor/fixture smoke | Local installed binary |
 | Readiness/consumer | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-readiness --version <VERSION>)` | Version alignment and journey receipt |
+| Negative corpus | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-negative-corpus --version <VERSION>)` plus the `summary` guard above | Controlled negative injections fail for intended reasons and restoration passes (#2792); smoke unless the qualified group is passed |
 | Linux/Windows | source release workflow artifacts, **[READ-ONLY]** when inspecting exact `SOURCE_RELEASE_HEAD` outputs | Workflow artifacts bound to `SOURCE_RELEASE_HEAD` | Platform proof; one OS is not the other |
 | Server | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-server-archive ...)`; `(cd "$SOURCE_ROOT" && cargo xtask release-server-manifest ...)` | Archive, manifest, checksum shape |
 | VSIX | source exact release checkout, **[LOCAL-MUTATING]** | `npm --prefix editors/vscode ci`, compile, package | Local package/version proof |

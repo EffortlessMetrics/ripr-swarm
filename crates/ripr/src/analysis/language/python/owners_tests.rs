@@ -197,6 +197,7 @@ fn owner_from_function(
         parameters,
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
             context.module_constants,
             args,
@@ -261,6 +262,7 @@ fn owner_from_class(
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -291,6 +293,7 @@ pub(super) fn module_owner(
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
