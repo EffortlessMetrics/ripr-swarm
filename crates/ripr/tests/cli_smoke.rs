@@ -28659,6 +28659,22 @@ fn pr_evidence_help_exits_cleanly() {
     );
 }
 
+fn run_pr_evidence_in_fixture(root: &Path, args: &[&str]) -> Result<Output, String> {
+    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
+    // Match fixture_git's isolation: a Git hook's exported repository
+    // selectors must not retarget the CLI away from this fixture.
+    std::process::Command::new(&bin)
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .args(args)
+        .output()
+        .map_err(|err| err.to_string())
+}
+
 #[test]
 fn pr_evidence_with_missing_artifacts_writes_packet() -> Result<(), String> {
     // Cargo places temporary directories beneath the checkout's target/.
@@ -28676,13 +28692,7 @@ fn pr_evidence_with_missing_artifacts_writes_packet() -> Result<(), String> {
             "fixture already has {artifact}"
         );
     }
-    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
-        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
-    let output = std::process::Command::new(&bin)
-        .current_dir(&root)
-        .arg("pr-evidence")
-        .output()
-        .map_err(|err| err.to_string())?;
+    let output = run_pr_evidence_in_fixture(&root, &["pr-evidence"])?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "pr-evidence failed: {stderr}");
     for artifact in artifacts {
@@ -28706,12 +28716,7 @@ fn pr_evidence_with_missing_artifacts_writes_packet() -> Result<(), String> {
     let markdown =
         std::fs::read_to_string(root.join(artifacts[1])).map_err(|err| err.to_string())?;
     assert!(markdown.contains("# PR Evidence Summary"), "{markdown}");
-    let checked = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &["pr-evidence", "--check"],
-    )
-    .map_err(|err| err.to_string())?;
+    let checked = run_pr_evidence_in_fixture(&root, &["pr-evidence", "--check"])?;
     assert!(
         checked.status.success(),
         "packet contract failed: {}",
@@ -28751,31 +28756,16 @@ fn pr_evidence_without_default_base_in_shallow_checkout_writes_nothing() -> Resu
             .trim(),
         "true"
     );
-    for base in [
-        "origin/HEAD",
-        "origin/main",
-        "origin/master",
-        "main",
-        "master",
-    ] {
-        let probe = run_command(
-            "git",
-            Some(&root),
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{base}^{{commit}}"),
-            ],
-        )
-        .map_err(|err| err.to_string())?;
-        assert!(
-            !probe.status.success(),
-            "fixture unexpectedly resolves {base}"
-        );
-    }
-    let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["pr-evidence"])
-        .map_err(|err| err.to_string())?;
+    // Use the same isolated Git route as setup: inherited GIT_DIR or
+    // GIT_WORK_TREE must not make this precondition inspect the harness.
+    let refs =
+        common::fixture_git::fixture_git_output(&root, &["for-each-ref", "--format=%(refname)"])?;
+    assert_eq!(
+        refs.lines().collect::<Vec<_>>(),
+        ["refs/heads/work", "refs/remotes/origin/work"],
+        "fixture must have only non-default work refs"
+    );
+    let output = run_pr_evidence_in_fixture(&root, &["pr-evidence"])?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(
