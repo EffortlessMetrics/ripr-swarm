@@ -242,8 +242,35 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'; $dest = Join-Path $env:QUAL_ROOT 'editor-host-logs'; New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          foreach ($lane in 'trusted-editor', 'untrusted-editor') { $logs = Join-Path $env:QUAL_TEMP_ROOT "$lane\vscode-test-user-data\logs"; if (Test-Path $logs) { Get-ChildItem $logs -File -Recurse -Filter *.log | Where-Object { $_.Length -lt 2MB } | ForEach-Object { $rel = $_.FullName.Substring($logs.Length + 1); $to = Join-Path $dest "$lane\$rel"; New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null; Copy-Item $_.FullName $to } } }
+          $ErrorActionPreference = 'Continue'
+          $dest = Join-Path $env:QUAL_ROOT 'editor-host-logs'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # Mirrors redactHostDiagnosticsText in editors/vscode/test/hostDiagnostics.ts; a
+          # timed-out step never reaches the runner's own collector, so redact here too.
+          $cap = 256KB
+          $patterns = @(
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----',
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*$',
+            '-----END [A-Z0-9 ]+-----',
+            '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b',
+            '\bgithub_pat_[A-Za-z0-9_]{20,}\b',
+            'x-access-token:[^@\s]+'
+          )
+          foreach ($lane in 'trusted-editor', 'untrusted-editor') {
+            $logs = Join-Path $env:QUAL_TEMP_ROOT "$lane\vscode-test-user-data\logs"
+            if (-not (Test-Path $logs)) { continue }
+            foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
+              try {
+                $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+                if ($bytes.Length -gt $cap) { $bytes = $bytes[($bytes.Length - $cap)..($bytes.Length - 1)] }
+                $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+                foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
+                $to = Join-Path $dest "$lane\$($file.FullName.Substring($logs.Length + 1))"
+                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+                [System.IO.File]::WriteAllText($to, $text)
+              } catch { Write-Host "skipped $($file.Name): $_" }
+            }
+          }
 
       - name: Write Actions-only qualification receipt
         if: always()

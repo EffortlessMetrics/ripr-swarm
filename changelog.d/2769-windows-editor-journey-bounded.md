@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- The Windows packaged editor journeys (`windows-packaged-qualification.yml`) are now bounded at 30 minutes per step, and the VS Code host logs are retained in the receipts even when a journey hangs or fails, so a stuck editor lane fails with evidence instead of running to the 120-minute job limit with no output (#2769).
+- The Windows packaged editor journeys (`windows-packaged-qualification.yml`) are now bounded at 30 minutes per step, and the VS Code host logs are retained in the receipts (last 256 KiB per file, credentials redacted) even when a journey hangs or fails, so a stuck editor lane fails with evidence instead of running to the 120-minute job limit with no output (#2769).
