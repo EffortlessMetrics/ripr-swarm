@@ -394,3 +394,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_value_returned (34)
+
+Reason:
+RIPR-SPEC-0122: Start-here selection ranks a decisive production probe above a same-owner unknown probe (#9346)
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
