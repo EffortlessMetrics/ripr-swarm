@@ -850,3 +850,86 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
     }
     Ok(())
 }
+
+/// RIPR-SPEC-0246 rule 5: a callback handed to a call, in a test that takes
+/// `done`, whose body asserts and then calls `done()` must run for the test
+/// to pass, so its assertions are the test's own.
+#[test]
+fn done_settled_callback_assertions_are_the_tests_own() {
+    let arrow = "import { load } from \"../src/loader\";\nit(\"calls back\", (done) => {\n  load((value) => {\n    expect(value).toBe(3);\n    done();\n  });\n});\n";
+    assert_eq!(
+        observed("test/loader.test.ts", arrow),
+        vec![some("value", "3", 4)]
+    );
+    let function = "import { load } from \"../src/loader\";\nit(\"calls back\", function (finish) {\n  load(function (value) {\n    expect(value).toBe(3);\n    finish();\n  });\n});\n";
+    assert_eq!(
+        observed("test/loader.test.ts", function),
+        vec![some("value", "3", 4)]
+    );
+}
+
+/// Discriminating negatives for rule 5: each shape lets the test pass
+/// without the asserting statements, or reads `done` as something else.
+#[test]
+fn done_callback_shapes_that_can_skip_the_assertion_collect_nothing() {
+    for (params, body) in [
+        // No callback parameter: nothing waits for the callback.
+        (
+            "()",
+            "  load((value) => {\n    expect(value).toBe(3);\n  });",
+        ),
+        // The first parameter is never called: the callback is not awaited.
+        (
+            "(done)",
+            "  load((value) => {\n    expect(value).toBe(3);\n  });",
+        ),
+        // `done(err)` can settle the test as failed or passed by argument.
+        (
+            "(done)",
+            "  load((value) => {\n    expect(value).toBe(3);\n    done(value);\n  });",
+        ),
+        // `done()` is behind a branch, so the callback can pass without it.
+        (
+            "(done)",
+            "  load((value) => {\n    if (value) {\n      expect(value).toBe(3);\n    }\n    done();\n  });",
+        ),
+        // An early `return` can leave before the assertion.
+        (
+            "(done)",
+            "  load((value) => {\n    if (!value) return;\n    expect(value).toBe(3);\n    done();\n  });",
+        ),
+        // The assertion runs after the test settled.
+        (
+            "(done)",
+            "  load((value) => {\n    done();\n    expect(value).toBe(3);\n  });",
+        ),
+        // The callback shadows `done`, so `done()` is not the test's.
+        (
+            "(done)",
+            "  load((value, done) => {\n    expect(value).toBe(3);\n    done();\n  });",
+        ),
+        (
+            "(done)",
+            "  load((value) => {\n    const done = () => {};\n    expect(value).toBe(3);\n    done();\n  });",
+        ),
+        // An async callback only creates a promise nobody awaits.
+        (
+            "(done)",
+            "  load(async (value) => {\n    expect(value).toBe(3);\n    done();\n  });",
+        ),
+        // A swallowing `try` before `done()`.
+        (
+            "(done)",
+            "  load((value) => {\n    try { expect(value).toBe(3); } catch (e) {}\n    done();\n  });",
+        ),
+    ] {
+        let source = format!(
+            "import {{ load }} from \"../src/loader\";\nit(\"calls back\", {params} => {{\n{body}\n}});\n"
+        );
+        assert_eq!(
+            observed("test/loader.test.ts", &source),
+            vec![],
+            "{params} {body}"
+        );
+    }
+}

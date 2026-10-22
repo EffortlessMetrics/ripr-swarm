@@ -693,6 +693,9 @@ fn collect_nested_callback_assertions(
     let Expression::CallExpression(call) = expr else {
         return;
     };
+    if !awaited && !returned {
+        collect_done_callback_assertions(call, source, context, out);
+    }
     let Some(member) = call.callee.as_member_expression() else {
         return;
     };
@@ -871,6 +874,83 @@ fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
             _ => return false,
         };
     }
+}
+
+/// RIPR-SPEC-0246 rule 5: the assertions of a callback handed to a call in a
+/// test that takes a `done` callback, read as the test's own when the
+/// callback must settle the test.
+///
+/// The test callback's first parameter (`done`) is called with no arguments
+/// as a top-level statement of the callback, after only expression and
+/// declaration statements. A runner cannot pass the test unless that call
+/// runs, and the statements before it either finish or throw, so every
+/// assertion among them has to hold for the test to pass. A callback the
+/// callee never invokes times out instead of passing.
+///
+/// Refused (fail closed, nothing collected): an `async` or generator
+/// callback, a `done` that takes arguments or sits behind a branch, a
+/// `return`, `throw`, `if`, `try` or loop before it, a callback parameter or
+/// declaration that shadows `done`, and a test without a callback parameter.
+fn collect_done_callback_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let Some(done) = context.receiver else {
+        return;
+    };
+    for argument in &call.arguments {
+        if callback_is_async_or_generator(argument) {
+            continue;
+        }
+        let Some(statements) = function_body_statements_from_argument(argument) else {
+            continue;
+        };
+        if super::tests_extract::argument_parameter_names(argument)
+            .iter()
+            .any(|parameter| parameter == done)
+        {
+            continue;
+        }
+        let mut declared = Vec::new();
+        super::tests_extract::collect_block_declared_names(statements, &mut declared);
+        if declared.iter().any(|name| name == done) {
+            continue;
+        }
+        let mut settles_at = None;
+        for (index, statement) in statements.iter().enumerate() {
+            match statement {
+                Statement::ExpressionStatement(expression)
+                    if is_bare_call_of(&expression.expression, done) =>
+                {
+                    settles_at = Some(index);
+                    break;
+                }
+                Statement::ExpressionStatement(_) | Statement::VariableDeclaration(_) => {}
+                _ => break,
+            }
+        }
+        let Some(settles_at) = settles_at else {
+            continue;
+        };
+        for statement in statements.iter().take(settles_at) {
+            collect_expect_assertions_in_statement(statement, source, &context.nested(), out);
+        }
+    }
+}
+
+/// `name()`: a call of the bare identifier with no arguments.
+fn is_bare_call_of(expression: &Expression<'_>, name: &str) -> bool {
+    let Expression::CallExpression(call) = expression.get_inner_expression() else {
+        return false;
+    };
+    call.arguments.is_empty()
+        && !call.optional
+        && matches!(
+            call.callee.get_inner_expression(),
+            Expression::Identifier(identifier) if identifier.name == name
+        )
 }
 
 /// `true` for an `async` or generator arrow or function callback.
