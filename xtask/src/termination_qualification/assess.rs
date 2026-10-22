@@ -48,11 +48,16 @@ pub(crate) struct Observed<'a> {
 }
 
 pub(crate) fn assess(case: &Case, observed: &Observed<'_>) -> Assessment {
-    if observed.exit_code != Some(0) {
+    let expected_exit = if matches!(case.expect, Expect::PolicyRefused) {
+        2
+    } else {
+        0
+    };
+    if observed.exit_code != Some(expected_exit) && !matches!(case.expect, Expect::PolicyRefused) {
         return Assessment::fail(
             RowResult::SemanticFailure,
             format!(
-                "exit code {:?}, expected 0; output is not trusted",
+                "exit code {:?}, expected {expected_exit}; output is not trusted",
                 observed.exit_code
             ),
         );
@@ -230,6 +235,145 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                 result: RowResult::PassedTypedLimitation,
                 detail: detail.clone(),
                 limitation: Some(detail),
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::GlobMatch => {
+            let summary_suppressed = root
+                .pointer("/summary/suppressed_by_policy")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if suppressed == 0 || summary_suppressed == 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "expected the pattern to suppress the finding; none was suppressed".to_string(),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: format!("{suppressed} finding(s) suppressed by the pattern"),
+                limitation: None,
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::GlobNonmatch => {
+            if suppressed != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    format!("pattern suppressed {suppressed} finding(s); expected none"),
+                ));
+            }
+            if changed_findings == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!(
+                        "no finding for {} after a nonmatching pattern",
+                        case.changed
+                    ),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: "pattern did not match; finding stays visible".to_string(),
+                limitation: None,
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::PolicyRefused => {
+            let limitation = root
+                .pointer("/analysis_scope/limitation")
+                .and_then(Value::as_str);
+            if observed.exit_code != Some(2)
+                || limitation != Some("suppression_policy_invalid")
+                || !findings.is_empty()
+            {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    format!(
+                        "malformed policy was not refused: exit {:?}, limitation {limitation:?}, {} finding(s)",
+                        observed.exit_code,
+                        findings.len()
+                    ),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedTypedLimitation,
+                detail: "malformed selector refused as suppression_policy_invalid".to_string(),
+                limitation: Some("suppression_policy_invalid".to_string()),
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::GeneratedExcluded => {
+            let excluded = all_limitations.iter().any(|limitation| {
+                limitation_text(limitation).contains("intentionally skipped")
+                    && limitation_text(limitation).contains(case.changed.as_str())
+            });
+            if !excluded {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    "expected the file to be excluded as generated with a disclosure".to_string(),
+                ));
+            }
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(false)
+            {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    "exclusion disclosed but analysis_complete is not false".to_string(),
+                ));
+            }
+            if changed_findings != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "excluded file still produced a finding".to_string(),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedTypedLimitation,
+                detail: "excluded as generated with disclosure".to_string(),
+                limitation: Some(format!("generated exclusion names {}", case.changed)),
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+            .with_counts(0, 0, 1)
+        }
+        Expect::GeneratedNotExcluded => {
+            let excluded = all_limitations.iter().any(|limitation| {
+                limitation_text(limitation).contains("intentionally skipped")
+                    && limitation_text(limitation).contains(case.changed.as_str())
+            });
+            if excluded {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a nonmatching pattern silently excluded the file".to_string(),
+                ));
+            }
+            if changed_findings == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!("no finding for {} though it was not excluded", case.changed),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: "pattern did not match; file analyzed".to_string(),
+                limitation: None,
                 findings_reported: 0,
                 findings_suppressed: 0,
                 declined_files: 0,
