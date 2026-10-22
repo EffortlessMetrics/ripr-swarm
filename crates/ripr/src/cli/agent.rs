@@ -94,6 +94,9 @@ pub(super) struct AgentVerifyOptions {
     pub(super) root_explicit: bool,
     pub(super) before: PathBuf,
     pub(super) after: PathBuf,
+    /// Bind the verify result to one canonical gap id (`--gap-id`): the gap
+    /// must close between two `check-findings-json` snapshots.
+    pub(super) gap_id: Option<String>,
     pub(super) json: bool,
 }
 
@@ -932,6 +935,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
     let mut root_explicit = false;
     let mut before: Option<PathBuf> = None;
     let mut after: Option<PathBuf> = None;
+    let mut gap_id: Option<String> = None;
     let mut json = false;
 
     let mut i = 0usize;
@@ -949,6 +953,10 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
             "--after" => {
                 i += 1;
                 after = Some(PathBuf::from(expect_value(args, i, "--after")?));
+            }
+            "--gap-id" => {
+                i += 1;
+                gap_id = Some(expect_value(args, i, "--gap-id")?.to_string());
             }
             "--json" => json = true,
             other => return Err(unknown_argument("agent verify", other)),
@@ -969,6 +977,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         root_explicit,
         before,
         after,
+        gap_id,
         json,
     })
 }
@@ -2257,8 +2266,39 @@ mod tests {
                 root_explicit: true,
                 before: PathBuf::from("target/ripr/workflow/before.repo-exposure.json"),
                 after: PathBuf::from("target/ripr/workflow/after.repo-exposure.json"),
+                gap_id: None,
                 json: true,
             })
+        );
+    }
+
+    #[test]
+    fn agent_verify_parses_a_gap_binding() {
+        let parsed = parse_agent_verify_options(&args(&[
+            "--before",
+            "before.json",
+            "--after",
+            "after.json",
+            "--gap-id",
+            "gap:typescript:typescript_preview:1a2b3c4d",
+            "--json",
+        ]));
+        assert_eq!(
+            parsed.map(|options| options.gap_id),
+            Ok(Some(
+                "gap:typescript:typescript_preview:1a2b3c4d".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_agent_verify_options(&args(&[
+                "--before",
+                "before.json",
+                "--after",
+                "after.json",
+                "--gap-id",
+            ]))
+            .map(|options| options.gap_id),
+            Err("missing value for --gap-id".to_string())
         );
     }
 

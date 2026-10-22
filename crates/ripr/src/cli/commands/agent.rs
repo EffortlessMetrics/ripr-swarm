@@ -782,6 +782,20 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_verify_movement(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify {error}"))?;
+    // `--gap-id` adds a positive closure requirement on top of the pair
+    // checks: the named gap must be open before and `exposed` after.
+    let bound_gap = options
+        .gap_id
+        .as_deref()
+        .map(|gap_id| {
+            crate::agent::artifact::verify_gap_closure(
+                &options.root,
+                &before_json,
+                &after_json,
+                gap_id,
+            )
+        })
+        .transpose()?;
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -804,10 +818,18 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
     };
-    output::outcome::render_agent_verify_json_with_currentness(
+    let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
+        gap_id: closure.gap_id,
+        before_classification: closure.before_classification,
+        after_classification: closure.after_classification,
+        file: closure.file,
+        line: closure.line,
+    });
+    output::outcome::render_agent_verify_json_with_bound_gap(
         &report,
         Some(artifact_currentness),
         &binding,
+        bound_gap.as_ref(),
     )
 }
 
@@ -825,7 +847,9 @@ const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
 /// never a substring: path-bearing operational errors echo user-supplied
 /// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR
+        || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+        || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -1910,6 +1934,7 @@ fn run_agent_repair_phase(
                 root_explicit: true,
                 before,
                 after,
+                gap_id: None,
                 json: true,
             };
 

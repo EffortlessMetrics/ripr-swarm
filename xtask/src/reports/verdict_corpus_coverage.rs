@@ -176,7 +176,17 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
     let path = corpus_dir.join(LEDGER_FILE);
     let text = fs::read_to_string(&path)
         .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-    toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))
+    let mut ledger: Ledger =
+        toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))?;
+    if !ledger.known_false.is_empty() {
+        return Err(format!(
+            "{} lists `[[known_false]]` inline; one file per row under `{}/` keeps parallel fixes from conflicting",
+            normalize_path(&path),
+            super::known_false::KNOWN_FALSE_DIR
+        ));
+    }
+    ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    Ok(ledger)
 }
 
 /// `RIPR-SPEC-NNNN#K` as (`RIPR-SPEC-NNNN`, K). K is a positive integer

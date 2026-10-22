@@ -404,6 +404,11 @@ pub fn check_workflows_impl() -> Result<(), String> {
     let budgets = read_workflow_budgets("policy/workflow_allowlist.txt")?;
     let runtime_allowlist = read_count_allowlist("policy/workflow_action_runtime_allowlist.txt")?;
     let unpinned_allowlist = read_count_allowlist(UNPINNED_ACTION_ALLOWLIST)?;
+    if !unpinned_allowlist.is_empty() {
+        return Err(format!(
+            "{UNPINNED_ACTION_ALLOWLIST} must remain empty after burn-down (#9529); pin third-party actions instead of restoring exceptions"
+        ));
+    }
     let mut violations = Vec::new();
 
     // Share only this invocation's YAML inputs; unbudgeted files still reach
@@ -754,7 +759,7 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
     violations
 }
 
-/// Reviewed exceptions to the third-party action SHA-pin rule (#9303).
+/// Retired exceptions to the third-party action SHA-pin rule (#9303, #9529).
 pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
 
 /// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
@@ -793,9 +798,9 @@ fn is_full_commit_sha(reference: &str) -> bool {
 /// A tag or branch is mutable: whoever controls it can change the code that
 /// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
 /// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
-/// tag pins are held in `policy/workflow_unpinned_action_allowlist.txt` with a
-/// per-file count; the allowlist is a ratchet, so a stale (too generous) row
-/// also fails and a pin that lands must lower its row.
+/// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
+/// a per-file count. The production entry point now requires that retired
+/// allowlist to remain empty, including rows whose count is zero (#9529).
 pub fn workflow_unpinned_action_violations(
     path: &str,
     text: &str,
@@ -813,7 +818,7 @@ pub fn workflow_unpinned_action_violations(
         *found.entry(reference.clone()).or_default() += 1;
         if !allowlist.contains_key(&(path.to_string(), reference.clone())) {
             violations.push(format!(
-                "{path}:{line_number} third-party action `{reference}` is not pinned to a full commit SHA; pin `owner/repo@<40-hex> # <tag>` (resolve the tag to its commit) or add a reviewed row to {UNPINNED_ACTION_ALLOWLIST}"
+                "{path}:{line_number} third-party action `{reference}` is not pinned to a full commit SHA; pin `owner/repo@<40-hex> # <ref>` (resolve the ref to its commit); {UNPINNED_ACTION_ALLOWLIST} must remain empty"
             ));
         }
     }

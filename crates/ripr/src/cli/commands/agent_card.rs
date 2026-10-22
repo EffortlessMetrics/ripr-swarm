@@ -265,8 +265,8 @@ pub(crate) fn agent_card_prose_lines(
         wire_name(&card.snapshot.currentness)
     ));
     lines.push(format!(
-        "  instruction: {:?} (fix site: {}, suggested assertion: {})",
-        card.instruction.state,
+        "  instruction: {} (fix site: {}, suggested assertion: {})",
+        wire_name(&card.instruction.state),
         yes_no(card.instruction.has_fix_site),
         yes_no(card.instruction.has_suggested_assertion)
     ));
@@ -286,7 +286,8 @@ pub(crate) fn agent_card_prose_lines(
     ));
     if let Some(goal) = &card.assertion_goal {
         lines.push(format!(
-            "  assertion goal: {goal:?}: {}",
+            "  assertion goal: {}: {}",
+            wire_name(goal),
             card.assertion_goal_detail.as_deref().unwrap_or("-")
         ));
     }
@@ -300,13 +301,17 @@ pub(crate) fn agent_card_prose_lines(
                 relation,
                 workspace_identity: _,
             } => format!(
-                "  selected target: existing {symbol_id} {file}:{line} ({test_kind:?}, relation {relation})"
+                "  selected target: existing {symbol_id} {file}:{line} ({} test, relation {relation})",
+                wire_name(test_kind)
             ),
             RepairCardTarget::Proposed {
                 file,
                 owner,
                 proposal_kind,
-            } => format!("  selected target: proposed {owner} in {file} ({proposal_kind:?})"),
+            } => format!(
+                "  selected target: proposed {owner} in {file} ({} test)",
+                wire_name(proposal_kind)
+            ),
         };
         lines.push(rendered);
     }
@@ -330,8 +335,9 @@ pub(crate) fn agent_card_prose_lines(
                 lines.push(format!("  next action: {} ({})", action.display, action.command_id));
             }
             None => lines.push(format!(
-                "  next action: none (instruction {:?} with repair_ready={} exposes no bounded route; inspect the detail references below)",
-                card.instruction.state, card.readiness.repair_ready
+                "  next action: none (instruction {} with repair_ready={} exposes no bounded route; inspect the detail references below)",
+                wire_name(&card.instruction.state),
+                card.readiness.repair_ready
             )),
         },
     }
@@ -343,11 +349,11 @@ pub(crate) fn agent_card_prose_lines(
         ));
     }
     lines.push(format!(
-        "  done when: static movement {:?}, focused test {:?}, edit cage {:?}, mutation {:?}, currentness {}",
-        card.done_when.static_movement,
-        card.done_when.focused_test_execution,
-        card.done_when.edit_cage,
-        card.done_when.mutation_confirmation,
+        "  done when: static movement {}, focused test {}, edit cage {}, mutation {}, currentness {}",
+        wire_name(&card.done_when.static_movement),
+        wire_name(&card.done_when.focused_test_execution),
+        wire_name(&card.done_when.edit_cage),
+        wire_name(&card.done_when.mutation_confirmation),
         wire_name(&card.done_when.currentness)
     ));
     for stop in &card.stop_conditions {
@@ -355,10 +361,13 @@ pub(crate) fn agent_card_prose_lines(
     }
     for reference in &card.detail_references {
         match &reference.route {
-            Some(route) => lines.push(format!("  detail [{:?}]: {route}", reference.family)),
+            Some(route) => lines.push(format!(
+                "  detail [{}]: {route}",
+                wire_name(&reference.family)
+            )),
             None => lines.push(format!(
-                "  detail [{:?}]: unavailable ({})",
-                reference.family,
+                "  detail [{}]: unavailable ({})",
+                wire_name(&reference.family),
                 reference
                     .unavailable_reason
                     .as_deref()
@@ -738,8 +747,20 @@ mod tests {
         let lines =
             agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
         let text = lines.join("\n");
-        if !text.contains("  next action: none (instruction FixSiteReady") {
+        if !text.contains("  next action: none (instruction fix_site_ready") {
             return Err(format!("legacy refusal line lost:\n{text}"));
+        }
+        // #9604 follow-up: prose never prints a Debug spelling; every typed
+        // value renders at its wire spelling like the JSON card does.
+        for expected in [
+            "  instruction: fix_site_ready (fix site: yes, suggested assertion: no)",
+            "  done when: static movement closed_by_selected_route, focused test verified_pass, edit cage compliant, mutation not_requested, currentness current",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!(
+                    "prose leaked a non-wire spelling; missing {expected:?}:\n{text}"
+                ));
+            }
         }
         Ok(())
     }

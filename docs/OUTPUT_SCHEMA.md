@@ -3581,6 +3581,17 @@ validated by the same identity, commitment and Git-provenance authority as
 and unique gap ids with a non-empty classification, file and line. Movement is
 compared per canonical gap id.
 
+`ripr agent verify --gap-id <canonical gap id>` binds the result to one gap in
+two such snapshots. The gap must be present and not `exposed` in the before
+snapshot and present and `exposed` in the after snapshot. Absence from the
+after snapshot is never closure: a shrunk diff or a moved base also removes a
+gap. On success the verify document gains one additive member,
+`bound_gap` (`gap_id`, `before_classification`, `after_classification`,
+`file`, `line`, `closed: true`); without `--gap-id` the document is unchanged.
+Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
+exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
+an operational error (exit `2`).
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
@@ -7638,10 +7649,16 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
+  "output_parity": "not_checked",
+  "status_reasons": [
+    "repo-exposure-json: file_fact_cache_cache_phase_not_observed",
+    "repo-exposure-md: file_fact_cache_cache_phase_not_observed",
+    "output_parity_not_checked"
+  ],
   "timeout_ms": 30000,
   "binary": "target/debug/ripr.exe",
   "runs": [
@@ -7717,11 +7734,24 @@ shape; the second run stands for any format that produced no receipt.
 
 Field contract:
 
-- `schema_version` - currently `"0.3"` for the diagnostic report. `0.3` adds
-  the analyzer's own `resource_cost` block; no `0.2` field changed.
-- `status` - `pass` when every attempted format completes successfully, `warn`
-  when a format times out or a later format is skipped after timeout, and
-  `fail` when a format exits unsuccessfully before timeout.
+- `schema_version` - currently `"0.4"` for the diagnostic report. `0.3` adds
+  the analyzer's own `resource_cost` block; `0.4` adds `output_parity` and
+  `status_reasons` (#9503). No earlier field changed.
+- `status` - `fail` when a format exits unsuccessfully before timeout; `warn`
+  when a format times out, a later format is skipped after timeout, any run
+  has cache `store_errors` or `corrupt_ignored` entries, any run has no
+  observed cache receipt, or output parity is unchecked; otherwise `pass`.
+  Exit codes alone never earn `pass`. Output parity is currently always
+  unchecked, so today's reports are `warn` at best; `cargo xtask
+  release-readiness` carries that as a non-required `warn` and forwards
+  `status_reasons` into its detail.
+- `output_parity` - `not_checked`: this report runs each format once and does
+  not compare cache-served output with a cold recomputation, so until it does
+  `status` cannot be `pass`.
+- `status_reasons` - the named, per-run reasons `status` is not `pass`
+  (`<format>: file_fact_cache_store_errors=N`,
+  `<format>: file_fact_cache_corrupt_ignored=N`,
+  `<format>: file_fact_cache_<limitation>`, `output_parity_not_checked`).
 - `timeout_ms` - timeout budget per repo-exposure format. Override with
   `RIPR_REPO_EXPOSURE_LATENCY_TIMEOUT_MS`.
 - `runs[].format` - `repo-exposure-json` or `repo-exposure-md`.
@@ -7742,8 +7772,9 @@ Field contract:
   `{path, stage, error}` failure rows, and `store_failures_dropped`. Cold and
   warm runs retain their own rows. Retained rows plus `store_failures_dropped`
   must equal `store_errors`, and rows are dropped only past the 32-row cap;
-  otherwise the receipt is `invalid_cache_receipt`. Paths containing control characters are
-  refused as nonportable receipt identities. A row's `path` is `null` when the
+  otherwise the receipt is `invalid_cache_receipt`. Paths containing control
+  characters, backslashes, or a Windows drive prefix (a letter, `:` and `/`) are refused as
+  nonportable receipt identities; a `:` elsewhere in a Unix file name is valid. A row's `path` is `null` when the
   file name has no portable spelling (not UTF-8, or a literal backslash in a
   Unix name); its counters still count. A cache hit that skips the file-fact phase
   does not fabricate zero counters.
@@ -18339,7 +18370,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.92",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.93",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19102,10 +19133,12 @@ targeted-rerun receipt shape:
     "corrupt_ignored": 0,
     "stores": 0,
     "store_errors": 0,
+    "store_failures": [],
+    "store_failures_dropped": 0,
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.92",
+      "schema_version": "1.93",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -19293,6 +19326,13 @@ specified by [RIPR-SPEC-0123](specs/RIPR-SPEC-0123-targeted-rerun.md).
 `recomputed_file_facts`, or `not_run`. `recomputation_reasons` names the
 selected scope, observed corrupt-entry/store-error fallbacks, and owned
 content invalidations that caused this command to rebuild facts.
+`cache.store_failures` carries up to 32 `{path, stage, error}` rows behind
+`cache.store_errors` in ordinary output, not only the opt-in latency trace
+(#9503): `stage` is `create_dir`, `encode`, or `write`, and `path` is `null`
+when the file name has no portable spelling. Retained rows plus
+`cache.store_failures_dropped` equal `cache.store_errors`; a healthy run emits
+`[]` and `0`. The rows describe file-fact store failures only; results are
+recomputed, never served stale.
 `invalidation_status: "file_content_changed"` is emitted only when a prior
 same-path file-fact envelope is found under a different content key.
 Every targeted receipt also carries `cache.input_fingerprint`, an owned hash

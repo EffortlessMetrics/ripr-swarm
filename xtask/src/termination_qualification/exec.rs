@@ -19,6 +19,10 @@ pub(crate) const CHILD_PATH: &str = "/usr/bin:/bin";
 #[cfg(not(unix))]
 pub(crate) const CHILD_PATH: &str = "";
 
+/// Per-stream cap on one case's retained output. The largest real case writes
+/// a few kilobytes; a binary that emits more is failing, not being verbose.
+pub(crate) const CHILD_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
 /// Placeholder for the owned case root in every retained string.
 pub(crate) const ROOT_TOKEN: &str = "<case-root>";
 
@@ -251,13 +255,18 @@ fn launch(
     ];
     let removed = removed_env();
     let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
-    let timed = run::capture_bytes_in_dir_with_timeout(
+    // A binary that floods a stream is a failed row, not a reason to hold the
+    // whole run's memory: overflow refuses instead of truncating.
+    let timed = run::capture_bytes_in_dir_with_env_budget(
         &binary.path,
         &case.args,
         root,
-        &envs,
-        &removed_refs,
-        deadline,
+        (&envs, &removed_refs),
+        run::ByteCaptureBudget {
+            timeout: deadline,
+            stdout_bytes: CHILD_OUTPUT_BYTES,
+            stderr_bytes: CHILD_OUTPUT_BYTES,
+        },
         &format!("termination case {} via {}", case.id, binary.path.display()),
     )?;
     let (aborted, termination) = match timed.status {

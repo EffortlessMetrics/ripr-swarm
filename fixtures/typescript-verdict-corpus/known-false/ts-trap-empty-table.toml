@@ -1,0 +1,3 @@
+case = "ts-trap-empty-table"
+issue = 9683
+reason = "False exposed: a loop over an empty table asserts nothing but reads as pinned (#9683)."

@@ -68,8 +68,12 @@ Each row ends in exactly one #4505 state. Only `passed_supported_analysis`
 failing states are `semantic_failure` (wrong limitation class, false limit on a
 supported input, non-JSON output), `process_abort`, `nonterminal_deadline`,
 `missing_or_false_clean_limitation`, `wrong_subject` (the changed file's
-evidence was lost), `instrument_failure` (launch, workspace or cleanup) and
-`not_run`.
+evidence was lost), `instrument_failure` (launch, workspace, cleanup or output
+over budget) and `not_run`.
+
+Each case's stdout and stderr are read through a 16 MiB per-stream budget. A
+binary that writes more fails its row as `instrument_failure` naming the stream;
+the output is refused, not truncated and kept.
 
 ## Controls
 
@@ -124,6 +128,13 @@ Known gaps against the child issues, each deliberate for this first harness:
 - Python rows use `check --diff` only, with no multi-line or continuation forms.
 - #4510 controls not built: a decoy repository in the caller's directory.
   `--expected-sha256` is optional. A non-Unix host is refused, not skipped.
+- `ripr` words every generated skip the same way, so the harness cannot read an
+  exclusion's cause from the limitation. It attributes the cause by experiment:
+  each excluded path is also run under a nonmatching `generated_file_patterns`
+  and must be analyzed, which rules out a naming convention or generator header
+  as the cause. A test fails if a generated-exclusion row has no such pair. A
+  per-path cause in `ripr`'s output would be a public schema change and is not
+  part of this harness.
 - The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
   and is tested against an inline fixture, not the real DTO.
 - A control passed with `--removal-control` instead of a manifest is bound to
