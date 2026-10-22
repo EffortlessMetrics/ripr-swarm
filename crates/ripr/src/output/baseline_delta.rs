@@ -1288,7 +1288,6 @@ fn push_missing_input_items(
             canonical_replacement_candidate: None,
             analyzer_version_discontinuity: None,
             not_evaluated: None,
-        not_evaluated: None,
         });
     }
 }
