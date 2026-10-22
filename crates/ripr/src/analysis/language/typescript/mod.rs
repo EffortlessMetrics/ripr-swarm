@@ -107,6 +107,7 @@ mod replaced_block_tests;
 mod repo;
 #[cfg(test)]
 mod repo_tests;
+mod rounding_mode_guard;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -159,6 +160,7 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use rounding_mode_guard::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;

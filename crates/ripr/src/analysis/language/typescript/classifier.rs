@@ -1565,7 +1565,7 @@ fn word_occurrences(text: &str, name: &str) -> usize {
 /// and import statements dropped, never names any of `names` and loads no
 /// module dynamically: no hook, describe-level binding or file-level helper
 /// can then feed the owner an input this row cannot see.
-fn test_file_names_owner_only_in_test_bodies(
+pub(crate) fn test_file_names_owner_only_in_test_bodies(
     test: &TypeScriptTest,
     sibling_tests: &[TypeScriptTest],
     names: &[&str],
@@ -1996,7 +1996,11 @@ fn is_literal_argument_text(text: &str, body_constants: &[String]) -> bool {
 /// and a member access on any receiver the resolver has not placed on the
 /// owner module (a `require` namespace, a dynamic import, an object) leave
 /// the inputs unseen.
-fn every_owner_reference_is_a_call(body: &str, name: &str, owner_receivers: &[String]) -> bool {
+pub(crate) fn every_owner_reference_is_a_call(
+    body: &str,
+    name: &str,
+    owner_receivers: &[String],
+) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -2133,7 +2137,7 @@ fn resolve_owner_module_boundary_constants(
 /// import resolved through the import record to a single immutable integer
 /// `const` in the owner's own module. Unresolved names pass through
 /// unchanged and fail the standalone-literal path exactly as before.
-fn substitute_constant_arguments(
+pub(crate) fn substitute_constant_arguments(
     arguments: Vec<String>,
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -3651,7 +3655,7 @@ fn receiver_before_dot(before_match: &str) -> String {
 /// unrelated receiver and is skipped. A test body that declares a local
 /// binding of the owner name never reaches this function: the shadow guard
 /// skips such a candidate entirely before calls are collected.
-fn owner_call_arguments(
+pub(crate) fn owner_call_arguments(
     observed: &str,
     owner_name: &str,
     owner_receivers: &[String],
@@ -3700,7 +3704,7 @@ fn owner_call_arguments(
 
 /// Split the text after a call's opening parenthesis into its top-level
 /// arguments, stopping at the matching closing parenthesis.
-fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
+pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -4270,7 +4274,7 @@ fn comparison_holds(operator: &str, lhs: f64, rhs: f64) -> Option<bool> {
 /// and parentheses. Any other construct — unbound identifiers, calls, member
 /// access, strings — fails the fold; the caller then skips the check rather
 /// than approximating.
-fn fold_numeric_expression(expression: &str, bindings: &[(String, f64)]) -> Option<f64> {
+pub(crate) fn fold_numeric_expression(expression: &str, bindings: &[(String, f64)]) -> Option<f64> {
     let mut folder = Folder {
         chars: expression.chars().collect(),
         position: 0,
@@ -5859,6 +5863,37 @@ fn ts_apply_post_ladder_rules(
             change.key
         )];
         return;
+    }
+    // RIPR-SPEC-0248 rule 2: a rounding-function swap no tested input tells apart.
+    if let Some(swap) = context
+        .old_line_text
+        .and_then(|old| ts_rounding_swap(old, context.line_text))
+    {
+        let reason = match ts_rounding_witness(
+            &swap,
+            context.owner,
+            context.candidates,
+            context.all_tests,
+            context.alias_map,
+            context.workspace_root,
+        ) {
+            RoundingWitness::Discriminates => None,
+            RoundingWitness::AllWhole => Some(
+                "the related tests only pass inputs whose pre-rounding value is whole, so the rounding mode is not discriminated",
+            ),
+            RoundingWitness::SameResult => Some(
+                "the related tests only pass inputs whose pre-rounding value rounds the same way under both functions, so the rounding mode is not discriminated",
+            ),
+        };
+        if let Some(reason) = reason {
+            verdict.class = ExposureClass::WeaklyExposed;
+            verdict.discriminate_state = StageState::Weak;
+            verdict.missing = vec![format!(
+                "The change to `{}` only swaps `Math.{}` for `Math.{}` on `{}`, and {reason}. Add a case whose input makes the pre-rounding value fractional.",
+                context.owner.name, swap.old_function, swap.new_function, swap.operand
+            )];
+            return;
+        }
     }
     let Some(term) = context
         .old_line_text
