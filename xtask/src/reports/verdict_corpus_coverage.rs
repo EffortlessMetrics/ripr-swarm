@@ -36,6 +36,9 @@ pub(crate) struct Ledger {
     /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
     #[serde(default)]
     pub(crate) oracle: Option<super::oracle::OracleGate>,
+    /// The operator-grid and trap gate (`verdict_corpus_grid.rs`).
+    #[serde(default)]
+    pub(crate) grid: Option<super::grid::GridGate>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
