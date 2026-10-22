@@ -4443,6 +4443,10 @@ mod tests {
                 return Ok(true);
             }
             restore_subdirectory_creation(dir)?;
+            // Say so in the test log: a skip otherwise reads as a pass.
+            eprintln!(
+                "skipped: icacls {windows_deny} deny is not enforced for this process (#9688)"
+            );
             Ok(false)
         }
         #[cfg(unix)]
