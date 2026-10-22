@@ -192,6 +192,11 @@ pub(crate) struct Case {
     /// compares untyped values, where a missing key differs from `[]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) spec_examples: Vec<String>,
+    /// Coverage axes this case counts toward (`[[axis]]` in
+    /// `spec-coverage.toml`): the sides of the Rust language and test
+    /// ecosystem the corpus is held to cover, apart from spec examples.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) axes: Vec<String>,
     /// The fact packet ripr reads for a Perl case; absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) perl_facts: Option<PerlFacts>,
@@ -3066,6 +3071,9 @@ fn score_loaded_corpus(
             coverage.coverage.denominator,
             coverage.floor
         );
+    }
+    if let Some(note) = coverage::axis_note(dir, &corpus, cases.is_some())? {
+        println!("verdict-corpus: {note}");
     }
     if let Some(note) = &floor_note {
         println!("{note}");

@@ -14,6 +14,25 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 144
 
+# Coverage axes beyond spec examples (`axes` on a case). Each axis names a
+# side of the Rust language or test ecosystem the corpus is held to cover;
+# `floor` is the fewest tagged cases `verdict-corpus validate` and `check`
+# accept, so an axis cannot shrink silently. Raise it when coverage grows.
+[[axis]]
+id = "test_library_idiom"
+description = "Test-library idioms: insta, proptest, quickcheck, rstest, test-case, tokio, mockall, assert_matches, claims, expect-test, trybuild, criterion and serial_test shapes."
+floor = 59
+
+[[axis]]
+id = "language_shape"
+description = "Language shapes: operator, conversion, iterator, Drop and Default impls; dyn dispatch, generics, const generics, impl Trait and associated consts; let-else, labeled break, slice patterns, casts and closures; async, threads and interior mutability."
+floor = 33
+
+[[axis]]
+id = "hostile_input"
+description = "Hostile source forms: assertions in comments and strings, raw and non-ASCII identifiers, very long and deeply nested lines, macro-generated owners, attribute stacks, cfg_attr tests, minified layout and owners reached as values."
+floor = 12
+
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
 # matches fall below `match_floor` or overclaims (ripr reads the test
