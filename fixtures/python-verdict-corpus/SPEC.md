@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twelve small authored Python projects under `subjects/`, our own code under
+Twenty small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -76,6 +76,20 @@ Python 3.11.15, pytest 9.1.1, Hypothesis 6.168.3 and, for the numpy
 subject, numpy 2.1.3.
 The newest subjects (shapes, idioms, hostile) were run under Python 3.13.16
 and pytest 9.1.1; the idioms subject's `pyproject.toml` adds `--doctest-modules`.
+
+`authored-py-grid-<operator>` (seven subjects: boundary, equality, logical,
+arithmetic, returns, delete, constant) cross each mutation-operator class with
+five test styles (exact pin, parametrized table, property loop, helper-wrapped
+assert, no assertion; returns adds a startswith case for a partial result),
+one function per style. `authored-py-trap-kit` holds false-credit traps, tests
+that look like they check the change but cannot notice it (`if False:`,
+`skip`, non-strict `xfail`, `importorskip` of a missing module, a platform
+guard, a misnamed test, an unused helper, assertions on inputs, an always-true
+tuple assert, a swallowed `AssertionError`, a tautology, a truthy-only assert,
+a patched owner, a swallowing wrapper, an empty parametrize table, a mock
+checked without arguments, a sibling arm), each paired with a control that does
+notice the change. Truth for these comes from running the subject's pytest
+suite on the edit and on every listed mutant.
 
 ## When
 
