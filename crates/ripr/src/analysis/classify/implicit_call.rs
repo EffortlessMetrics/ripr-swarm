@@ -132,7 +132,7 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     // A same-named trait or a second impl of it for this type (a test-local
     // shadow) makes `Type.method()` resolve to the shadow at runtime, so the
     // finding is a real gap, not an implicit call.
-    if kind == ImplicitCall::Dispatch && trait_is_shadowed(owner, &self_type, index) {
+    if trait_is_shadowed(owner, &self_type, index, kind) {
         return false;
     }
     let judged: Vec<String> = index
@@ -184,8 +184,13 @@ impl<'a> ImplicitCall<'a> {
             Some(Self::Syntax(known))
         } else if OWNED_ELSEWHERE_TRAITS.contains(&trait_name) {
             None
-        } else {
+        } else if owner.item.has_self_param {
             Some(Self::Dispatch)
+        } else {
+            // An associated function is called by path (`Type::create()`), which
+            // existing reach matching resolves; a `.create()` receiver call is
+            // not evidence of it.
+            None
         }
     }
 
@@ -225,9 +230,17 @@ fn test_makes_implicit_call(
     }
 }
 
-/// Whether the owner's trait is declared more than once in the workspace, or
-/// another impl of it for the same self type defines the same method.
-fn trait_is_shadowed(owner: &FunctionSummary, self_type: &str, index: &RustIndex) -> bool {
+/// Whether the owner's trait is not the one the implicit call reaches. A
+/// dispatch trait is shadowed when it is declared more than once in the
+/// workspace or another impl of it for the same self type defines the same
+/// method. A syntax trait names a std operator or glue trait, so any workspace
+/// declaration of that name is a different trait the syntax cannot call.
+fn trait_is_shadowed(
+    owner: &FunctionSummary,
+    self_type: &str,
+    index: &RustIndex,
+    kind: ImplicitCall<'_>,
+) -> bool {
     let Some(trait_name) = owner_trait_name(&owner.id.0) else {
         return true;
     };
@@ -240,9 +253,10 @@ fn trait_is_shadowed(owner: &FunctionSummary, self_type: &str, index: &RustIndex
                 && impl_self_type_name(&function.id.0).as_deref() == Some(self_type)
         })
         .count();
-    if same_impl != 1 {
+    if kind == ImplicitCall::Dispatch && same_impl != 1 {
         return true;
     }
+    let short_name = trait_name.rsplit("::").next().unwrap_or(&trait_name);
     let declarations: usize = index
         .files()
         .values()
@@ -254,11 +268,14 @@ fn trait_is_shadowed(owner: &FunctionSummary, self_type: &str, index: &RustIndex
                 .collect();
             tokens
                 .windows(2)
-                .filter(|pair| pair[0] == "trait" && pair[1] == trait_name)
+                .filter(|pair| pair[0] == "trait" && pair[1] == short_name)
                 .count()
         })
         .sum();
-    declarations > 1
+    match kind {
+        ImplicitCall::Syntax(_) => declarations > 0,
+        ImplicitCall::Dispatch => declarations > 1,
+    }
 }
 
 /// Whether `code` (comments and strings masked) spells the syntax that calls

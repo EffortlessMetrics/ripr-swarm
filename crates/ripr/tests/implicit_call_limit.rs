@@ -387,3 +387,34 @@ mod tests {
     );
     kept(lib, &edit, line, "shadow trait")
 }
+
+#[test]
+fn a_workspace_trait_named_like_an_operator_trait_is_not_the_operator() -> Result<(), String> {
+    // A local `trait Add` is not `std::ops::Add`, so `+` cannot call `sum`.
+    let lib = "pub trait Add {
+    fn sum(&self) -> i64;
+}
+
+pub struct Money(pub i64);
+
+impl Add for Money {
+    fn sum(&self) -> i64 {
+        self.0 + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn money_and_arithmetic() {
+        let _money = Money(2);
+        assert_eq!(1 + 2, 3);
+    }
+}
+";
+    let line = line_of(lib, "self.0 + 1")?;
+    let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
+    kept(lib, &edit, line, "local trait named Add")
+}

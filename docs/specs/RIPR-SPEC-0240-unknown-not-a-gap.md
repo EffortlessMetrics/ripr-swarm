@@ -397,12 +397,15 @@ comments and strings masked, matches:
   `Index`, `<`, `>`, `partial_cmp`, `max`, `min`, `sort` or `clamp` for
   `PartialOrd`);
   `Drop` needs `drop(` or an inner block; iterator and `Deref` traits have no
-  token and pass on the type name;
+  token and pass on the type name. A workspace declaration of a trait with an
+  operator trait's name is a different trait the operator cannot call, so the
+  gap stays;
 - **dispatch**: any other trait except those the gated std rules own
   (`Display`, `Debug`, `PartialEq`, `Eq`, `Ord`, `Hash`, `Clone`, `Default`,
   `FromStr`, `Serialize`, `Deserialize`, `Visitor`, `Arbitrary`, `Error`), the test names the self type, and
-  it calls `.<method>(` on some receiver, and the trait is declared once with
-  one impl of the method for that type. A test-local shadow trait or second
+  it calls `.<method>(` on some receiver, the method takes `self` (an
+  associated function is called by path, never on a receiver), and the trait
+  is declared once with one impl of the method for that type. A test-local shadow trait or second
   impl makes `Sample.render()` run the shadow, a real gap
   (`rust_trait_impl_shadow`, `rust_trait_parent_shadow`).
 
@@ -520,7 +523,8 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
   `an_operator_impl_controls_keep_the_gap` (no test names the type, smoke
   test, wrong operator, ignored test), `a_dispatch_shape_that_differs_keeps_its_class`
   (never calls the method, never names the type) and
-  `a_test_local_shadow_trait_keeps_the_gap`. The `rust_trait_impl_shadow` and
+  `a_test_local_shadow_trait_keeps_the_gap` and
+  `a_workspace_trait_named_like_an_operator_trait_is_not_the_operator`. The `rust_trait_impl_shadow` and
   `rust_trait_parent_shadow` goldens pin the same shadow rule.
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
