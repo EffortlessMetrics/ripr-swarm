@@ -1,0 +1,10 @@
+diff --git a/src/cfg_attr_ignored.rs b/src/cfg_attr_ignored.rs
+--- a/src/cfg_attr_ignored.rs
++++ b/src/cfg_attr_ignored.rs
+@@ -1,5 +1,5 @@
+ pub fn gated_rate(base: u32) -> u32 {
+-    base * 3
++    3 * base
+ }
+ 
+ #[cfg(test)]

@@ -17,6 +17,7 @@ mod helper_transfer;
 mod implicit_effect;
 pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
 mod implicit_call;
+mod indirect_owner;
 mod infection;
 mod macro_item_names;
 mod mask_pin;
@@ -79,6 +80,7 @@ pub(in crate::analysis) use helper_transfer::{
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
+pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
