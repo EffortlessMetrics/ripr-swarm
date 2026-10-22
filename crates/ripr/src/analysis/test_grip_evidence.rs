@@ -297,6 +297,10 @@ impl<'index> EvidencePass<'index> {
         let Some(context) = self.context.as_ref() else {
             return Vec::new();
         };
+        if seams.is_empty() {
+            // An empty stage must not pay the whole-index warm below.
+            return Vec::new();
+        }
         let evidence_started = Instant::now();
         // Seams are independent and the context's memos are keyed, so the
         // pass runs on the rayon pool. Workers inherit this thread's
