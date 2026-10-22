@@ -5247,7 +5247,10 @@ pub(crate) fn classify_change_with_alias_state(
         // "no discriminator" is not established: unknown, not a gap
         // (RIPR-SPEC-0027). A weak oracle stays `weakly_exposed`: its
         // missing stronger assertion is actionable on any reach.
-        let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank();
+        // The strong oracle must observe a computed value: a constant exact
+        // assertion in the same test says nothing about the entry's result.
+        let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank()
+            && ts_entry_result_is_asserted(&related_candidates);
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -6729,6 +6732,28 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
         }
     }
+}
+
+/// Whether an assertion of a module-entry test observes something computed
+/// (the caller has already established a strong oracle): a literal-only value (`expect(1).toBe(1)`) is
+/// no oracle for the entry, however exact its matcher. An assertion on any
+/// other expression keeps the unknown reading, because the entry may run
+/// behind a default import, a factory product or a mock.
+fn ts_entry_result_is_asserted(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall)
+        .flat_map(|candidate| candidate.test.assertions.iter())
+        .any(|assertion| {
+            assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(|observed| {
+                    ts_mask_literals_and_comments(observed)
+                        .chars()
+                        .any(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+                })
+        })
 }
 
 /// Missing-evidence line for an owner reached only through same-module

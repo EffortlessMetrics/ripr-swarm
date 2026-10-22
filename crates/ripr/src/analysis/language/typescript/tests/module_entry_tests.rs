@@ -135,6 +135,30 @@ fn weak_oracle_through_an_entry_stays_an_actionable_gap() -> Result<(), String> 
 }
 
 #[test]
+fn unrelated_exact_assertion_beside_an_entry_call_stays_an_actionable_gap() -> Result<(), String> {
+    // The entry is called but its result is never asserted: the exact
+    // assertion on an unrelated value is no oracle for the entry, so the
+    // missing assertion stays actionable (Devin review on #9465).
+    let finding = merge_finding(
+        "entry-unrelated-assertion",
+        MERGE,
+        "import { it, expect } from 'vitest';\nimport { merge } from '../src/merge';\n\nit('merges', () => {\n  merge({ a: 1 }, { b: 2 });\n  expect(1).toBe(1);\n});\n",
+    )?;
+    assert!(
+        relates_through_entry(&finding),
+        "related: {:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding.stop_reasons.is_empty(),
+        "{:?}",
+        finding.stop_reasons
+    );
+    Ok(())
+}
+
+#[test]
 fn default_import_of_factory_product_relates() -> Result<(), String> {
     let test = "import { it, expect } from 'vitest';\nimport combine from '../src/merge';\n\nit('merges', () => {\n  expect(combine({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });\n});\n";
     assert_entry_related("default-import", MERGE, test)?;
