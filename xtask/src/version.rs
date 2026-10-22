@@ -1180,7 +1180,7 @@ mod npm_launcher_version_tests {
         let contract = contract()?;
         let updated = replace_npm_launcher_versions(
             launcher,
-            if launcher.contains("\"version\": \"0.12.0-rc.1\"") {
+            if launcher.contains("0.12.0-rc.1") {
                 "0.12.0-rc.1"
             } else {
                 "0.11.0"
