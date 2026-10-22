@@ -45,6 +45,8 @@ pub(super) struct PacketOpenPr {
 
 #[derive(Default)]
 pub(super) struct Context {
+    /// The release's fixed starting commit; a later base would silently drop history.
+    pub(super) expected_base: Option<String>,
     pub(super) packet: Option<SelectionPacket>,
     pub(super) markdown: Option<String>,
     pub(super) manifest: Option<Value>,
@@ -79,7 +81,7 @@ fn canonical_reachable(first_parent: &[String], reachable: &[String]) -> Vec<Str
 
 pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     let mut reasons = Vec::new();
-    validate_header(ledger, &mut reasons);
+    validate_header(ledger, context, &mut reasons);
     let range_ok = validate_range(ledger, &mut reasons);
     validate_records(ledger, range_ok, &mut reasons);
     validate_merged_prs(ledger, &mut reasons);
@@ -90,7 +92,13 @@ pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     reasons
 }
 
-fn validate_header(ledger: &Ledger, reasons: &mut Vec<String>) {
+/// Disposition rule versions this validator knows how to judge.
+const SUPPORTED_RULE_VERSIONS: [&str; 1] = ["v1"];
+
+/// First commit of the 0.11 range (#2768).
+pub(super) const RELEASE_BASE_0_11: &str = "45b56c0957ad7e7360114edceca4b844c85f846e";
+
+fn validate_header(ledger: &Ledger, context: &Context, reasons: &mut Vec<String>) {
     if ledger.schema_version != SCHEMA_VERSION {
         reasons.push(format!("schema_version must be {SCHEMA_VERSION}"));
     }
@@ -102,8 +110,11 @@ fn validate_header(ledger: &Ledger, reasons: &mut Vec<String>) {
             "adjudication_basis must be {ADJUDICATION_BASIS}: the ledger does not claim per-commit semantic review"
         ));
     }
-    if ledger.rule_version.trim().is_empty() {
-        reasons.push("rule_version is empty".to_string());
+    if !SUPPORTED_RULE_VERSIONS.contains(&ledger.rule_version.as_str()) {
+        reasons.push(format!(
+            "rule_version `{}` is not one of {SUPPORTED_RULE_VERSIONS:?}",
+            ledger.rule_version
+        ));
     }
     if ledger.stage != STAGE_DRY_RUN && ledger.stage != STAGE_FINAL {
         reasons.push(format!("stage `{}` is not dry_run or final", ledger.stage));
@@ -117,6 +128,14 @@ fn validate_header(ledger: &Ledger, reasons: &mut Vec<String>) {
         if !is_sha(value) {
             reasons.push(format!("{name} is not a 40-hex SHA"));
         }
+    }
+    if let Some(expected) = &context.expected_base
+        && &ledger.source.base_sha != expected
+    {
+        reasons.push(format!(
+            "source.base_sha {} is not the release base {expected}",
+            ledger.source.base_sha
+        ));
     }
     if ledger.source.cut_sha != ledger.source.main_sha {
         reasons.push(format!(
@@ -198,11 +217,48 @@ fn validate_records(ledger: &Ledger, range_ok: bool, reasons: &mut Vec<String>) 
         }
     }
     if range_ok {
+        validate_cut_binding(ledger, reasons);
         let order: Vec<&String> = ledger.records.iter().map(|r| &r.commit_sha).collect();
         let expected: Vec<&String> = range.reachable.iter().collect();
         if order != expected && seen.len() == ledger.records.len() && order.len() == expected.len()
         {
             reasons.push("records are not in canonical range order".to_string());
+        }
+    }
+}
+
+/// The cut record carries the cut tree, and every reachable commit descends
+/// from the cut through retained parent edges that stay inside the range.
+fn validate_cut_binding(ledger: &Ledger, reasons: &mut Vec<String>) {
+    let by_sha: BTreeMap<&String, &Record> = ledger
+        .records
+        .iter()
+        .map(|record| (&record.commit_sha, record))
+        .collect();
+    let reachable: BTreeSet<&String> = ledger.range.reachable.iter().collect();
+    if let Some(cut) = by_sha.get(&ledger.source.cut_sha)
+        && cut.tree_sha != ledger.source.cut_tree_sha
+    {
+        reasons.push(format!(
+            "source.cut_tree_sha {} contradicts the cut record's tree {}",
+            ledger.source.cut_tree_sha, cut.tree_sha
+        ));
+    }
+    let mut visited: BTreeSet<&String> = BTreeSet::new();
+    let mut pending = vec![&ledger.source.cut_sha];
+    while let Some(sha) = pending.pop() {
+        if !reachable.contains(sha) || !visited.insert(sha) {
+            continue;
+        }
+        if let Some(record) = by_sha.get(sha) {
+            pending.extend(record.parent_shas.iter());
+        }
+    }
+    for sha in &ledger.range.reachable {
+        if !visited.contains(sha) {
+            reasons.push(format!(
+                "reachable commit {sha} has no parent path from the cut"
+            ));
         }
     }
 }
@@ -286,6 +342,13 @@ fn validate_record(
             "{sha}: claim_ref `{claim}` is not a selected-claim row"
         ));
     }
+    if record
+        .override_ref
+        .as_deref()
+        .is_some_and(|reference| reference.trim().is_empty())
+    {
+        reasons.push(format!("{sha}: override_ref is blank"));
+    }
     validate_disposition_effect(record, reasons);
 }
 
@@ -303,8 +366,8 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
         PRESENT_BUT_SUPERSEDED if basis.alive_paths == 0 || owned > 0 => {
             Some("present_but_superseded needs alive paths and no owned path or line")
         }
-        HISTORY_NO_BLOB_EFFECT if basis.alive_paths > 0 => {
-            Some("history_reachable_no_final_blob_effect cannot have an alive touched path")
+        HISTORY_NO_BLOB_EFFECT if basis.alive_paths > 0 || owned > 0 => {
+            Some("history_reachable_no_final_blob_effect cannot have an alive path or owned line")
         }
         NOT_REACHABLE => {
             Some("a record in the reachable range cannot be not_reachable_from_candidate")
@@ -315,6 +378,10 @@ fn validate_effect(record: &Record, reasons: &mut Vec<String>) {
         reasons.push(format!(
             "{sha}: final tree effect contradicts the cut tree: {message}"
         ));
+    }
+    if basis.blamed_lines > 0 && basis.alive_paths == 0 && record.final_tree_effect != PRESENT_EFFECTIVE
+    {
+        reasons.push(format!("{sha}: blamed lines need an alive path"));
     }
     if basis.last_toucher_paths > basis.alive_paths {
         reasons.push(format!("{sha}: last_toucher_paths exceeds alive_paths"));
@@ -358,6 +425,19 @@ fn validate_merged_prs(ledger: &Ledger, reasons: &mut Vec<String>) {
         if !reachable.contains(&pr.merge_sha) {
             reasons.push(format!(
                 "merged PR #{} names {}, which is outside the reachable range",
+                pr.number, pr.merge_sha
+            ));
+        }
+    }
+    for pr in &ledger.merged_prs {
+        let linked = ledger.records.iter().any(|record| {
+            record.first_parent_position.is_some()
+                && record.commit_sha == pr.merge_sha
+                && record.pr_refs.last() == Some(&pr.number)
+        });
+        if !linked {
+            reasons.push(format!(
+                "merged PR #{} has no first-parent record {} that names it",
                 pr.number, pr.merge_sha
             ));
         }
@@ -533,7 +613,13 @@ fn validate_digests(ledger: &Ledger, context: &Context, reasons: &mut Vec<String
     }
     if let Some(markdown) = &context.markdown {
         for (name, recorded) in digest_pairs(&ledger.digests) {
-            if !markdown.contains(&format!("{name} digest: `{recorded}`")) {
+            let prefix = format!("{name} digest: `");
+            let lines: Vec<&str> = markdown
+                .lines()
+                .filter(|line| line.contains(&prefix))
+                .collect();
+            let expected = format!("{name} digest: `{recorded}`");
+            if lines.len() != 1 || !lines.iter().all(|line| line.contains(&expected)) {
                 reasons.push(format!(
                     "Markdown projection disagrees on the {name} digest"
                 ));

@@ -31,6 +31,7 @@ struct Args<'a> {
     packet: Option<&'a str>,
     markdown: Option<&'a str>,
     manifest: Option<&'a str>,
+    expected_base: Option<&'a str>,
     require_final: bool,
 }
 
@@ -38,6 +39,11 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
     let args = parse_args(args)?;
     let ledger: Ledger = read_json(args.input, "ledger")?;
     let context = Context {
+        expected_base: Some(
+            args.expected_base
+                .unwrap_or(validate::RELEASE_BASE_0_11)
+                .to_string(),
+        ),
         packet: args.packet.map(read_packet).transpose()?,
         markdown: args
             .markdown
@@ -82,6 +88,7 @@ fn parse_args(args: &[String]) -> Result<Args<'_>, String> {
         packet: None,
         markdown: None,
         manifest: None,
+        expected_base: None,
         require_final: false,
     };
     let mut index = 0;
@@ -101,6 +108,7 @@ fn parse_args(args: &[String]) -> Result<Args<'_>, String> {
             "--packet" => parsed.packet = Some(value),
             "--markdown" => parsed.markdown = Some(value),
             "--manifest" => parsed.manifest = Some(value),
+            "--expected-base" => parsed.expected_base = Some(value),
             _ => return Err(format!("unknown release-ledger argument `{flag}`")),
         }
         index += 2;

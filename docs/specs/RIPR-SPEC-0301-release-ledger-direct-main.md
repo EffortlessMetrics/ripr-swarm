@@ -94,7 +94,13 @@ The validator fails on:
 8. any `blocking_unresolved` record, non-terminal open PR or `pending`/`failed_release_hold` claim in a `final` ledger, or a final
    ledger without an audit digest;
 9. a Markdown or manifest projection whose digests differ from the ledger;
-10. a cut that is not the observed tip of `main`.
+10. a cut that is not the observed tip of `main`;
+11. a base other than the pinned 0.11 base (`--expected-base`, default
+    `45b56c09…`), a reachable commit with no parent path from the cut, or a cut
+    tree that differs from the cut record's tree;
+12. a merged-PR row that no first-parent record names, an unsupported
+    `rule_version`, a blank `override_ref`, a no-blob-effect row that claims an
+    owned line, or a Markdown projection with a second, conflicting digest line.
 
 Open-PR rows must not be inside the reachable range and carry the #2766 PR
 dispositions from `policy/release-selection.json`; with `--packet`, the claim
@@ -137,6 +143,13 @@ valid-ledger control that yields no reasons.
   `open_pr_inside_range_or_with_included_disposition_is_rejected`,
   `packet_roster_and_final_capture_commit_are_compared`,
   `final_ledger_rejects_pending_claims_and_open_non_terminal_prs`,
+  `commit_with_no_parent_path_from_the_cut_is_rejected`,
+  `cut_tree_contradicting_the_cut_record_is_rejected`,
+  `later_base_is_rejected_when_the_release_base_is_pinned`,
+  `unlinked_merged_pr_row_is_rejected`,
+  `history_row_claiming_surviving_lines_is_rejected`,
+  `blank_override_ref_is_rejected`, `unknown_rule_version_is_rejected`,
+  `markdown_with_a_conflicting_second_digest_line_is_rejected`,
   `valid_ledger_has_no_reasons`).
 
 ## Implementation Mapping

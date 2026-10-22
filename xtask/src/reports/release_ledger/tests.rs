@@ -88,6 +88,9 @@ fn valid() -> Ledger {
             "included_historical_reachable_only",
         ),
     ];
+    // Commit 9 reaches the cut through a merge, as a non-first-parent commit does.
+    let mut records = records;
+    records[2].parent_shas.push(sha(9));
     let mut ledger = Ledger {
         schema_version: "0.1".to_string(),
         kind: "release_ledger".to_string(),
@@ -387,4 +390,85 @@ fn final_ledger_rejects_pending_claims_and_open_non_terminal_prs() -> Result<(),
     ledger.selected_claims.rows[0].resolution = "pending".to_string();
     ledger.selected_claims.totals = BTreeMap::from([("pending".to_string(), 1)]);
     require_reason(&ledger, "unresolved claims")
+}
+
+#[test]
+fn commit_with_no_parent_path_from_the_cut_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[2].parent_shas.truncate(1);
+    redigest(&mut ledger);
+    require_reason(&ledger, "has no parent path from the cut")
+}
+
+#[test]
+fn cut_tree_contradicting_the_cut_record_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.source.cut_tree_sha = sha(150);
+    redigest(&mut ledger);
+    require_reason(&ledger, "contradicts the cut record's tree")
+}
+
+#[test]
+fn later_base_is_rejected_when_the_release_base_is_pinned() -> Result<(), String> {
+    let ledger = valid();
+    let context = Context {
+        expected_base: Some(sha(60)),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    found
+        .iter()
+        .any(|reason| reason.contains("is not the release base"))
+        .then_some(())
+        .ok_or_else(|| format!("expected a base reason, got {found:?}"))
+}
+
+#[test]
+fn unlinked_merged_pr_row_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.merged_prs.push(MergedPr {
+        number: 999,
+        merge_sha: sha(3),
+        state: "merged".to_string(),
+    });
+    require_reason(&ledger, "has no first-parent record")
+}
+
+#[test]
+fn history_row_claiming_surviving_lines_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[3].effect_basis.blamed_lines = 1;
+    redigest(&mut ledger);
+    require_reason(&ledger, "cannot have an alive path or owned line")
+}
+
+#[test]
+fn blank_override_ref_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].override_ref = Some(String::new());
+    redigest(&mut ledger);
+    require_reason(&ledger, "override_ref is blank")
+}
+
+#[test]
+fn unknown_rule_version_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.rule_version = "v9".to_string();
+    require_reason(&ledger, "rule_version")
+}
+
+#[test]
+fn markdown_with_a_conflicting_second_digest_line_is_rejected() -> Result<(), String> {
+    let ledger = valid();
+    let good = format!("first-parent digest: `{}`\n", ledger.digests.first_parent);
+    let context = Context {
+        markdown: Some(format!("{good}first-parent digest: `sha256:other`\n")),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    found
+        .iter()
+        .any(|reason| reason.contains("first-parent digest"))
+        .then_some(())
+        .ok_or_else(|| format!("expected a digest reason, got {found:?}"))
 }
