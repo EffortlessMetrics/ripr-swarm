@@ -208,7 +208,7 @@ fn supported_rows_reject_a_limitation_that_names_the_input() -> TestResult {
 }
 
 const DECLINED_SUMMARY: &str = "{\"status\":\"complete\",\"declined_rust_files\":{\"file_count\":1,\"files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}}";
-const DECLINED_ARTIFACT: &str = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\"}],\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
+const DECLINED_ARTIFACT: &str = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_files\":[{\"path\":\"src/deep.rs\"}]}],\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
 const COMPLETE_ARTIFACT: &str = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
 
 #[test]
@@ -252,13 +252,35 @@ fn rust_pilot_requires_the_declined_field_the_limited_status_and_the_unaffected_
         ));
     }
 
-    let no_seams = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\"}],\"seams\":[]}";
+    let no_seams = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_files\":[{\"path\":\"src/deep.rs\"}]}],\"seams\":[]}";
     let lost = assess(&case, &observe(DECLINED_SUMMARY, "", Some(no_seams)));
     if lost.result != RowResult::WrongSubject {
         return Err(format!("lost seam classified {:?}", lost.result));
     }
 
+    // The summary names the hostile file but the artifact only another one.
+    let wrong_artifact = DECLINED_ARTIFACT.replace("src/deep.rs", "src/other.rs");
+    let mismatched = assess(&case, &observe(DECLINED_SUMMARY, "", Some(&wrong_artifact)));
+    if mismatched.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "an artifact naming another file classified {:?}",
+            mismatched.result
+        ));
+    }
+
     let control = case_named("rust-supported-control.pilot")?;
+    // Any declined file, whichever path, fails a supported row.
+    let other_summary = DECLINED_SUMMARY.replace("src/deep.rs", "src/other.rs");
+    let other_decline = assess(
+        &control,
+        &observe(&other_summary, "", Some(COMPLETE_ARTIFACT)),
+    );
+    if other_decline.result != RowResult::SemanticFailure {
+        return Err(format!(
+            "a decline of another file on a supported row classified {:?}",
+            other_decline.result
+        ));
+    }
     let false_limit = assess(
         &control,
         &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),

@@ -311,14 +311,37 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
                 .iter()
                 .find(|file| file.get("path").and_then(Value::as_str) == Some(hostile))
         });
-    let declined_in_artifact = exposure
+    let declined_limitations: Vec<&Value> = exposure
         .get("limitations")
         .and_then(Value::as_array)
-        .is_some_and(|limitations| {
-            limitations.iter().any(|limitation| {
-                limitation.get("category").and_then(Value::as_str) == Some("rust_files_declined")
+        .map(|limitations| {
+            limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.get("category").and_then(Value::as_str)
+                        == Some("rust_files_declined")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // The artifact must name the same file the summary does; the category
+    // alone would let a decline of some other file satisfy the row.
+    let declined_in_artifact = declined_limitations.iter().any(|limitation| {
+        limitation
+            .get("declined_files")
+            .and_then(Value::as_array)
+            .is_some_and(|files| {
+                files
+                    .iter()
+                    .any(|file| file.get("path").and_then(Value::as_str) == Some(hostile))
             })
-        });
+    });
+    // A supported row is a whole run: any declined file, whichever path it
+    // names, in either surface, fails it.
+    let any_decline_reported = summary
+        .get("declined_rust_files")
+        .is_some_and(|field| !field.is_null())
+        || !declined_limitations.is_empty();
     match &case.expect {
         Expect::TypedLimitation { token, .. } => {
             let reason = declined_entry
@@ -340,7 +363,7 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
                     Assessment::fail(
                         RowResult::MissingOrFalseCleanLimitation,
                         format!(
-                            "declined file named in the summary but the artifact run_status is {run_status:?} (rust_files_declined limitation: {declined_in_artifact})"
+                            "declined file named in the summary but the artifact run_status is {run_status:?} (rust_files_declined limitation naming {hostile}: {declined_in_artifact})"
                         ),
                     )
                     .with_counts(unaffected, 0, 1),
@@ -371,13 +394,12 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
             )
         }
         _ => {
-            if declined_entry.is_some() || declined_in_artifact || run_status != Some("complete") {
+            if any_decline_reported || run_status != Some("complete") {
                 return attach(
                     Assessment::fail(
                         RowResult::SemanticFailure,
                         format!(
-                            "a supported input was not a whole run: run_status {run_status:?}, declined_rust_files entry: {}",
-                            declined_entry.is_some()
+                            "a supported input was not a whole run: run_status {run_status:?}, decline reported: {any_decline_reported}"
                         ),
                     )
                     .with_counts(unaffected, 0, 1),
