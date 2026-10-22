@@ -9379,6 +9379,8 @@ id = "RIPR-SPEC-0115"
 name = "rust transitive-reach witness"
 spec = "docs/specs/RIPR-SPEC-0115-rust-transitive-reach-witness.md"
 tests = [
+  "crates/ripr/src/analysis/extract/calls.rs::tests::safe_typed_function_pointer_calls_keep_their_target_and_arguments",
+  "crates/ripr/src/analysis/extract/calls.rs::tests::typed_pointer_resolution_refuses_local_targets_and_ambiguous_uses",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_two_witnesses_then_first_by_file_line_is_selected",
@@ -9438,6 +9440,7 @@ fixtures = [
   "fixtures/rust_transitive_reach_negative",
 ]
 code = [
+  "crates/ripr/src/analysis/extract/calls/function_alias.rs",
   "crates/ripr/src/analysis/classify/transitive_reach.rs",
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/mod.rs",
@@ -13194,6 +13197,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_pins_only_the_observed_owner_value",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_runtime_controls_observe_the_same_value",
   "crates/ripr/tests/owner_pin_execution.rs::tokio_spawned_task_counts_only_when_joined_and_unwrapped",
   "crates/ripr/tests/returned_comparison_boundary.rs::inputs_far_from_the_threshold_do_not_expose_the_returned_comparison",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_input_at_the_changed_boundary_keeps_the_returned_comparison_exposed",
@@ -13575,6 +13580,7 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/extract/calls/function_alias.rs",
   "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs",
   "crates/ripr/src/analysis/classify/changed_span.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",

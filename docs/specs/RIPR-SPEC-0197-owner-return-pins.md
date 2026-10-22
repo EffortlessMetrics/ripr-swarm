@@ -15,6 +15,8 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
+- #9478 (bounded typed function-pointer calls; iterator, macro and executor
+  credit remain separate work)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
@@ -330,6 +332,25 @@ rule only for an assertion whose context was admitted.
    unrelated `let (want, _) = (12, 0);` keeps the pin. Residual, shared with
    the bare call on main: an item `const` or `static` initialized from a
    `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
+   A sync free function returning a primitive scalar may also be pinned through
+   `let f: fn(..) -> Scalar = owner_path; assert_eq!(f(args), literal)`
+   (#9478), with either operand order. The shared local-alias reader requires
+   one immutable ASCII identifier binding, a safe Rust `fn` type (no ABI,
+   `unsafe`, type alias or cast), a plain function path, and only direct calls
+   of the binding after its definition. A bare target is admitted only when
+   the parsed test body binds no value of that name; the existing import,
+   module, rival-owner and cfg gates still resolve its identity. Calls must
+   close on one line and the existing 64-alias/body cap applies. The resolved
+   call supplies reach and its own arguments, and the pin checks it under the
+   existing owner and assertion gates. The original assertion's exact text,
+   location and execution context are preserved. The changed tail must have
+   the ordinary unconditional return-path gate, and the expected operand must
+   be a literal. A blind comparison, a value computed from the pointer, any
+   mutation, shadow, capture or forwarding of the pointer, and a deferred
+   assertion supply no pointer pin. A `fn(..)` type is not a nested function
+   declaration; actual nested `fn` items retain the existing refusal. Async,
+   associated, iterator and macro-generated owner credit is outside this rule.
+
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -2213,6 +2234,13 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- `crates/ripr/tests/owner_pin_execution/function_pointer.rs`:
+  `function_pointer_pins_only_the_observed_owner_value` and
+  `function_pointer_runtime_controls_observe_the_same_value` (#9478) compare
+  the same admitted and blind/rebound/rival/dead subjects through the public
+  API and compiled neutral/wrong-value runs. Every runtime subject must
+  compile, enumerate one test and execute it before its outcome is checked.
+
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
@@ -2417,6 +2445,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `spec0231-oracle-helper-assert-json-eq`.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/extract/calls/function_alias.rs`: shared bounded
+  alias reader and `local_fn_pointer_call`; `extract/calls.rs` retains the
+  call-fact producer and its per-line budget. The scalar free-function pin
+  resolves the returned path through its existing identity gates (#9478).
 
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.

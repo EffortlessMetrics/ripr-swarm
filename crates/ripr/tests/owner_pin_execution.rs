@@ -15,6 +15,9 @@ mod field_projected_collection;
 #[path = "owner_pin_execution/literal_json_output.rs"]
 mod literal_json_output;
 
+#[path = "owner_pin_execution/function_pointer.rs"]
+mod function_pointer;
+
 struct Scratch(PathBuf);
 
 impl Scratch {

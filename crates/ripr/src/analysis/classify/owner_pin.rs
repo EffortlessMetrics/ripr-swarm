@@ -3250,6 +3250,7 @@ impl OwnerReturnPin {
         let condition;
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
+        let pointer_call;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -3323,6 +3324,33 @@ impl OwnerReturnPin {
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
+            };
+            // #9478: a typed immutable function pointer lends its exact call,
+            // not an arbitrary use of the owner as a value. Keep this bounded
+            // to a sync scalar free-function tail compared with a literal;
+            // every identity, expected-value and execution gate below remains.
+            pointer_call = (!self.awaited
+                && self.returns_scalar
+                && matches!(self.call, PinCall::Bare)
+                && matches!(self.path, ReturnPathGate::Any)
+                && (test.start_line..=test.end_line).contains(&assertion.line))
+            .then(|| {
+                [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                    if self.awaited_call_shape(operands[at], &self.name).is_some() {
+                        return None;
+                    }
+                    helper_arguments::expected_literal(operands[other], index)?;
+                    let call =
+                        crate::analysis::extract::local_fn_pointer_call(&test.body, operands[at])?;
+                    self.awaited_call_shape(&call, &self.name)?;
+                    Some((at, call))
+                })
+            })
+            .flatten();
+            let operands = match &pointer_call {
+                Some((0, call)) => [call.as_str(), operands[1]],
+                Some((1, call)) => [operands[0], call.as_str()],
+                _ => operands,
             };
             // trap-shine-debug-exact-control: the std rendering of a
             // primitive scalar names its value, so an exact string pins it.
@@ -12035,7 +12063,13 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
 /// nested `fn`'s parameters. Lexical and conservative: a `|` operator or an unrelated
 /// match arm that mentions the name also counts.
 fn binds_outside_let(masked: &str, name: &str) -> bool {
-    let fns = whole_word_offsets(masked, "fn");
+    // A function-pointer type has no item name: its `fn` is followed by
+    // `(`. Its parameter labels bind no values in the surrounding test.
+    // Keep the existing conservative refusal for actual nested fn items.
+    let fns: Vec<_> = whole_word_offsets(masked, "fn")
+        .into_iter()
+        .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+        .collect();
     if fns.len() > 1 {
         return true;
     }
