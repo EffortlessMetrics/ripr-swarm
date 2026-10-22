@@ -60,8 +60,10 @@ mod arm_activation;
 mod bool_oracle;
 mod boundary;
 mod classify;
+mod conditional_defs;
 mod deleted_lines;
 mod guard_activation;
+mod module_value;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
@@ -1044,6 +1046,12 @@ impl PythonAdapter {
                     structural_def_header_line: in_multi_line_def_header
                         && is_structural_def_header_text(&added.text),
                     multi_line_def_header_line: in_multi_line_def_header,
+                    // Removed lines carry the new-side line where the removal
+                    // sits, so a replacement in place has equal coordinates.
+                    sole_line_replacement: matches!(
+                        (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                        ([added_line], [removed_line]) if added_line.line == removed_line.line
+                    ),
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,
@@ -1161,6 +1169,8 @@ mod helper_assertions_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod module_value_tests;
 #[cfg(test)]
 mod new_declaration_tests;
 

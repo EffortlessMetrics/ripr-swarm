@@ -73,6 +73,41 @@ pub(super) fn module_literal_constants(
         .collect()
 }
 
+/// How a module binds its names, for the conditional-definition and
+/// module-value reads (#9423): whether a name is bound exactly once, with no
+/// `global` declaration, no star import and no dynamic namespace writer that
+/// could rebind it behind the walk's back.
+pub(super) struct ModuleBindingFacts {
+    counts: std::collections::HashMap<String, usize>,
+    globals: std::collections::HashSet<String>,
+    opaque: bool,
+}
+
+impl ModuleBindingFacts {
+    /// The module's binding facts over `statements`.
+    pub(super) fn of(source: &str, statements: &[Stmt]) -> Self {
+        let mut bindings = ScopeBindings::default();
+        collect_scope_bindings(statements, &mut bindings);
+        let mut globals = Vec::new();
+        collect_global_declarations(statements, &mut globals);
+        let mut counts = std::collections::HashMap::new();
+        for name in bindings.names {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        Self {
+            counts,
+            globals: globals.into_iter().collect(),
+            opaque: bindings.opaque || writes_namespace_dynamically(source),
+        }
+    }
+
+    /// Whether `name` is bound exactly once at module scope and nothing in
+    /// the module can rebind it.
+    pub(super) fn bound_once(&self, name: &str) -> bool {
+        !self.opaque && !self.globals.contains(name) && self.counts.get(name) == Some(&1)
+    }
+}
+
 /// The constants still visible inside a function owner: those its parameters
 /// and local bindings do not shadow. `body_text` is the function's source,
 /// used only to catch a walrus binding inside it.
