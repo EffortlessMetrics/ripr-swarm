@@ -652,30 +652,10 @@ case = "jest-mined-private-impl-dispatcher"
 issue = 6655
 reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
 
-[[known_false]]
-case = "shape-arrow-const-export"
-issue = 9435
-reason = "Exact oracle ignored on arrow-const export (#9435)."
 
-[[known_false]]
-case = "shape-reduce-initial-value"
-issue = 9435
-reason = "Exact oracle ignored on reduce seed (#9435)."
 
-[[known_false]]
-case = "shape-class-method-compound-assign"
-issue = 9435
-reason = "Exact oracle ignored on compound assign (#9435)."
 
-[[known_false]]
-case = "shape-enum-branch-weight"
-issue = 9435
-reason = "Exact oracle ignored on enum comparison (#9435)."
 
-[[known_false]]
-case = "shape-generator-upper-bound"
-issue = 9435
-reason = "Exact oracle ignored on loop bound (#9435)."
 
 [[known_false]]
 case = "shape-nullish-middle-operand"
@@ -727,10 +707,6 @@ case = "pw-fixme-clamp-upper-bound"
 issue = 9436
 reason = "test.fixme credited as a live test (#9436)."
 
-[[known_false]]
-case = "hostile-minified-line-pinned"
-issue = 9435
-reason = "Exact oracle ignored on a minified line (#9435)."
 
 [[known_false]]
 case = "mocha-before-hook-trimmed-name"
