@@ -1,0 +1,62 @@
+{
+  "case_id": "spec0186-ex06-private-predicate-via-wrapper",
+  "subject_id": "authored-spec0186-6",
+  "diff": "cases/spec0186-ex06-private-predicate-via-wrapper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "private_predicate_pinned_through_public_wrapper",
+  "hard_case": "RIPR-SPEC-0186 example 6: private is_bulk reached only through order_discount, whose test pins 10 and 9.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "fn is_bulk(qty: u32) -> bool { qty > 10 }",
+        "mutated_line": "fn is_bulk(qty: u32) -> bool { qty > 10 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bulk_edge_is_discounted",
+        "equivalence_review": "not equivalent: order_discount(10) turns 0"
+      },
+      {
+        "replacement": "fn is_bulk(qty: u32) -> bool { qty < 10 }",
+        "mutated_line": "fn is_bulk(qty: u32) -> bool { qty < 10 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bulk_edge_is_discounted",
+        "equivalence_review": "not equivalent: order_discount(10) turns 0"
+      },
+      {
+        "replacement": "fn is_bulk(qty: u32) -> bool { qty <= 10 }",
+        "mutated_line": "fn is_bulk(qty: u32) -> bool { qty <= 10 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bulk_edge_is_discounted",
+        "equivalence_review": "not equivalent: order_discount(9) turns 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "order_discount(10) is pinned to 5 and order_discount(9) to 0 in one test, so every listed mutant of the private predicate fails. Spec cells: RIPR-SPEC-0186 example 6.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0186#6"
+  ]
+}

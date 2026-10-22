@@ -229,6 +229,12 @@ id = "RIPR-SPEC-0185"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
 
+# Same-test pairing for boundary-class probes
+[[spec]]
+id = "RIPR-SPEC-0186"
+scope = "out"
+reason = "Rust same-test boundary pairing; a Rust case labels it"
+
 # Rich command metadata projected into human help and inventories
 [[spec]]
 id = "RIPR-SPEC-0187"
@@ -282,6 +288,12 @@ reason = "agent repair-loop surface, not an analyzer verdict"
 id = "RIPR-SPEC-0196"
 scope = "out"
 reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Owner-return pins through calls that name the owner
+[[spec]]
+id = "RIPR-SPEC-0197"
+scope = "out"
+reason = "Rust owner-return pins; a Rust case labels them"
 
 # RepairCard projection through standard LSP
 [[spec]]
