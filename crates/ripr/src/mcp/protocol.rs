@@ -62,7 +62,7 @@ fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session; it never edits source, executes nothing, and names CLI routes without invoking them (ADR 0022). Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; use `ripr check --committed` for committed input or `ripr check --format json` for working-tree input. Continue with `ripr_list_gaps` for the bounded working set; read one item's evidence with `ripr_get_gap` or ripr://gap/{canonical_id}. When repair-readiness facts are established, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` or ripr://repair-attempt/{attempt_id}, inspect receipt state with `ripr_get_receipt_status` or ripr://receipt/{receipt_id}, list every durable attempt with `ripr_list_repair_attempts`, and project the repair card with `ripr_get_repair_card` or ripr://repair-card/{canonical_id} — the same repair_card.v1 document `ripr agent card` and the language server project.";
+pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session; it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; use `ripr check --committed` for committed input or `ripr check --format json` for working-tree input. Continue with `ripr_list_gaps` for the bounded working set; read one item's evidence with `ripr_get_gap` or ripr://gap/{canonical_id}. When repair-readiness facts are established, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` or ripr://repair-attempt/{attempt_id}, inspect receipt state with `ripr_get_receipt_status` or ripr://receipt/{receipt_id}, list every durable attempt with `ripr_list_repair_attempts`, and project the repair card with `ripr_get_repair_card` or ripr://repair-card/{canonical_id} — the same repair_card.v1 document `ripr agent card` and the language server project.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state: repository-root discovery state (validated or unavailable, with root error detail when no usable Git work tree is detected), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block — current desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good state, freshness, the typed AnalysisOutcome, and profile facts (project_config loaded with enabled languages when the workspace ripr.toml resolves, built-in defaults otherwise, an unreadable config detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
@@ -1595,13 +1595,11 @@ mod tests {
     fn description_length_budgets_keep_session_context_lean() {
         // #9604 finding 33: every description below is injected into the
         // model's context for the whole session, so each surface carries a
-        // byte budget. The template budgets were set by the first diet pass;
-        // tool budgets stay interim at the pre-diet maximum and tighten in
-        // the per-tool compression follow-up.
+        // byte budget. Both diet passes have landed; the budgets below are
+        // the tightened per-surface ceilings.
         const TEMPLATE_BUDGET: usize = 475;
         const RESOURCE_BUDGET: usize = 650;
-        const TOOL_BUDGET_INTERIM: usize = 2800;
-        const TOTAL_BUDGET_INTERIM: usize = 14716;
+        const TOTAL_BUDGET_INTERIM: usize = 14900;
         for (name, text, budget) in [
             ("status_tool", STATUS_TOOL_DESCRIPTION, 1025),
             ("refresh_tool", REFRESH_TOOL_DESCRIPTION, 1450),
@@ -1653,7 +1651,7 @@ mod tests {
                 REPAIR_CARD_TEMPLATE_DESCRIPTION,
                 TEMPLATE_BUDGET,
             ),
-            ("instructions", INSTRUCTIONS, 1485),
+            ("instructions", INSTRUCTIONS, 1665),
         ] {
             assert!(
                 text.len() <= budget,
@@ -2004,6 +2002,10 @@ mod tests {
             "ripr://receipt/{receipt_id}",
             "ripr://repair-card/{canonical_id}",
             "never edits source",
+            "runs no tests or mutation",
+            "launches no processes",
+            "No document this server returns is a repair authorization",
+            "approval and sandbox policy remain authoritative",
             "ripr check --format json",
         ] {
             if !INSTRUCTIONS.contains(required) {
