@@ -21,6 +21,7 @@ mod editor_validators;
 mod gap_validators;
 mod general_validators;
 mod installed_journey;
+mod installed_journey_recipe;
 mod native_python;
 mod report_validators;
 mod retained_files;
@@ -30,6 +31,7 @@ pub(crate) use editor_validators::*;
 pub(crate) use gap_validators::*;
 pub(crate) use general_validators::*;
 pub(crate) use installed_journey::*;
+pub(crate) use installed_journey_recipe::*;
 pub(crate) use report_validators::*;
 
 pub(crate) fn check_fixture_contracts() -> Result<(), String> {

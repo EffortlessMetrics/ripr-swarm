@@ -10010,6 +10010,11 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_refuses_serialization_failure_after_partial_buffer_flush",
+  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::real_file_facts_keep_original_cache_bytes_and_integrity",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_inputs_preserved",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_terminal_type_arguments",
@@ -14071,6 +14076,13 @@ tests = [
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::unlisted_installed_python_snapshot_file_is_rejected",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::installed_python_scenario_candidate_must_bind_the_manifest_snapshots",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::bare_historical_command_must_not_become_the_recommendation",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::committed_fixtures_reproduce_their_recorded_ids_from_the_recipe",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_recorded_commit_id_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_snapshot_byte_is_refused_by_the_rebuilt_tree",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_without_the_base_and_head_steps_fails_closed",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::inherited_repository_selectors_do_not_redirect_the_rebuild",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::snapshot_git_metadata_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_that_drops_the_variant_derivation_is_refused",
   "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
   "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason",
@@ -14091,6 +14103,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs",
 ]
 outputs = []
 metrics = [
@@ -14151,6 +14164,13 @@ tests = [
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::scenario_candidate_must_bind_the_manifest_snapshots",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::scenario_must_bind_its_designated_snapshot",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::git_identity_binding_accepts_only_lowercase_hex",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::committed_fixtures_reproduce_their_recorded_ids_from_the_recipe",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_recorded_commit_id_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_tampered_snapshot_byte_is_refused_by_the_rebuilt_tree",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_without_the_base_and_head_steps_fails_closed",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::inherited_repository_selectors_do_not_redirect_the_rebuild",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::snapshot_git_metadata_is_refused",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs::installed_journey_recipe_tests::a_recipe_that_drops_the_variant_derivation_is_refused",
   "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
   "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
 ]
@@ -14164,6 +14184,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/fixture_contracts/installed_journey_recipe.rs",
 ]
 outputs = []
 metrics = [
@@ -14925,6 +14946,7 @@ tests = [
   "xtask/src/reports/issue_lifecycle.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
   "xtask/src/reports/issue_lifecycle.rs::tests::parse_captured_accepts_at_most_one_path",
   "xtask/src/reports/issue_lifecycle.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
+  "xtask/src/reports/issue_lifecycle.rs::tests::rejected_duplicate_digest_ties_preserve_json_and_markdown",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_attempts",
