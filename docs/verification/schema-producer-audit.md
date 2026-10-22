@@ -132,7 +132,7 @@ producer sweep`, reached through `Ripr Rust Small Result` on a merge-ready
 request and on `main` pushes) without any new workflow or check name (#9505).
 On the candidate it validates every corpus row and feeds the runtime-only rows
 with bytes that same run produced: `doctor` from the freshly built binary on
-every run, and on pull requests also `pr-evidence`
+every run, and on pull requests and merge groups also `pr-evidence`
 (`target/ripr/pr/repo-exposure.json`) and `review-comments`
 (`target/ripr/review/comments.json`) from the PR evidence step. A missing or
 unparseable artifact fails the step, so a producer that stops writing cannot

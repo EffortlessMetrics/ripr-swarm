@@ -1299,15 +1299,15 @@ mod tests {
             .ok_or("rust-gates.yml has no `Schema producer sweep` step")?;
         assert!(step.contains("cargo xtask schema-producer-sweep"));
         let guard = step
-            .find("\"$EVENT_NAME\" = \"pull_request\"")
-            .ok_or("pr-evidence and review-comments feeds are not guarded to pull_request")?;
+            .find("\"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\"")
+            .ok_or("pr-evidence and review-comments feeds are not guarded to the events that run PR evidence")?;
         for schema in ["pr-evidence", "review-comments"] {
             let feed = step
                 .find(&format!("--artifact schemas/ripr/{schema}.schema.json="))
                 .ok_or_else(|| format!("sweep step does not feed {schema}"))?;
             assert!(
                 feed > guard,
-                "{schema} feed sits outside the pull_request guard"
+                "{schema} feed sits outside the pull_request/merge_group guard"
             );
         }
         for schema in ["doctor", "pr-evidence", "review-comments"] {

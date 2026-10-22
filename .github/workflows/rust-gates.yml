@@ -368,7 +368,7 @@ jobs:
       # Published schema vs real producer bytes on the candidate (#9505, #3920).
       # Corpus rows read committed bytes via `git archive HEAD`; the runtime-only
       # rows are fed this run's own producer output: doctor from the freshly
-      # built binary, plus (pull requests) the pr-evidence and review-comments
+      # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
       # bytes the PR evidence step just wrote. A missing artifact file fails the
       # step, so a producer that stops writing cannot silently turn a row into
       # `not_run`. Producer-only rows (repair-attempt, execution_result) stay
@@ -381,7 +381,7 @@ jobs:
           mkdir -p target/ripr/sweep
           cargo run --quiet -p ripr -- doctor --json > target/ripr/sweep/doctor.json
           artifacts=(--artifact schemas/ripr/doctor.schema.json=target/ripr/sweep/doctor.json)
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; then
             artifacts+=(
               --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json
               --artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json
