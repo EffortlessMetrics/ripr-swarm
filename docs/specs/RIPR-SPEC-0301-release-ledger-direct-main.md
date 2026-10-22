@@ -158,8 +158,8 @@ files; anything else is unclassified.
 
 Order, first match wins:
 
-0. A first-parent commit with two parents, an empty diff, or an unclassified
-   path is `blocking_unresolved`.
+0. A first-parent commit with two parents, an empty diff, or any unclassified
+   path (even beside a classified one) is `blocking_unresolved`.
 1. A commit reached only through a merge (not first-parent) is
    `included_historical_reachable_only`; its tree effect stays a separate field.
 2. `present_but_superseded` is `included_superseded_by_later_fix`.
@@ -181,7 +181,8 @@ ref.
 `blocking_unresolved` rows are resolved by `policy/release-ledger-overrides.json`
 (`kind: release_ledger_overrides`): `{commit_sha, disposition, owner, note}`,
 reviewed in a PR. An override must name a commit in the range, a closed
-non-blocking disposition, an owner and a note, and may appear once. The row keeps
+non-blocking disposition, an owner and a note, may appear once, and may name only a
+commit the rule left `blocking_unresolved`. The row keeps
 the rule's disposition in its limitations and carries `override_ref`. A refuted
 rule changes `rule_version` and regenerates; it never edits rows by hand.
 
@@ -217,7 +218,7 @@ valid-ledger control that yields no reasons.
   `unjudgeable_commits_block_instead_of_defaulting`,
   `deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row`,
   `derived_ledger_validates_and_overrides_resolve_blocking_rows`,
-  `bad_overrides_are_rejected`.
+  `bad_overrides_are_rejected`, `short_commit_ids_do_not_panic_the_override_reference`.
 - `xtask/src/reports/release_ledger/tests.rs`: one test per rule, named for its
   failure (`missing_record_is_rejected`, `duplicate_record_is_rejected`,
   `record_outside_range_is_rejected`, `reordered_first_parent_is_rejected`,

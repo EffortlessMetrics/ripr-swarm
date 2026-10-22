@@ -240,6 +240,30 @@ fn unjudgeable_commits_block_instead_of_defaulting() -> Result<(), String> {
         ))? == "blocking_unresolved",
         "empty diff",
     )?;
+    for effect in [
+        "present_effective",
+        "present_but_superseded",
+        "history_reachable_no_final_blob_effect",
+    ] {
+        require(
+            disposition_of(commit(
+                5,
+                Some(1),
+                effect,
+                &["crates/ripr/src/a.rs", "unknown/dir/state.json"],
+            ))? == "blocking_unresolved",
+            &format!("unclassified path beside a product path ({effect})"),
+        )?;
+    }
+    require(
+        disposition_of(commit(
+            5,
+            None,
+            "present_effective",
+            &["unknown/dir/state.json"],
+        ))? == "included_historical_reachable_only",
+        "rule 0 covers first-parent commits only",
+    )?;
     let mut merge = commit(5, Some(1), "present_effective", &["crates/ripr/src/a.rs"]);
     merge.parent_shas.push(sha(77));
     require(
@@ -358,6 +382,10 @@ fn bad_overrides_are_rejected() -> Result<(), String> {
         (vec![entry(sha(5), "blocking_unresolved")], "non-blocking"),
         (vec![entry(sha(5), "looks_fine")], "non-blocking"),
         (
+            vec![entry(sha(5), "included_accepted_product")],
+            "only blocking_unresolved",
+        ),
+        (
             vec![
                 entry(sha(5), "included_test_or_evidence"),
                 entry(sha(5), "included_test_or_evidence"),
@@ -383,4 +411,33 @@ fn bad_overrides_are_rejected() -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn short_commit_ids_do_not_panic_the_override_reference() -> Result<(), String> {
+    let mut short = commit(5, Some(1), "present_effective", &[]);
+    short.commit_sha = "abc".to_string();
+    let input = facts(vec![short]);
+    let set = Overrides {
+        schema_version: "1".to_string(),
+        kind: OVERRIDES_KIND.to_string(),
+        overrides: vec![Override {
+            commit_sha: "abc".to_string(),
+            disposition: "included_historical_reachable_only".to_string(),
+            owner: "reviewer".to_string(),
+            note: "reason".to_string(),
+        }],
+    };
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: Some(&set),
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let record = ledger.records.first().ok_or("no record")?;
+    require(
+        record.override_ref.as_deref() == Some("override:abc"),
+        "short id reference",
+    )
 }

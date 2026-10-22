@@ -189,6 +189,20 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
         return blocked("empty", "empty diff: needs an override", limitations);
     }
     let class = strongest_class(&commit.paths).unwrap_or(PathClass::Other);
+    // Rule 0 looks at every path, not the strongest class: an unclassified path
+    // beside a product path must not be hidden by the product class.
+    if first_parent
+        && commit
+            .paths
+            .iter()
+            .any(|path| classify_path(path) == PathClass::Other)
+    {
+        return blocked(
+            PathClass::Other.theme(),
+            "path outside every v1 path class: needs an override",
+            limitations,
+        );
+    }
     if !first_parent {
         limitations.push("reached through a merge, not first-parent".to_string());
         return decided(
@@ -278,9 +292,18 @@ pub(super) fn derive(input: &DeriveInput<'_>) -> Result<Ledger, String> {
         let mut owner = RULE_OWNER.to_string();
         let mut override_ref = None;
         if let Some(entry) = overrides.get(commit.commit_sha.as_str()) {
+            if decision.disposition != BLOCKING {
+                return Err(format!(
+                    "override for {} replaces rule disposition {}: overrides resolve only blocking_unresolved rows",
+                    commit.commit_sha, decision.disposition
+                ));
+            }
             disposition = entry.disposition.clone();
             owner = entry.owner.clone();
-            override_ref = Some(format!("override:{}", &commit.commit_sha[..12]));
+            override_ref = Some(format!(
+                "override:{}",
+                commit.commit_sha.get(..12).unwrap_or(&commit.commit_sha)
+            ));
             decision.limitations.push(format!(
                 "rule disposition {} overridden: {}",
                 decision.disposition, entry.note

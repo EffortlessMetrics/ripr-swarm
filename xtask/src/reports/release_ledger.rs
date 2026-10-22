@@ -156,6 +156,19 @@ fn run_derive(args: &[String]) -> Result<(), String> {
         stage,
         audit,
     })?;
+    let context = Context {
+        expected_base: Some(validate::RELEASE_BASE_0_11.to_string()),
+        packet: Some(packet),
+        ..Context::default()
+    };
+    let reasons = validate(&ledger, &context);
+    if let Some(first) = reasons.first() {
+        // Leave --output untouched: a failed derivation must not replace a valid ledger.
+        return Err(format!(
+            "derived ledger is invalid ({} reasons); first: {first}",
+            reasons.len()
+        ));
+    }
     let text = serde_json::to_string_pretty(&ledger)
         .map_err(|error| format!("failed to serialize release-ledger: {error}"))?;
     write_output(output, &format!("{text}\n"))?;
@@ -173,20 +186,7 @@ fn run_derive(args: &[String]) -> Result<(), String> {
     for (name, count) in by_disposition {
         println!("  {name}: {count}");
     }
-    let context = Context {
-        packet: Some(packet),
-        ..Context::default()
-    };
-    let reasons = validate(&ledger, &context);
-    if reasons.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "derived ledger is invalid ({} reasons); first: {}",
-            reasons.len(),
-            reasons[0]
-        ))
-    }
+    Ok(())
 }
 
 fn write_output(output: &str, text: &str) -> Result<(), String> {
