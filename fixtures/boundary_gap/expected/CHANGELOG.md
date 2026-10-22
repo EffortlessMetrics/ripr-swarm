@@ -1031,3 +1031,13 @@ commitments and receipt byte hashes bind those exact updated bytes. Semantic
 evidence, unchanged movement, incomplete receipt routing and all tamper
 controls remain unchanged. This is a portable negative-control input update,
 not a new execution receipt.
+
+### macro_rules! test tables classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.90 to 1.91 for same-file `macro_rules!` test tables that index one generated
+test per row (RIPR-SPEC-0117, #6925). Only the generation and its content
+commitment changed; the dependent verify commitments and receipt byte hashes
+bind those exact updated bytes. Semantic evidence, unchanged movement,
+incomplete receipt routing and all tamper controls remain unchanged. This is a
+portable negative-control input update, not a new execution receipt.
