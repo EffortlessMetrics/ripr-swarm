@@ -360,12 +360,23 @@ impl<'index> EvidencePass<'index> {
         self.shared_tables_warmed.call_once(|| {
             cancellation::with_optional_token(token, || {
                 crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                    // A cancelled pass returns no evidence, so it stops paying
+                    // for tables nobody will read.
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
                     let started = Instant::now();
                     context.prime_pin_syntax_scan();
                     trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
                     let started = Instant::now();
                     context.unseen_reach_names();
                     trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
+                    if cancellation::checkpoint().is_err() {
+                        return;
+                    }
                     let started = Instant::now();
                     context.type_mentions();
                     trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
