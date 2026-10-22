@@ -32,6 +32,7 @@
 
 use super::import_source_module_matches_owner;
 use super::related_tests::related_test_relation;
+use super::sink_alignment::{binds_by_walrus, pattern_binds_name};
 use super::source_facts::parse_module_result;
 use super::{PythonAssertion, PythonBareBoolCall, PythonOracleShape, PythonOwner, PythonTest};
 use crate::domain::{OracleKind, OracleStrength, OwnerKind};
@@ -161,6 +162,11 @@ fn owner_returns_bool(
     let (Some(function), None) = (definitions.next(), definitions.next()) else {
         return false;
     };
+    // An assignment expression binds wherever it sits (`if (f := ..):`, a match
+    // subject or guard), so it is scanned textually over the whole module.
+    if binds_by_walrus(source, &owner.name) {
+        return false;
+    }
     // Any other binding of the name, at any depth, can swap the function out.
     if module
         .iter()
@@ -257,7 +263,10 @@ fn binds_name(stmt: &Stmt, name: &str, definition: Option<&ast::StmtFunctionDef>
             name,
             definition,
         ),
-        Stmt::Match(stmt) => stmt.cases.iter().any(|case| any(&case.body)),
+        Stmt::Match(stmt) => stmt
+            .cases
+            .iter()
+            .any(|case| pattern_binds_name(&case.pattern, name) || any(&case.body)),
         Stmt::Global(global) => global.names.iter().any(|bound| bound.as_str() == name),
         Stmt::Nonlocal(nonlocal) => nonlocal.names.iter().any(|bound| bound.as_str() == name),
         _ => false,

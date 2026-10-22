@@ -188,6 +188,12 @@ fn given_another_binding_of_the_owner_name_anywhere_in_its_module_then_the_asser
         "del is_adult\n",
         "for is_adult in range(2):\n    pass\n",
         "with open('x') as is_adult:\n    pass\n",
+        "match (lambda age: True):\n    case is_adult:\n        pass\n",
+        "match 1:\n    case [*is_adult]:\n        pass\n",
+        "match 1:\n    case int() as is_adult:\n        pass\n",
+        "if (is_adult := lambda age: True):\n    pass\n",
+        "while (is_adult := lambda age: True):\n    break\n",
+        "match 1:\n    case 1 if (is_adult := None):\n        pass\n",
     ] {
         let strengths = strengths_with_owner(&format!("{BOOL_OWNER}{rebinding}"));
         assert_eq!(strengths, vec![OracleStrength::Smoke; 2], "{rebinding}");
