@@ -23,4 +23,4 @@ jobs:
       - name: Run the two bash-stub test targets
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p xtask --test hard_cut_admission_selftest --test routed_dispatch_result -- --test-threads=2 > target/probe.log 2>&1; status=$?; cat target/probe.log; exit "$status"
+          mkdir -p target; set +e; cargo test -p xtask --test hard_cut_admission_selftest --test routed_dispatch_result --no-fail-fast -- --test-threads=2 > target/probe.log 2>&1; status=$?; cat target/probe.log; exit "$status"
