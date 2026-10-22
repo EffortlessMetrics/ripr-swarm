@@ -381,7 +381,7 @@ fn has_closure(text: &str) -> bool {
     text.match_indices('|').any(|(at, _)| {
         let before = text[..at].trim_end();
         let opens = |ch: char| matches!(ch, '(' | ',' | '=');
-        text[..at].chars().next_back() != Some('|')
+        !text[..at].ends_with('|')
             && (before.chars().next_back().is_some_and(opens) || before.ends_with("move"))
     })
 }
