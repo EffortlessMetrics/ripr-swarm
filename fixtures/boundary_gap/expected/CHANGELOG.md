@@ -1002,3 +1002,32 @@ verify commitments and receipt byte hashes bind those exact updated bytes.
 Semantic evidence, historical/noncurrent status, advisory output, unchanged
 movement, incomplete receipt routing and all tamper controls remain unchanged.
 This is a portable negative-control input update, not a new execution receipt.
+
+### #8051 - debug-assertion profile limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.87 to 1.88 for the `debug_assert_eq!` profile limit. Only the generation and
+its content commitment changed; the dependent verify commitments and receipt
+byte hashes bind those exact updated bytes. Semantic evidence, unchanged
+movement, incomplete receipt routing and all tamper controls remain unchanged.
+This is a portable negative-control input update, not a new execution receipt.
+
+### #8606 - mock call-count side-flip classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.88 to 1.89 for mock call-count side flips (RIPR-SPEC-0305). Only the
+generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### tokio spawned-task assertion pins classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.89 to 1.90 for joined `tokio::spawn` assertion pins (RIPR-SPEC-0197). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.

@@ -610,7 +610,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         let Some(snapshot) = &self.last_good else {
@@ -1374,6 +1374,7 @@ pub(crate) fn run_check(
         &output.findings,
         &inventory.candidate_seams,
         crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+        &inventory.completeness,
     );
     let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     snapshot.base = base.map(str::to_string);

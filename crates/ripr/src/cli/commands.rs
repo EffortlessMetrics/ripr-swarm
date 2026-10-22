@@ -140,6 +140,10 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 mod review_comments;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/capabilities.rs"]
+mod capabilities;
+pub(super) use capabilities::capabilities;
+
 #[path = "commands/doctor.rs"]
 mod doctor;
 pub(super) use doctor::doctor;
@@ -3051,6 +3055,7 @@ fn run_diff_check_from_file(
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)

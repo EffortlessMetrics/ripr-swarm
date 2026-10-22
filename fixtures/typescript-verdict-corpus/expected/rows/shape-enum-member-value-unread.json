@@ -1,0 +1,20 @@
+{
+  "case_id": "shape-enum-member-value-unread",
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "anchor": "src/level.ts:3",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_enum_symbolic_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "silent",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [],
+  "outcome": "false_silent",
+  "contradictions": [],
+  "findings_scored": 0,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

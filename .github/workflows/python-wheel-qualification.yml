@@ -486,9 +486,10 @@ jobs:
           planted="${RUNNER_TEMP}/planted-${CLIENT}"
           planted_marker="${RUNNER_TEMP}/planted-${CLIENT}-executed"
           mkdir -p "${planted}"
+          # The marker becomes shell source; encode its literal path once.
           cat > "${planted}/ripr" <<SH
           #!/usr/bin/env bash
-          printf 'planted PATH ripr was executed\n' > "${planted_marker}"
+          printf 'planted PATH ripr was executed\n' > $(printf '%q' "${planted_marker}")
           exit 97
           SH
           chmod +x "${planted}/ripr"
@@ -570,7 +571,7 @@ jobs:
           mkdir -p "${fixture}/.venv/bin"
           cat > "${fixture}/.venv/bin/python" <<SH
           #!/usr/bin/env bash
-          printf 'project virtualenv was executed\n' > "${project_marker}"
+          printf 'project virtualenv was executed\n' > $(printf '%q' "${project_marker}")
           exit 98
           SH
           chmod +x "${fixture}/.venv/bin/python"

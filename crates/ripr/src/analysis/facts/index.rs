@@ -120,6 +120,9 @@ pub struct RustIndex {
     test_positions: Vec<usize>,
     membership_revision: u64,
     pub package_names: BTreeSet<String>,
+    /// The identifier the root package's library is imported as (#8999);
+    /// `None` when not established. Not serialized, like `macro_owned_crates`.
+    pub(crate) root_library_name: Option<String>,
     /// `package_names` plus the crate names of workspace members that have
     /// at least one indexed file. Only the trusted-macro binding scan reads
     /// it: a glob import from such a crate brings in macros whose

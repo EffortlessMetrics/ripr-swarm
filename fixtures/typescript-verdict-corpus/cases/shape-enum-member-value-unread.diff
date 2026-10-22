@@ -1,0 +1,12 @@
+diff --git a/src/level.ts b/src/level.ts
+index 0000000..1111111 100644
+--- a/src/level.ts
++++ b/src/level.ts
+@@ -1,6 +1,6 @@
+ export enum Level {
+   Low = 1,
+-  High = 2,
++  High = 3,
+ }
+ 
+ export function weight(level: Level): number {

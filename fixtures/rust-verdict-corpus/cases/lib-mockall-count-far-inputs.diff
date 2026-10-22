@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -38,7 +38,7 @@ pub fn remind_always(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool
+ }
+ 
+ pub fn remind_far(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+-    if overdue_days > GRACE_DAYS {
++    if GRACE_DAYS < overdue_days {
+         return mailer.send(user, "late");
+     }
+     false
