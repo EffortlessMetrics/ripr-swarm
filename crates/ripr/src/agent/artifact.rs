@@ -362,9 +362,10 @@ fn running_executable() -> Option<String> {
 /// no-envelope diagnosis and the foreign-producer-version diagnosis.
 fn repo_exposure_regeneration_guidance(root: &Path) -> String {
     let program = running_executable();
-    let bash_recovery = super::loop_commands::check_repo_exposure_command_with_program(
+    let bash_recovery = super::loop_commands::check_repo_exposure_command_with_program_and_base(
         program.as_deref().unwrap_or("ripr"),
         &super::loop_commands::bound_root(&root.to_string_lossy()),
+        None,
         "draft",
         "recovered.repo-exposure.json",
     );
@@ -1470,9 +1471,10 @@ mod tests {
     fn expected_recovery_command(root: &str) -> Result<String, String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         Ok(
-            super::super::loop_commands::check_repo_exposure_command_with_program(
+            super::super::loop_commands::check_repo_exposure_command_with_program_and_base(
                 &exe.to_string_lossy(),
                 &super::super::loop_commands::bound_root(root),
+                None,
                 "draft",
                 "recovered.repo-exposure.json",
             ),
