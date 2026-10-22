@@ -213,8 +213,11 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 /// - N > 0 + discriminating class (`Exposed`):
 ///   `ripr: N related tests (exposed) · static, cached`
 /// - N > 0 + non-discriminating class (anything except `Exposed`):
-///   `ripr: N related tests, no static discriminator (CLASS) · static, cached`
-/// - N == 0: `ripr: no related tests found (CLASS) · static, cached`
+///   `ripr: N related tests, no static discriminator (PLAIN) · static, cached`
+/// - N == 0: `ripr: no related tests found (PLAIN) · static, cached`
+///   where `PLAIN` is the same plain vocabulary word (`exposed`, `weak`,
+///   `unrevealed`, `no path`, `unknown`) the `ripr check` summary uses, not
+///   the schema value (`as_str` stays in JSON / `human-full` / `explain`).
 /// - Appends `· as of Xs ago` when the snapshot age is known.
 ///
 /// Vocabulary enforcement: titles must not contain runtime mutation-testing
@@ -224,7 +227,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
         .language_status
         .as_ref()
         .is_some_and(|s| *s == LanguageStatus::Preview);
-    let class_label = finding.class.as_str();
+    let class_label = finding.class.plain_label();
     let count = finding.related_tests.len();
 
     let body = if is_preview {
