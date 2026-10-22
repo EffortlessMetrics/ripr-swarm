@@ -1,0 +1,22 @@
+{
+  "case_id": "mined-feature-v4-stamp-run-with-feature",
+  "subject_id": "authored-mined-features",
+  "origin": "authored",
+  "anchor": "src/lib.rs:9",
+  "behavior_family": "return_value_bitmask",
+  "test_shape": "feature_gated_module_tests_run_with_feature",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
