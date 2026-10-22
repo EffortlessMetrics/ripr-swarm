@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- TypeScript and JavaScript repo-mode analysis is no longer an empty stub: `analyze_repo` selects production sources under the shared `RIPR_MAX_REPO_INDEX_FILES` cap, reuses the diff-mode owner, test and oracle producers, and keeps `typescript`/`javascript` identity on preview findings without fabricating Rust seams. Capped, truncated, unreadable, unparseable or partially indexed runs disclose a `typescript_repo_*` partial reason and never back an all-clear (#5545, #6395).
