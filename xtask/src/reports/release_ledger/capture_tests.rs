@@ -416,3 +416,65 @@ fn editor_rust_is_scanned_and_same_line_product_edits_stay_product() -> Result<(
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+#[test]
+fn changing_which_code_is_cfg_test_gated_is_not_an_inline_test_edit() -> Result<(), String> {
+    let root = new_repo("inline-gate")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let path = "crates/ripr/src/gate.rs";
+        let gated = "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nfn helper() -> u8 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {}\n}\n";
+        let base = commit(&root, &[(path, Some(gated))], "base")?;
+        // Pure deletion of the attribute line: `helper` now compiles in production.
+        let ungated = commit(
+            &root,
+            &[(
+                path,
+                Some(&gated.replacen("#[cfg(test)]\nfn helper", "fn helper", 1)),
+            )],
+            "fix: compile helper everywhere (#61)",
+        )?;
+        // Pure insertion of an attribute line above existing code.
+        let regated = commit(&root, &[(path, Some(gated))], "fix: gate helper (#62)")?;
+        // Adding a whole new test module is a test-only change.
+        let added = commit(
+            &root,
+            &[(
+                path,
+                Some(&format!(
+                    "{gated}#[cfg(test)]\nmod more {{\n    #[test]\n    fn also() {{}}\n}}\n"
+                )),
+            )],
+            "test: more (#63)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &added,
+            main: &added,
+        })?;
+        let inline = |sha: &str| -> Result<Vec<String>, String> {
+            facts
+                .commits
+                .iter()
+                .find(|commit| commit.commit_sha == sha)
+                .map(|commit| commit.inline_test_paths.clone())
+                .ok_or_else(|| format!("{sha} missing from facts"))
+        };
+        require(
+            inline(&ungated)?.is_empty(),
+            "deleting only the attribute line changes production compilation",
+        )?;
+        require(
+            inline(&regated)?.is_empty(),
+            "inserting only the attribute line changes production compilation",
+        )?;
+        require(
+            inline(&added)? == [path.to_string()],
+            "a whole new cfg(test) module is a test-only change",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
