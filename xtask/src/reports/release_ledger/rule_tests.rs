@@ -25,6 +25,7 @@ fn commit(n: u8, position: Option<u64>, effect: &str, paths: &[&str]) -> CommitF
         pr_refs: position.map_or_else(Vec::new, |_| vec![u64::from(n)]),
         issue_refs: Vec::new(),
         paths: paths.iter().map(|path| (*path).to_string()).collect(),
+        inline_test_paths: Vec::new(),
         final_tree_effect: effect.to_string(),
         effect_basis: EffectBasis {
             alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect"),
@@ -510,5 +511,32 @@ fn failed_derivation_leaves_an_existing_output_untouched() -> Result<(), String>
     require(
         kept == "previous ledger",
         "the existing output was replaced",
+    )
+}
+
+#[test]
+fn inline_test_only_product_paths_count_as_evidence() -> Result<(), String> {
+    let path = "crates/ripr/src/lib.rs";
+    let mut inline = commit(5, Some(1), "present_effective", &[path]);
+    require(
+        disposition_of(inline.clone())? == "included_accepted_product",
+        "no inline-test fact keeps the path product",
+    )?;
+    inline.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(inline.clone())? == "included_test_or_evidence",
+        "an inline-test-only path is evidence",
+    )?;
+    // The fact covers only the path it names.
+    let mut mixed = commit(
+        5,
+        Some(1),
+        "present_effective",
+        &[path, "crates/ripr/src/other.rs"],
+    );
+    mixed.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(mixed)? == "included_accepted_product",
+        "another product path keeps the commit product",
     )
 }

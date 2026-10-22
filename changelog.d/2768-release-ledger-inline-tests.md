@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- Release ledger rule v1 counts a product `.rs` path as evidence when every hunk of the commit sits inside a `#[cfg(test)]` item (detected per hunk from `git diff -U0`), so a commit that only edits inline tests is `included_test_or_evidence` instead of product. A commit that also edits product code in the same file stays product. On the 0.11 dry-run range this moves 45 rows (36 to evidence, 9 to control) (#2768).

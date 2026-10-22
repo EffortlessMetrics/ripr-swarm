@@ -277,3 +277,81 @@ fn repeated_capture_flags_are_rejected_before_git_runs() -> Result<(), String> {
         "the repeated flag is named",
     )
 }
+
+#[test]
+fn inline_test_edits_are_detected_per_hunk_from_real_git() -> Result<(), String> {
+    let root = new_repo("inline")?;
+    let result = (|| {
+        fs::create_dir_all(root.join("crates/ripr/src")).map_err(|error| error.to_string())?;
+        let path = "crates/ripr/src/lib.rs";
+        let base = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n    }\n}\n",
+                ),
+            )],
+            "base",
+        )?;
+        let test_only = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "test: tighten (#41)",
+        )?;
+        let product_only = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    2\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 1);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "fix: change (#42)",
+        )?;
+        let mixed = commit(
+            &root,
+            &[(
+                path,
+                Some(
+                    "pub fn run() -> u8 {\n    3\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn runs() {\n        assert_eq!(super::run(), 3);\n        assert_ne!(super::run(), 2);\n    }\n}\n",
+                ),
+            )],
+            "fix: both (#43)",
+        )?;
+        let facts = capture(&CaptureArgs {
+            repo: &root,
+            repository: "example/ledger",
+            base: &base,
+            cut: &mixed,
+            main: &mixed,
+        })?;
+        let inline = |sha: &str| -> Result<Vec<String>, String> {
+            facts
+                .commits
+                .iter()
+                .find(|commit| commit.commit_sha == sha)
+                .map(|commit| commit.inline_test_paths.clone())
+                .ok_or_else(|| format!("{sha} missing from facts"))
+        };
+        require(
+            inline(&test_only)? == [path.to_string()],
+            "a hunk inside the cfg(test) module is an inline-test edit",
+        )?;
+        require(
+            inline(&product_only)?.is_empty(),
+            "a hunk in product code is not",
+        )?;
+        require(
+            inline(&mixed)?.is_empty(),
+            "a hunk inside and a hunk outside the module keeps the file product",
+        )
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}

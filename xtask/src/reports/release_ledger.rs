@@ -10,11 +10,14 @@
 
 mod capture;
 mod dto;
+mod inline_tests;
 mod rule;
 mod validate;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod inline_tests_tests;
 #[cfg(test)]
 mod rule_tests;
 #[cfg(test)]
