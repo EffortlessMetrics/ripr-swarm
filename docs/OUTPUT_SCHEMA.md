@@ -3560,6 +3560,27 @@ value as `finding_alignment.items[].canonical_gap_id` and the finding-level
 `ripr receipt write --gap` and the gap ledger instead of inventing a second
 one. It is emitted between `tool` and `source_currentness`.
 
+## Check Findings Artifact
+
+`ripr check --format check-findings-json` emits the complete diff-scoped
+`check --format json` document (the Output section above, never
+findings-bounded) with one additive top-level member, `artifact`, as its
+first member (ADR 0020 amendment, #9103). The envelope is the same shared
+projection `repo-exposure-json` carries with these token differences: `kind`
+is `"check_findings"` and `analysis.format` / `analysis.command` name
+`check-findings-json` / `ripr check --format check-findings-json`. The
+`content_sha256` commitment covers the exact emitted bytes with the digest
+replaced by the fixed placeholder. The analysis format is part of
+`analysis.input_identity`, so this artifact is never comparable to a
+repo-exposure artifact.
+
+`ripr agent verify` and `ripr agent receipt` accept it as a snapshot. It is
+validated by the same identity, commitment and Git-provenance authority as
+`repo-exposure-json`, and additionally requires
+`analysis_outcome.analysis_complete: true`, no `document_complete: false`,
+and unique gap ids with a non-empty classification, file and line. Movement is
+compared per canonical gap id.
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
@@ -3738,7 +3759,9 @@ identity is unchanged. Only the current `input:v4:` identity version with the
 exact `fnv1a64:<16 lowercase hex>` digest shape validates as current
 evidence; a wrong version is rejected as an unsupported input identity
 version and a wrong digest shape as a malformed input identity digest. `agent verify`
-and `agent receipt` compare the stable producer/version, base, mode, and
+and `agent receipt` require `artifact.producer.version` to equal the consuming
+executable's version exactly (an artifact from any other RIPR build is refused
+with a regenerate diagnostic, #9500), and compare the base, mode, and
 profile fields separately, and reject unchanged identities when the declared
 repository commits differ. `analysis.command` and `analysis.profile` state the
 producer operation used.
