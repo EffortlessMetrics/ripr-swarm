@@ -831,10 +831,6 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
 
-[[known_false]]
-case = "grid-flow-err-guard"
-issue = 6578
-reason = "Mislabeled truth: the case's own test does not pin the version string, so one mutant survives; relabel to partially_discriminated in #9408."
 
 [[known_false]]
 case = "mined-allowlist-listed-row-ftp"

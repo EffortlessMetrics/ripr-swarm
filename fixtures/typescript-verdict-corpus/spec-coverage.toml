@@ -651,13 +651,3 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 case = "jest-mined-private-impl-dispatcher"
 issue = 6655
 reason = "A module-private impl behind an exported dispatcher reads as a gap; follow the exported caller (#6655)."
-
-[[known_false]]
-case = "jest-spec0246-ex07-then-rejection-handler"
-issue = 8679
-reason = "RIPR-SPEC-0246 withholds credit for .then(ok, onRejected) because the handler can swallow a rejection (#8679)."
-
-[[known_false]]
-case = "jest-spec0246-ex09-async-foreach"
-issue = 8679
-reason = "RIPR-SPEC-0246 withholds credit for async forEach because the promise is discarded (#8679)."

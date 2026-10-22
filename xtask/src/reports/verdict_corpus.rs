@@ -3099,24 +3099,8 @@ fn score_loaded_corpus(
         Ok(None) => None,
         Err(failure) => Some(failure),
     };
-    // A subset run cannot see the whole corpus's false rows.
-    let gate_failure = if cases.is_none() && dir.join(coverage::LEDGER_FILE).is_file() {
-        let ledger = coverage::load_ledger(dir)?;
-        let scored: Vec<(&str, Outcome)> = report
-            .rows
-            .iter()
-            .map(|row| (row.case_id.as_str(), row.outcome))
-            .collect();
-        match known_false::known_false_gate(&scored, &ledger, &coverage::ledger_label(dir)) {
-            Ok(()) => gate_failure,
-            Err(failure) => Some(match gate_failure {
-                Some(existing) => format!("{existing}\n{failure}"),
-                None => failure,
-            }),
-        }
-    } else {
-        gate_failure
-    };
+    let gate_failure =
+        known_false::apply_known_false_gate(dir, cases.is_some(), &report.rows, gate_failure)?;
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
         return gate_failure.map_or(Ok(()), Err);

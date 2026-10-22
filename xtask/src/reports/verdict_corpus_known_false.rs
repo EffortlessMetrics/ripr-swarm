@@ -7,10 +7,11 @@
 //! must be removed. A fixed row therefore leaves the ledger, and its return
 //! fails `check` as an unlisted false verdict.
 
-use super::Outcome;
 use super::coverage::Ledger;
+use super::{CaseRow, Outcome, coverage};
 use serde::Deserialize;
 use std::collections::BTreeSet;
+use std::path::Path;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +82,33 @@ pub(crate) fn known_false_gate(
     }
 }
 
+/// Join the ledger gate's failure to `existing`. A case subset cannot see the
+/// whole corpus's false rows, and a corpus without a ledger has no gate.
+pub(crate) fn apply_known_false_gate(
+    dir: &Path,
+    subset: bool,
+    rows: &[CaseRow],
+    existing: Option<String>,
+) -> Result<Option<String>, String> {
+    if subset || !dir.join(coverage::LEDGER_FILE).is_file() {
+        return Ok(existing);
+    }
+    let ledger = coverage::load_ledger(dir)?;
+    let scored: Vec<(&str, Outcome)> = rows
+        .iter()
+        .map(|row| (row.case_id.as_str(), row.outcome))
+        .collect();
+    Ok(
+        match known_false_gate(&scored, &ledger, &coverage::ledger_label(dir)) {
+            Ok(()) => existing,
+            Err(failure) => Some(match existing {
+                Some(existing) => format!("{existing}\n{failure}"),
+                None => failure,
+            }),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +177,42 @@ mod tests {
         let ownerless = "[[known_false]]\ncase = \"a\"\nissue = 0\nreason = \" \"\n";
         let err = failure(&[("a", Outcome::FalseSilent)], ownerless);
         assert!(err.contains("owning `issue`"), "{err}");
+    }
+
+    fn committed_rust_rows() -> Result<(std::path::PathBuf, Vec<CaseRow>), String> {
+        let dir = crate::dogfood::repo_rooted_fixture_path("fixtures/rust-verdict-corpus");
+        let rows = super::super::expected_report(&dir)?.rows;
+        Ok((dir, rows))
+    }
+
+    #[test]
+    fn wiring_accepts_the_committed_ledger_against_blessed_rows() -> Result<(), String> {
+        let (dir, rows) = committed_rust_rows()?;
+        assert_eq!(apply_known_false_gate(&dir, false, &rows, None)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn wiring_fails_an_unlisted_false_row_and_keeps_the_earlier_failure() -> Result<(), String> {
+        let (_, rows) = committed_rust_rows()?;
+        let empty = crate::tests::temp_dir("known-false-empty-ledger");
+        std::fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
+        std::fs::write(
+            empty.join(coverage::LEDGER_FILE),
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let alone = apply_known_false_gate(&empty, false, &rows, None)?.unwrap_or_default();
+        assert!(alone.contains("is a false verdict"), "{alone}");
+        let joined = apply_known_false_gate(&empty, false, &rows, Some("oracle failed".into()))?
+            .unwrap_or_default();
+        assert!(
+            joined.starts_with("oracle failed\n") && joined.contains("is a false verdict"),
+            "{joined}"
+        );
+        // A case subset cannot see the whole corpus, so it is never gated.
+        assert_eq!(apply_known_false_gate(&empty, true, &rows, None)?, None);
+        Ok(())
     }
 
     #[test]
