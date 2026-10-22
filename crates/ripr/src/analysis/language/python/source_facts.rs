@@ -689,6 +689,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             body: &imports,
             definition: &[],
             standard_unittest_list: false,
+            subclassed: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,

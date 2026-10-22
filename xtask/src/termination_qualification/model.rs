@@ -159,6 +159,9 @@ pub(crate) enum ControlKind {
     /// A stub binary the harness must classify as a failure. Proves the
     /// classifier discriminates without a second product build.
     Instrument,
+    /// A stub run through the launch path that must show the harness, not the
+    /// environment, decided what ran (#4510).
+    Execution,
     /// The real pre-repair or budget-disabled binary run over the corpus.
     Removal,
     /// The unchanged binary run over the corpus a second time.
@@ -304,6 +307,7 @@ pub(crate) fn render_markdown(packet: &Packet) -> String {
             control.id,
             match control.kind {
                 ControlKind::Instrument => "instrument",
+                ControlKind::Execution => "execution",
                 ControlKind::Removal => "removal",
                 ControlKind::Repeat => "repeat",
             },
