@@ -4437,7 +4437,8 @@ mod tests {
             }
             // A successful icacls exit does not prove this process is denied
             // (hosted runners were observed creating through the ACE), so
-            // establish the denial the same way as the Unix root check.
+            // establish the denial the same way as the Unix root check. A
+            // skipped oracle here is a known coverage hole: #9688.
             if creation_is_denied(dir, windows_deny == "(WD)") {
                 return Ok(true);
             }
