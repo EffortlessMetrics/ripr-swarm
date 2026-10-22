@@ -378,7 +378,7 @@ pub(super) fn read_baseline_impl(
                 ));
                 return BaselineIndex::default();
             }
-            if let Some(defect) = baseline_document_defect(&value) {
+            if let Some(defect) = baseline_document_defect(&value, &display_path(&input.root)) {
                 config_errors.push(format!(
                     "baseline {} is not a recognized gate baseline: {defect}",
                     display_path(path),
@@ -476,10 +476,38 @@ const BASELINE_IDENTITY_ARRAYS: [&str; 5] = [
 /// empty baseline (every finding new) or as an unrelated document whose ids
 /// happen to be harvested. `schema_version` is not required because the
 /// documented hand-built compatibility baselines may omit it.
-fn baseline_document_defect(value: &Value) -> Option<String> {
+fn baseline_document_defect(value: &Value, current_root: &str) -> Option<String> {
     let Some(object) = value.as_object() else {
         return Some("expected a JSON object".to_string());
     };
+    // Same contract as `ripr baseline diff` (#9301): a recorded schema_version
+    // must be the supported one, and a recorded root (top-level or per entry)
+    // must name this repository. Absent values stay accepted (compat window).
+    if let Some(version) = object.get("schema_version")
+        && version.as_str() != Some(crate::output::baseline_delta::BASELINE_SCHEMA_VERSION)
+    {
+        return Some(format!(
+            "unsupported schema_version {version}; expected \"{}\"",
+            crate::output::baseline_delta::BASELINE_SCHEMA_VERSION
+        ));
+    }
+    let entry_roots = object
+        .get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("root"));
+    for root in object.get("root").into_iter().chain(entry_roots) {
+        let recorded = root.as_str().unwrap_or_default();
+        if root.as_str().is_none()
+            || crate::output::baseline_delta::normalize_root_for_comparison(recorded)
+                != crate::output::baseline_delta::normalize_root_for_comparison(current_root)
+        {
+            return Some(format!(
+                "baseline root {root} does not match the gate root \"{current_root}\" (foreign repository baseline)"
+            ));
+        }
+    }
     match object.get("kind") {
         Some(Value::String(kind)) if kind == GATE_BASELINE_KIND => {
             return if object.get("entries").is_some_and(Value::is_array) {

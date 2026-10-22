@@ -1073,6 +1073,63 @@ fn given_baseline_of_unrecognized_kind_when_gate_evaluated_then_config_error() -
 }
 
 #[test]
+fn given_baseline_with_foreign_schema_or_root_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    // #9301 F3: the gate shares `baseline diff`'s schema/root contract.
+    let (_fixture, probe) = fixture_input(GateMode::BaselineCheck)?;
+    let own_root = display_path(&probe.root).replace('\\', "/");
+    let foreign = [
+        (
+            "schema-99.json",
+            r#"{"schema_version":"99.0","kind":"gate_baseline","entries":[]}"#.to_string(),
+            "unsupported schema_version",
+        ),
+        (
+            "root-top.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","root":"/elsewhere/other","entries":[]}"#
+                .to_string(),
+            "foreign repository baseline",
+        ),
+        (
+            "root-entry.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"root":"/elsewhere/other","canonical_gap_id":"a"}]}"#
+                .to_string(),
+            "foreign repository baseline",
+        ),
+    ];
+    for (name, contents, expected) in foreign {
+        let dir = temp_dir("gate-baseline-foreign")?;
+        let baseline = write_temp_json(&dir, name, &contents)?;
+        let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{name}");
+        assert!(
+            report.config_errors.iter().any(|e| e.contains(expected)),
+            "{name}: {:?}",
+            report.config_errors
+        );
+        ignore_remove_dir_all(dir);
+    }
+    // Positive control: matching root and supported schema stay accepted.
+    let dir = temp_dir("gate-baseline-own-root")?;
+    let contents = format!(
+        r#"{{"schema_version":"0.1","kind":"gate_baseline","root":{own_root:?},"entries":[{{"root":{own_root:?},"canonical_gap_id":"a"}}]}}"#
+    );
+    let baseline = write_temp_json(&dir, "own.json", &contents)?;
+    let (_f, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_calibrated_mode_uses_imported_mutation_support() -> Result<(), String> {
     let dir = temp_dir("gate-mutation-calibrated")?;
     let baseline = dir.join("baseline.json");
