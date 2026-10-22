@@ -61,9 +61,9 @@ this repository's license, one per test library or library feature:
   `unittest.TestCase` with `setUp` run under pytest, and an autouse fixture.
 - `authored-py-pytest-hostile`: inputs that stress file, name and syntax
   handling. Non-ASCII identifiers and strings, tab indentation, a file with no
-  final newline, a 480-character line, a function named like a builtin, a
-  conditional definition (live and dead branch), `from m import *` with and
-  without `__all__`, a test that asserts nothing, a CRLF test file asserting
+  final newline, a 488-character line, a function named like a builtin, a
+  conditional definition (live and dead branch), `from m import *` through a
+  module whose `__all__` exports one name and omits another, a test that asserts nothing, a CRLF test file asserting
   through a helper in another file, a module-level lambda, `globals()`
   dispatch, a module constant read by a test class, the same function name in
   two modules, a nested function, and an unrelated unparseable module.

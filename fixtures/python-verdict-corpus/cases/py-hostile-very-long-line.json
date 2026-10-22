@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "arithmetic_constant",
   "test_shape": "pytest_very_long_expression_line",
-  "hard_case": "a 480-character source line",
+  "hard_case": "a 488-character source line",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
