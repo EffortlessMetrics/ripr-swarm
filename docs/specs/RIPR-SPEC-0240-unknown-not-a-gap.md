@@ -302,6 +302,38 @@ the typed reason. Crediting the assertion would be a new table-family rule
 that also changes unsaturated inputs, and it would move a finding toward
 `exposed` (a clean claim), not toward a repair signal, so it needs its own
 corpus and decision. `call_budget_slice_positive.rs` pins the three readings.
+### Caller-loop selector domains (#5503)
+
+A table-like owner (`fn max_scalar_value(n: usize) -> u32 { match n { 1 =>
+.., 2 => .. } }`) is often called only from a bounded loop inside an
+`Iterator::next`, and the test collects the iterator and compares the whole
+collection. The classifier sees a shared name token and reads a certain
+`weakly_exposed` gap. `caller_loop_selector::withhold_caller_loop_selector_gap`
+withholds a `weakly_exposed` or `reachable_unrevealed` `match_arm` finding
+with no `static_limit_kind` under `rust_caller_loop_selector_unresolved` when:
+
+- the changed line is one integer-literal arm of a one-parameter owner whose
+  body matches on that parameter;
+- the owner's only call (no other function or test calls it) is in a `for VAR in A..B` or
+  `A..=B` loop in the `next` of an `impl Iterator for TYPE`, where each bound
+  is an integer literal or a uniquely defined `const`, the range holds at most
+  64 selectors, the call is `owner(VAR)` once at the loop body's top level, no
+  `continue`, `break`, `return` or `?` precedes it and `VAR` is not rebound;
+- the arm's selector is in that range (the range and its file:line are
+  recorded as `caller_loop_selector_domain` evidence);
+- a non-ignored related test binds
+  `let x = TYPE::ctor(..).collect()` directly and uses `x` only as a whole
+  operand of `assert_eq!`, with the constructor defined once in the file and returning `Self` or the iterator type.
+
+An arm outside the range, an unresolved, empty or oversized range, an
+unreadable loop, a caller that is not `Iterator::next`, a second loop caller,
+or a consumer that takes, filters, maps or mutates the items keeps the gap.
+ripr does not prove the loop is entered for the test's input or that the arm's
+value reaches the compared items, so nothing is credited: the corpus row
+`regex-syntax-max-scalar-two-byte` moves from `gap` to `limited`, and
+`regex-syntax-word-byte` stays a gap. Credit needs a producer that proves loop
+entry and value flow; #5503 stays open for it.
+
 ### Framework oracles ripr does not evaluate
 
 Four test idioms check a changed value through machinery ripr reads only at
@@ -379,6 +411,57 @@ and writes the finding the same way. Nothing is credited. Corpus effect:
 `lib-expect-test-assert-debug-eq-variant-payload` and
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
 `abstained`, which their cases accept.
+
+### Methods the language calls implicitly (#9441)
+
+A trait-impl method often runs with no call that names it: `Money(2) +
+Money(3)` runs `Add::add`, the end of a block runs `Drop::drop`,
+`Countdown(3).collect()` runs `Iterator::next`, and `shapes[0].area()` on a
+`Vec<Box<dyn Shape>>` runs whichever `area` the box holds. Name-based reach
+then finds only tests that share the owner's file or a name token, the reach
+stage reads `weak` ("No test is seen calling `add`"), and the finding read
+`weakly_exposed` although the test pins an exact value.
+`implicit_call::withhold_implicit_call_gap` withholds a `weakly_exposed` or
+`reachable_unrevealed` finding with no `static_limit_kind` and reach `weak`
+under `rust_implicit_call_unresolved` when the owner is a trait-impl method and
+a non-ignored indexed test with a strong assertion, read as code with
+comments and strings masked, matches:
+
+- **syntax trait**: the trait is an operator trait (`Add` .. `ShrAssign`,
+  `Neg`, `Not`), `Drop`, `Iterator`, `IntoIterator`, `DoubleEndedIterator`,
+  `ExactSizeIterator`, `Deref`, `DerefMut`, `Index`, `IndexMut` or
+  `PartialOrd`, the test names the impl's self type as a whole identifier,
+  and, for an operator, index or ordering trait, its code spells that syntax
+  (a binary `+`, `*`, `/`, `%`, `&`, `|` or `^` between two operands for the matching operator trait, a `-` that is not `->` or `-=` for `Sub` and `Neg`, `[` for
+  `Index`, `<`, `>`, `partial_cmp`, `max`, `min`, `sort` or `clamp` for
+  `PartialOrd`);
+  `Drop` needs `drop(` or an inner block; iterator and `Deref` traits have no
+  token and pass on the type name. A workspace declaration of a trait with an
+  operator trait's name is a different trait the operator cannot call, so the
+  gap stays;
+- **dispatch**: any other trait except those the gated std rules own
+  (`Display`, `Debug`, `PartialEq`, `Eq`, `Ord`, `Hash`, `Clone`, `Default`,
+  `FromStr`, `Serialize`, `Deserialize`, `Visitor`, `Arbitrary`, `Error`), the test names the self type, and
+  it calls `.<method>(` on some receiver, the method takes `self` (an
+  associated function is called by path, never on a receiver), and the trait
+  is declared once with one impl of the method for that type. A test-local shadow trait or second
+  impl makes `Sample.render()` run the shadow, a real gap
+  (`rust_trait_impl_shadow`, `rust_trait_parent_shadow`).
+
+A test with no strong assertion (`negation_is_only_exercised`,
+`assert!(a < b)`), a test that never names the self type, a dispatch test that never calls the
+method name, an ignored test, and a finding whose reach is not `weak` keep
+their class: the rule only withholds, so the actionability flip stays
+fail-closed. It does not credit the test: whether the operator or virtual call
+lands on the changed method is not established. Corpus effect:
+`shape-op-add-impl`, `shape-drop-impl-side-effect` and
+`shape-dyn-trait-method-exact` move from `false_actionable` to `abstained`,
+which their cases accept. `shape-dyn-trait-method-twin-input` is a true gap
+(`partially_discriminated`: the input cannot tell the twin impls apart) that
+now reads `abstained` instead of `ideal`; its case accepts `limited`, and ripr
+cannot tell twin impls apart from a dyn call, so the rule trades that one
+advisory for removing three false actionable claims. The finding names at most
+three judged tests.
 
 ## Scope boundary
 
@@ -466,6 +549,23 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 
+Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
+`crates/ripr/tests/implicit_call_limit.rs`:
+
+- `method_calls_need_a_dot_receiver_and_a_whole_name`
+- `operator_syntax_is_read_per_trait`
+- `a_drop_impl_reached_at_scope_exit_is_withheld`,
+  `an_iterator_impl_reached_through_collect_is_withheld`,
+  `an_operator_impl_reached_through_the_operator_is_withheld` and
+  `a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld`
+- keeps-the-gap controls (each asserts a gap remains and the limit is absent):
+  `an_operator_impl_controls_keep_the_gap` (no test names the type, smoke
+  test, wrong operator, ignored test), `a_dispatch_shape_that_differs_keeps_its_class`
+  (never calls the method, never names the type) and
+  `a_test_local_shadow_trait_keeps_the_gap` and
+  `a_workspace_trait_named_like_an_operator_trait_is_not_the_operator`. The `rust_trait_impl_shadow` and
+  `rust_trait_parent_shadow` goldens pin the same shadow rule.
+
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 
 - `analyzer_limit_refusals_are_limits_of_ripr_reading`
@@ -502,6 +602,8 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
+  rule (#9441).
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`

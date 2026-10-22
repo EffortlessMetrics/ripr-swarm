@@ -788,8 +788,23 @@ Recovery labels the Bash/Git Bash form and the PowerShell form translated by
 the existing Markdown command helper. If that helper refuses translation, the
 diagnostic labels the command Bash/Git Bash only and names PowerShell recovery
 as unavailable. Root apostrophes and dollar signs remain literal path text.
-Printed recovery still requires the current installed RIPR executable; this
-partial repair does not bind PATH or qualify installed binary substitution.
+The printed recovery command runs the executable that issued the refusal
+(`std::env::current_exe()`, quoted by the shared shell-argument helper) and the
+refusal prints that executable's version line, so a stale `ripr` earlier on
+`PATH` cannot satisfy it (#9500). If the operating system cannot name the
+running executable the command falls back to bare `ripr` and the refusal says to
+confirm `ripr --version`. Only this refusal is rebound; other emitters still
+render PATH `ripr`, and installed-binary substitution on every route stays
+unqualified.
+
+An envelope whose `artifact.producer.version` is not exactly the consuming
+executable's version is refused at the same validation site (#9500) with a
+"produced by X, consumer is Y, regenerate" diagnostic and the same recovery
+command. This is fail-closed version equality, not producer authentication: a
+document can still declare the current version, and artifacts from another RIPR
+build, including a patch release, must be regenerated. `reports gap-ledger
+--repo-exposure` is a separate route governed by RIPR-SPEC-0046 (a missing
+envelope is disclosed as a warning there, #9570).
 
 - `agent_loop_status_available`
 - `agent_workflow_manifest_available`

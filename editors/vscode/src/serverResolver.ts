@@ -20,7 +20,10 @@ import {
   terminateProbeProcessTree
 } from './lspCompatibility';
 
-const START_TIMEOUT_MS = 10_000;
+// The Windows probe timed out at 10s on a cold runner and failed activation in
+// #9526. Where that time goes (PowerShell start, the Add-Type compile, or the
+// server itself) is not measured yet; #9631 tracks it.
+const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 
 /**
  * Guidance for a failed configured-path candidate. The generic remedy tells

@@ -4,7 +4,6 @@ use super::capture::{CommitFacts, FACTS_KIND, GitFacts};
 use super::dto::{EffectBasis, Range, SCHEMA_VERSION, Source};
 use super::rule::{
     DeriveInput, OVERRIDES_KIND, Override, Overrides, PathClass, classify_path, derive,
-    strongest_class,
 };
 use super::validate::{
     Context, PacketClaim, PacketOpenPr, PacketOpenPrs, SelectionPacket, validate,
@@ -25,6 +24,7 @@ fn commit(n: u8, position: Option<u64>, effect: &str, paths: &[&str]) -> CommitF
         pr_refs: position.map_or_else(Vec::new, |_| vec![u64::from(n)]),
         issue_refs: Vec::new(),
         paths: paths.iter().map(|path| (*path).to_string()).collect(),
+        inline_test_paths: Vec::new(),
         final_tree_effect: effect.to_string(),
         effect_basis: EffectBasis {
             alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect"),
@@ -142,7 +142,8 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         ),
         ("CHANGELOG.md", PathClass::Docs),
         ("docs/ROADMAP.md", PathClass::Docs),
-        ("xtask/src/main.rs", PathClass::Control),
+        ("xtask/src/main.rs", PathClass::Automation),
+        ("xtask", PathClass::Automation),
         (".github/workflows/x.yml", PathClass::Control),
         ("policy/x.toml", PathClass::Control),
         ("Cargo.lock", PathClass::Control),
@@ -159,8 +160,51 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         "xtask/src/main.rs".to_string(),
     ];
     require(
-        strongest_class(&mixed) == Some(PathClass::Control),
+        mixed.iter().map(|path| classify_path(path)).max() == Some(PathClass::Automation),
         "the strongest class wins",
+    )?;
+    let with_packaging = [
+        "xtask/src/main.rs".to_string(),
+        "packaging/x.toml".to_string(),
+    ];
+    require(
+        with_packaging.iter().map(|path| classify_path(path)).max() == Some(PathClass::Control),
+        "packaging outranks automation",
+    )
+}
+
+fn theme_of(commit: CommitFacts) -> Result<String, String> {
+    let input = facts(vec![commit]);
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    Ok(ledger.records.first().ok_or("no record")?.theme.clone())
+}
+
+#[test]
+fn xtask_only_commits_share_the_control_disposition_under_their_own_theme() -> Result<(), String> {
+    let effective = "present_effective";
+    require(
+        disposition_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))?
+            == "included_accepted_release_or_control",
+        "xtask keeps the control disposition",
+    )?;
+    require(
+        theme_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))? == "automation",
+        "xtask-only theme",
+    )?;
+    require(
+        theme_of(commit(
+            5,
+            Some(1),
+            effective,
+            &["xtask/src/a.rs", "packaging/x.toml"],
+        ))? == "release_or_control",
+        "packaging in the commit keeps the release theme",
     )
 }
 
@@ -510,5 +554,32 @@ fn failed_derivation_leaves_an_existing_output_untouched() -> Result<(), String>
     require(
         kept == "previous ledger",
         "the existing output was replaced",
+    )
+}
+
+#[test]
+fn inline_test_only_product_paths_count_as_evidence() -> Result<(), String> {
+    let path = "crates/ripr/src/lib.rs";
+    let mut inline = commit(5, Some(1), "present_effective", &[path]);
+    require(
+        disposition_of(inline.clone())? == "included_accepted_product",
+        "no inline-test fact keeps the path product",
+    )?;
+    inline.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(inline.clone())? == "included_test_or_evidence",
+        "an inline-test-only path is evidence",
+    )?;
+    // The fact covers only the path it names.
+    let mut mixed = commit(
+        5,
+        Some(1),
+        "present_effective",
+        &[path, "crates/ripr/src/other.rs"],
+    );
+    mixed.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(mixed)? == "included_accepted_product",
+        "another product path keeps the commit product",
     )
 }

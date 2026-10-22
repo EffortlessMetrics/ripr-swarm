@@ -1,3 +1,4 @@
+use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
     strength_only_assertion,
@@ -11,13 +12,14 @@ use super::no_behavior::{
     is_structural_def_header_text,
 };
 use super::probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, python_flow_sink_for,
+    canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
     helper_owner_call_candidates, python_repair_placement, related_test_candidates,
     related_tests_for_candidates, verify_command_for_test,
 };
+use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
 use super::table_rows::python_unvaried_table_operand;
@@ -281,7 +283,7 @@ pub(super) fn classify_change_for_owner(
     {
         return None;
     }
-    let (family, delta) = classify_probe_shape(line_text);
+    let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
     // The changed line's probe family (and, for a field change, its changed
     // field) selects which assertion of each related test this finding judges
     // (#5572). Every consumer below — the public rows, sink alignment, the
@@ -298,7 +300,7 @@ pub(super) fn classify_change_for_owner(
         Vec::new()
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
-    let related = related_tests_for_candidates(&related_candidates, Some(&focus));
+    let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
     let static_limit =
@@ -453,6 +455,19 @@ pub(super) fn classify_change_for_owner(
                     &related_candidates,
                     &focus,
                 )
+                .or_else(|| {
+                    // #9429: a `match` arm or a `.get` default that no
+                    // observed input reaches reads the same way.
+                    arm_activation::python_unreached_arm_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();
@@ -1018,6 +1033,20 @@ pub(super) fn classify_change_for_owner(
             placement.location_reason
         ));
     }
+    // Row-local misses are explanation only (#5491): written after the class
+    // and every stage are final, and read by no decision above.
+    annotate_row_misses(
+        &mut related,
+        &related_candidates,
+        &class,
+        static_limit.is_some(),
+        &RowMissChange {
+            owner,
+            line_text,
+            old_line_text,
+        },
+        all_tests,
+    );
     for candidate in related_candidates {
         let test = candidate.test;
         evidence.push(format!(

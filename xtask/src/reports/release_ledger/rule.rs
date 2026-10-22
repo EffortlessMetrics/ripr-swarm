@@ -16,7 +16,7 @@
 //! 4. A subject naming the owner issue of a packet claim resolved
 //!    `accepted_defer_with_non_claim` is `included_with_release_nonclaim`.
 //! 5. Otherwise the strongest path class wins:
-//!    product > unclassified (blocking) > control > evidence > docs.
+//!    product > unclassified (blocking) > control > automation > evidence > docs.
 //!
 //! The brief reads "only tests..." and "only docs..." for the lower classes; v1
 //! takes the strongest class present so a tests-plus-docs commit is evidence
@@ -58,6 +58,7 @@ pub(super) struct Override {
 pub(super) enum PathClass {
     Docs,
     Evidence,
+    Automation,
     Control,
     Other,
     Product,
@@ -68,6 +69,7 @@ impl PathClass {
         match self {
             Self::Docs => "docs",
             Self::Evidence => "test_or_evidence",
+            Self::Automation => "automation",
             Self::Control => "release_or_control",
             Self::Other => "unclassified",
             Self::Product => "product",
@@ -125,6 +127,11 @@ pub(super) fn classify_path(path: &str) -> PathClass {
         return PathClass::Docs;
     }
     let top = path.split('/').next().unwrap_or(path);
+    // Unshipped repository automation: the same disposition as control, but its
+    // own theme, so a release reader can tell it from packaging.
+    if top == "xtask" {
+        return PathClass::Automation;
+    }
     let is_root_file = !path.contains('/');
     if matches!(
         top,
@@ -135,7 +142,6 @@ pub(super) fn classify_path(path: &str) -> PathClass {
             | ".config"
             | ".cargo"
             | ".ci"
-            | "xtask"
             | "policy"
             | "scripts"
             | "tools"
@@ -149,8 +155,17 @@ pub(super) fn classify_path(path: &str) -> PathClass {
     PathClass::Other
 }
 
-pub(super) fn strongest_class(paths: &[String]) -> Option<PathClass> {
-    paths.iter().map(|path| classify_path(path)).max()
+/// The strongest class of a commit's paths, counting a product path the commit
+/// edited only inside `#[cfg(test)]` items as evidence.
+fn commit_class(commit: &CommitFacts) -> Option<PathClass> {
+    commit
+        .paths
+        .iter()
+        .map(|path| match classify_path(path) {
+            PathClass::Product if commit.inline_test_paths.contains(path) => PathClass::Evidence,
+            class => class,
+        })
+        .max()
 }
 
 struct Decision {
@@ -188,7 +203,7 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
     if commit.paths.is_empty() {
         return blocked("empty", "empty diff: needs an override", limitations);
     }
-    let class = strongest_class(&commit.paths).unwrap_or(PathClass::Other);
+    let class = commit_class(commit).unwrap_or(PathClass::Other);
     // Rule 0 looks at every path, not the strongest class: an unclassified path
     // beside a product path must not be hidden by the product class.
     if first_parent
@@ -246,7 +261,7 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
     }
     let disposition = match class {
         PathClass::Product => "included_accepted_product",
-        PathClass::Control => "included_accepted_release_or_control",
+        PathClass::Control | PathClass::Automation => "included_accepted_release_or_control",
         PathClass::Evidence => "included_test_or_evidence",
         PathClass::Docs => "included_structural_no_semantic_delta",
         PathClass::Other => {
