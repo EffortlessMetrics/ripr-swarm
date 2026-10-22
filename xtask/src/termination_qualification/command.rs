@@ -74,10 +74,6 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
         );
     }
     let identity = admit_binary(options)?;
-    let binary = Binary {
-        path: fs::canonicalize(&options.binary)
-            .map_err(|error| format!("failed to resolve {}: {error}", options.binary.display()))?,
-    };
     let run_root = options
         .work
         .join(format!("{}-{}", &identity.sha256[..12], std::process::id()));
@@ -93,6 +89,13 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
     // must be absolute.
     let run_root = fs::canonicalize(&run_root)
         .map_err(|error| format!("failed to resolve {}: {error}", run_root.display()))?;
+
+    // Rows launch an owned copy of the admitted bytes, so replacing or
+    // rebuilding the candidate path mid-run cannot change what is tested.
+    let snapshot = snapshot_binary(&options.binary, &run_root, &identity.sha256)?;
+    let binary = Binary {
+        path: snapshot.clone(),
+    };
 
     let cases: Vec<Case> = all_cases()
         .into_iter()
@@ -126,10 +129,17 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
         &cases,
         &options.removal_controls,
         &identity.sha256,
+        &identity.reported_version,
         options.deadline,
     ));
 
-    let work_cleanup = exec::cleanup(&run_root);
+    let snapshot_intact = hash_file(&snapshot).is_ok_and(|sha| sha == identity.sha256);
+    let cleaned = exec::cleanup(&run_root);
+    let work_cleanup = if snapshot_intact {
+        cleaned
+    } else {
+        format!("binary snapshot changed during the run; {cleaned}")
+    };
     let binary_path = identity.path.clone();
     let scrub = |text: &mut String| {
         *text = text
@@ -327,7 +337,7 @@ fn non_claims() -> Vec<String> {
         "Python: f-string replacement-field shapes and any other construct the tree-depth estimate does not model are outside this corpus".to_string(),
         "wall time is an instrument observation; it is not part of the packet digest and proves no latency".to_string(),
         "the packet does not bind the binary to a source SHA, tree, candidate ref or package; those identities are supplied by the candidate lane".to_string(),
-        "LSP routes are not exercised here; this packet covers `ripr check` only".to_string(),
+        "LSP routes are not exercised here; this packet covers `ripr check --diff` and `ripr pilot` only".to_string(),
         "no orphan scan beyond the shared process owner's tree termination and the instrument cancellation control".to_string(),
         "does not decide qualification; #2769 consumes the packet".to_string(),
     ]
@@ -454,4 +464,36 @@ fn parse_family(value: &str) -> Result<Family, String> {
 
 fn usage() -> &'static str {
     "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--family <name>]... [--removal-control <family>=<binary>]... [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
+}
+
+fn hash_file(path: &Path) -> Result<String, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    Ok(crate::blind_journey::sha256_hex(&bytes))
+}
+
+/// Copy the admitted executable into the owned run root and verify the copy.
+fn snapshot_binary(
+    source: &Path,
+    run_root: &Path,
+    expected_sha256: &str,
+) -> Result<PathBuf, String> {
+    let dir = run_root.join("binary");
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
+    let target = dir.join("ripr-under-test");
+    fs::copy(source, &target).map_err(|error| {
+        format!(
+            "failed to snapshot {} to {}: {error}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    let sha = hash_file(&target)?;
+    if sha != expected_sha256 {
+        return Err(format!(
+            "binary changed between admission and snapshot (admitted {expected_sha256}, copied {sha})"
+        ));
+    }
+    Ok(target)
 }

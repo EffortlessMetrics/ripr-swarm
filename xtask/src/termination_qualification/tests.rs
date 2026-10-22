@@ -301,6 +301,39 @@ fn a_malformed_selector_passes_only_as_a_policy_refusal() -> TestResult {
 }
 
 #[test]
+fn a_supported_row_must_report_a_complete_analysis_of_the_changed_file() -> TestResult {
+    let case = case_named("python-supported-control")?;
+    let incomplete = check_json(&["src/app.py"], "", false);
+    if assess(&case, &observe(&incomplete, "", None)).result != RowResult::SemanticFailure {
+        return Err("analysis_complete=false must not pass a supported row".to_string());
+    }
+    let naming = check_json(
+        &["src/app.py"],
+        &python_limitation(
+            "src/app.py",
+            "parse_budget: stub",
+            "language_scope_unsupported",
+        ),
+        true,
+    );
+    if assess(&case, &observe(&naming, "", None)).result != RowResult::SemanticFailure {
+        return Err("a limitation naming the changed file must not pass".to_string());
+    }
+    let excluded = case_named("glob-generated-star-in-segment")?;
+    let complete = format!(
+        "{{\"findings\":[],\"analysis_outcome\":{{\"analysis_complete\":true,\"outcome\":{{\"limitations\":[{{\"kind\":\"language_scope_unsupported\",\"bounded_detail\":\"1 generated file(s) were intentionally skipped: {}\"}}]}}}}}}",
+        excluded.changed
+    );
+    if assess(&excluded, &observe(&complete, "", None))
+        .result
+        .is_pass()
+    {
+        return Err("an exclusion marked complete must not pass".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn a_nonzero_exit_distrusts_otherwise_correct_output() -> TestResult {
     let case = case_named("python-supported-control")?;
     let clean = check_json(&["src/app.py"], "", true);
@@ -808,7 +841,10 @@ mod unix_stubs {
     #[test]
     fn removal_controls_need_a_failing_and_different_binary() -> TestResult {
         let root = scratch("removal")?;
-        let candidate = stub(&root, "#!/bin/sh\nexit 0\n")?;
+        let candidate = stub(
+            &root,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && echo ripr-test 1\nexit 0\n",
+        )?;
         let candidate_sha = crate::blind_journey::sha256_hex(
             &fs::read(&candidate).map_err(|error| format!("read: {error}"))?,
         );
@@ -824,17 +860,34 @@ mod unix_stubs {
             &cases,
             &[(Family::PythonNesting, candidate.clone())],
             &candidate_sha,
+            "ripr-test 1",
             deadline,
         );
         // An aborting binary is a valid removal control.
         let aborting_dir = root.join("abort");
         fs::create_dir_all(&aborting_dir).map_err(|error| format!("mkdir: {error}"))?;
-        let aborting = stub(&aborting_dir, "#!/bin/sh\nkill -ABRT $$\n")?;
+        let aborting = stub(
+            &aborting_dir,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo ripr-test 1; exit 0; }\nkill -ABRT $$\n",
+        )?;
+        let unrelated_dir = root.join("unrelated");
+        fs::create_dir_all(&unrelated_dir).map_err(|error| format!("mkdir: {error}"))?;
+        let unrelated = stub(&unrelated_dir, "#!/bin/sh\nkill -ABRT $$\n")?;
         let abort = super::super::controls::removal_controls(
             &root.join("w2"),
             &cases,
             &[(Family::PythonNesting, aborting)],
             &candidate_sha,
+            "ripr-test 1",
+            deadline,
+        );
+        // An unrelated aborting executable is not a build of the candidate.
+        let foreign = super::super::controls::removal_controls(
+            &root.join("w4"),
+            &cases,
+            &[(Family::PythonNesting, unrelated)],
+            &candidate_sha,
+            "ripr-test 1",
             deadline,
         );
         // A binary that passes every row proves nothing.
@@ -843,6 +896,7 @@ mod unix_stubs {
             &cases,
             &[],
             &candidate_sha,
+            "ripr-test 1",
             deadline,
         );
         let _ = fs::remove_dir_all(&root);
@@ -855,6 +909,9 @@ mod unix_stubs {
                 "aborting control did not discriminate: {:?}",
                 abort[0]
             ));
+        }
+        if foreign[0].discriminated {
+            return Err("an unrelated aborting executable must not discriminate".to_string());
         }
         if none[0].observed.is_some() || none[0].discriminated {
             return Err("a missing control must read as not run".to_string());

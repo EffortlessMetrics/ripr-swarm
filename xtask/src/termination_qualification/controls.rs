@@ -251,9 +251,12 @@ fn child_gone(pid_file: &Path) -> bool {
             .rsplit_once(')')
             .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
             .is_some_and(|state| state == "Z" || state == "X"),
-        // Without /proc the answer is unknown, which must not read as gone.
-        Err(_) => {
-            PathBuf::from("/proc/self").exists() && !PathBuf::from(format!("/proc/{pid}")).exists()
+        // Gone only when the host has /proc and the pid's entry is absent;
+        // any other read failure (permissions, no /proc) is unknown, not gone.
+        Err(error) => {
+            error.kind() == std::io::ErrorKind::NotFound
+                && PathBuf::from("/proc/self").exists()
+                && !PathBuf::from(format!("/proc/{pid}")).exists()
         }
     }
 }
@@ -265,6 +268,7 @@ pub(crate) fn removal_controls(
     cases: &[Case],
     supplied: &[(Family, PathBuf)],
     candidate_sha256: &str,
+    candidate_version: &str,
     deadline: Duration,
 ) -> Vec<Control> {
     let mut out = Vec::new();
@@ -314,6 +318,27 @@ pub(crate) fn removal_controls(
             out.push(control);
             continue;
         }
+        // A repairs-disabled build of the candidate source reports the
+        // candidate's version; an unrelated executable that merely aborts
+        // does not, so it cannot stand in for the removed repair.
+        let control_version = match reported_version(path) {
+            Ok(version) => version,
+            Err(error) => {
+                control.observed = Some("version_unreadable".to_string());
+                control.detail = format!("could not read `--version` from the control: {error}");
+                out.push(control);
+                continue;
+            }
+        };
+        if control_version != candidate_version {
+            control.observed = Some("version_mismatch".to_string());
+            control.detail = format!(
+                "control reports `{control_version}`, not the candidate's `{candidate_version}`; \
+                 it is not a build of the same source"
+            );
+            out.push(control);
+            continue;
+        }
         let binary = Binary { path: path.clone() };
         let mut observed = Vec::new();
         let mut signal = false;
@@ -331,4 +356,21 @@ pub(crate) fn removal_controls(
         out.push(control);
     }
     out
+}
+
+/// `--version` output of an executable, read with the shared bounded runner.
+pub(crate) fn reported_version(path: &Path) -> Result<String, String> {
+    let version = crate::run::capture_bytes_in_dir_with_timeout(
+        path,
+        &["--version".to_string()],
+        path.parent().unwrap_or_else(|| Path::new(".")),
+        &[("PATH", exec::CHILD_PATH)],
+        &[],
+        Duration::from_secs(30),
+        "termination control --version",
+    )?;
+    if version.timed_out || !version.status.is_some_and(|status| status.success()) {
+        return Err("`--version` did not exit cleanly".to_string());
+    }
+    Ok(String::from_utf8_lossy(&version.stdout).trim().to_string())
 }

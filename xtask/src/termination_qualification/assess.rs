@@ -135,6 +135,27 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
 
     match &case.expect {
         Expect::Supported | Expect::TerminatesWithEvidence => {
+            let names_changed = all_limitations
+                .iter()
+                .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
+            if names_changed {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a limitation names the changed file; the row is not fully analyzed"
+                        .to_string(),
+                ));
+            }
+            if matches!(case.expect, Expect::Supported)
+                && root
+                    .pointer("/analysis_outcome/analysis_complete")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+            {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a supported input did not report analysis_complete=true".to_string(),
+                ));
+            }
             if !declined.is_empty() {
                 return counts(Assessment::fail(
                     RowResult::SemanticFailure,
@@ -303,6 +324,16 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                 return counts(Assessment::fail(
                     RowResult::MissingOrFalseCleanLimitation,
                     "expected the file to be excluded as generated with a disclosure".to_string(),
+                ));
+            }
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(false)
+            {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    "exclusion disclosed but analysis_complete is not false".to_string(),
                 ));
             }
             if changed_findings != 0 {
