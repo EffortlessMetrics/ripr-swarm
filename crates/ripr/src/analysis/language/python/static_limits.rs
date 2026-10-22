@@ -458,7 +458,7 @@ fn is_route_decorator_edit(trimmed: &str) -> bool {
     trimmed
         .strip_prefix('@')
         .and_then(|rest| rest.split('(').next())
-        .is_some_and(|name| is_static_route_decorator(name.trim()))
+        .is_some_and(is_static_route_decorator)
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {

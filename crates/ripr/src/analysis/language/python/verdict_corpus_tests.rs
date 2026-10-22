@@ -2078,16 +2078,24 @@ fn a_route_decorator_edit_needs_a_client_call_to_the_route() -> Result<(), Strin
 
 #[test]
 fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), String> {
-    // Method, stacked and multi-line decorators all route to the decorated
-    // function, so its decorator-indirection limit applies (#9756).
+    // Stacked and multi-line decorators route to the decorated function, so
+    // its decorator-indirection limit applies (#9756).
     let test = "from src.shop import flaky\n\n\ndef test_flaky():\n    assert flaky() == 1\n";
-    for (owner, line) in [
-        ("@retry(2)\ndef flaky():\n    return 1\n", 1),
-        ("@cache\n@retry(2)\ndef flaky():\n    return 1\n", 2),
-        ("@retry(\n    2,\n)\ndef flaky():\n    return 1\n", 2),
+    for (owner, line, old) in [
+        ("@retry(2)\ndef flaky():\n    return 1\n", 1, "@retry(3)"),
+        (
+            "@cache\n@retry(2)\ndef flaky():\n    return 1\n",
+            2,
+            "@retry(3)",
+        ),
+        (
+            "@retry(\n    2,\n)\ndef flaky():\n    return 1\n",
+            2,
+            "    3,",
+        ),
     ] {
         assert_eq!(
-            classify(owner, line, "@retry(3)", test)?,
+            classify(owner, line, old, test)?,
             ExposureClass::StaticUnknown,
             "{owner}"
         );
