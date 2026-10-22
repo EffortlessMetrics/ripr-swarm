@@ -44,6 +44,13 @@ and bounded drains.
 | `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, many-star and many-segment nonmatches |
 | `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
 
+Corpus generation `ripr-termination-corpus-v2` retains the original row IDs and
+expectations and adds generated-file leading `./`, inner `.`, and empty-segment
+rows from the same literal table as suppression policy. A normalized nonmatch
+is retained for both consumers. This expands the glob corpus from 29 to 34 rows;
+the packet format remains `ripr-termination-qualification-v1`. Historical
+version 1 packets retain their original corpus identity and coverage.
+
 Each Rust and Python row carries an unchanged hostile file outside the diff
 and a changed file whose finding must stay visible. `pilot` is the only route
 that reads every Rust file. A declined Rust file is a typed limitation on both
@@ -125,5 +132,4 @@ Known gaps against the child issues, each deliberate for this first harness:
   candidate build; the binding between them is the commit in `--version`, not
   a byte comparison.
 - Glob corpus omits mixed separators, root-relative boundaries and an empty
-  path, and the generated-file family omits `.`/empty-segment and
-  adjacent-`**` rows.
+  path, and the generated-file family omits adjacent-`**` rows.

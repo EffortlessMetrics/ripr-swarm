@@ -626,7 +626,7 @@ Updated:
 ## Pending — python_broad_boolean_assertion (23)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0028: fixture assertion argument is now a variable so the fixture keeps testing a broad boolean assertion after literal bare bool asserts on bool owners became exact pins (#9542); text change only
 
 Command:
 `cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
@@ -636,6 +636,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — python_broad_boolean_assertion (24)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_broad_boolean_assertion (25)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
