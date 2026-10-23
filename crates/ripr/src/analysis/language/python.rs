@@ -1213,6 +1213,9 @@ mod bool_oracle_tests;
 mod conftest_admission_tests;
 
 #[cfg(test)]
+mod source_facts_tests;
+
+#[cfg(test)]
 mod deleted_lines_tests;
 
 #[cfg(test)]

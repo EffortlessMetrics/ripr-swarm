@@ -6952,6 +6952,48 @@ mod tests {
     }
 
     #[test]
+    fn shared_evidence_rows_spell_the_unconfirmed_observation_in_words() {
+        // #9244: the grouped catalogue rows apply the same rewrite as the
+        // per-finding lines; the stage summary keeps the machine marker.
+        let marker = "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)";
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate = stage(StageState::Weak, Confidence::Medium, marker);
+        finding.ripr.reveal.observe = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Observed; the changed value is never named (observation_unverified)",
+        );
+        assert!(
+            finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("(observation_unverified)")
+        );
+
+        let rendered = super::evidence_lines::evidence_path_entries(&finding, false)
+            .into_iter()
+            .map(|entry| entry.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !rendered.contains("observation_unverified"),
+            "shared evidence rows leaked the raw token:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("observation yes: Observed; the changed value is never named"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn plain_observation_wording_handles_each_producer_form() {
         use super::evidence_lines::plain_observation_wording;
         assert_eq!(

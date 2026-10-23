@@ -345,3 +345,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_owner (22)
+
+Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

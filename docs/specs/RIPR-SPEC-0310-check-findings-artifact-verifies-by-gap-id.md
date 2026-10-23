@@ -90,15 +90,17 @@ could not be verified without trusting hand-authored JSON.
   reads as absent in the after artifact. This slice only makes the snapshots
   trustworthy. Plain `agent verify` and `agent receipt` still compare
   whatever moved; only `agent verify --gap-id` (behavior 5) requires the named
-  gap to be present in the after artifact as `exposed`, and a gap-bound
-  receipt remains a later slice of #9103.
+  gap to be present in the after artifact as `exposed`. The gap-bound
+  `agent repair` start and after phase landed (C2a/C2b, RIPR-SPEC-0311); the
+  gap-bound receipt (C2c) remains a later slice of #9103.
 - The outcome parser keys findings by a wider set of gap-id spellings than
   `CheckFindingsFinding::gap_id`; the producer is the only source of these
   artifacts, so the two agree on its output.
 
 ## Non-Goals
 
-- A gap-bound `agent repair` start or attempt (later slices of #9103).
+- The journey flips (D, a later slice of #9103); the gap-bound `agent repair`
+  start and attempt landed as C2a/C2b.
 - Signing, runtime mutation proof, or Python enablement.
 - A gap-bound `agent receipt` (the receipt still binds the pair, not a gap).
 
