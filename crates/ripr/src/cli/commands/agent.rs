@@ -4612,6 +4612,7 @@ mod tests {
             "seam:sample",
             &"b".repeat(40),
             &after,
+            None,
         );
         let first = lines
             .first()
@@ -4667,6 +4668,7 @@ mod tests {
             "seam:sample",
             &"b".repeat(40),
             &after,
+            None,
         );
         let joined = lines.join("\n");
         assert!(
