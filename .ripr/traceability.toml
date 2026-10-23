@@ -17517,6 +17517,14 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_input_missing_the_early_exit_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_disjoint_early_exits_words_at_least_one",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_ignores_early_exit_text_inside_a_docstring",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_return_no_strong_call_enters_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_return_with_an_entering_call_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_after_an_elif_chain_names_every_chain_condition",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_that_does_not_close_an_if_chain_stays_exposed",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_reads_the_if_elif_chain_of_an_else_arm",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_never_bridges_unrelated_headers_into_a_chain",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::conditional_expressions_are_not_a_single_comparison",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_fails_open_on_loop_else",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_wildcard_arm_no_observed_input_reaches_does_not_credit",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_literal_arm_is_unreached_by_a_different_literal_only",
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::an_unreadable_match_subject_or_pattern_fails_open",
@@ -18094,6 +18102,26 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0318"
+name = "Pilot next steps name the dirty-target precondition and the continue command"
+spec = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/pilot/render/complete.rs",
+  "crates/ripr/src/output/pilot/commands.rs",
+  "crates/ripr/src/output/pilot/current_change.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md",
 ]
 metrics = [
   "unit_test_pass_rate",
