@@ -724,8 +724,15 @@ impl WorkspaceSession {
                     RECOVERY_GAP_LIST_IDENTITY_ROUTE
                 }
             };
+        // The overflow side carries the same reserve margin the page budget
+        // charges: the final document adds the echoed window (for example a
+        // past-end offset renders longer than the zero-page shell probe), so
+        // a shell that fits raw can still overflow once page metadata is
+        // rendered. Attributing that overflow without the reserve would
+        // fall back to the identity route even when dropping the echo
+        // leaves a fitting shell (#9895 review).
         let recovery_for_document = || -> &'static str {
-            if shell_bytes > super::MAX_TOOL_DOCUMENT_BYTES
+            if shell_bytes.saturating_add(reserve) > super::MAX_TOOL_DOCUMENT_BYTES
                 && shell_without_filter_bytes.saturating_add(reserve)
                     <= super::MAX_TOOL_DOCUMENT_BYTES
             {
@@ -2727,6 +2734,101 @@ mod tests {
             return Err(format!(
                 "shell-driven overflow must keep the identity route: {identity_refusal:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #9895 review: the document-branch attribution charges the same
+    /// `reserve` margin the page budget charges. A shell that fits raw at
+    /// the zero offset but overflows once the echoed window gains a digit
+    /// (a past-end offset renders longer than the zero-page shell probe) is
+    /// still echo-driven and must name the filter, not the identity route.
+    /// The reserve-only negative control — shell plus reserve over the
+    /// ceiling, the final rendered document under it — must keep shipping.
+    #[test]
+    fn document_branch_attribution_charges_the_page_metadata_reserve() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        let window = |offset: usize| GapListWindow {
+            offset,
+            limit: None,
+        };
+        let echo = |len: usize| GapListFilter {
+            file: Some("x".repeat(len)),
+            ..GapListFilter::default()
+        };
+        let refuses_at_offset_zero = |len: usize| -> Result<bool, String> {
+            match session.list_gaps(None, window(0), &echo(len), crate::mcp::MAX_RESPONSE_BYTES) {
+                Ok(_) => Ok(false),
+                Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => Ok(true),
+                Err(failure) => Err(format!("unexpected refusal: {failure:?}")),
+            }
+        };
+        // Largest echo whose zero-offset page still ships: the document
+        // guard measures the raw document against MAX_TOOL_DOCUMENT_BYTES,
+        // and the envelope stays clear (the double envelope only exceeds the
+        // wire budget well above the document ceiling), so the search edge
+        // sits exactly at the document ceiling.
+        let (mut low, mut high) = (0usize, 70_000usize);
+        while low < high {
+            let mid = (low + high + 1) / 2;
+            if refuses_at_offset_zero(mid)? {
+                high = mid - 1;
+            } else {
+                low = mid;
+            }
+        }
+        let edge_echo = low;
+        if session
+            .list_gaps(
+                None,
+                window(0),
+                &echo(edge_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err("the edge echo must still ship at offset zero".to_string());
+        }
+        // One more window digit (offset ten renders two digits) pushes the
+        // final document past the ceiling; without the echo the shell fits
+        // with reserve to spare, so the attribution must name the filter.
+        let metadata_refusal = match session.list_gaps(
+            None,
+            window(10),
+            &echo(edge_echo),
+            crate::mcp::MAX_RESPONSE_BYTES,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "the echoed window metadata must tip the edge echo over: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if metadata_refusal.code != CODE_RESULT_TOO_LARGE
+            || metadata_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "echo-driven document overflow must name the filter: {metadata_refusal:?}"
+            ));
+        }
+        // Reserve-only negative control: 255 fewer echo bytes leave the
+        // shell plus reserve under the ceiling even though the shell alone
+        // is within 256 bytes of it; the widest window echo (20 digits)
+        // must still ship.
+        let reserve_echo = edge_echo.saturating_sub(255);
+        if session
+            .list_gaps(
+                None,
+                window(usize::MAX),
+                &echo(reserve_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err(
+                "reserve exhaustion alone must not refuse: the rendered document fits".to_string(),
+            );
         }
         Ok(())
     }
