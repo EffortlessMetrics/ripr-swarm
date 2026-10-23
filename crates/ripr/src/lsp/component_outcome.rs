@@ -24,7 +24,8 @@
 use super::client_features::ClientFeatureProfile;
 
 /// The VS Code palette command the stored recovery routes name. It exists
-/// only when the RIPR editor extension registered it (#9895).
+/// only when the client explicitly advertised it in `riprEditor.commands`
+/// (#9895, RIPR-SPEC-0129/0143: absence never implies support).
 const EDITOR_REFRESH_COMMAND: &str = "ripr.refreshDiagnostics";
 
 /// The route every other client can act on: the server-executed refresh
@@ -221,15 +222,16 @@ impl ComponentOutcome {
 
     /// The recovery route as this client can act on it (#9895). The stored
     /// route names the VS Code palette command `ripr.refreshDiagnostics`,
-    /// which only exists when the RIPR editor extension registered it (the
-    /// client advertised the `riprEditor` block). Every other LSP client is
+    /// which only exists when the client explicitly advertised it in its
+    /// `riprEditor.commands` list. A version-only, empty-commands or
+    /// unrelated-commands block does not qualify. Every other LSP client is
     /// pointed at the server-executed `ripr.refresh` command instead, which
     /// the server registers for all clients. Capability absence never implies
     /// support, so a pre-initialize or malformed-block profile gets the
     /// generic route.
     fn recovery_for_client(&self, client: &ClientFeatureProfile) -> Option<String> {
         let recovery = self.recovery?;
-        if client.has_editor_integration() {
+        if client.supports_client_command(EDITOR_REFRESH_COMMAND) {
             return Some(recovery.to_string());
         }
         Some(recovery.replace(EDITOR_REFRESH_COMMAND, SERVER_REFRESH_ROUTE))
@@ -395,8 +397,12 @@ fn is_absolute_path_token(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisComponent, ComponentOutcome, ComponentState, degradation_signature};
+    use super::{
+        AnalysisComponent, ComponentOutcome, ComponentState, EDITOR_REFRESH_COMMAND,
+        degradation_signature,
+    };
     use crate::lsp::client_features::{ClientFeatureProfile, RiprEditorClientCapabilities};
+    use tower_lsp_server::ls_types::InitializeParams;
 
     /// #4350: the editor bounds failure text, and the long-root failure
     /// reaches it behind the workspace-analysis and diff prefixes. The
@@ -743,7 +749,7 @@ mod tests {
         let mut profile = ClientFeatureProfile::unsupported();
         profile.ripr_editor = Some(RiprEditorClientCapabilities {
             version: "0.10.0".to_string(),
-            commands: Vec::new(),
+            commands: vec![EDITOR_REFRESH_COMMAND.to_string()],
             guarded_test_edit: false,
         });
         profile
@@ -801,6 +807,92 @@ mod tests {
             .ok_or_else(|| "failed outcome must log".to_string())?;
         if !editor_log.contains("retry ripr.refreshDiagnostics") {
             return Err(format!("editor log lost the palette command: {editor_log}"));
+        }
+        Ok(())
+    }
+
+    /// #9895: the palette route is selected only by an explicit
+    /// `riprEditor.commands` advertisement (RIPR-SPEC-0129/0143). Every
+    /// block shape that does not list the command gets the universal route,
+    /// parsed through the real initialize-params owner.
+    #[test]
+    fn palette_route_requires_explicit_refresh_command_advertisement() -> Result<(), String> {
+        let outcome = ComponentOutcome::failed(
+            AnalysisComponent::SeamInventory,
+            "seam_inventory_failed",
+            "walk failed",
+            true,
+            "retry ripr.refreshDiagnostics",
+        );
+        let generic = Some("retry ripr.refresh (workspace/executeCommand)");
+        let editor = Some("retry ripr.refreshDiagnostics");
+        let cases = [
+            ("absent experimental", serde_json::json!({}), generic),
+            (
+                "empty experimental",
+                serde_json::json!({"experimental": {}}),
+                generic,
+            ),
+            (
+                "null block",
+                serde_json::json!({"experimental": {"riprEditor": null}}),
+                generic,
+            ),
+            (
+                "scalar block",
+                serde_json::json!({"experimental": {"riprEditor": 1}}),
+                generic,
+            ),
+            (
+                "empty object block",
+                serde_json::json!({"experimental": {"riprEditor": {}}}),
+                generic,
+            ),
+            (
+                "missing version",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"commands": ["ripr.refreshDiagnostics"]}}}),
+                generic,
+            ),
+            (
+                "malformed commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": "ripr.refreshDiagnostics"}}}),
+                generic,
+            ),
+            (
+                "version only",
+                serde_json::json!({"experimental": {"riprEditor": {"version": "0.1"}}}),
+                generic,
+            ),
+            (
+                "empty commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": []}}}),
+                generic,
+            ),
+            (
+                "unrelated commands only",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext"]}}}),
+                generic,
+            ),
+            (
+                "explicitly advertised",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext", "ripr.refreshDiagnostics"]}}}),
+                editor,
+            ),
+        ];
+        for (name, capabilities, expected) in cases {
+            let params: InitializeParams =
+                serde_json::from_value(serde_json::json!({"capabilities": capabilities}))
+                    .map_err(|error| format!("{name}: {error}"))?;
+            let profile = ClientFeatureProfile::from_initialize_params(&params);
+            let payload = outcome.status_payload(Some("s:1"), &profile);
+            if payload["recovery"].as_str() != expected {
+                return Err(format!("{name}: got {}", payload["recovery"]));
+            }
         }
         Ok(())
     }
