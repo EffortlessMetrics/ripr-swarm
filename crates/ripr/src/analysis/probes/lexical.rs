@@ -251,6 +251,11 @@ const SELECTOR_NAMES: [&str; 12] = [
 /// by another. The differing span is widened to whole identifiers, so
 /// `min_by_key` against `max_by_key` compares as words, not as `in` and `ax`.
 fn is_selector_swap(old: &str, new: &str) -> bool {
+    // Masked first: a string or comment spelled like a selector is not one.
+    let (old, new) = (
+        mask_comments_and_strings(old),
+        mask_comments_and_strings(new),
+    );
     let (old, new) = (old.trim(), new.trim());
     if old == new {
         return false;
@@ -278,12 +283,21 @@ fn is_selector_swap(old: &str, new: &str) -> bool {
         while end < chars.len() && is_word(chars[end]) {
             end += 1;
         }
-        chars[start..end].iter().collect::<String>()
+        // A selector is a method call: `.name(`. A local, field or argument
+        // spelled like one is not.
+        let before = chars[..start].iter().rev().find(|c| !c.is_whitespace());
+        let after = chars[end..].iter().find(|c| !c.is_whitespace());
+        let word = chars[start..end].iter().collect::<String>();
+        (before == Some(&'.') && after == Some(&'(')).then_some(word)
     };
-    let (old_word, new_word) = (word_span(&old_chars), word_span(&new_chars));
-    SELECTOR_NAMES.contains(&old_word.as_str())
-        && SELECTOR_NAMES.contains(&new_word.as_str())
-        && old_word != new_word
+    match (word_span(&old_chars), word_span(&new_chars)) {
+        (Some(old_word), Some(new_word)) => {
+            SELECTOR_NAMES.contains(&old_word.as_str())
+                && SELECTOR_NAMES.contains(&new_word.as_str())
+                && old_word != new_word
+        }
+        _ => false,
+    }
 }
 
 fn contains_question_operator(text: &str) -> bool {
@@ -974,6 +988,19 @@ mod tests {
             ),
             // identical text is not a swap
             (Some(MIN_LINE), MIN_LINE),
+            // selector-spelled arguments, fields, strings and comments (#9866 review)
+            (Some("let v = check(x, min)?;"), "let v = check(x, max)?;"),
+            (Some("let v = load(first)?;"), "let v = load(last)?;"),
+            (Some("let v = parse(\"max\")?;"), "let v = parse(\"min\")?;"),
+            (Some("let v = cfg.first?;"), "let v = cfg.last?;"),
+            (
+                Some("let v = it.next()?; // min"),
+                "let v = it.next()?; // max",
+            ),
+            (
+                Some("let v = m.get(\"first\")?;"),
+                "let v = m.get(\"last\")?;",
+            ),
         ] {
             assert!(
                 classify_changed_line_against(new, old).contains(&ProbeFamily::ErrorPath),
@@ -991,6 +1018,8 @@ mod tests {
         assert!(!is_selector_swap("a.xmax()?;", "a.xmin()?;"));
         // selector and non-selector
         assert!(!is_selector_swap("a.first()?;", "a.get(0)?;"));
+        // spaced method-call position still counts
+        assert!(is_selector_swap("a . first ()?;", "a . last ()?;"));
     }
 
     #[test]
