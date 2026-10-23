@@ -971,3 +971,53 @@ fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String
     }
     Ok(())
 }
+
+/// #9170: a replaced `struct`/`enum`/`union`/`trait` header with generic bounds
+/// is one `static_unknown` probe, not a field; a const-generic default holding
+/// a call keeps its call probe.
+#[test]
+fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> Result<(), String> {
+    let probes_for = |header: &str, before: &str| -> Result<Vec<_>, String> {
+        let source = format!("{header}\n    x: u8,\n}}\n");
+        probes(
+            &source,
+            ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: header.into(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: before.into(),
+                }],
+            },
+        )
+    };
+    for (header, before) in [
+        ("pub struct Wrapper<T: Clone + Send> {", "pub struct Wrapper<T: Clone> {"),
+        ("enum Op<Q: Ord + Copy> {", "enum Op<Q: Ord> {"),
+        ("union Bits<T: Copy> {", "union Bits<T> {"),
+    ] {
+        let result = probes_for(header, before)?;
+        assert!(
+            !result.is_empty()
+                && result
+                    .iter()
+                    .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "`{header}` was probed as something else, or lost: {result:?}"
+        );
+    }
+    let call = probes_for(
+        "struct Buffer<const N: usize = { capacity() }> {",
+        "struct Buffer<const N: usize = 4> {",
+    )?;
+    assert!(
+        call.iter()
+            .any(|probe| probe.family == ProbeFamily::CallDeletion),
+        "a call in a const-generic default lost its call probe: {call:?}"
+    );
+    Ok(())
+}

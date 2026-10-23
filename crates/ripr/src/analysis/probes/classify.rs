@@ -596,9 +596,35 @@ pub(crate) fn is_item_header(text: &str) -> bool {
         .map_or(declared, str::trim_start);
     ["struct", "enum", "union", "trait"].iter().any(|word| {
         declared.strip_prefix(word).is_some_and(|rest| {
-            rest.starts_with(char::is_whitespace) && text.ends_with('{') && !rest.contains("fn ")
+            // `union` is a contextual keyword: `union = Bits {` is an
+            // expression, so a declaration needs an identifier next.
+            rest.starts_with(char::is_whitespace)
+                && rest
+                    .trim_start()
+                    .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && text.ends_with('{')
+                && !rest.contains("fn ")
+                && !generics_hold_expression(rest)
         })
     })
+}
+
+/// A const-generic default (`<const N: usize = { capacity() }>`) or an array
+/// length in a generic default is an expression that runs at compile time and
+/// can call code, so a header carrying one keeps its call probe instead of
+/// reading as declaration-only. `rest` ends with the header's own `{`.
+fn generics_hold_expression(rest: &str) -> bool {
+    let generics = rest.strip_suffix('{').unwrap_or(rest);
+    let masked = mask_comments_and_strings(generics);
+    // A block expression, or a macro invocation, in the header.
+    let bang_macro = masked
+        .match_indices('!')
+        .any(|(i, _)| masked[i + 1..].trim_start().starts_with(['(', '[', '{']));
+    // An array length call: `(` after a `;` (`[u8; cap()]`), not `[u8; 4]`.
+    let array_len_call = masked
+        .split_once(';')
+        .is_some_and(|(_, after)| after.contains('('));
+    masked.contains('{') || bang_macro || array_len_call
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -646,6 +672,7 @@ mod tests {
             "pub struct Pair<A, B: Default> where A: Copy {",
             "unsafe trait Marker<T: Sized>: Send {",
             "union Bits<T: Copy> {",
+            "pub struct Arr<T> where [u8; 4]: Copy {",
         ] {
             assert!(is_item_header(header), "`{header}`");
             assert_eq!(
@@ -676,6 +703,19 @@ mod tests {
             "structure.field: Foo {",
             "traitor: Foo {",
             "pub fn enum_of<T: Clone>(t: T) -> T {",
+            // Contextual keyword `union` and other non-declaration uses.
+            "union = Bits {",
+            "union |= Bits {",
+            "union => Bits {",
+            "union : Foo {",
+            "union .map(|x| {",
+            // Const-generic defaults and macros are expressions that can
+            // call code: they keep their call probe.
+            "struct Buffer<const N: usize = { capacity() }> {",
+            "struct Buffer<T = [u8; cap()]> {",
+            "struct Tagged<const N: usize = { len!() }> {",
+            "struct = Foo {",
+            "enum : Foo {",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
         }
