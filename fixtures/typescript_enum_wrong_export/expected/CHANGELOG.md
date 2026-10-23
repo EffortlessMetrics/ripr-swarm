@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_enum_wrong_export (3)
+
+Reason:
+RIPR-SPEC-0224: row-local related-test miss (#9056) adds the observation-unconfirmed wording and a relation_confidence field comma; classification unchanged
+
+Command:
+`cargo xtask goldens bless typescript_enum_wrong_export --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
