@@ -11240,6 +11240,194 @@
           "class": "exposed"
         }
       ]
+    },
+    {
+      "id": "rust_module_reach_control_qualified",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_control_qualified",
+      "vector": "module_qualified_own_library_call_reaches_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_bare_import_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_bare_import_control",
+      "vector": "imported_own_library_entry_bare_call_reaches_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_cfg_comment_hidden",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_cfg_comment_hidden",
+      "vector": "cfg_hidden_by_a_comment_does_not_admit_a_gated_module_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_include_spaced_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_include_spaced_shadow",
+      "vector": "spaced_include_macro_may_rebind_the_library_name",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_multiline_qualified_text",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_multiline_qualified_text",
+      "vector": "qualified_spelling_in_a_multiline_string_is_not_a_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_multiline_bare_text",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_multiline_bare_text",
+      "vector": "bare_spelling_in_a_multiline_string_is_not_a_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_namespace_alias_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_namespace_alias_import",
+      "vector": "aliased_library_name_import_prefix_is_not_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_local_module_self_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_local_module_self_import",
+      "vector": "self_import_of_a_test_crate_module_is_not_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_macro_expanded_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_macro_expanded_shadow",
+      "vector": "item_position_macro_may_declare_a_module_named_like_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
     }
   ]
 }

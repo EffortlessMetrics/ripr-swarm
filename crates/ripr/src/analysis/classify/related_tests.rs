@@ -1060,7 +1060,7 @@ fn find_related_tests_with_candidates<'a>(
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
                         && (super::helper_transfer::is_direct_call_site(
-                            &call.text,
+                            &masked_call_line(index, test, call.line, &call.text),
                             &hop.caller.name,
                         ) || own_crate_qualified_entry_call(
                             index,
@@ -1800,7 +1800,7 @@ fn own_crate_qualified_entry_call(
         return false;
     };
     if facts.source.contains("include!")
-        || super::call_identity::source_may_splice_items(&facts.source, false)
+        || super::call_identity::source_may_splice_items(&facts.source, true)
     {
         return false;
     }
@@ -1852,6 +1852,22 @@ fn own_crate_qualified_entry_call(
         && !may_rebind_crate_name(&test.body)
 }
 
+/// The call's source line as code: the line at `line` of the comment/string-
+/// masked FULL test file, so text inside a multiline raw string or block
+/// comment (or a single-line string) is blanked before the call spelling is
+/// matched. A line past the end of an indexed file yields an empty line.
+fn masked_call_line(index: &RustIndex, test: &TestSummary, line: usize, text: &str) -> String {
+    // A test with no indexed file (a synthetic index) keeps the call fact's own
+    // line text; every real analysis indexes the test file.
+    let Some(facts) = index.files().get(&test.file) else {
+        return text.to_string();
+    };
+    let masked = mask_comments_and_strings(&facts.source);
+    line.checked_sub(1)
+        .and_then(|at| masked.lines().nth(at).map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// #8999 review: a bare call of an imported entry trusts an own-looking
 /// import prefix (`use <lib>::inner::entry;`). When the test file imports a
 /// path whose first segment is the root library's name, that name must be the
@@ -1874,9 +1890,41 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         return true;
     }
     let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+    // An import of the entry's name through `self::`/`crate::`/`super::` binds
+    // it to a module of the test crate, never to the library.
+    let binds_entry_locally = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                matches!(
+                    import.path.split("::").next(),
+                    Some("self" | "crate" | "super")
+                ) && import
+                    .alias
+                    .as_deref()
+                    .or_else(|| import.path.rsplit("::").next())
+                    .map(unraw)
+                    .as_deref()
+                    == Some(caller.name.as_str())
+            })
+    };
+    if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
+        return false;
+    }
     let uses_prefix = super::reveal::flattened_use_paths(&facts.source)
         .iter()
-        .any(|import| import.path.split("::").next().map(unraw).as_deref() == Some(crate_name));
+        .any(|import| {
+            // An absolute `::lib::..` import names the extern crate; it goes
+            // through the same proof as the bare-name prefix.
+            import
+                .path
+                .trim_start_matches("::")
+                .split("::")
+                .next()
+                .map(unraw)
+                .as_deref()
+                == Some(crate_name)
+        });
     if !uses_prefix {
         return true;
     }
@@ -1890,7 +1938,7 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
             })
     };
     let stripped_file = strip_comments_and_strings(&facts.source);
-    !super::call_identity::source_may_splice_items(&facts.source, false)
+    !super::call_identity::source_may_splice_items(&facts.source, true)
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
