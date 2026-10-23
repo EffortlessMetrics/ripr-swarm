@@ -248,6 +248,9 @@ fn real_check_json_carries_repo_scope_into_ledger_reason() -> Result<(), String>
     {
         return Err("diff finding JSON must omit analysis_scope".to_string());
     }
+    // The card-ready diff fixture forms no no-card record; the loop below is
+    // only meaningful for records that exist, and the contradiction/legacy
+    // matrix test exercises the non-vacuous diff-without-card case.
     for record in no_card_records(ledger_records(diff_json)?) {
         if record
             .static_limit_detail
@@ -279,6 +282,192 @@ fn real_check_json_carries_repo_scope_into_ledger_reason() -> Result<(), String>
     }
     if !no_card_records(ledger_records(nopath_json)?).is_empty() {
         return Err("a no-static-path finding must form no no-repair-card record".to_string());
+    }
+    Ok(())
+}
+
+fn python_output(label: &str, repo: bool) -> Result<crate::app::CheckOutput, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system time: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-py-repo-matrix-{label}-{}-{stamp}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<crate::app::CheckOutput, String> {
+        for (path, contents) in [
+            ("ripr.toml", CONFIG),
+            ("src/pricing.py", SOURCE),
+            ("tests/test_pricing.py", TEST),
+            ("diff.patch", DIFF),
+        ] {
+            let path = root.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {}: {error}", parent.display()))?;
+            }
+            fs::write(&path, contents)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+        }
+        let config = crate::config::tests_only_parse(CONFIG)?;
+        let input = crate::CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: (!repo).then(|| root.join("diff.patch")),
+            mode: crate::Mode::Draft,
+            format: crate::OutputFormat::Json,
+            include_unchanged_tests: true,
+            perl_facts_path: None,
+            suppression_policy: None,
+            git_timeout: None,
+            git_candidate: None,
+            scope: Default::default(),
+        };
+        if repo {
+            crate::app::check_workspace_repo_with_config(input, &config)
+        } else {
+            crate::app::check_workspace_with_config(input, &config)
+        }
+    })();
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|error| format!("remove fixture {}: {error}", root.display()));
+    let output = result?;
+    cleanup?;
+    Ok(output)
+}
+
+const REPO_REASON_FRAGMENT: &str = "repo-mode findings have no repair routing";
+
+fn mutate_py_findings(rendered: &str, edit: impl Fn(&mut Value)) -> Result<String, String> {
+    let mut value: Value = serde_json::from_str(rendered).map_err(|e| e.to_string())?;
+    if let Some(findings) = value["findings"].as_array_mut() {
+        for finding in findings
+            .iter_mut()
+            .filter(|f| f["classification"] == "weakly_exposed")
+        {
+            edit(finding);
+        }
+    }
+    Ok(value.to_string())
+}
+
+fn detail_has_repo_reason(rendered: String) -> Result<Vec<bool>, String> {
+    Ok(no_card_records(ledger_records(rendered)?)
+        .iter()
+        .map(|r| {
+            r.static_limit_detail
+                .as_deref()
+                .is_some_and(|d| d.contains(REPO_REASON_FRAGMENT))
+        })
+        .collect())
+}
+
+/// #5531 matrix (2, 3, 4, 5): the registry reason wins with discriminators
+/// cleared; the ledger never infers Repo from the legacy evidence string
+/// (typed scope removed) nor borrows it for an explicit Diff; and a real diff
+/// finding with only the legacy line added is a contradiction that closes the
+/// card and selects no repo reason.
+#[test]
+fn python_scope_matrix_discriminators_legacy_and_contradiction() -> Result<(), String> {
+    let repo_json = run("matrix-repo", true, crate::OutputFormat::Json)?;
+    // (2) discriminators cleared: still the registry reason.
+    let cleared = mutate_py_findings(&repo_json, |f| {
+        f["missing_discriminators"] = serde_json::json!([]);
+    })?;
+    let flags = detail_has_repo_reason(cleared)?;
+    if flags.is_empty() || flags.contains(&false) {
+        return Err(format!(
+            "cleared discriminators lost the registry reason: {flags:?}"
+        ));
+    }
+    // (3) typed scope removed, legacy evidence line retained.
+    let legacy = mutate_py_findings(&repo_json, |f| {
+        if let Some(object) = f.as_object_mut() {
+            object.remove("analysis_scope");
+        }
+        if let Some(evidence) = f["evidence"].as_array_mut() {
+            evidence.push(Value::from("analysis_scope: repo"));
+        }
+    })?;
+    if detail_has_repo_reason(legacy)?.contains(&true) {
+        return Err("ledger inferred Repo from the legacy evidence string".to_string());
+    }
+    // (4) explicit Diff scope plus legacy Repo evidence.
+    let explicit = mutate_py_findings(&repo_json, |f| {
+        f["analysis_scope"] = Value::from("diff");
+        if let Some(evidence) = f["evidence"].as_array_mut() {
+            evidence.push(Value::from("analysis_scope: repo"));
+        }
+    })?;
+    if detail_has_repo_reason(explicit)?.contains(&true) {
+        return Err("explicit Diff + legacy line borrowed the repo reason".to_string());
+    }
+    // (5) real diff finding, only the legacy line added.
+    let mut diff = python_output("matrix-diff", false)?;
+    for finding in &mut diff.findings {
+        finding
+            .evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+    }
+    let rendered = crate::render_check(&diff, &crate::OutputFormat::Json)?;
+    let weak = py_findings(&rendered)?;
+    if weak.is_empty() {
+        return Err("contradiction fixture lost its weak subject".to_string());
+    }
+    if weak.iter().any(|f| {
+        f.get("python_repair_card").is_some_and(|c| !c.is_null())
+            || f.get("analysis_scope").is_some()
+    }) {
+        return Err(format!(
+            "contradiction kept a card or typed scope: {weak:?}"
+        ));
+    }
+    let flags = detail_has_repo_reason(rendered)?;
+    if flags.is_empty() {
+        return Err("contradiction fixture formed no no-card record (vacuous)".to_string());
+    }
+    if flags.contains(&true) {
+        return Err("contradiction selected the repo reason".to_string());
+    }
+    Ok(())
+}
+
+/// Every key of every real finding must be declared by the published schema
+/// (`additionalProperties: false`), so a producer cannot add an undeclared one.
+fn assert_finding_keys_in_published_schema(json: &Value, label: &str) -> Result<(), String> {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../../schemas/ripr/check.schema.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    let props = schema["$defs"]["finding"]["properties"]
+        .as_object()
+        .ok_or_else(|| "schema finding properties missing".to_string())?;
+    let findings = json["findings"].as_array().cloned().unwrap_or_default();
+    if findings.is_empty() {
+        return Err(format!("{label}: no findings to check"));
+    }
+    for finding in &findings {
+        for key in finding.as_object().map(|o| o.keys()).into_iter().flatten() {
+            if !props.contains_key(key) {
+                return Err(format!(
+                    "{label}: finding key `{key}` is not in the published schema"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn real_python_payload_finding_keys_are_declared_by_schema() -> Result<(), String> {
+    for repo in [true, false] {
+        let json: Value = serde_json::from_str(&crate::render_check(
+            &python_output(&format!("schema-{repo}"), repo)?,
+            &crate::OutputFormat::Json,
+        )?)
+        .map_err(|e| e.to_string())?;
+        assert_finding_keys_in_published_schema(&json, &format!("python repo={repo}"))?;
     }
     Ok(())
 }

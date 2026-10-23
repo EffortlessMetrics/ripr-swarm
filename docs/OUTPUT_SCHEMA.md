@@ -2660,6 +2660,13 @@ Expired entries are not applied; expired and unmatched selectors surface as
 warnings. A missing or malformed policy fails the run (fail-closed): the run
 never silently emits unfiltered counts as if a policy had been applied.
 
+`findings[].analysis_scope` (#5531) is distinct from the top-level
+`analysis_scope` object (partial/limited scope disclosure). It is the typed
+per-finding scope, emitted as the single value `"repo"` for findings produced
+by a repo-mode run and omitted for diff-scoped findings (diff bytes are
+unchanged). Consumers such as the gap ledger read it instead of the legacy
+`analysis_scope: repo` evidence line; any other value is rejected by the schema.
+
 Three surfaces change when the flag is present:
 
 - `summary.suppressed_by_policy` — count of suppressed findings. The
