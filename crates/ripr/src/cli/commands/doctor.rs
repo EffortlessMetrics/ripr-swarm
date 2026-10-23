@@ -655,6 +655,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         defaults.lsp_seam_diagnostics
                     ));
                 }
+                // A missing root cannot have a config; reporting "using
+                // built-in defaults" under a passing Workspace line would
+                // read as a healthy root.
+                None if !root.is_dir() => {}
                 None => workspace.push("Config: not found; using built-in defaults".to_string()),
             }
         } else {
@@ -726,11 +730,22 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    lines.push(format!(
-        "✓ Cache: {} ({})",
-        display_text(&cache_loc),
-        cache.size_display
-    ));
+    if !cache.relocated_by_env && !root.is_dir() {
+        // The default cache lives under the missing root; a ✓ would claim
+        // a usable cache for a root that does not exist.
+        let reason = if root.exists() {
+            "the root is not a directory"
+        } else {
+            "the root directory does not exist"
+        };
+        lines.push(format!("- Cache check skipped: {reason}"));
+    } else {
+        lines.push(format!(
+            "✓ Cache: {} ({})",
+            display_text(&cache_loc),
+            cache.size_display
+        ));
+    }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
     if !cache.relocated_by_env && !root.is_dir() {
