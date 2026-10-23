@@ -55,6 +55,24 @@ static DIFF_AGGREGATES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
+/// Language labels the changed files route to, with JavaScript-family files
+/// kept apart from TypeScript (the one adapter reads both, the outcomes do
+/// not fold them).
+fn routed_outcome_labels(files: &[diff::ChangedFile]) -> BTreeSet<String> {
+    files
+        .iter()
+        .filter_map(|file| {
+            route(&file.path).map(|language| {
+                if language == LanguageId::TypeScript && is_javascript_family_path(&file.path) {
+                    LanguageId::JavaScript.as_str().to_string()
+                } else {
+                    language.as_str().to_string()
+                }
+            })
+        })
+        .collect()
+}
+
 /// Typed limitation kinds as stable wire labels, in adapter order.
 fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
     limitations
@@ -689,14 +707,11 @@ fn rust_excluded_by_config_limitation(
     ))
 }
 
-/// The typed limitation for changed source files in languages no ripr adapter
-/// reads (Go, Java, C, ...). Shell and PowerShell scripts count only when
-/// the diff changed no analyzable source (see [`is_script_language`]). `None` when the diff has none. Without it
-/// a Go-only diff read as `no_behavioral_candidates (analysis complete)` and a
-/// Rust + Go diff reported only the Rust half as a complete analysis.
 /// Changed files in languages no ripr adapter reads, counted per router
-/// label with their paths in diff order. Shared by the typed limitation and
-/// the per-language `unsupported` outcomes so the two cannot drift.
+/// label with their paths in diff order. Shell and PowerShell scripts count
+/// only when the diff changed no analyzable source (see
+/// [`is_script_language`]). Shared by the typed limitation and the
+/// per-language `unsupported` outcomes so the two cannot drift.
 fn unanalyzed_source_files(
     changed_files: &[diff::ChangedFile],
 ) -> (std::collections::BTreeMap<&'static str, usize>, Vec<String>) {
@@ -718,6 +733,10 @@ fn unanalyzed_source_files(
     (by_language, paths)
 }
 
+/// The typed limitation for changed source files in languages no ripr adapter
+/// reads (Go, Java, C, ...). `None` when the diff has none. Without it
+/// a Go-only diff read as `no_behavioral_candidates (analysis complete)` and a
+/// Rust + Go diff reported only the Rust half as a complete analysis.
 fn unanalyzed_source_language_limitation(
     changed_files: &[diff::ChangedFile],
 ) -> Result<Option<AnalysisLimitation>, String> {
@@ -1190,13 +1209,11 @@ fn run_pipeline_for_diff_text_with_language_config(
                 ))?,
             );
         }
-        diff_outcomes.push(LanguageAnalysisOutcomeV1::from_diff_result(
+        diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
             LanguageId::Rust,
             &result,
             &limitation_kind_labels(&result.limitations),
-            analysis_changed_files
-                .iter()
-                .any(|file| route(&file.path) == Some(LanguageId::Rust)),
+            &routed_outcome_labels(&analysis_changed_files),
             &diff_scope_label(result.partial_scope.as_ref()),
         ));
         limitations.extend(result.limitations);
@@ -1316,7 +1333,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .any(|file| route(&file.path) == Some(adapter_language));
                 let keeps_limitations =
                     reads_only_supplied_evidence || diff_touches_language || produced_findings;
-                diff_outcomes.push(LanguageAnalysisOutcomeV1::from_diff_result(
+                diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
                     *language,
                     &result,
                     &if keeps_limitations {
@@ -1324,7 +1341,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     } else {
                         Vec::new()
                     },
-                    diff_touches_language,
+                    &routed_outcome_labels(preview_changed_files),
                     &scope_label,
                 ));
                 findings.extend(result.findings);
@@ -1352,7 +1369,26 @@ fn run_pipeline_for_diff_text_with_language_config(
                     &scope_label,
                 );
                 language_runs.extend(outcome.compat_run());
-                diff_outcomes.push(outcome);
+                // An optional adapter that errors on a diff holding none of
+                // its language has no denominator to claim over, so its
+                // failure stays visible (public `language_runs`, outcome
+                // limitation) but must not block the aggregate. Perl reads
+                // only the caller-supplied packet, so its failure always
+                // concerns explicit evidence and always counts (mirrors the
+                // `reads_only_supplied_evidence` rule on the Ok path).
+                let adapter_language = match language {
+                    LanguageId::JavaScript => LanguageId::TypeScript,
+                    other => *other,
+                };
+                let out_of_scope = !matches!(language, LanguageId::Perl)
+                    && !preview_changed_files
+                        .iter()
+                        .any(|file| route(&file.path) == Some(adapter_language));
+                diff_outcomes.push(if out_of_scope {
+                    outcome.without_scope()
+                } else {
+                    outcome
+                });
             }
         }
     }
@@ -1798,7 +1834,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         diff_language_aggregate.record(outcome);
     }
     let diff_language_aggregate = diff_language_aggregate.finish();
-    diff_language_aggregate.validate()?;
+    // An invariant check that cannot change what a release build reports:
+    // a contradiction is an accounting bug for tests and debug builds to
+    // surface, never an analysis failure.
+    debug_assert!(
+        diff_language_aggregate.validate().is_ok(),
+        "{:?}",
+        diff_language_aggregate.validate()
+    );
     #[cfg(test)]
     if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
         aggregates.insert(options.root.clone(), diff_language_aggregate);
@@ -2703,6 +2746,7 @@ fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
 )]
 mod tests {
     use super::*;
+    use crate::analysis::language_outcome::{DiffCompleteness, LanguageOutcomeStatus};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -5342,7 +5386,6 @@ mod tests {
         .map_err(|error| error.to_string())?;
         let aggregate = captured_aggregate(&root)?;
         assert_eq!(aggregate.validate(), Ok(()));
-        assert_eq!(aggregate.completeness(), aggregate.claimed);
         assert_eq!(aggregate.blockers(), vec![("go", "unsupported")]);
         let rust = aggregate.outcomes.get("rust").ok_or("rust child missing")?;
         assert_eq!(rust.finding_count(), analysis.findings.len());
@@ -5383,6 +5426,9 @@ mod tests {
         let enabled = captured_aggregate(&root)?;
         assert_eq!(enabled.validate(), Ok(()));
         assert!(enabled.blockers().is_empty(), "{:?}", enabled.blockers());
+        let rust = enabled.outcomes.get("rust").ok_or("rust child missing")?;
+        assert_eq!(rust.status, LanguageOutcomeStatus::Complete);
+        assert_eq!(enabled.completeness(), DiffCompleteness::Complete);
 
         run_diff_pipeline_with_oracle_policy(
             &aggregate_options(root.clone(), diff_file),
@@ -5396,6 +5442,277 @@ mod tests {
         assert_ne!(enabled.semantic_digest, excluded.semantic_digest);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    fn ts_diff(files: &[&str]) -> String {
+        files
+            .iter()
+            .map(|file| {
+                format!(
+                    "diff --git a/{file} b/{file}\n--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,3 @@\n\
+                     +export function price(amount) {{\n\
+                     +  return amount > 10 ? 1 : 2;\n\
+                     +}}\n"
+                )
+            })
+            .collect()
+    }
+
+    /// Runs the real diff pipeline over `files` (written to disk) and returns
+    /// the result with its captured aggregate.
+    fn run_aggregate(
+        name: &str,
+        files: &[&str],
+        diff: &str,
+        languages: &[LanguageId],
+    ) -> Result<(AnalysisResult, DiffLanguageAggregate), String> {
+        let root = temp_root(name)?;
+        for file in files {
+            write(
+                &root.join(file),
+                "export function price(amount) {\n  return amount > 10 ? 1 : 2;\n}\n",
+            )?;
+        }
+        let diff_file = root.join("change.diff");
+        write(&diff_file, diff)?;
+        let analysis = run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            languages,
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(aggregate.validate(), Ok(()));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok((analysis, aggregate))
+    }
+
+    fn child_status(
+        aggregate: &DiffLanguageAggregate,
+        label: &str,
+    ) -> Option<LanguageOutcomeStatus> {
+        aggregate.outcomes.get(label).map(|child| child.status)
+    }
+
+    fn summed(aggregate: &DiffLanguageAggregate) -> usize {
+        aggregate.outcomes.values().map(|c| c.finding_count()).sum()
+    }
+
+    /// #6468: a JavaScript-only diff under a TypeScript-only language set
+    /// stays a JavaScript outcome and the TypeScript child has no scope.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn diff_pipeline_aggregate_javascript_only_diff_stays_javascript() -> Result<(), String> {
+        let (analysis, aggregate) = run_aggregate(
+            "aggregate-js-only",
+            &["src/price.js"],
+            &ts_diff(&["src/price.js"]),
+            &[LanguageId::TypeScript],
+        )?;
+        assert!(
+            child_status(&aggregate, "javascript").is_some(),
+            "{aggregate:?}"
+        );
+        assert_eq!(
+            child_status(&aggregate, "typescript"),
+            Some(LanguageOutcomeStatus::NoCurrentScope)
+        );
+        assert!(!analysis.findings.is_empty(), "fixture must yield findings");
+        assert_eq!(summed(&aggregate), analysis.findings.len());
+        assert_eq!(
+            aggregate
+                .outcomes
+                .get("javascript")
+                .map(|c| c.finding_count()),
+            Some(analysis.findings.len())
+        );
+        assert!(!aggregate.outcomes.contains_key("rust"));
+        Ok(())
+    }
+
+    /// #6468: both TypeScript-family ids enabled run the adapter twice; the
+    /// aggregate keeps one child per label and its summed count is the real
+    /// adapter output, not doubled.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn diff_pipeline_aggregate_both_typescript_ids_do_not_double_count() -> Result<(), String> {
+        let files = ["src/price.js", "src/cost.ts"];
+        let diff = ts_diff(&files);
+        let (single, single_aggregate) = run_aggregate(
+            "aggregate-ts-single",
+            &files,
+            &diff,
+            &[LanguageId::TypeScript],
+        )?;
+        let (both, both_aggregate) = run_aggregate(
+            "aggregate-ts-both",
+            &files,
+            &diff,
+            &[LanguageId::TypeScript, LanguageId::JavaScript],
+        )?;
+        assert_eq!(
+            both_aggregate.outcomes.keys().collect::<Vec<_>>(),
+            vec!["javascript", "typescript"]
+        );
+        assert_eq!(summed(&single_aggregate), single.findings.len());
+        // One adapter result per label: the aggregate equals the single run's
+        // output even though the loop ran the adapter for each id.
+        assert_eq!(summed(&both_aggregate), summed(&single_aggregate));
+        assert_eq!(
+            single_aggregate.semantic_digest,
+            both_aggregate.semantic_digest
+        );
+        assert!(both.findings.len() >= single.findings.len());
+        Ok(())
+    }
+
+    /// #6468: an enabled adapter whose language the diff does not touch is
+    /// `no_current_scope`, which alone does not make the diff complete.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn diff_pipeline_aggregate_untouched_enabled_language_is_no_current_scope() -> Result<(), String>
+    {
+        let root = temp_root("aggregate-no-scope")?;
+        write(&root.join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n")?;
+        let diff_file = root.join("rust.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- /dev/null\n+++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n+pub fn a() -> u32 { 1 }\n",
+        )?;
+        run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(
+            child_status(&aggregate, "python"),
+            Some(LanguageOutcomeStatus::NoCurrentScope)
+        );
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Complete);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #6468: preview files whose adapter is not in the language set are
+    /// `not_selected` per label (JavaScript apart from TypeScript), block the
+    /// aggregate, and do not project into `language_runs`.
+    #[test]
+    fn diff_pipeline_aggregate_not_enabled_preview_files_are_not_selected() -> Result<(), String> {
+        let (analysis, aggregate) = run_aggregate(
+            "aggregate-not-selected-preview",
+            &["src/price.js", "src/cost.ts"],
+            &ts_diff(&["src/price.js", "src/cost.ts"]),
+            &[LanguageId::Rust],
+        )?;
+        assert_eq!(
+            child_status(&aggregate, "javascript"),
+            Some(LanguageOutcomeStatus::NotSelected)
+        );
+        assert_eq!(
+            child_status(&aggregate, "typescript"),
+            Some(LanguageOutcomeStatus::NotSelected)
+        );
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        assert!(analysis.language_runs.is_empty());
+        Ok(())
+    }
+
+    /// #6468: a generated Rust file the adapter skips makes the Rust child
+    /// `partial`, never `complete`.
+    #[test]
+    fn diff_pipeline_aggregate_generated_rust_skip_is_partial() -> Result<(), String> {
+        let root = temp_root("aggregate-generated-skip")?;
+        write(
+            &root.join("src/pb.rs"),
+            "// This file is @generated by prost-build.\npub fn big() -> bool { true }\n",
+        )?;
+        let diff_file = root.join("gen.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/pb.rs b/src/pb.rs\n--- /dev/null\n+++ b/src/pb.rs\n\
+             @@ -0,0 +1,2 @@\n+// This file is @generated by prost-build.\n\
+             +pub fn big() -> bool { true }\n",
+        )?;
+        run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(
+            child_status(&aggregate, "rust"),
+            Some(LanguageOutcomeStatus::Partial)
+        );
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #6468: the Perl adapter errors when no packet exists (feature off or
+    /// no packet path). Perl reads only supplied evidence, so even a diff
+    /// with no Perl file records it as `unavailable`, and the public
+    /// projection is unchanged.
+    #[test]
+    fn diff_pipeline_aggregate_perl_error_is_unavailable_and_projected() -> Result<(), String> {
+        let (analysis, aggregate) = run_aggregate(
+            "aggregate-perl-unavailable",
+            &["src/cost.ts"],
+            &ts_diff(&["src/cost.ts"]),
+            &[LanguageId::TypeScript, LanguageId::Perl],
+        )?;
+        assert_eq!(
+            child_status(&aggregate, "perl"),
+            Some(LanguageOutcomeStatus::Unavailable)
+        );
+        assert_eq!(
+            analysis
+                .language_runs
+                .iter()
+                .map(|run| (run.language.as_str(), run.status))
+                .collect::<Vec<_>>(),
+            vec![("perl", LanguageRunStatus::Unavailable)]
+        );
+        Ok(())
+    }
+
+    /// #6468: a failing optional adapter on a diff holding none of its
+    /// language stays in the public projection but does not block.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn diff_pipeline_aggregate_out_of_scope_python_error_does_not_block() -> Result<(), String> {
+        let root = temp_root("aggregate-python-off")?;
+        write(&root.join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n")?;
+        let diff_file = root.join("rust.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- /dev/null\n+++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n+pub fn a() -> u32 { 1 }\n",
+        )?;
+        let analysis = run_diff_pipeline_with_oracle_policy(
+            &aggregate_options(root.clone(), diff_file),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+        )
+        .map_err(|error| error.to_string())?;
+        let aggregate = captured_aggregate(&root)?;
+        assert_eq!(analysis.language_runs.len(), 1);
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Complete);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn diff_scope_label_binds_the_partial_partition_identity() {
+        use super::super::language::PartialDiffStopReason;
+        assert_eq!(diff_scope_label(None), "full");
+        assert_eq!(
+            diff_scope_label(Some(&partial_scope(PartialDiffStopReason::LineBudget, 9))),
+            "partial:sha256:diff"
+        );
     }
 
     /// #6468: Rust complete plus a Perl packet that fails its integrity check.

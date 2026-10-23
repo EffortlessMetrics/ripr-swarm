@@ -26,6 +26,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 mod diff_aggregate;
+#[cfg(test)]
+pub(crate) use diff_aggregate::DiffCompleteness;
 pub(crate) use diff_aggregate::DiffLanguageAggregate;
 
 pub(crate) const LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "1";
@@ -209,17 +211,41 @@ impl LanguageAnalysisOutcomeV1 {
     /// Builds the outcome of one diff-mode adapter run that returned `Ok`.
     ///
     /// `kept_limitations` are the typed limitation kinds the pipeline kept for
-    /// this adapter (its own filter, not recomputed here); `diff_touches` is
-    /// whether the diff routed any changed file to the adapter. A run that
-    /// touched nothing and found nothing is `NoCurrentScope`, never
-    /// `CompleteZero`.
+    /// this adapter (its own filter, not recomputed here); `touched` holds the
+    /// language labels the diff routed changed files to (`javascript` apart
+    /// from `typescript`).
+    ///
+    /// Returns one child per language label of the adapter's family that is in
+    /// play: the loop language, any family label with routed files, and any
+    /// family label with findings. The TypeScript adapter's family is
+    /// `{typescript, javascript}`; every other adapter's is itself. Each
+    /// child holds only the findings whose `finding.language` is its label;
+    /// findings outside the family (a bridge profile's Rust-line findings,
+    /// or none) stay with the loop language's child and never create another
+    /// language's key. When both TypeScript ids run, the same label is
+    /// produced twice and `DiffLanguageAggregate::record` keeps one child, so
+    /// counts are never summed twice. A child that touched nothing and found
+    /// nothing is `NoCurrentScope`, never `CompleteZero`. Limitations belong
+    /// to the adapter run and attach to every child it produced.
     pub(crate) fn from_diff_result(
         language: LanguageId,
         result: &LanguageDiffResult,
         kept_limitations: &[String],
-        diff_touches: bool,
+        touched: &std::collections::BTreeSet<String>,
         scope: &str,
-    ) -> Self {
+    ) -> Vec<Self> {
+        let family: &[&str] = match language {
+            LanguageId::TypeScript | LanguageId::JavaScript => &["typescript", "javascript"],
+            other => &[other.as_str()],
+        };
+        let own = language.as_str();
+        let label_of = |finding: &Finding| {
+            finding
+                .language
+                .map(|found| found.as_str())
+                .filter(|found| family.contains(found))
+                .unwrap_or(own)
+        };
         let mut limitations = kept_limitations.to_vec();
         if let Some(partial) = &result.partial_scope {
             limitations.push(format!("limited_partial_scope: {}", partial.run_status));
@@ -227,27 +253,63 @@ impl LanguageAnalysisOutcomeV1 {
         if result.skipped_files > 0 {
             limitations.push(format!("generated_files_skipped: {}", result.skipped_files));
         }
-        let status = if !limitations.is_empty() {
-            LanguageOutcomeStatus::Partial
-        } else if !result.findings.is_empty() {
-            LanguageOutcomeStatus::Complete
-        } else if diff_touches || result.changed_files > 0 {
-            LanguageOutcomeStatus::CompleteZero
-        } else {
-            LanguageOutcomeStatus::NoCurrentScope
-        };
-        let resources = LanguageResourceObservations {
-            files_skipped: Some(result.skipped_files),
-            ..LanguageResourceObservations::default()
-        };
+        let mut labels = std::collections::BTreeSet::from([own]);
+        labels.extend(
+            family
+                .iter()
+                .copied()
+                .filter(|label| touched.contains(*label)),
+        );
+        labels.extend(result.findings.iter().map(label_of));
+        labels
+            .into_iter()
+            .map(|label| {
+                let own_findings = result
+                    .findings
+                    .iter()
+                    .filter(|finding| label_of(finding) == label)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let status = if !limitations.is_empty() {
+                    LanguageOutcomeStatus::Partial
+                } else if !own_findings.is_empty() {
+                    LanguageOutcomeStatus::Complete
+                } else if touched.contains(label) {
+                    LanguageOutcomeStatus::CompleteZero
+                } else {
+                    LanguageOutcomeStatus::NoCurrentScope
+                };
+                let resources = LanguageResourceObservations {
+                    files_skipped: Some(result.skipped_files),
+                    ..LanguageResourceObservations::default()
+                };
+                Self::new(
+                    label.to_string(),
+                    OutcomeMode::Diff,
+                    Some(scope.to_string()),
+                    status,
+                    count_findings(&own_findings),
+                    resources,
+                    limitations.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// The same failure for an optional adapter whose language the diff did
+    /// not touch (no files, no packet needed): the error stays visible in the
+    /// limitation and digest, but there is no denominator to claim over, so it
+    /// is `NoCurrentScope` and does not block the aggregate. The public
+    /// `LanguageRun` is derived from the original `Err` outcome, not this one.
+    pub(crate) fn without_scope(&self) -> Self {
         Self::new(
-            language.as_str().to_string(),
-            OutcomeMode::Diff,
-            Some(scope.to_string()),
-            status,
-            count_findings(&result.findings),
-            resources,
-            limitations,
+            self.language.clone(),
+            self.mode,
+            self.scope.clone(),
+            LanguageOutcomeStatus::NoCurrentScope,
+            self.findings_by_language.clone(),
+            self.resources.clone(),
+            self.limitations.clone(),
         )
     }
 
@@ -381,7 +443,11 @@ impl LanguageAnalysisOutcomeV1 {
                 "{label}: status complete_zero carries {findings} finding(s)"
             ));
         }
-        if self.status.is_complete_for_aggregate() && !self.limitations.is_empty() {
+        if matches!(
+            self.status,
+            LanguageOutcomeStatus::Complete | LanguageOutcomeStatus::CompleteZero
+        ) && !self.limitations.is_empty()
+        {
             return Some(format!("{label}: status {status} carries limitations"));
         }
         None

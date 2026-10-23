@@ -9,7 +9,9 @@
 //! It is an internal record. It does not feed `AnalysisOutcome.kind`, the
 //! public `language_runs` projection, or any gate.
 
-use super::{LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION, LanguageAnalysisOutcomeV1};
+use super::{
+    LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION, LanguageAnalysisOutcomeV1, LanguageOutcomeStatus,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -92,12 +94,19 @@ impl DiffLanguageAggregate {
             .collect()
     }
 
-    /// Pure completeness: complete only when at least one language was
-    /// evidenced and every child is complete, evidenced `complete_zero`, or
-    /// had nothing in scope. Unsupported, not-selected, unavailable, invalid,
-    /// failed and partial children all keep it incomplete.
+    /// Pure completeness: complete only when at least one child is evidenced
+    /// (`complete` or `complete_zero`) and every child is complete, evidenced
+    /// `complete_zero`, or had nothing in scope. Nothing-in-scope children
+    /// alone evidence nothing. Unsupported, not-selected, unavailable,
+    /// invalid, failed and partial children all keep it incomplete.
     pub(crate) fn completeness(&self) -> DiffCompleteness {
-        if self.outcomes.is_empty() || !self.blockers().is_empty() {
+        let evidenced = self.outcomes.values().any(|outcome| {
+            matches!(
+                outcome.status,
+                LanguageOutcomeStatus::Complete | LanguageOutcomeStatus::CompleteZero
+            )
+        });
+        if !evidenced || !self.blockers().is_empty() {
             DiffCompleteness::Incomplete
         } else {
             DiffCompleteness::Complete

@@ -22,13 +22,37 @@ fn diff_ok(
     findings: Vec<Finding>,
     kept: &[&str],
 ) -> LanguageAnalysisOutcomeV1 {
-    LanguageAnalysisOutcomeV1::from_diff_result(
+    children(
         language,
         &diff_result(findings, 1),
         &kept.iter().map(|k| k.to_string()).collect::<Vec<_>>(),
-        true,
+        &[language.as_str()],
         "full",
     )
+    .into_iter()
+    .find(|child| child.language == language.as_str())
+    .unwrap_or_else(|| LanguageAnalysisOutcomeV1::unsupported("missing-child", 0, "full"))
+}
+
+fn children(
+    language: LanguageId,
+    result: &LanguageDiffResult,
+    kept: &[String],
+    touched: &[&str],
+    scope: &str,
+) -> Vec<LanguageAnalysisOutcomeV1> {
+    let touched = touched.iter().map(|label| label.to_string()).collect();
+    LanguageAnalysisOutcomeV1::from_diff_result(language, result, kept, &touched, scope)
+}
+
+fn only(
+    language: LanguageId,
+    result: &LanguageDiffResult,
+    touched: &[&str],
+) -> LanguageAnalysisOutcomeV1 {
+    let mut all = children(language, result, &[], touched, "full");
+    assert_eq!(all.len(), 1, "{all:?}");
+    all.remove(0)
 }
 
 fn aggregate(children: Vec<LanguageAnalysisOutcomeV1>) -> DiffLanguageAggregate {
@@ -136,13 +160,17 @@ fn javascript_only_changes_stay_javascript() -> Result<(), String> {
     assert_eq!(child.findings_by_language.get("typescript"), None);
     // A TypeScript-adapter run that carries JavaScript findings keeps them
     // counted as JavaScript under the adapter's own label.
-    let ts_run = diff_ok(
+    let ts_run = children(
         LanguageId::TypeScript,
-        vec![finding_in(Some(LanguageId::JavaScript))?],
+        &diff_result(vec![finding_in(Some(LanguageId::JavaScript))?], 1),
         &[],
+        &["javascript"],
+        "full",
     );
-    assert_eq!(ts_run.language, "typescript");
-    assert_eq!(ts_run.findings_by_language.get("javascript"), Some(&1));
+    let labels: Vec<_> = ts_run.iter().map(|c| c.language.as_str()).collect();
+    assert_eq!(labels, vec!["javascript", "typescript"]);
+    assert_eq!(ts_run[0].findings_by_language.get("javascript"), Some(&1));
+    assert_eq!(ts_run[1].finding_count(), 0);
     Ok(())
 }
 
@@ -156,20 +184,8 @@ fn unavailable_not_selected_unsupported_no_scope_and_complete_zero_stay_distinct
     );
     let not_selected = LanguageAnalysisOutcomeV1::not_selected("python", 1, "disabled", "full");
     let unsupported = LanguageAnalysisOutcomeV1::unsupported("python", 1, "full");
-    let no_scope = LanguageAnalysisOutcomeV1::from_diff_result(
-        LanguageId::Python,
-        &diff_result(Vec::new(), 0),
-        &[],
-        false,
-        "full",
-    );
-    let complete_zero = LanguageAnalysisOutcomeV1::from_diff_result(
-        LanguageId::Python,
-        &diff_result(Vec::new(), 1),
-        &[],
-        true,
-        "full",
-    );
+    let no_scope = only(LanguageId::Python, &diff_result(Vec::new(), 0), &[]);
+    let complete_zero = only(LanguageId::Python, &diff_result(Vec::new(), 1), &["python"]);
     let all = [
         &unavailable,
         &not_selected,
@@ -295,13 +311,15 @@ fn empty_aggregate_and_scope_binding_fail_closed() -> Result<(), String> {
     assert_eq!(empty.completeness(), DiffCompleteness::Incomplete);
     let full = aggregate(vec![rust_complete()?]);
     let mut partial_scope = DiffLanguageAggregate::new("partial:sha256:x".to_string());
-    partial_scope.record(LanguageAnalysisOutcomeV1::from_diff_result(
+    for child in children(
         LanguageId::Rust,
         &diff_result(vec![finding_in(Some(LanguageId::Rust))?], 1),
         &[],
-        true,
+        &["rust"],
         "partial:sha256:x",
-    ));
+    ) {
+        partial_scope.record(child);
+    }
     let partial_scope = partial_scope.finish();
     assert_eq!(partial_scope.validate(), Ok(()));
     assert_ne!(full.semantic_digest, partial_scope.semantic_digest);
@@ -336,8 +354,124 @@ fn err_compat_run_is_the_adapter_reason_verbatim() {
 fn generated_skips_make_a_diff_run_partial() {
     let mut run = diff_result(Vec::new(), 2);
     run.skipped_files = 1;
-    let outcome =
-        LanguageAnalysisOutcomeV1::from_diff_result(LanguageId::Rust, &run, &[], true, "full");
+    let outcome = only(LanguageId::Rust, &run, &["rust"]);
     assert_eq!(outcome.status, LanguageOutcomeStatus::Partial);
     assert_eq!(outcome.limitations, vec!["generated_files_skipped: 1"]);
+}
+
+#[test]
+fn partial_scope_label_is_bound_into_the_child_scope() -> Result<(), String> {
+    // `only` builds with scope "full"; a partial label must flow through.
+    let child = children(
+        LanguageId::Rust,
+        &diff_result(vec![finding_in(Some(LanguageId::Rust))?], 1),
+        &[],
+        &["rust"],
+        "partial:sha256:x",
+    )
+    .remove(0);
+    assert_eq!(child.scope.as_deref(), Some("partial:sha256:x"));
+    Ok(())
+}
+
+#[test]
+fn nothing_but_no_current_scope_children_is_not_whole_diff_complete() {
+    let idle = aggregate(vec![only(
+        LanguageId::Python,
+        &diff_result(Vec::new(), 0),
+        &[],
+    )]);
+    assert!(idle.blockers().is_empty());
+    assert_eq!(idle.completeness(), DiffCompleteness::Incomplete);
+    let evidenced = aggregate(vec![
+        only(LanguageId::Python, &diff_result(Vec::new(), 0), &[]),
+        only(LanguageId::Rust, &diff_result(Vec::new(), 1), &["rust"]),
+    ]);
+    assert_eq!(evidenced.completeness(), DiffCompleteness::Complete);
+}
+
+#[test]
+fn javascript_loop_over_typescript_only_files_is_no_current_scope() {
+    let all = children(
+        LanguageId::JavaScript,
+        &diff_result(Vec::new(), 1),
+        &[],
+        &["typescript"],
+        "full",
+    );
+    let status_of = |label: &str| {
+        all.iter()
+            .find(|child| child.language == label)
+            .map(|child| child.status)
+    };
+    assert_eq!(
+        status_of("javascript"),
+        Some(LanguageOutcomeStatus::NoCurrentScope)
+    );
+    assert_eq!(
+        status_of("typescript"),
+        Some(LanguageOutcomeStatus::CompleteZero)
+    );
+}
+
+#[test]
+fn typescript_family_findings_split_by_finding_language_and_never_double_count()
+-> Result<(), String> {
+    let result = diff_result(
+        vec![
+            finding_in(Some(LanguageId::TypeScript))?,
+            finding_in(Some(LanguageId::JavaScript))?,
+            finding_in(Some(LanguageId::JavaScript))?,
+            finding_in(Some(LanguageId::Rust))?,
+            finding_in(None)?,
+        ],
+        3,
+    );
+    let touched = ["typescript", "javascript"];
+    let from_ts = children(LanguageId::TypeScript, &result, &[], &touched, "full");
+    let from_js = children(LanguageId::JavaScript, &result, &[], &touched, "full");
+    let labels: Vec<_> = from_ts.iter().map(|c| c.language.as_str()).collect();
+    assert_eq!(labels, vec!["javascript", "typescript"]);
+    // Rust-line and unknown findings stay with the loop language's child;
+    // they never create a `rust` key from a preview adapter.
+    let total =
+        |all: &[LanguageAnalysisOutcomeV1]| all.iter().map(|c| c.finding_count()).sum::<usize>();
+    assert_eq!(total(&from_ts), 5);
+    assert_eq!(total(&from_js), 5);
+    // Both ids run: the same labels are recorded twice; the aggregate keeps
+    // one child per label, so the summed count is the single run's.
+    let mut both = DiffLanguageAggregate::new("full".to_string());
+    for child in from_ts.into_iter().chain(from_js) {
+        both.record(child);
+    }
+    let both = both.finish();
+    assert_eq!(both.outcomes.len(), 2);
+    assert_eq!(
+        both.outcomes
+            .values()
+            .map(|c| c.finding_count())
+            .sum::<usize>(),
+        5
+    );
+    Ok(())
+}
+
+#[test]
+fn out_of_scope_optional_error_stays_visible_but_does_not_block() -> Result<(), String> {
+    let failed = LanguageAnalysisOutcomeV1::from_diff_err(
+        LanguageId::Python,
+        "feature off".to_string(),
+        LanguageRunStatus::Unavailable,
+        "full",
+    );
+    let demoted = failed.without_scope();
+    assert_eq!(demoted.status, LanguageOutcomeStatus::NoCurrentScope);
+    assert_eq!(demoted.limitations, failed.limitations);
+    assert_ne!(demoted.semantic_digest, failed.semantic_digest);
+    let blocked = aggregate(vec![rust_complete()?, failed]);
+    assert_eq!(blocked.completeness(), DiffCompleteness::Incomplete);
+    let free = aggregate(vec![rust_complete()?, demoted]);
+    assert_eq!(free.validate(), Ok(()));
+    assert_eq!(free.completeness(), DiffCompleteness::Complete);
+    Ok(())
 }
