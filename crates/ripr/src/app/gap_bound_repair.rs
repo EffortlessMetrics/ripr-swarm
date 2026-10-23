@@ -158,7 +158,8 @@ pub(crate) fn repair_start_command(
         // forged or damaged manifest) gets a neutral route, never a
         // `--gap-id` start for a foreign subject.
         Some(base) if !is_gap_bound_subject(subject) || base.trim().is_empty() => {
-            format!("ripr check --root {}{store_flag}", shell_arg(root_display))
+            // `ripr check` has no `--store` arm, so the flag is not carried.
+            format!("ripr check --root {}", shell_arg(root_display))
         }
         Some(base) => gap_bound_start_command(root_display, store_flag, subject, base),
         None => format!(
@@ -188,6 +189,26 @@ mod tests {
             assert!(!command.contains("--seam-id"), "{subject}: {command}");
         }
         let ok = repair_start_command(".", "", "gap:typescript:typescript_preview:1a2b", Some("B"));
+        assert!(ok.contains("--gap-id"), "{ok}");
+    }
+
+    #[test]
+    fn a_malformed_binding_fallback_drops_the_store_flag() {
+        let store = " --store /tmp/s";
+        for (subject, base) in [
+            ("seam:src/lib.rs:1", "HEAD~1"),
+            ("gap:typescript:typescript_preview:1a2b", "  "),
+        ] {
+            let command = repair_start_command(".", store, subject, Some(base));
+            assert!(!command.contains("--store"), "{subject}: {command}");
+            assert!(command.starts_with("ripr check --root"), "{command}");
+        }
+        let ok = repair_start_command(
+            ".",
+            store,
+            "gap:typescript:typescript_preview:1a2b",
+            Some("B"),
+        );
         assert!(ok.contains("--gap-id"), "{ok}");
     }
 
