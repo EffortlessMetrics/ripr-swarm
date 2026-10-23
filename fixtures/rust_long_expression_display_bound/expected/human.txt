@@ -17,8 +17,9 @@ Start here:
   Changed behavior: decisions.iter().filter(|d| d.decision == "blocking").count() == 1
   Missing discriminator (1 of 2): Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
   Related test: src/lib.rs:25 single_blocking_decision_reports_its_reason
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain

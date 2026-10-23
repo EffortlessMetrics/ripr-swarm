@@ -98,6 +98,16 @@ pub(crate) use probes::{
 pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+/// Parser-backed related-test retention fixture for consumer tests (#9175);
+/// a narrow cfg(test) entry so output tests need no analysis internals.
+#[cfg(test)]
+pub(crate) fn retention_fixture_finding(
+    docs: usize,
+    demoted_call: &str,
+    demoted_asserts: usize,
+) -> crate::domain::Finding {
+    classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
+}
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -157,6 +167,13 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
         *counts.entry(language).or_default() += 1;
     }
     counts.into_iter().collect()
+}
+
+/// Whether the root holds any regular source file ripr reads, routes to a
+/// preview adapter or names as an unanalyzed language, in one short-circuiting
+/// walk; see `workspace::has_inspectable_source_file`.
+pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
+    workspace::has_inspectable_source_file(root)
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
