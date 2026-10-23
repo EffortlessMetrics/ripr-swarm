@@ -1,0 +1,8 @@
+[package]
+name = "rust_build_script_no_test_reach_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_build_script_no_test_reach_fixture"
+path = "src/lib.rs"

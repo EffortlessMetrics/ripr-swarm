@@ -65,6 +65,14 @@ pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
     "this page was already narrowed to fit; there is no narrower MCP read of this list page";
 pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
     "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+/// The non-pageable disclosure overflow that filtering cannot cause: only
+/// then is the snapshot identity route the honest recovery (#9895).
+pub(crate) const RECOVERY_GAP_LIST_IDENTITY_ROUTE: &str = "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap";
+/// The overflow the snapshot identity route cannot fix: when the echoed
+/// filter value is the difference between a fitting shell and an
+/// overflowing one, the truthful recovery names the filter, not the page
+/// (#9895).
+pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter value, not the page, exceeds the response bound; narrow the file/class/language filter and retry ripr_list_gaps";
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
@@ -347,7 +355,7 @@ pub(crate) struct Snapshot {
 pub(crate) struct ScopeFacts {
     pub(crate) uncommitted_edits: bool,
     pub(crate) untracked: Vec<String>,
-    /// Gitignored Rust files the diff source could not analyze (#7467).
+    /// Gitignored source files the diff source could not analyze (#7467).
     pub(crate) ignored: Vec<String>,
 }
 
@@ -671,20 +679,68 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
-        let shell_bytes = {
+        let shell = {
             let scope = GapListScope {
                 selection,
                 requested,
                 filter,
                 filtered,
             };
-            let shell =
-                self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?;
-            document_bytes(&shell)?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
         };
+        let shell_bytes = document_bytes(&shell)?;
+        // The same shell with an empty filter echo isolates the echo's
+        // contribution: when the echo is the difference between a fitting
+        // shell and an overflowing one, the overflow is filter-driven and
+        // the refusal must name the filter, not the identity route (#9895).
+        // `filtered` stays as counted so only the echo differs between the
+        // two probes.
+        let shell_without_filter = {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter: &GapListFilter::default(),
+                filtered,
+            };
+            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+        };
+        let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
+        let shell_envelope_overflows =
+            crate::mcp::protocol::structured_envelope_overflows(&shell, max_envelope_bytes)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })?;
         // Reserve covers the array syntax around the summaries and the
         // byte-accounting margin; per-item commas are charged below.
         let reserve = 256usize;
+        // The recovery names what the caller can change: a shell that fits
+        // once the filter echo is removed overflowed because of the filter;
+        // any other overflow is a disclosure the page cannot narrow.
+        let recovery_for_envelope =
+            |shell_without_filter_envelope_overflows: bool| -> &'static str {
+                if shell_envelope_overflows && !shell_without_filter_envelope_overflows {
+                    RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+                } else {
+                    RECOVERY_GAP_LIST_IDENTITY_ROUTE
+                }
+            };
+        // The overflow side carries the same reserve margin the page budget
+        // charges: the final document adds the echoed window (for example a
+        // past-end offset renders longer than the zero-page shell probe), so
+        // a shell that fits raw can still overflow once page metadata is
+        // rendered. Attributing that overflow without the reserve would
+        // fall back to the identity route even when dropping the echo
+        // leaves a fitting shell (#9895 review).
+        let recovery_for_document = || -> &'static str {
+            if shell_bytes.saturating_add(reserve) > super::MAX_TOOL_DOCUMENT_BYTES
+                && shell_without_filter_bytes.saturating_add(reserve)
+                    <= super::MAX_TOOL_DOCUMENT_BYTES
+            {
+                RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+            } else {
+                RECOVERY_GAP_LIST_IDENTITY_ROUTE
+            }
+        };
         let page_budget =
             super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
 
@@ -763,13 +819,21 @@ impl WorkspaceSession {
                 // includes empty pages whose echoed filters fill the shell;
                 // fail closed instead of shipping a text-only success that
                 // breaks the outputSchema contract (#6021 review, #7768).
+                let shell_without_filter_overflows =
+                    crate::mcp::protocol::structured_envelope_overflows(
+                        &shell_without_filter,
+                        max_envelope_bytes,
+                    )
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })?;
                 return Err(AttemptFailure::new(
                     CODE_RESULT_TOO_LARGE,
                     format!(
                         "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {max_envelope_bytes}-byte id-aware envelope budget ({}-byte response bound minus the request id and outer reserve)",
                         super::MAX_RESPONSE_BYTES
                     ),
-                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    recovery_for_envelope(shell_without_filter_overflows),
                 )
                 .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
             }
@@ -787,7 +851,8 @@ impl WorkspaceSession {
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
         // disclosure alone) outgrows the ceiling cannot be narrowed by
-        // paging; fail closed naming the identity route (#6021).
+        // paging; fail closed naming what the caller can change (#6021,
+        // #9895).
         let bytes = document_bytes(&document)?;
         if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
             return Err(AttemptFailure::new(
@@ -796,7 +861,7 @@ impl WorkspaceSession {
                     "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
                     super::MAX_TOOL_DOCUMENT_BYTES
                 ),
-                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                recovery_for_document(),
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
@@ -845,6 +910,16 @@ impl WorkspaceSession {
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
+            "outcome": {
+                "kind": snapshot.outcome.kind.as_str(),
+                "label": snapshot.outcome.kind.plain_label(),
+                "limitations": snapshot
+                    .outcome
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.kind.as_str())
+                    .collect::<Vec<_>>(),
+            },
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -1109,21 +1184,45 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return disclosure;
     }
     const NAMED_PATHS: usize = 3;
+    // #9604 batch G finding 34: the ignored-files wording names the languages
+    // the snapshot actually analyzed, derived from the committed findings, so
+    // a Python or five-language workspace is not mislabeled "Rust".
+    let language_label = analyzed_language_label(&snapshot.findings);
     let ignored_edits = json!({
         "files": scope.ignored.iter().take(NAMED_PATHS).collect::<Vec<_>>(),
         "total": scope.ignored.len(),
         "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
-        "remedy": "gitignored Rust files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`",
+        "languages_analyzed": language_label,
+        "remedy": format!("gitignored {language_label} files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`"),
     });
     let base = disclosure.get_or_insert_with(|| {
         json!({
             "analyzed": analyzed_label(snapshot),
             "ignored_files": "outside this analysis",
-            "note": "gitignored Rust files were excluded and are not analyzed by this snapshot",
+            "note": format!("gitignored {language_label} files were excluded and are not analyzed by this snapshot"),
         })
     });
     base["ignored_edits"] = ignored_edits;
     disclosure
+}
+
+/// The languages the snapshot actually analyzed, for scope-disclosure wording
+/// (#9604 batch G finding 34): derived from the committed findings so a
+/// Python-only or five-language workspace is not mislabeled "Rust". A snapshot
+/// with zero findings cannot name a language from evidence; the wording falls
+/// back to "source" rather than guessing.
+fn analyzed_language_label(findings: &[crate::domain::Finding]) -> String {
+    let mut languages = findings
+        .iter()
+        .filter_map(|finding| finding.language)
+        .collect::<Vec<_>>();
+    languages.sort_by_key(|language| language.as_str());
+    languages.dedup();
+    match languages.as_slice() {
+        [] => "source".to_string(),
+        [only] => only.display_name().to_string(),
+        _ => "mixed-language".to_string(),
+    }
 }
 
 /// What the snapshot analyzed: the default-branch diff, or the diff against
@@ -1964,7 +2063,84 @@ mod tests {
         Ok(())
     }
 
-    /// #7464: each filter dimension narrows the stored selection on its own,
+    /// #9604 batch G finding 29: a gap list over a partial run must disclose
+    /// the run's outcome, not read as clean. The block embeds the snapshot's
+    /// typed outcome kind, a plain label, and the limitation kinds — and stays
+    /// consistent with the snapshot resource.
+    #[test]
+    fn gap_list_discloses_the_snapshots_analysis_outcome() -> Result<(), String> {
+        let session = session_with_varied_findings()?;
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let snapshot_id = document
+            .pointer("/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list lost its snapshot identity: {document}"))?
+            .to_string();
+        let snapshot = session
+            .snapshot_document(&snapshot_id)
+            .map_err(|failure| failure.detail)?;
+        let snapshot_kind = snapshot
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("snapshot resource lost its outcome kind: {snapshot}"))?;
+        let list_kind = document
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list omitted the run outcome: {document}"))?;
+        if list_kind != snapshot_kind {
+            return Err(format!(
+                "gap list outcome ({list_kind}) must match the snapshot resource ({snapshot_kind})"
+            ));
+        }
+        if document
+            .pointer("/outcome/label")
+            .and_then(Value::as_str)
+            .is_none()
+        {
+            return Err(format!("gap list outcome lost its plain label: {document}"));
+        }
+        let outcome_limitations = document
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("gap list outcome lost its limitations array: {document}"))?;
+        let snapshot_limitations = snapshot
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .map(|limitations| limitations.len())
+            .unwrap_or(0);
+        if outcome_limitations.len() != snapshot_limitations {
+            return Err(format!(
+                "gap list carried {} outcome limitations where the snapshot carries {snapshot_limitations}",
+                outcome_limitations.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9604 batch G finding 34: ignored-file disclosure must name the
+    /// languages the snapshot actually analyzed, not hardcode Rust.
+    #[test]
+    fn analyzed_language_label_follows_the_committed_findings() -> Result<(), String> {
+        let rust_only = vec![gaps::test_finding()?];
+        assert_eq!(analyzed_language_label(&rust_only), "Rust");
+        let mut python = gaps::test_finding()?;
+        python.language = Some(crate::domain::LanguageId::Python);
+        assert_eq!(analyzed_language_label(&[python]), "Python");
+        let mut typescript = gaps::test_finding()?;
+        typescript.language = Some(crate::domain::LanguageId::TypeScript);
+        let mixed = vec![rust_only[0].clone(), typescript];
+        assert_eq!(analyzed_language_label(&mixed), "mixed-language");
+        let no_language: Vec<crate::domain::Finding> = Vec::new();
+        assert_eq!(analyzed_language_label(&no_language), "source");
+        Ok(())
+    }
     /// dimensions combine conjunctively, and `offset`/`limit` page the
     /// narrowed set — while `selected` stays the full stored-selection count
     /// and `filters` echoes the request.
@@ -2482,6 +2658,177 @@ mod tests {
             .map_err(|error| format!("small listing must ship: {error}"))?;
         if envelope.get("structuredContent").is_none() {
             return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9895: the refusal recovery names what the caller can change. A
+    /// shell that overflows only because of the echoed filter value names
+    /// the filter; a shell that overflows on its own keeps the snapshot
+    /// identity route.
+    #[test]
+    fn list_gaps_overflow_recovery_names_the_shrinkable_cause() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        // An empty page at a past-end offset with no filter echo IS the
+        // no-echo shell probe: its envelope sizes every later comparison.
+        let shell_probe = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 10,
+                    limit: None,
+                },
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let shell_envelope = crate::mcp::protocol::structured_envelope_bytes(&shell_probe)
+            .map_err(|error| error.to_string())?;
+        // A budget the no-echo shell fits with slack to spare: only the
+        // echoed filter can push the with-filter shell past it.
+        let filter_budget = shell_envelope + 64;
+        let huge_echo = GapListFilter {
+            file: Some("x".repeat(4_000)),
+            ..GapListFilter::default()
+        };
+        let filter_refusal: AttemptFailure = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &huge_echo,
+            filter_budget,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a 4000-character filter echo must overflow the {filter_budget}-byte budget: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if filter_refusal.code != CODE_RESULT_TOO_LARGE
+            || filter_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "filter-driven overflow must name the filter: {filter_refusal:?}"
+            ));
+        }
+        // No filter echo at all: a budget a few bytes below the same shell
+        // refuses with the identity route, because nothing caller-side can
+        // shrink the disclosure. (The probe's past-end offset renders one
+        // byte longer than the default window's, hence the margin.)
+        let identity_refusal = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &GapListFilter::default(),
+            shell_envelope.saturating_sub(4),
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a budget below the empty shell must refuse: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if identity_refusal.code != CODE_RESULT_TOO_LARGE
+            || identity_refusal.recovery != RECOVERY_GAP_LIST_IDENTITY_ROUTE
+        {
+            return Err(format!(
+                "shell-driven overflow must keep the identity route: {identity_refusal:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9895 review: the document-branch attribution charges the same
+    /// `reserve` margin the page budget charges. A shell that fits raw at
+    /// the zero offset but overflows once the echoed window gains a digit
+    /// (a past-end offset renders longer than the zero-page shell probe) is
+    /// still echo-driven and must name the filter, not the identity route.
+    /// The reserve-only negative control — shell plus reserve over the
+    /// ceiling, the final rendered document under it — must keep shipping.
+    #[test]
+    fn document_branch_attribution_charges_the_page_metadata_reserve() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        let window = |offset: usize| GapListWindow {
+            offset,
+            limit: None,
+        };
+        let echo = |len: usize| GapListFilter {
+            file: Some("x".repeat(len)),
+            ..GapListFilter::default()
+        };
+        let refuses_at_offset_zero = |len: usize| -> Result<bool, String> {
+            match session.list_gaps(None, window(0), &echo(len), crate::mcp::MAX_RESPONSE_BYTES) {
+                Ok(_) => Ok(false),
+                Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => Ok(true),
+                Err(failure) => Err(format!("unexpected refusal: {failure:?}")),
+            }
+        };
+        // Largest echo whose zero-offset page still ships: the document
+        // guard measures the raw document against MAX_TOOL_DOCUMENT_BYTES,
+        // and the envelope stays clear (the double envelope only exceeds the
+        // wire budget well above the document ceiling), so the search edge
+        // sits exactly at the document ceiling.
+        let (mut low, mut high) = (0usize, 70_000usize);
+        while low < high {
+            let mid = (low + high).div_ceil(2);
+            if refuses_at_offset_zero(mid)? {
+                high = mid - 1;
+            } else {
+                low = mid;
+            }
+        }
+        let edge_echo = low;
+        if session
+            .list_gaps(
+                None,
+                window(0),
+                &echo(edge_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err("the edge echo must still ship at offset zero".to_string());
+        }
+        // One more window digit (offset ten renders two digits) pushes the
+        // final document past the ceiling; without the echo the shell fits
+        // with reserve to spare, so the attribution must name the filter.
+        let metadata_refusal = match session.list_gaps(
+            None,
+            window(10),
+            &echo(edge_echo),
+            crate::mcp::MAX_RESPONSE_BYTES,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "the echoed window metadata must tip the edge echo over: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if metadata_refusal.code != CODE_RESULT_TOO_LARGE
+            || metadata_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "echo-driven document overflow must name the filter: {metadata_refusal:?}"
+            ));
+        }
+        // Reserve-only negative control: 255 fewer echo bytes leave the
+        // shell plus reserve under the ceiling even though the shell alone
+        // is within 256 bytes of it; the widest window echo (20 digits)
+        // must still ship.
+        let reserve_echo = edge_echo.saturating_sub(255);
+        if session
+            .list_gaps(
+                None,
+                window(usize::MAX),
+                &echo(reserve_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err(
+                "reserve exhaustion alone must not refuse: the rendered document fits".to_string(),
+            );
         }
         Ok(())
     }

@@ -103,13 +103,34 @@ pub(crate) fn extract_tests_with_expansion(
     // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
     // replaced by its assertion, on the same line, before extraction. One pass
     // only, so self-referential or mutually recursive helpers cannot loop.
+    // A wrapper that only rethrows its callback's failure is unwrapped the
+    // same way (decision 20), first, so a helper call inside the callback is
+    // still seen by the helper pass.
     if source.contains("function ")
         && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
             let ret = Parser::new(allocator, source, source_type_for(file)).parse();
             if !ret.errors.is_empty() {
                 return None;
             }
-            super::assertion_helper::expand_assertion_helpers(&ret.program.body, source)
+            let unwrapped =
+                super::rethrow_wrapper::expand_rethrow_wrappers(&ret.program.body, source);
+            let Some(unwrapped) = unwrapped else {
+                return super::assertion_helper::expand_assertion_helpers(
+                    &ret.program.body,
+                    source,
+                );
+            };
+            let reparsed = Parser::new(allocator, &unwrapped, source_type_for(file)).parse();
+            if !reparsed.errors.is_empty() {
+                return Some(unwrapped);
+            }
+            Some(
+                super::assertion_helper::expand_assertion_helpers(
+                    &reparsed.program.body,
+                    &unwrapped,
+                )
+                .unwrap_or(unwrapped),
+            )
         })
         && expanded != source
     {
@@ -182,6 +203,21 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
         let code = blank_ranges(source, &masked);
+        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let unstable_member_roots: Vec<String> = imports
+            .iter()
+            .filter(|import| {
+                !enum_member_guard::enum_member_root_is_read_only(
+                    &enum_code,
+                    &import.local,
+                    import.namespace,
+                )
+            })
+            .map(|import| import.local.clone())
+            .collect();
+        for test in &mut tests {
+            test.unstable_member_roots_in_file = unstable_member_roots.clone();
+        }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
             for test in &mut tests {
@@ -192,6 +228,12 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         if !member_only.is_empty() {
             for test in &mut tests {
                 test.default_member_only_locals_in_file = member_only.clone();
+            }
+        }
+        let rewritten = rewritten_identifier_names(&code);
+        if !rewritten.is_empty() {
+            for test in &mut tests {
+                test.written_locals_in_file = rewritten.clone();
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
@@ -849,6 +891,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         }
     }
     scope.levels.push(level);
+    scope.hook_levels.push(collect_mocha_setup_hooks(
+        statements, source, imports, scope,
+    ));
     scope.registration_levels.push(
         declared_names
             .into_iter()
@@ -977,12 +1022,136 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
             test.scope_bindings = scope.resolve_with(parameters);
+            test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
             tests.push(test);
         }
     }
     scope.iterables.pop();
     scope.registration_levels.pop();
+    scope.hook_levels.pop();
     scope.levels.pop();
+}
+
+/// RIPR-SPEC-0246 rule 7: the body source of each synchronous mocha setup
+/// hook (`before`, `beforeEach`, `beforeAll`) registered directly in this
+/// statement list, in source order. Mocha has no import for its globals, so
+/// provenance is explicit: the file imports `mocha` or a mocha-style
+/// assertion library (`chai`) and carries no jest/vitest/ava signal, and the
+/// hook identifier is not declared in scope or imported from elsewhere.
+/// A hook that is `async`, a generator, takes a parameter (`done`), has an
+/// expression body or contains `return` is not recorded: its work may finish
+/// after the test starts.
+fn collect_mocha_setup_hooks(
+    statements: &[Statement<'_>],
+    source: &str,
+    imports: &[TypeScriptImport],
+    scope: &TestScope,
+) -> Vec<String> {
+    if !file_has_mocha_provenance(imports, source) {
+        return Vec::new();
+    }
+    let mut bodies = Vec::new();
+    for stmt in statements {
+        let Statement::ExpressionStatement(statement) = stmt else {
+            continue;
+        };
+        let Expression::CallExpression(call) = &statement.expression else {
+            continue;
+        };
+        let Expression::Identifier(callee) = &call.callee else {
+            continue;
+        };
+        let hook = callee.name.as_str();
+        if !matches!(hook, "before" | "beforeEach" | "beforeAll") {
+            continue;
+        }
+        let declared = scope
+            .levels
+            .iter()
+            .flatten()
+            .any(|(name, _, phase)| name == hook && *phase == Phase::Declaration);
+        let imported_elsewhere = imports.iter().any(|import| {
+            import.local == hook
+                && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
+        });
+        if declared || imported_elsewhere {
+            continue;
+        }
+        let Some(argument) = call.arguments.last() else {
+            continue;
+        };
+        let body = match argument {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)
+                if !arrow.r#async
+                    && !arrow.expression
+                    && arrow.params.items.is_empty()
+                    && arrow.params.rest.is_none() =>
+            {
+                &arrow.body.statements
+            }
+            oxc_ast::ast::Argument::FunctionExpression(function)
+                if !function.r#async
+                    && !function.generator
+                    && function.params.items.is_empty()
+                    && function.params.rest.is_none() =>
+            {
+                let Some(body) = function.body.as_ref() else {
+                    continue;
+                };
+                &body.statements
+            }
+            _ => continue,
+        };
+        let (Some(first), Some(last)) = (body.first(), body.last()) else {
+            continue;
+        };
+        let text = source
+            .get(first.span().start as usize..last.span().end as usize)
+            .unwrap_or_default();
+        if text.is_empty() || identifier_in_text(text, "return") {
+            continue;
+        }
+        bodies.push(text.to_string());
+    }
+    bodies
+}
+
+/// Whether the file reads as a mocha file: it imports `mocha` or `chai`
+/// (mocha's usual assertion library) and shows no jest, vitest, bun, ava or
+/// `node:test` signal, whether by import or by a `jest.` / `vi.` global use.
+fn file_has_mocha_provenance(imports: &[TypeScriptImport], source: &str) -> bool {
+    let mocha_hint = imports.iter().any(|import| {
+        import.source == "mocha" || import.source == "chai" || import.source.starts_with("chai-")
+    });
+    let other_runner = imports.iter().any(|import| {
+        TEST_RUNNER_MODULES.contains(&import.source.as_str())
+            || matches!(import.source.as_str(), "jest" | "ava")
+            || import.source.starts_with("@jest/")
+            || import.source.starts_with("@vitest/")
+    }) || ["jest", "vi"]
+        .iter()
+        .any(|global| member_use_in_text(source, global));
+    mocha_hint && !other_runner
+}
+
+/// Whether `word` appears in `text` as a whole identifier.
+fn identifier_in_text(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + word.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+            && !after.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+    })
+}
+
+/// Whether `name.` appears in `text` as a whole identifier followed by a
+/// member access (`jest.fn`, `vi.mock`), comments and strings included.
+fn member_use_in_text(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        text[idx + name.len()..].starts_with('.')
+            && !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.')
+    })
 }
 
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
@@ -995,6 +1164,10 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Per statement list being walked (the file and each enclosing
+    /// describe), outermost first: the bodies of its mocha setup hooks
+    /// (RIPR-SPEC-0246 rule 7).
+    hook_levels: Vec<Vec<String>>,
     /// Lexical registration declarations, including hoisted block `var`
     /// names, retained while descending into suites. The flag identifies
     /// file declarations eligible for the immutable import exemption.
@@ -1941,6 +2114,155 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
     names
 }
 
+/// Names `text` writes at least twice: a declaration initializer counts as
+/// one write, so a second one is a reassignment, update or loop target.
+fn rewritten_identifier_names(text: &str) -> Vec<String> {
+    let writes = strict_identifier_writes(text);
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in &writes {
+        if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+/// `true` when `before` (text ending in `.`) is a global-object receiver
+/// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
+/// can rebind a sloppy-mode `var` of the same name, so the strict scan reads
+/// it like a bare identifier (fail-closed).
+fn global_object_member(before: &str) -> bool {
+    let receiver = before[..before.len() - 1].trim_end();
+    ["globalThis", "this", "window", "global", "self"]
+        .iter()
+        .any(|name| {
+            receiver.strip_suffix(name).is_some_and(|head| {
+                !head.ends_with(|ch: char| {
+                    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'
+                })
+            })
+        })
+}
+
+/// `true` when the identifier ending just before `rest` is written through
+/// grouping or a TypeScript wrapper: `(name) = x`, `(name)++`, `++(name)`,
+/// `name! = x`, `(name as T) = x`, `(name satisfies T) = x` and
+/// `for ((name) of xs)`. Fail-closed: the identifier counts as written when
+/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause (its own
+/// parentheses balanced) stand between it and an assignment operator, update
+/// or loop keyword.
+fn wrapped_write(before: &str, rest: &str) -> bool {
+    if before.ends_with('(') {
+        let lead = before.trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace());
+        if lead.ends_with("++") || lead.ends_with("--") {
+            return true;
+        }
+    }
+    let mut rest = rest;
+    let mut wrapped = false;
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix(')') {
+            rest = after;
+        } else if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+            rest = &trimmed[1..];
+        } else if ["as", "satisfies"].iter().any(|keyword| {
+            trimmed
+                .strip_prefix(keyword)
+                .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
+        }) {
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, ch) in trimmed.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => {
+                        close = Some(offset);
+                        break;
+                    }
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            match close {
+                Some(close) => rest = &trimmed[close..],
+                None => return false,
+            }
+        } else {
+            break;
+        }
+        wrapped = true;
+    }
+    if !wrapped {
+        return false;
+    }
+    let rest = rest.trim_start();
+    if rest.starts_with("++") || rest.starts_with("--") {
+        return true;
+    }
+    let operator_end = rest
+        .find(|ch: char| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+            )
+        })
+        .unwrap_or(rest.len());
+    let after_operator = &rest[operator_end..];
+    if after_operator.starts_with('=')
+        && !after_operator[1..].starts_with(['=', '>'])
+        && !matches!(&rest[..operator_end], "<" | ">" | "!")
+    {
+        return true;
+    }
+    ["of", "in"].iter().any(|keyword| {
+        rest.strip_prefix(keyword).is_some_and(|tail| {
+            !tail.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
+}
+
+/// `text` with U+FEFF (JavaScript whitespace that Rust does not trim) blanked
+/// to three spaces, so byte offsets are unchanged.
+fn blank_byte_order_marks(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{feff}') {
+        std::borrow::Cow::Owned(text.replace('\u{feff}', "   "))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Every function declaration or expression name `text` introduces, with its
+/// byte offset (`function name`, `function* name`). A declaration nested in a
+/// block re-binds a sloppy-mode `var` of the same name (Annex B.3.3), so
+/// callers treat it as a write to that name.
+pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
+    let mut names = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find("function") {
+        let start = from + found;
+        from = start + "function".len();
+        let boundary_before = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+        if !boundary_before {
+            continue;
+        }
+        let rest = text[from..].trim_start_matches(|ch: char| ch.is_whitespace() || ch == '*');
+        let name_start = text.len() - rest.len();
+        let length = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+            .unwrap_or(rest.len());
+        if length > 0 && name_start > from {
+            names.push((rest[..length].to_string(), name_start));
+        }
+    }
+    names
+}
+
 /// `true` when `text` may write `identifier`; see [`identifier_writes`].
 pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
     identifier_writes(text)
@@ -1948,32 +2270,58 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
         .any(|(name, _)| name == identifier)
 }
 
+/// `true` when the strict scan ([`strict_identifier_writes`]) may write
+/// `identifier`.
+pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
+    strict_identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
 /// Every identifier `text` may write, with its byte offset: an assignment
 /// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
 /// `for (name of ...)` target, and any identifier inside a bracketed group
-/// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
-/// targets (`this.name =`) are not writes. Comments and strings are not
-/// skipped: a false entry only withholds a relation.
-fn identifier_writes(text: &str) -> Vec<(String, usize)> {
-    let bytes = text.as_bytes();
+/// that is itself assigned or looped over (`[name] = ...`, `({ name } = ...)`,
+/// `for ([name] of ...)`). Member targets (`this.name =`) are not writes.
+/// Identifiers are Unicode-aware. Comments and strings are not skipped: a
+/// false entry only withholds a relation.
+pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, false)
+}
+
+/// [`identifier_writes`] plus the spellings only a binding that must stay
+/// provably unwritten needs (the `var`/`let` runner and CommonJS export
+/// gates): grouped and TypeScript-wrapped targets (`(name) = x`, `name! = x`,
+/// `(name as T) = x`) and global-object members (`globalThis.name = x`,
+/// `this.name = x`).
+pub(crate) fn strict_identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, true)
+}
+
+fn scan_writes(text: &str, strict: bool) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
     let destructured = destructuring_ranges(text);
     let mut writes = Vec::new();
     let mut index = 0;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
-        if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
-            index += 1;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        if !(ch == '_' || ch == '$' || ch.is_alphabetic()) {
+            index += ch.len_utf8();
             continue;
         }
         let start = index;
-        while index < bytes.len() && {
-            let ch = bytes[index] as char;
-            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-        } {
-            index += 1;
+        while let Some(ch) = text[index..].chars().next() {
+            if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
+                break;
+            }
+            index += ch.len_utf8();
         }
         let before = text[..start].trim_end();
-        if before.ends_with('.') && !before.ends_with("...") {
+        let global = strict && before.ends_with('.') && global_object_member(before);
+        if before.ends_with('.') && !before.ends_with("...") && !global {
             continue;
         }
         let rest = text[index..].trim_start();
@@ -2004,7 +2352,8 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
                 prefix.ends_with("for") || prefix.ends_with("await")
             });
         let in_target = destructured.iter().any(|range| range.contains(&start));
-        if assigns || steps || loop_target || in_target {
+        let wrapped = strict && wrapped_write(before, rest);
+        if assigns || steps || loop_target || in_target || wrapped {
             writes.push((text[start..index].to_string(), start));
         }
     }
@@ -2012,7 +2361,7 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
 }
 
 /// Byte ranges of `[...]` and `{...}` groups directly followed by an
-/// assignment `=`: destructuring targets.
+/// assignment `=` or a `for` head's `of`/`in`: destructuring targets.
 fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let bytes = text.as_bytes();
     let mut ranges = Vec::new();
@@ -2023,7 +2372,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             _ => continue,
         };
         let rest = text[close + 1..].trim_start();
-        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+        let assigned = rest.starts_with('=') && !rest[1..].starts_with(['=', '>']);
+        // `for ([name] of ...)` / `for ({ name } in ...)` write their targets.
+        let loop_bound = ["of", "in"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                tail.starts_with(|c: char| c.is_whitespace() || "([{'\"`".contains(c))
+            })
+        });
+        if !assigned && !loop_bound {
             continue;
         }
         let mut depth = 0usize;
@@ -2614,15 +2970,18 @@ pub(crate) fn test_from_statement<'s, 'a>(
         // per file before the test is returned to the caller.
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
+        unstable_member_roots_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         default_member_only_locals_in_file: Vec::new(),
+        written_locals_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
     })
 }
 
@@ -2630,7 +2989,21 @@ pub(crate) fn test_from_statement<'s, 'a>(
 /// Unicode literals. Expand only its spaces back to the original byte widths
 /// before comparing identifier offsets with parser spans.
 pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
-    let masked = super::classifier::ts_mask_literals_and_comments(source);
+    byte_preserving_mask_of(
+        source,
+        super::classifier::ts_mask_literals_and_comments(source),
+    )
+}
+
+/// [`byte_preserving_code_mask`] over the division-only mask.
+pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+    byte_preserving_mask_of(
+        source,
+        super::classifier::ts_mask_literals_and_comments_division_only(source),
+    )
+}
+
+fn byte_preserving_mask_of(source: &str, masked: String) -> Option<String> {
     if source.chars().count() != masked.chars().count() {
         return None;
     }
@@ -2861,6 +3234,22 @@ fn test_name_and_assertions_from_registration(
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let callback = call.arguments.get(declaration_callback_index(call))?;
+    // `node:test` / AVA-style contexts end a running test as skipped or todo
+    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
+    // the run passes however the later assertions would have gone, so the
+    // test registers no discriminator. Textual and fail-closed: any call of
+    // those methods on the callback's first parameter withdraws the test,
+    // exactly like a `.skip` registration.
+    if let Some(context) = test_callback_receiver_name(callback)
+        && body_calls_context_skip(
+            source
+                .get(call.span.start as usize..call.span.end as usize)
+                .unwrap_or_default(),
+            &context,
+        )
+    {
+        return None;
+    }
     // A first parameter named like an imported assertion binding
     // (`const assert = require('node:assert')` + `it('x', function (assert)
     // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
@@ -2946,6 +3335,194 @@ fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
         Expression::CallExpression(call) => callee_root_name(&call.callee),
         _ => None,
     }
+}
+
+/// Whether `text` calls `<context>.skip(` or `<context>.todo(` (a whole
+/// identifier before the dot, optional whitespace before the paren) on the
+/// test's own context. Comments and string literals are masked first, and a
+/// call inside a nested callback that rebinds the same name (a subtest
+/// `t.test("sub", (t) => { t.skip(); })`) belongs to that subtest, not here.
+fn body_calls_context_skip(text: &str, context: &str) -> bool {
+    let masked = mask_comments_and_strings_text(text);
+    let shadowed = nested_rebinding_bodies(&masked, context);
+    ["skip", "todo"].into_iter().any(|method| {
+        let needle = format!("{context}.{method}");
+        masked.match_indices(&needle).any(|(at, _)| {
+            let before_ok = masked
+                .get(..at)
+                .and_then(|head| head.chars().next_back())
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+            let after = masked.get(at + needle.len()..).unwrap_or_default();
+            before_ok
+                && after.trim_start().starts_with('(')
+                && !shadowed.iter().any(|range| range.contains(&at))
+        })
+    })
+}
+
+/// Replace comments and string / template literal contents with spaces,
+/// keeping byte offsets and newlines.
+fn mask_comments_and_strings_text(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                for k in [i, i + 1] {
+                    if k < out.len() {
+                        out[k] = b' ';
+                    }
+                }
+                i += 2;
+            }
+            quote @ (b'"' | b'\'' | b'`') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Byte ranges of function bodies, other than the test's own callback, whose
+/// parameter list rebinds `context`.
+fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut ranges = Vec::new();
+    let mut first = true;
+    for (at, _) in masked.match_indices(context) {
+        if at > 0 && is_ident(bytes[at - 1])
+            || bytes.get(at + context.len()).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let mut end = at + context.len();
+        while bytes.get(end).is_some_and(|b| b.is_ascii_whitespace()) {
+            end += 1;
+        }
+        let mut head = at;
+        while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+            head -= 1;
+        }
+        // A bare single parameter may follow `async` (`async t => {...}`).
+        if masked[..head].ends_with("async")
+            && !masked[..head - 5]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        {
+            head -= 5;
+            while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+                head -= 1;
+            }
+        }
+        let prev = if head > 0 { bytes[head - 1] } else { 0 };
+        let body_from = if masked[end..].starts_with("=>") && (prev == b'(' || prev == b',') {
+            // `t => { ... }` (bare single parameter)
+            end + 2
+        } else if prev == b'(' || prev == b',' {
+            // Walk back to the list's `(` and forward to its `)`.
+            let mut depth = 0i32;
+            let mut open = None;
+            for k in (0..at).rev() {
+                match bytes[k] {
+                    b')' => depth += 1,
+                    b'(' if depth == 0 => {
+                        open = Some(k);
+                        break;
+                    }
+                    b'(' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let Some(open) = open else { continue };
+            let word_end = masked[..open].trim_end().len();
+            let word_start = masked[..word_end]
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .map_or(0, |k| k + 1);
+            if matches!(
+                &masked[word_start..word_end],
+                "if" | "while" | "for" | "switch" | "with"
+            ) {
+                continue;
+            }
+            let mut depth = 0i32;
+            let mut close = None;
+            for (k, b) in bytes.iter().enumerate().skip(open) {
+                match b {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(k);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else { continue };
+            let rest = masked[close + 1..].trim_start();
+            let skipped = masked.len() - rest.len();
+            if rest.starts_with("=>") {
+                skipped + 2
+            } else if rest.starts_with('{') {
+                skipped
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        if first {
+            // The test's own callback parameter.
+            first = false;
+            continue;
+        }
+        let Some(open) = masked[body_from..].find('{').map(|k| body_from + k) else {
+            continue;
+        };
+        let mut depth = 0i32;
+        for (k, b) in bytes.iter().enumerate().skip(open) {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        ranges.push(open..k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    ranges
 }
 
 /// Extract the name bound to the test callback's first parameter.

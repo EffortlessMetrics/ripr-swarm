@@ -1,0 +1,12 @@
+diff --git a/src/h_binding_tail.rs b/src/h_binding_tail.rs
+--- a/src/h_binding_tail.rs
++++ b/src/h_binding_tail.rs
+@@ -8,7 +8,7 @@
+ 
+ pub fn is_triple(input: &str) -> bool {
+     let n = width_of(input);
+-    n == 3
++    n >= 3
+ }
+ 
+ #[cfg(test)]

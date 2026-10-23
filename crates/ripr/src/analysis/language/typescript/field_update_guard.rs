@@ -88,6 +88,25 @@ pub(crate) fn ts_field_update_change(
     (writes == 1).then_some(FieldUpdateChange { field, class_name })
 }
 
+/// Whether the owner's class declares `get field` or `set field`. A read of
+/// such a field runs the accessor, which need not return what the method wrote,
+/// so an exact assertion on it does not observe the update.
+pub(crate) fn ts_field_has_accessor(
+    change: &FieldUpdateChange,
+    owner: &TypeScriptOwner,
+    owners: &[TypeScriptOwner],
+) -> bool {
+    owners.iter().any(|other| {
+        other.file == owner.file
+            && other.class_name == owner.class_name
+            && other.name == change.field
+            && matches!(
+                other.method_kind,
+                TypeScriptMethodKind::Getter | TypeScriptMethodKind::Setter
+            )
+    })
+}
+
 /// `field` of `this.<field> <op>= e` or `this.<field> = this.<field> <op> e`.
 fn updated_field(statement: &str) -> Option<String> {
     let statement = statement.trim_end_matches(';').trim();
@@ -545,6 +564,8 @@ mod tests {
             class_name: Some("Stats".to_string()),
             decorated: false,
             exported_as_default: false,
+            commonjs_default_export: false,
+            commonjs_whole_function: false,
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
@@ -558,6 +579,45 @@ mod tests {
 
     fn changed(source: &str, new: &str, old: &str) -> Option<FieldUpdateChange> {
         ts_field_update_change(&method(source), new, Some(old))
+    }
+
+    #[test]
+    fn accessor_for_the_field_in_the_same_class_is_detected() {
+        let change = change();
+        let owner = method("");
+        let accessor = |name: &str, kind: TypeScriptMethodKind, class: &str| TypeScriptOwner {
+            name: name.to_string(),
+            class_name: Some(class.to_string()),
+            method_kind: kind,
+            ..method("")
+        };
+        let has = |owners: &[TypeScriptOwner]| ts_field_has_accessor(&change, &owner, owners);
+        assert!(has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Getter,
+            "Stats"
+        )]));
+        assert!(has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Setter,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Ordinary,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "misses",
+            TypeScriptMethodKind::Getter,
+            "Stats"
+        )]));
+        assert!(!has(&[accessor(
+            "hits",
+            TypeScriptMethodKind::Getter,
+            "Other"
+        )]));
+        assert!(!has(&[]));
     }
 
     #[test]

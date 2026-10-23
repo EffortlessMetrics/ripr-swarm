@@ -371,8 +371,8 @@ jobs:
       # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
       # bytes the PR evidence step just wrote. A missing artifact file fails the
       # step, so a producer that stops writing cannot silently turn a row into
-      # `not_run`. Producer-only rows (repair-attempt, execution_result) stay
-      # unrun here by design; see docs/verification/schema-producer-audit.md.
+      # `not_run`. Producer-only rows (repair-attempt, execution_result) carry a
+      # reviewed narrower authority instead (#9561); see docs/verification/schema-producer-audit.md.
       - name: Schema producer sweep
         id: schema_producer_sweep
         env:
