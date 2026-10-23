@@ -115,3 +115,16 @@ Command:
 Updated:
 - `expected/human-full.txt`
 - `expected/library-human-lines.json` (hand-edited: not covered by goldens bless)
+
+## Pending — human_full_shared_parse_port (10)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,129 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/selector_swap_try_not_error_path/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:52817a830853aad130947b786592fe21ea510d13134c8a00b0f67d92f367b887","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:static_unknown:85edf1a7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Scheduler::next:static_unknown:static_unknown:let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Scheduler::next:static_unknown:static_unknown:let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Scheduler::next",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_lib.rs:static_unknown:85edf1a7",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach next: drains_all, empty, single"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach next: drains_all, empty, single", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 9)", "related test src/lib.rs:19 drains_all uses smoke only oracle, not graded against this probe: assert!(s.next().is_none());", "related test src/lib.rs:17 empty uses exact value oracle, not graded against this probe: assert_eq!(Scheduler::new().next(), None);", "related test src/lib.rs:18 single uses no oracle: assert_eq!(s.next().unwrap().name, \"a\");", "source assertion argument value \"a\" at line 18", "source assertion argument value 0 at line 18"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":9}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach next: drains_all, empty, single"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "18": "assert_eq!(s.next().unwrap().name, \"a\");"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 18,
+            "value": "\"a\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "0",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(s.pending(), 0);"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 18,
+          "value": "\"a\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "0",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(s.pending(), 0);"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "drains_all",
+          "file": "src/lib.rs",
+          "line": 19,
+          "oracle_strength": "unknown",
+          "oracle_kind": "smoke_only",
+          "oracle": "assert!(s.next().is_none());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "empty",
+          "file": "src/lib.rs",
+          "line": 17,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(Scheduler::new().next(), None);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "single",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(s.next().unwrap().name, \"a\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
