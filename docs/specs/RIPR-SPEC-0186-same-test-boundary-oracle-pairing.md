@@ -116,6 +116,16 @@ pair, and so does an entry call shadowed by a test-local closure or nested
 fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
 never admits a wrapper assertion here.
 
+The `return_value` twin of that private predicate may confirm the same wrapper
+assertion when the owner-return shape is an unconditional whole `bool` tail
+(RIPR-SPEC-0197's `Any` path), and the test reaches it only through the helper
+chain (#9849). This separate confirmation requires an admitted bare `assert_eq!`
+whose whole compared operand is the entry call and whose other operand is one
+numeric or boolean literal. The same per-test boundary row and result-forwarding
+chain are required. A projected or transformed operand, computed or named
+expectation, short-circuit owner tail, and discarded or recomputed helper result
+receive no new credit. Direct owner-return pin admission remains unchanged.
+
 A `let`-bound boundary name stays paired only while the binding still holds
 the call's result. A post-`let` reassignment (`got = true`), compound
 assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding

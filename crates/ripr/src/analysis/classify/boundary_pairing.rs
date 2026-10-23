@@ -46,6 +46,43 @@ pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     pub(in crate::analysis) test_activation: TestActivation<'a>,
 }
 
+/// #9849: confirmation for the return-value twin of a whole boolean tail.
+/// The caller establishes that owner shape and assertion execution. Keep the
+/// legacy predicate's broader subject matcher out of this new credit path:
+/// the wrapper call must be one whole compared operand, and the expectation
+/// an independent numeric or boolean literal. In particular `entry(10) * 0`
+/// and a name bound from `entry(10)` do not observe the helper's result.
+pub(in crate::analysis) fn wrapper_return_boundary_pinned(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    entry: WrapperEntryPairing<'_>,
+) -> bool {
+    let Some(hop) = entry.chain.hops.last() else {
+        return false;
+    };
+    let name = hop.caller.name.as_str();
+    let literal = |text: &str| {
+        matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
+    };
+    let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
+            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+    });
+    assertion.text.trim_start().starts_with("assert_eq!")
+        && assertion.kind == OracleKind::ExactValue
+        && assertion.strength == OracleStrength::Strong
+        && whole_call
+        && chain_forwards_owner_result(&owner.name, entry.chain)
+        && assertion_names_one_entry_call(owner, name, assertion)
+        && assertion_observes_boundary_entry_call(
+            owner,
+            name,
+            assertion,
+            &(entry.test_activation)(test),
+        )
+}
+
 /// True when some related test both feeds a boundary input to the owner and
 /// holds an admitted discriminating oracle on that call's result.
 ///
