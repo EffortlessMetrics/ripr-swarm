@@ -91,8 +91,8 @@ could not be verified without trusting hand-authored JSON.
   trustworthy. Plain `agent verify` and `agent receipt` still compare
   whatever moved; only `agent verify --gap-id` (behavior 5) requires the named
   gap to be present in the after artifact as `exposed`. The gap-bound
-  `agent repair` start and after phase landed (C2a/C2b, RIPR-SPEC-0311); the
-  gap-bound receipt (C2c) remains a later slice of #9103.
+  `agent repair` start, after phase and receipt landed (C2a/C2b/C2c,
+  RIPR-SPEC-0311).
 - The outcome parser keys findings by a wider set of gap-id spellings than
   `CheckFindingsFinding::gap_id`; the producer is the only source of these
   artifacts, so the two agree on its output.
@@ -102,7 +102,9 @@ could not be verified without trusting hand-authored JSON.
 - The journey flips (D, a later slice of #9103); the gap-bound `agent repair`
   start and attempt landed as C2a/C2b.
 - Signing, runtime mutation proof, or Python enablement.
-- A gap-bound `agent receipt` (the receipt still binds the pair, not a gap).
+- Plain `agent receipt` over a pair still binds the pair; the gap-bound receipt
+  (RIPR-SPEC-0311 item 8) is issued only over a verify document that closed the
+  gap.
 
 ## Acceptance Examples
 

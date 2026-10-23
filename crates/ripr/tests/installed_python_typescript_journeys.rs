@@ -1164,20 +1164,70 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
             return Err(format!("gap-bound after output leaks --seam-id:\n{text}"));
         }
     }
-    // Status over the finished gap attempt offers no seam-bound command and
-    // no receipt: the closure rides the verify document.
+    // The receipt is bound to the closed gap and to this attempt.
+    let receipt_path = attempt.root.join("target/ripr/reports/agent-receipt.json");
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&receipt_path)
+            .map_err(|error| format!("read receipt: {error}"))?,
+    )
+    .map_err(|error| format!("receipt json: {error}"))?;
+    if receipt["status"] != "advisory"
+        || receipt["seam"]["seam_id"] != attempt.gap.as_str()
+        || receipt["provenance"]["seam_id"] != attempt.gap.as_str()
+        || receipt["bound_gap"]["gap_id"] != attempt.gap.as_str()
+        || receipt["bound_gap"]["closed"] != true
+        || receipt["bound_gap"]["before_classification"] != "weakly_exposed"
+        || receipt["bound_gap"]["after_classification"] != "exposed"
+        || receipt["repair_attempt"]["attempt_id"] != attempt.attempt_id.as_str()
+        || receipt["repair_attempt"]["seam_id"] != attempt.gap.as_str()
+        || receipt["repair_attempt"]["gap_binding"]["base"] != "HEAD~1"
+        || receipt["verification"]["status"] != "verification_not_run"
+        || receipt["provenance"]["limits"]["runtime_mutation_execution"] != false
+        || receipt["provenance"]["limits"]["runtime_adequacy_claim"] != false
+    {
+        return Err(format!(
+            "receipt is not bound to the closed gap:\n{receipt}"
+        ));
+    }
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if receipt["repair_attempt"]["gap_binding"]["base_commit"]
+        != manifest["gap_binding"]["base_commit"]
+    {
+        return Err("receipt does not record the attempt's resolved base commit".to_string());
+    }
+    // The attempt retained the receipt and its verify document.
+    let roles: Vec<&str> = manifest["terminal_artifacts"]
+        .as_array()
+        .map(|artifacts| {
+            artifacts
+                .iter()
+                .filter_map(|a| a["role"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !roles.contains(&"agent_receipt") || !roles.contains(&"agent_verify") {
+        return Err(format!("terminal evidence not retained: {roles:?}"));
+    }
+    // Status reads the retained receipt as showing this gap closed and offers
+    // no seam-bound command.
     let (status_ok, status) = ripr(
         &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg],
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
     )?;
     expect_exit(status_ok, true, "agent status after a gap-bound finish")?;
-    need(
-        &status,
-        "gap-bound attempt issues no receipt",
-        "status explains the missing receipt",
-    )?;
-    if status.contains("--seam-id") || status.contains("ripr agent receipt") {
-        return Err(format!("status offers a seam or receipt route:\n{status}"));
+    let status_doc: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| format!("status json: {error}\n{status}"))?;
+    let attempt_view = &status_doc["repair_attempts"][0];
+    if attempt_view["receipt"]["issued_for_attempt"] != true
+        || attempt_view["receipt"]["shows_gap_closed"] != true
+        || attempt_view["receipt"]["status"] != "advisory"
+    {
+        return Err(format!("status does not read the receipt:\n{status}"));
+    }
+    if status.contains("--seam-id") || status.contains("repair_receipt_unconfirmed") {
+        return Err(format!(
+            "status offers a seam route or doubts the receipt:\n{status}"
+        ));
     }
     // A finished attempt cannot run again, and its restart names the gap.
     let again = attempt.after(false)?;
@@ -1187,12 +1237,13 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     decoy_untouched(&attempt.decoy)
 }
 
-/// Human (non `--json`) gap-bound after output names the closure, prints no
-/// receipt line, and never summarizes a stale seam receipt planted at the
-/// receipt path.
+/// Human (non `--json`) gap-bound after output names the closure and this
+/// attempt's receipt, and replaces a stale seam receipt planted at the
+/// receipt path rather than summarizing it.
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn gap_bound_after_phase_human_output_names_closure_and_no_stale_receipt() -> Result<(), String> {
+fn gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt()
+-> Result<(), String> {
     let attempt = GapAttempt::start("ts-after-human")?;
     let reports = attempt.root.join("target/ripr/reports");
     std::fs::create_dir_all(&reports).map_err(|error| format!("mkdir: {error}"))?;
@@ -1211,10 +1262,159 @@ fn gap_bound_after_phase_human_output_names_closure_and_no_stale_receipt() -> Re
     )?;
     need(&stdout, "closed", "stdout names the gap closure")?;
     need(&stdout, attempt.gap.as_str(), "stdout names the gap")?;
+    need(&stdout, "receipt:", "stdout names the receipt it issued")?;
     for text in [&stdout, &stderr] {
-        let lower = text.to_lowercase();
-        if lower.contains("receipt") || lower.contains("stale_seam_receipt_marker") {
-            return Err(format!("gap-bound output mentions a receipt:\n{text}"));
+        if text.contains("stale_seam_receipt_marker") || text.contains("--seam-id") {
+            return Err(format!(
+                "gap-bound output is not this attempt's output\n{text}"
+            ));
+        }
+    }
+    let receipt = std::fs::read_to_string(reports.join("agent-receipt.json"))
+        .map_err(|error| format!("read receipt: {error}"))?;
+    if receipt.contains("stale_seam_receipt_marker") {
+        return Err("the stale receipt was not replaced by the gap-bound finish".to_string());
+    }
+    need(&receipt, attempt.gap.as_str(), "receipt names the gap")?;
+    decoy_untouched(&attempt.decoy)
+}
+
+/// `ripr agent receipt` for a gap is fail-closed on closure evidence: the
+/// real bound verify document issues it, while an unbound pair (no
+/// `--gap-id`), a forged `bound_gap` naming a gap that never closed, and an
+/// edited closure are each refused.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-receipt-forgery")?;
+    attempt.commit_closing_test()?;
+    let finished = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&finished);
+    expect_exit(
+        finished.status.success(),
+        true,
+        &format!("closing finish:\n{stdout}\n{stderr}"),
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let verify_text = std::fs::read_to_string(workflow.join("agent-verify.json"))
+        .map_err(|error| format!("read verify: {error}"))?;
+    let verify: serde_json::Value =
+        serde_json::from_str(&verify_text).map_err(|error| format!("verify json: {error}"))?;
+    let before = verify["inputs"]["before"].as_str().unwrap_or_default();
+    let after = verify["inputs"]["after"].as_str().unwrap_or_default();
+
+    let receipt_for = |verify_path: &Path, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &attempt.decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &attempt.root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &attempt.gap,
+                "--attempt",
+                &attempt.attempt_id,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+
+    // Positive control: the bound verify document the finish wrote issues the
+    // receipt again.
+    let again = receipt_for(&workflow.join("agent-verify.json"), "control")?;
+    expect_exit(
+        again.status.success(),
+        true,
+        &format!("receipt over the bound verify:\n{:?}", text_of(&again)),
+    )?;
+    let control = std::fs::read_to_string(workflow.join("control.receipt.json"))
+        .map_err(|error| format!("read control receipt: {error}"))?;
+    need(
+        &control,
+        "\"closed\": true",
+        "control receipt carries closure",
+    )?;
+
+    // Negative 1: an unbound verify over the same pair carries no closure.
+    let unbound = ripr_output(
+        &attempt.decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--before",
+            before,
+            "--after",
+            after,
+        ],
+    )?;
+    expect_exit(unbound.status.success(), true, "unbound verify")?;
+    let unbound_path = workflow.join("unbound-verify.json");
+    std::fs::write(&unbound_path, &unbound.stdout)
+        .map_err(|error| format!("write unbound verify: {error}"))?;
+    let refused = receipt_for(&unbound_path, "unbound")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an unbound pair",
+    )?;
+    need(
+        &refused_err,
+        "requires an agent verify document bound to that gap",
+        "unbound pair refused",
+    )?;
+    if workflow.join("unbound.receipt.json").exists() {
+        return Err("a receipt was written over an unbound pair".to_string());
+    }
+
+    // Negative 2: a forged closure naming a gap that never closed.
+    let mut forged = verify.clone();
+    forged["bound_gap"]["gap_id"] = serde_json::json!("gap:typescript:typescript_preview:deadbeef");
+    let forged_path = workflow.join("forged-verify.json");
+    std::fs::write(
+        &forged_path,
+        serde_json::to_string_pretty(&forged).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write forged verify: {error}"))?;
+    let refused = receipt_for(&forged_path, "forged")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "receipt over a forged gap")?;
+    need(
+        &refused_err,
+        "gap binding refused",
+        "forged closure refused",
+    )?;
+
+    // Negative 3: the real gap with an edited classification is not the
+    // canonical render of its snapshots.
+    let mut edited = verify;
+    edited["bound_gap"]["before_classification"] = serde_json::json!("exposed");
+    let edited_path = workflow.join("edited-verify.json");
+    std::fs::write(
+        &edited_path,
+        serde_json::to_string_pretty(&edited).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write edited verify: {error}"))?;
+    let refused = receipt_for(&edited_path, "edited")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an edited closure",
+    )?;
+    need(&refused_err, "not_canonical", "edited closure refused")?;
+    for label in ["forged", "edited"] {
+        if workflow.join(format!("{label}.receipt.json")).exists() {
+            return Err(format!("a receipt was written over the {label} verify"));
         }
     }
     decoy_untouched(&attempt.decoy)
@@ -1251,6 +1451,13 @@ fn gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable() 
     }
     if attempt.state()? != "awaiting_edit" {
         return Err(format!("unexpected state {}", attempt.state()?));
+    }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that did not close".to_string());
     }
     let manifest = attempt.manifest_for_only_attempt()?;
     if manifest["after_refusal_count"] != 1 {
@@ -1309,6 +1516,13 @@ fn gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed() -> Result<(), 
     if attempt.state()? != "awaiting_edit" {
         return Err(format!("unexpected state {}", attempt.state()?));
     }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that did not close".to_string());
+    }
     Ok(())
 }
 
@@ -1340,6 +1554,13 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
     let state = attempt.state()?;
     if state == "awaiting_edit" || state == "ready_to_finish" {
         return Err(format!("cage violation left a live attempt: {state}"));
+    }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that the cage refused".to_string());
     }
     Ok(())
 }
