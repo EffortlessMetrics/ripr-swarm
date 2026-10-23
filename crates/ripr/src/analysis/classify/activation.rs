@@ -1859,7 +1859,20 @@ fn missing_boundary_discriminator(
             if matches!(resolved, ResolvedOperand::Expression(..)) {
                 call_values.iter().all(row_evaluates)
             } else {
+                // A local some row evaluates is still unresolved when
+                // another row's chain is refused outright (an absent `rfind`
+                // whose `map_or` default is a computed local): that row may
+                // sit on the boundary, so the evaluated rows cannot support
+                // "no test uses it" (RIPR-SPEC-0158).
                 call_values.iter().any(row_evaluates)
+                    && call_values.iter().all(|row| {
+                        let inputs: super::value_transfer::ExactInputs = row
+                            .iter()
+                            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+                            .collect();
+                        exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                            .is_some()
+                    })
             }
         })
     };
@@ -6659,6 +6672,31 @@ mod tests {
         assert!(
             reason.contains("boundary operand `amount`"),
             "boundary operands must stay unresolved; got {reason:?}"
+        );
+    }
+
+    // RIPR-SPEC-0158 case 5: a row the evaluator refuses may sit on the
+    // boundary, so the rows it does evaluate cannot claim "no test uses it".
+    #[test]
+    fn activation_evidence_keeps_a_partially_evaluated_local_operand_unresolved() {
+        let owner = function(
+            "pub fn hit(input: &str, delim: char) -> bool {\n    let floor = input.len().min(1);\n    let end = input.rfind(delim).map_or(floor, |idx| idx);\n    let start = delim.len_utf8();\n    end >= start\n}",
+        );
+        let present = test_with_call("present_row", "hit(\"xab\", 'x');");
+        let absent = test_with_call("absent_row", "hit(\"ab\", 'x');");
+        let probe = probe(ProbeFamily::Predicate, "end >= start");
+
+        let gathered = boundary_input(&owner, &probe, &[&present, &absent]);
+
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "an unevaluated row is not a missing input; got {:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("`end`"),
+            "the partially evaluated operand must stay unresolved; got {reason:?}"
         );
     }
 
