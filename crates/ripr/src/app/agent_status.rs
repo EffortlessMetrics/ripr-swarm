@@ -4812,13 +4812,26 @@ mod tests {
             base: "HEAD~1".to_string(),
             base_commit: Some("a".repeat(40)),
         });
-        let shared = WorkflowReceiptRead::Parsed(serde_json::json!({}));
-        match attempt_receipt(&root, &manifest, &shared) {
-            AgentStatusAttemptReceipt::NotIssued => Ok(()),
-            other => Err(format!(
-                "a gap-bound attempt must be NotIssued, got {other:?}"
-            )),
+        // Unreadable and other-attempt shared receipts would surface as
+        // `Unreadable` / `Superseded` through the legacy path; a gap-bound
+        // attempt must ignore both and stay `NotIssued`.
+        let other_attempt = WorkflowReceiptRead::Parsed(serde_json::json!({
+            "repair_attempt": {"attempt_id": "repair-attempt-ffffffffffffffffffffffff"}
+        }));
+        for (label, shared) in [
+            ("unreadable", WorkflowReceiptRead::Unreadable),
+            ("other_attempt", other_attempt),
+        ] {
+            match attempt_receipt(&root, &manifest, &shared) {
+                AgentStatusAttemptReceipt::NotIssued => {}
+                other => {
+                    return Err(format!(
+                        "{label}: a gap-bound attempt must be NotIssued, got {other:?}"
+                    ));
+                }
+            }
         }
+        Ok(())
     }
 
     #[test]

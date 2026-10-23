@@ -3156,11 +3156,10 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
     (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
 }
 
-/// Whether `ch` continues a Rust identifier. Rust identifiers are Unicode
-/// (XID); `char::is_alphanumeric` plus `_` is the repository's convention for
-/// the boundary, so `前r` is one name rather than a delimiter before `r`.
+/// Whether `ch` continues a Rust identifier: Unicode `XID_Continue` (which
+/// includes combining marks, so decomposed `a\u{301}r` is one name) plus `_`.
 fn is_ident_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch == '_' || unicode_ident::is_xid_continue(ch)
 }
 
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from

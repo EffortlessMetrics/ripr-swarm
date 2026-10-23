@@ -59,6 +59,10 @@ fn bound_receivers_credit_the_owner_field_ascii_and_unicode_alike() -> Result<()
     for (label, body) in [
         ("ascii", "let r = price(3);\nassert_eq!(r.total, 4);"),
         ("unicode", "let 前r = price(3);\nassert_eq!(前r.total, 4);"),
+        (
+            "decomposed",
+            "let a\u{301}r = price(3);\nassert_eq!(a\u{301}r.total, 4);",
+        ),
     ] {
         assert_eq!(classify(body)?, "exposed", "{label}");
     }
@@ -75,6 +79,14 @@ fn unrelated_receivers_do_not_credit_the_owner_field() -> Result<(), String> {
         (
             "unicode_prefixed",
             "let r = price(3);\nlet 前r = Quote { total: 7 };\nassert_eq!(前r.total, 7);\nlet _ = r;",
+        ),
+        (
+            "combining_composed",
+            "let r = price(3);\nlet \u{e1}r = Quote { total: 7 };\nassert_eq!(\u{e1}r.total, 7);\nlet _ = r;",
+        ),
+        (
+            "combining_decomposed",
+            "let r = price(3);\nlet a\u{301}r = Quote { total: 7 };\nassert_eq!(a\u{301}r.total, 7);\nlet _ = r;",
         ),
         (
             "unicode_cjk_text",
