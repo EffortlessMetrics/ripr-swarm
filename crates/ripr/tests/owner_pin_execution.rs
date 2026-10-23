@@ -1905,6 +1905,141 @@ fn tokio_test_regains_the_exact_oracle_but_not_the_boundary() -> Result<(), Stri
     Ok(())
 }
 
+/// RIPR-SPEC-0197: an assertion inside `tokio::spawn(async { .. })` counts only
+/// where the awaited handle's `JoinError` is re-raised on the test task.
+#[test]
+fn tokio_spawned_task_counts_only_when_joined_and_unwrapped() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
+    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let direct = "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);";
+    assert!(
+        source.contains(direct),
+        "the fixture must hold the exact input"
+    );
+    let variant = |label: &str, body: &str, prelude: &str| -> Result<ExposureClass, String> {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("src/lib.rs"),
+            source
+                .replace(
+                    "    use super::*;\n",
+                    &format!("    use super::*;\n{prelude}"),
+                )
+                .replace(direct, body),
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{label}: retain the async owner");
+        Ok(report.findings[0].class.clone())
+    };
+    let spawned = |tail: &str| {
+        format!(
+            "tokio::spawn(async {{\n            assert_eq!(fetch_limit(50, 50).await, 50);\n        }}){tail}"
+        )
+    };
+    for (label, tail) in [
+        ("unwrap", ".await.unwrap();"),
+        ("expect", ".await.expect(\"task panicked\");"),
+    ] {
+        assert_eq!(
+            variant(label, &spawned(tail), "")?,
+            ExposureClass::Exposed,
+            "{label}: the joined task's panic reaches the test"
+        );
+    }
+    for (label, body, prelude) in [
+        ("detached task", spawned(";"), ""),
+        (
+            "handle kept in a binding",
+            format!("let _handle = {}", spawned(";")),
+            "",
+        ),
+        ("await result converted", spawned(".await.ok();"), ""),
+        (
+            "await result dropped",
+            format!("let _ = {}", spawned(".await;")),
+            "",
+        ),
+        ("handle awaited without a check", spawned(".await;"), ""),
+        (
+            "return before the assertion",
+            spawned(".await.unwrap();").replacen(
+                "assert_eq!(fetch_limit(50, 50)",
+                "if std::env::var(\"X\").is_ok() { return; }\n            assert_eq!(fetch_limit(50, 50)",
+                1,
+            ),
+            "",
+        ),
+        (
+            "question mark before the assertion",
+            spawned(".await.unwrap();")
+                .replacen(
+                    "assert_eq!(fetch_limit(50, 50)",
+                    "let _v = std::env::var(\"X\").ok()?;\n            assert_eq!(fetch_limit(50, 50)",
+                    1,
+                )
+                .replacen("}).await", "Some(())\n        }).await", 1),
+            "",
+        ),
+        (
+            "a spawn that is a shadowing local item",
+            spawned(".await.unwrap();"),
+            "    fn spawn() {}\n",
+        ),
+        (
+            "rebound tokio",
+            spawned(".await.unwrap();"),
+            "    use core as tokio;\n",
+        ),
+        (
+            "a glob import that may supply tokio",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::*;\n",
+        ),
+        (
+            "an imported tokio from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::tokio;\n",
+        ),
+        (
+            "an imported spawn from another module",
+            spawned(".await.unwrap();"),
+            "    use crate::fake::{spawn};\n",
+        ),
+        (
+            "an expect message that can return",
+            spawned(".await.expect(if std::env::var(\"X\").is_ok() { return; } else { \"failed\" });"),
+            "",
+        ),
+        (
+            "a spawn that is not tokio's",
+            spawned(".await.unwrap();").replace("tokio::spawn", "spawn"),
+            "    fn spawn<F>(task: F) -> std::future::Ready<Result<(), ()>> { drop(task); std::future::ready(Ok(())) }\n",
+        ),
+    ] {
+        let class = variant(label, &body, prelude)?;
+        assert!(
+            !matches!(class, ExposureClass::Exposed | ExposureClass::WeaklyExposed),
+            "{label}: no oracle credit, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
 fn source_runtime_control(
     source: &str,
     label: &str,
@@ -3531,9 +3666,13 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
         let root = scratch.0.join(case);
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        // Read and write rather than `fs::copy`: on Windows the copy keeps the
+        // fixture's old mtime, and the shared target dir then reuses the
+        // previous case's broken `demo` build as fresh (#9661).
         for file in ["Cargo.toml", "Cargo.lock", "src/lib.rs", "tests/save.rs"] {
-            std::fs::copy(fixture.join("input").join(file), root.join(file))
-                .map_err(|e| e.to_string())?;
+            let bytes =
+                std::fs::read(fixture.join("input").join(file)).map_err(|e| e.to_string())?;
+            std::fs::write(root.join(file), bytes).map_err(|e| e.to_string())?;
         }
         let correct =
             std::fs::read_to_string(root.join("src/lib.rs")).map_err(|e| e.to_string())?;

@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-async-error-class-changed",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-async-error-class-changed.diff",
+  "anchor": {
+    "file": "src/parsePort.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "vitest_rejects_tothrow_class",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "throw new TypeError(\"bad port\");",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/parsePort.test.ts > rejects text",
+        "equivalence_review": "the edit itself: One test pins the error class with toThrow(RangeError); a TypeError fails it."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "One test pins the error class with toThrow(RangeError); a TypeError fails it. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

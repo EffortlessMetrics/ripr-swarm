@@ -20,6 +20,13 @@ impl Drop for TempRepo {
 /// Findings on line 2 of a one-function crate whose `src/lib.rs` line 2
 /// changed from `old` to `new`, checked against the integration `test`.
 fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    findings_after("", new, old, test)
+}
+
+/// [`findings`] with `prefix` (whole lines) ahead of the changed line, which
+/// then sits on line `2 + prefix lines`.
+fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    let changed_line = 2 + prefix.lines().count();
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -40,11 +47,16 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
     )?;
     write(
         "src/lib.rs",
-        &format!("pub fn thr(x: i32) -> bool {{\n{new}\n}}\n"),
+        &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n}}\n"),
     )?;
     write("tests/it.rs", test)?;
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn thr(x: i32) -> bool {{\n-{old}\n+{new}\n }}\n"
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n }}\n",
+        n = changed_line + 1,
+        ctx = prefix
+            .lines()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>(),
     );
     write("diff.patch", &diff)?;
     let output = check_workspace(CheckInput {
@@ -60,7 +72,7 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
     Ok(output
         .findings
         .into_iter()
-        .filter(|finding| finding.probe.location.line == 2)
+        .filter(|finding| finding.probe.location.line == changed_line)
         .collect())
 }
 
@@ -278,5 +290,189 @@ fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Re
             .contains("equality-boundary discriminator is missing"),
         "{return_value:?}"
     );
+    Ok(())
+}
+
+const INTERMEDIATE_INPUT: &str = "use thr::thr;\n\n#[test]\nfn between() {\n    assert!(!thr(101));\n}\n\n#[test]\nfn above() {\n    assert!(thr(500));\n}\n";
+
+fn assert_gap_named(findings: &[Finding], named: bool) -> Result<(), String> {
+    let return_value = family(findings, "return_value")?;
+    assert_eq!(
+        return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        named,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_intermediate_input_separates_a_multi_value_tail_threshold_move() -> Result<(), String> {
+    // #9147: `thr(101)` is true before (`> 100`) and false after (`> 102`), so
+    // it discriminates even though it equals neither threshold.
+    let findings = findings("    x > 102", OLD, INTERMEDIATE_INPUT)?;
+    assert_gap_named(&findings, false)?;
+    let return_value = family(&findings, "return_value")?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_intermediate_input_separates_a_multi_value_explicit_return_threshold_move()
+-> Result<(), String> {
+    let findings = findings(
+        "    return x > 102;",
+        "    return x > 100;",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        return_value.probe.expression.contains("return"),
+        "{return_value:?}"
+    );
+    assert_gap_named(&findings, false)?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn far_only_inputs_keep_the_multi_value_threshold_gap() -> Result<(), String> {
+    // Negative control: 50 and 500 are on the same side of both thresholds.
+    for (new, old) in [
+        ("    x > 102", OLD),
+        ("    return x > 102;", "    return x > 100;"),
+    ] {
+        let findings = findings(new, old, FAR_INPUTS)?;
+        assert_gap_named(&findings, true)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_ne!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{return_value:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_input_outside_the_moved_range_keeps_the_multi_value_threshold_gap() -> Result<(), String> {
+    // Negative control: 99 and 103 flank the range (100, 102] without
+    // landing inside it, so neither separates the versions.
+    let findings = findings(
+        "    x > 102",
+        OLD,
+        "use thr::thr;\n\n#[test]\nfn below() {\n    assert!(!thr(99));\n}\n\n#[test]\nfn above() {\n    assert!(thr(103));\n}\n",
+    )?;
+    assert_gap_named(&findings, true)?;
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_parameter_does_not_take_the_intermediate_input() -> Result<(), String> {
+    // The compared `x` is the local 500, not the caller's 101, so 101 says
+    // nothing about the moved threshold and the gap stays.
+    let findings = findings_after(
+        "    let x = 500;\n",
+        "    x > 102",
+        "    x > 100",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mutated_parameter_does_not_take_the_intermediate_input() -> Result<(), String> {
+    let findings = findings_after(
+        "    x += 5;\n",
+        "    x > 102",
+        "    x > 100",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_equality_literal_move_is_separated_only_by_an_input_equal_to_one_literal()
+-> Result<(), String> {
+    // `x == 100` to `x == 102`: `thr(100)` is true before and false after, so
+    // it separates the versions; 101 equals neither literal and does not.
+    let separating = findings(
+        "    x == 102",
+        "    x == 100",
+        "use thr::thr;\n\n#[test]\nfn old() {\n    assert!(!thr(100));\n}\n",
+    )?;
+    let separating = family(&separating, "return_value")?;
+    assert_eq!(separating.class, ExposureClass::Exposed, "{separating:?}");
+    let between = findings(
+        "    x == 102",
+        "    x == 100",
+        "use thr::thr;\n\n#[test]\nfn neither() {\n    assert!(!thr(101));\n}\n",
+    )?;
+    let between = family(&between, "return_value")?;
+    assert_ne!(between.class, ExposureClass::Exposed, "{between:?}");
+    Ok(())
+}
+
+#[test]
+fn a_qualified_rival_call_is_not_a_separating_input() -> Result<(), String> {
+    // `rival::thr(101)` is not the owner's `thr`; only 50 and 500 reach it.
+    let rival = findings(
+        "    x > 102",
+        OLD,
+        "use thr::thr;\n\nmod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n\n#[test]\nfn other() {\n    assert!(rival::thr(101));\n}\n",
+    )?;
+    assert_gap_named(&rival, true)?;
+    let owner = family(&rival, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // Positive control: a plain `thr(101)` does separate.
+    let plain = findings("    x > 102", OLD, INTERMEDIATE_INPUT)?;
+    assert_gap_named(&plain, false)?;
+    Ok(())
+}
+
+#[test]
+fn pattern_and_loop_rebindings_of_the_parameter_keep_the_gap() -> Result<(), String> {
+    // Each prefix rebinds `x` through a pattern, so the compared value is not
+    // the caller's 101 and the intermediate input must not separate.
+    for prefix in [
+        "    let (x, _) = (0, 0);\n",
+        "    let [x, ..] = [0, 0];\n",
+        "    for x in 0..1 {}\n",
+        "    if let Some(x) = Some(0) {}\n",
+        "    match Some(0) {\n        Some(x) => {}\n        None => {}\n    }\n",
+        "    let _f = |x: i32| x;\n",
+    ] {
+        let findings = findings_after(prefix, "    x > 102", "    x > 100", INTERMEDIATE_INPUT)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_ne!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{prefix:?} {return_value:?}"
+        );
+        assert_gap_named(&findings, true)?;
+    }
     Ok(())
 }

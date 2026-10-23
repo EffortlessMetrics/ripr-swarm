@@ -1,0 +1,11 @@
+diff --git a/src/stats.ts b/src/stats.ts
+--- a/src/stats.ts
++++ b/src/stats.ts
+@@ -7,6 +7,6 @@
+     this.stored = Math.min(value, 5);
+   }
+   recordHit(): void {
+-    this.hits = this.hits + 1;
++    this.hits += 1;
+   }
+ }

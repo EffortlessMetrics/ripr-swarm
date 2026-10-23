@@ -226,3 +226,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infection_expected_value_literal (20)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless infection_expected_value_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

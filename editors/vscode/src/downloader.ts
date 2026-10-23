@@ -64,6 +64,8 @@ export interface SelectedServerManifest {
   readonly manifest: ServerManifest;
   readonly manifestUrl: string;
   readonly observation: ManifestPlacementObservation;
+  /** Raw-byte SHA-256 of the manifest that was selected. */
+  readonly manifestSha256: string;
 }
 
 export interface ManifestPlacementRequest {
@@ -147,7 +149,8 @@ async function downloadServerWithProgress(
         expectedSha256: asset.sha256,
         bytes,
         manifestUrl: selection.manifestUrl,
-        manifestPlacement: selection.observation.placement
+        manifestPlacement: selection.observation.placement,
+        manifestSha256: selection.manifestSha256
       };
     },
     extractArchive: async (archivePath, destination) => {
@@ -177,7 +180,8 @@ export async function resolveServerManifestPlacement(
     return {
       manifest,
       manifestUrl: request.stableManifestUrl,
-      observation: { placement: 'stable', manifestUrl: request.stableManifestUrl }
+      observation: { placement: 'stable', manifestUrl: request.stableManifestUrl },
+      manifestSha256: sha256Hex(stable.bytes)
     };
   }
   if (stable.kind !== 'authoritative_absence') {
@@ -201,7 +205,8 @@ export async function resolveServerManifestPlacement(
       placement: 'rc_after_stable_absent',
       stableManifestUrl: request.stableManifestUrl,
       rcManifestUrl: request.rcManifestUrl
-    }
+    },
+    manifestSha256: sha256Hex(rc.bytes)
   };
 }
 
@@ -272,12 +277,14 @@ function installRequest(
   version: string,
   platform: RiprPlatform
 ): ManagedServerInstallRequest {
+  const admittedManifestSha256 = admittedDescriptor(distributionGeneration(version))?.manifestSha256;
   return {
     serversRoot: path.join(context.globalStorageUri.fsPath, 'servers'),
     version,
     platformTarget: platform.target,
     executableName: platform.executableName,
-    archiveExtension: platform.archiveExtension
+    archiveExtension: platform.archiveExtension,
+    ...(admittedManifestSha256 !== undefined ? { admittedManifestSha256 } : {})
   };
 }
 
@@ -287,6 +294,10 @@ function downloadOriginLabel(config: RiprConfig, version: string): string {
   } catch {
     return 'the configured download mirror';
   }
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
 function parseAdmittedManifest(

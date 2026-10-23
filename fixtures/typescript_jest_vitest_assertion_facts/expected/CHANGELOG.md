@@ -504,6 +504,7 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
 ## Pending — typescript_jest_vitest_assertion_facts (12)
 
 Reason:
@@ -640,6 +641,54 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (24)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (25)
+
+Reason:
+RIPR-SPEC-0224: TypeScript row-miss narrowed to proven paths (#5495)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (26)
+
+Reason:
+RIPR-SPEC-0224: TypeScript weak_assertion limited to weak and smoke oracles (#5495)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (27)
+
+Reason:
+isReady loses its boolean annotation so the fixture keeps exercising smoke-only truthiness after RIPR-SPEC-0247 rule 5 (#9532); only the source snapshot line changes
 
 Command:
 `cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
