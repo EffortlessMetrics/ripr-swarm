@@ -4600,9 +4600,15 @@ fn retain_owner_calling_rows(
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
             && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
     };
+    // Candidates are chosen by test identity, seeded with the tests already
+    // in the window, and each absent test contributes only its first ranked
+    // row: extra assertions of one test must not evict distinct tests (the
+    // unique-tests-first contract of `pack_unique_tests_first`, #4760).
+    let identity = |test: &RelatedTest| (test.file.clone(), test.line, test.name.clone());
+    let mut seen: std::collections::BTreeSet<OwnerCallKey> = window.iter().map(identity).collect();
     let lifted: Vec<RelatedTest> = ranked
         .iter()
-        .filter(|test| signalled(test) && !window.contains(test))
+        .filter(|test| signalled(test) && seen.insert(identity(test)))
         .cloned()
         .collect();
     let replaceable = window
@@ -6386,6 +6392,116 @@ mod tests {
         let (kept, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
         assert!(kept.iter().any(|test| test.name == "truncate_to_zero"));
         assert!(kept.iter().all(|test| test.name != "sibling_same_line"));
+    }
+
+    /// #9175 regression: extra assertions of one absent demoted test must
+    /// not evict distinct tests; the test is retained once.
+    #[test]
+    fn owner_call_signal_admits_one_row_per_absent_test() {
+        let mut input = nine_file_location_rows_and_one_demoted_row();
+        for index in 0..8 {
+            input.push(RelatedTest {
+                oracle: Some(format!("assert_eq!(extra_{index}, 1);")),
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    "truncate_to_zero",
+                    40,
+                    Some(RelationReason::WeakTokenSubstring),
+                )
+            });
+        }
+        let calls = owner_call_rows(&[40]);
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(total, 18);
+        assert_eq!(kept.len(), RELATED_TESTS_RENDER_CAP);
+        assert_eq!(
+            kept.iter()
+                .filter(|test| test.name == "truncate_to_zero")
+                .count(),
+            1
+        );
+        assert_ne!(kept[0].name, "truncate_to_zero");
+        assert_eq!(
+            kept.iter()
+                .filter(|test| test.name.starts_with("doc_"))
+                .count(),
+            7
+        );
+    }
+
+    /// #9175 regression: a demoted test already in the window gains no extra
+    /// rows from its other assertions.
+    #[test]
+    fn owner_call_signal_ignores_extra_rows_of_a_test_already_in_the_window() {
+        let mut input: Vec<_> = (0..7)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        for oracle in [
+            "assert_eq!(a, 1);",
+            "assert_eq!(b, 2);",
+            "assert_eq!(c, 3);",
+        ] {
+            input.push(RelatedTest {
+                oracle: Some(oracle.to_string()),
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    "truncate_to_zero",
+                    40,
+                    Some(RelationReason::WeakTokenSubstring),
+                )
+            });
+        }
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().any(|test| test.name == "truncate_to_zero"),
+            "setup: the demoted test is already in the window"
+        );
+        let calls = owner_call_rows(&[40]);
+        let (kept, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(kept, plain);
+    }
+
+    /// #9175 control: distinct signalled tests that tie are each retained,
+    /// one row apiece, up to the number of displaceable rows.
+    #[test]
+    fn owner_call_signal_retains_distinct_tied_tests() {
+        let mut input = nine_file_location_rows_and_one_demoted_row();
+        input.push(RelatedTest {
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..related(
+                "second_demoted",
+                41,
+                Some(RelationReason::WeakTokenSubstring),
+            )
+        });
+        let calls: std::collections::BTreeSet<OwnerCallKey> = [
+            (
+                PathBuf::from("tests/lib.rs"),
+                40,
+                "truncate_to_zero".to_string(),
+            ),
+            (
+                PathBuf::from("tests/lib.rs"),
+                41,
+                "second_demoted".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(total, 11);
+        assert_eq!(kept.len(), RELATED_TESTS_RENDER_CAP);
+        assert_ne!(kept[0].name, "truncate_to_zero");
+        for name in ["truncate_to_zero", "second_demoted"] {
+            assert_eq!(kept.iter().filter(|test| test.name == name).count(), 1);
+        }
     }
 
     /// #9175 negative: with no file-location row to displace, nothing moves.
