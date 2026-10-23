@@ -2885,6 +2885,21 @@ fn plain_decimal_and_plain_string_guard_literals_still_evaluate() -> Result<(), 
     Ok(())
 }
 
+// `!=` guards are read through the same equality owner. An early exit on
+// `name != "\x41"` is NOT taken by "A" in Python (they are equal), so the
+// fallthrough return runs; reading the raw text would call it taken.
+#[test]
+fn unreadable_guard_literal_inequality_fails_open() -> Result<(), String> {
+    let finding = classify_added_case(
+        "def quote(name):\n    if name != \"\\x41\":\n        return 0\n    return 42\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(\"A\") == 42\n",
+        4,
+        "    return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // A loop header that opens a multi-line string is masked as string text, so
 // the walk would skip it and read the `if` before it as the guard (or the
 // chain head of a `for`/`else`). The header is unreadable: fail open.

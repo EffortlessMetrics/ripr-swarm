@@ -476,9 +476,18 @@ fn masked_header_opens_string(trimmed: &str, masked: bool, starts_in_code: bool)
     masked
         && starts_in_code
         && (is_block_opener(trimmed)
-            || ["if ", "elif ", "else", "while "]
-                .iter()
-                .any(|prefix| trimmed.starts_with(prefix)))
+            || [
+                "if ",
+                "elif ",
+                "else",
+                "while ",
+                "async for ",
+                "async with ",
+                "match ",
+                "case ",
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix)))
 }
 
 /// Per line: whether it is masked, and whether it begins in code.
@@ -1263,6 +1272,11 @@ mod tests {
         assert_eq!(compare_literal_values("1e3", "==", "1000"), None);
         assert_eq!(compare_literal_values("\"\\x41\"", "==", "\"A\""), None);
         assert_eq!(compare_literal_values("\"A\"", "!=", "'\\x41'"), None);
+        // Prefixed strings are not plain strings.
+        for prefixed in ["r\"A\"", "b\"A\"", "f\"A\""] {
+            assert_eq!(compare_literal_values(prefixed, "==", "\"A\""), None);
+        }
+        assert_eq!(compare_literal_values("1000", "==", "1000.0"), Some(true));
         // Plain decimals and plain strings still evaluate.
         assert_eq!(compare_literal_values("16", "==", "16.0"), Some(true));
         assert_eq!(compare_literal_values("\"A\"", "==", "'A'"), Some(true));
@@ -1277,7 +1291,9 @@ mod tests {
         let source = "def quote(total):\n    if total > 1:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 3\n";
         let lines: Vec<&str> = source.lines().collect();
         assert_eq!(else_chain_conditions(&lines, 6, &owner), None);
-        assert!(walk_guards(&owner, source, 7).is_none());
+        // Line 8 is the `return 3` inside the loop's `else`; line 7 is the
+        // `else:` itself.
+        assert!(walk_guards(&owner, source, 8).is_none());
         // Control: a plain `if`/`else` chain is still read.
         let plain =
             "def quote(total):\n    if total > 1:\n        return 1\n    else:\n        return 3\n";
@@ -1286,6 +1302,27 @@ mod tests {
         // A loop body under a string-opening header is not under the `if`.
         let body = "def quote(total):\n    if total > 1:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n";
         assert!(walk_guards(&owner, body, 6).is_none());
+        // Every block keyword that can open a string on its header fails open.
+        for header in [
+            "while x and ",
+            "if x == ",
+            "elif x == ",
+            "async for s in ",
+            "async with ",
+            "match ",
+            "case ",
+        ] {
+            let source = format!(
+                "def quote(total):\n    if total > 1:\n        return 1\n    {header}(\"\"\"\na\"\"\"):\n        return 2\n"
+            );
+            assert!(walk_guards(&owner, &source, 6).is_none(), "{header}");
+        }
+        // Control: a docstring continuation line that merely starts with a
+        // block keyword begins inside the string and does not fail open.
+        let docstring = "def quote(total):\n    if total > 1:\n        \"\"\"\n    for each item\n        \"\"\"\n        return 1\n";
+        let walk = walk_guards(&owner, docstring, 6)
+            .ok_or_else(|| "docstring text must not fail the walk open".to_string())?;
+        assert_eq!(walk.conditions, vec![(1, "total > 1".to_string())]);
         Ok(())
     }
 
