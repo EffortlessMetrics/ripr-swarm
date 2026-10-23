@@ -8,6 +8,7 @@ use crate::app::receipt::{
     RECEIPT_SCHEMA_VERSION, ReceiptCheckOptions, ReceiptCrossRefResult, ReceiptWriteOptions,
     check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
+use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
@@ -276,15 +277,18 @@ pub(in crate::cli) fn parse_receipt_check_options(
 // ── help text ─────────────────────────────────────────────────────────────────
 
 fn print_receipt_help() {
-    println!("{RECEIPT_HELP}");
+    println!(
+        "{}",
+        help::render_command_help(RECEIPT_HELP, &["receipt check", "receipt write"])
+    );
 }
 
 fn print_receipt_write_help() {
-    println!("{RECEIPT_WRITE_HELP}");
+    println!("{}", help::render_command_help(RECEIPT_WRITE_HELP, &[]));
 }
 
 fn print_receipt_check_help() {
-    println!("{RECEIPT_CHECK_HELP}");
+    println!("{}", help::render_command_help(RECEIPT_CHECK_HELP, &[]));
 }
 
 pub(in crate::cli) const RECEIPT_HELP: &str = r#"Write and validate canonical repair receipts.

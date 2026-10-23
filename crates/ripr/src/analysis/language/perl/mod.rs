@@ -895,6 +895,7 @@ fn packet_to_findings_with_currentness(
         );
 
         findings.push(crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: probe_id,
             canonical_gap,
             probe,

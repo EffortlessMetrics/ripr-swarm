@@ -1889,8 +1889,24 @@ mod tests {
         finding.language_status = Some(LanguageStatus::Preview);
     }
 
+    /// #5531: the typed scope is omitted from a serialized diff `Finding`
+    /// (byte-stable) and round-trips for a repo finding.
+    #[test]
+    fn analysis_scope_serializes_only_for_repo() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        let diff = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(diff.get("analysis_scope").is_none());
+        finding.mark_repo_scoped();
+        let repo = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(repo["analysis_scope"], serde_json::json!("repo"));
+        let restored: Finding = serde_json::from_value(repo).map_err(|e| e.to_string())?;
+        assert_eq!(restored, finding);
+        Ok(())
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

@@ -31,7 +31,7 @@ pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
-    discover_python_test_files, discover_unanalyzed_source_files,
+    discover_python_test_files, discover_unanalyzed_source_files, has_inspectable_source_file,
     limitations_for_absent_changed_files, supplement_absent_file_limitations,
     worktree_contains_regular_source_file,
 };
