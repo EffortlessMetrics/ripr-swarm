@@ -691,13 +691,6 @@ fn find_related_tests_with_candidates<'a>(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidates: RelatedTestCandidates<'_>,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
-    // #9173: Cargo compiles and runs a build script before the package, as a
-    // separate crate, so no test of the package can call into it. Without a
-    // test file that names `build.rs` (an `include!` or `#[path]` mount) no
-    // name, stem or substring signal may relate a test to it.
-    if is_root_build_script(&probe.location.file) && !any_test_file_names_build_script(index) {
-        return Vec::new();
-    }
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
@@ -716,6 +709,19 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::FullScan => None,
     };
     let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
+    // #9173: Cargo compiles and runs a build script before the package, as a
+    // separate crate, so no test of the package can call into it. Judged on
+    // the root-relative path, so a checkout under `/work/src/shop` is not
+    // mistaken for a `src` module. Unless a test file of its package really
+    // mounts it (`include!`/`#[path]` of `build.rs`, or the generated
+    // `OUT_DIR` output), no name, stem or substring signal may relate a test
+    // to it.
+    if let Some(relative) = probe_path.as_deref()
+        && is_root_build_script(relative)
+        && !package_test_file_mounts_build_script(index, relative)
+    {
+        return Vec::new();
+    }
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -2436,25 +2442,42 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "tests",
 ];
 
-/// Whether `path` is a package's root `build.rs`: the file name is `build.rs`
-/// and no `src`, `tests`, `examples` or `benches` directory sits above it. A
-/// `package.build = "tools/gen.rs"` script is not recognised and keeps the
-/// ordinary relation rules.
-fn is_root_build_script(path: &Path) -> bool {
-    let text = normalize_path(path);
-    let mut parts = text.rsplit('/');
+/// Whether the root-relative `path` is a package's root `build.rs`: the file
+/// name is `build.rs` and no `src`, `tests`, `examples` or `benches`
+/// directory sits above it. A `package.build = "tools/gen.rs"` script is not
+/// recognised and keeps the ordinary relation rules.
+pub(in crate::analysis) fn is_root_build_script(path: &str) -> bool {
+    let mut parts = path.rsplit('/');
     parts.next() == Some("build.rs")
         && !parts.any(|part| matches!(part, "src" | "tests" | "examples" | "benches"))
 }
 
-/// Whether any indexed test file spells `build.rs`, the only way a test
-/// target could mount a build script and reach it.
-fn any_test_file_names_build_script(index: &RustIndex) -> bool {
-    index.tests().iter().any(|test| {
-        index
-            .files()
-            .get(&test.file)
-            .is_some_and(|facts| facts.data().source.contains("build.rs"))
+/// Whether a test file in the build script's own package really mounts it:
+/// an `include!` or `#[path]` line naming `build.rs`, or an `include!` of
+/// the `OUT_DIR` output. Comment lines and bare string mentions do not
+/// count. Files are deduplicated; a test elsewhere in the workspace does not
+/// count.
+fn package_test_file_mounts_build_script(index: &RustIndex, script: &str) -> bool {
+    let package_dir = script.strip_suffix("build.rs").unwrap_or("");
+    let files: BTreeSet<&Path> = index
+        .tests()
+        .iter()
+        .map(|test| test.file.as_path())
+        .collect();
+    files.into_iter().any(|file| {
+        normalize_path(file).starts_with(package_dir)
+            && index
+                .files()
+                .get(file)
+                .is_some_and(|facts| source_mounts_build_script(&facts.data().source))
+    })
+}
+
+fn source_mounts_build_script(source: &str) -> bool {
+    source.lines().any(|line| {
+        let code = line.split("//").next().unwrap_or("");
+        (code.contains("include!") || code.contains("#[path"))
+            && (code.contains("build.rs") || code.contains("OUT_DIR"))
     })
 }
 
@@ -10646,6 +10669,27 @@ try_parse_summary(raw).map_err(Into::into)"
             assert!(full_scan.is_empty(), "full scan related for {file}");
         }
 
+        // An absolute checkout path under `src` is judged root-relative: the
+        // root `build.rs` still relates nothing, a real `src/build.rs` does.
+        let root = Path::new("/work/src/shop");
+        let candidate_index = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        for (file, expected) in [
+            ("/work/src/shop/build.rs", 0),
+            ("/work/src/shop/src/build.rs", 1),
+        ] {
+            let probe = probe(file, expression);
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            assert_eq!(related.len(), expected, "{file}: {related:?}");
+        }
+
         // Discriminating control: the same expression in a `src/` file keeps
         // the name-token relation, and `src/build.rs` is an ordinary module.
         for file in ["src/probe.rs", "src/build.rs"] {
@@ -10654,6 +10698,53 @@ try_parse_summary(raw).map_err(Into::into)"
             assert_eq!(related.len(), 1, "control for {file}");
             assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
         }
+    }
+
+    /// #9173: a test file of the build script's own package that mounts it
+    /// (`include!`, `#[path]`, `OUT_DIR`) restores the ordinary name-token
+    /// relation; a mounting test in another package does not.
+    #[test]
+    fn mounting_test_file_restores_build_script_relation() -> Result<(), String> {
+        let expression = ".arg(\"--cap-lints=allow\")";
+        let index_with = |test_path: &str, source: &str| -> Result<RustIndex, String> {
+            let file_facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                std::path::Path::new(test_path),
+                source,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(RustIndex::from_owned(
+                crate::analysis::facts::OwnedRustIndex {
+                    tests: file_facts.tests.clone(),
+                    files: std::iter::once((PathBuf::from(test_path), file_facts)).collect(),
+                    ..Default::default()
+                },
+            ))
+        };
+        let related_for = |index: &RustIndex, file: &str| {
+            let probe = probe(file, expression);
+            find_related_tests(&probe, None, index, true, None, None).len()
+        };
+
+        for mount in [
+            "include!(\"../build.rs\");\n#[test]\nfn test_allow_attributes() {}\n",
+            "#[path = \"../build.rs\"]\nmod script;\n#[test]\nfn test_allow_attributes() {}\n",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"));\n#[test]\nfn test_allow_attributes() {}\n",
+        ] {
+            let index = index_with("tests/lints.rs", mount)?;
+            assert_eq!(related_for(&index, "build.rs"), 1, "mount: {mount}");
+        }
+
+        let plain = index_with("tests/lints.rs", "#[test]\nfn test_allow_attributes() {}\n")?;
+        assert_eq!(related_for(&plain, "build.rs"), 0);
+
+        // A mounting test in a different package does not re-enable it.
+        let other_package = index_with(
+            "other/tests/lints.rs",
+            "include!(\"../build.rs\");\n#[test]\nfn test_allow_attributes() {}\n",
+        )?;
+        assert_eq!(related_for(&other_package, "member/build.rs"), 0);
+        assert_eq!(related_for(&other_package, "other/build.rs"), 1);
+        Ok(())
     }
 
     /// Another crate's common assertion token does not silence the only

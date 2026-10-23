@@ -4,8 +4,8 @@ Spec: RIPR-SPEC-0172
 
 ## Given
 
-A Rust crate whose root `build.rs` gains `.arg("--cap-lints=allow")` in
-`compile_probe`. An unrelated integration test is named `test_allow_attributes`
+A Rust crate whose root `build.rs` changes the string returned by `lint_cap`
+from `"--cap-lints=warn"` to `"--cap-lints=allow"`. An unrelated integration test is named `test_allow_attributes`
 and never runs the build script.
 
 ## When
@@ -30,5 +30,6 @@ test, and the finding is not `reachable_unrevealed`.
 ## Must Not
 
 - Report `reachable_unrevealed` or `reach weak` for a root build script.
-- Tell the reader to add an assertion to an unrelated test.
+- Tell the reader to add an assertion to an unrelated test, or to add a
+  co-located test for the build script.
 - Relate a test to a build script through a name, stem or substring token.

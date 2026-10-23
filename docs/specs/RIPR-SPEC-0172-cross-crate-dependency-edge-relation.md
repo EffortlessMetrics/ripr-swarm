@@ -269,10 +269,18 @@ call.
 Cargo compiles and runs a package's root `build.rs` before the package, as a
 separate crate; no test of the package can call into it. A probe in a root
 `build.rs` (no `src`, `tests`, `examples` or `benches` directory above it)
-therefore relates no test through a name, stem or substring token, unless some
-indexed test file spells `build.rs` (an `include!` or `#[path]` mount), in which
-case the ordinary rules apply. A `package.build = "tools/gen.rs"` script is not
-recognised and keeps the ordinary rules. Fixture:
+therefore relates no test through a name, stem or substring token, unless a
+test file of the script's own package (files deduplicated; a test in another
+package does not count) spells `build.rs` or `OUT_DIR` (an `include!`,
+`#[path]` or generated-source mount), in which case the ordinary rules apply. A `package.build = "tools/gen.rs"` script is not
+recognised and keeps the ordinary rules. The path is judged
+relative to the analysis root, so a checkout under a `src` directory is not
+mistaken for a module. A mount is an `include!` or `#[path]` line naming
+`build.rs`, or an `include!` of the `OUT_DIR` output; comments and bare string
+mentions do not count. The `no_static_path` next step for a root build script
+does not ask for a co-located test: it names building the package and
+inspecting the script's output, or moving the logic into a callable library
+function. Fixture:
 `fixtures/rust_build_script_no_test_reach`.
 
 ## Implementation Mapping
