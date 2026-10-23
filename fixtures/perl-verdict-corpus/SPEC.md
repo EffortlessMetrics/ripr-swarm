@@ -4,10 +4,12 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Three small authored Perl distributions under `subjects/`, our own code under
+Four small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
-`authored-perl-test2-ledger` (Test2::V0) and
-`authored-perl-testexception-account` (Test::Exception). Each case is a
+`authored-perl-test2-ledger` (Test2::V0),
+`authored-perl-testexception-account` (Test::Exception) and
+`authored-perl-hostile-source` (hostile constructs — string `eval`, heredocs,
+`# line` directives, dynamic subs — under Test::More). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
