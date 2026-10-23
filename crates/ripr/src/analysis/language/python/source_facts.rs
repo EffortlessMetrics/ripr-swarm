@@ -1963,6 +1963,8 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
                 in_typing_block = true;
             }
             true
+        } else if is_plain_builtins_import_line(code) {
+            true
         } else if let Some(rest) = trimmed.strip_prefix('@') {
             let head = rest.split('(').next().unwrap_or_default();
             // The call arguments are scanned too: `@final(final := wrapper)`
@@ -1976,6 +1978,20 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
         }
     }
     false
+}
+
+/// A single plain stdlib `builtins` import statement (`import builtins [as x]`
+/// or `from builtins import property [as x]`): the one binding the built-in
+/// `property` spellings rely on (#6585). Comma lists, parentheses and
+/// semicolon-joined statements are not plain and still count as a rebind.
+fn is_plain_builtins_import_line(code: &str) -> bool {
+    let code = code.trim();
+    if code.contains([',', '(', ';', '\\']) {
+        return false;
+    }
+    code.strip_prefix("import builtins")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(" as "))
+        || code.starts_with("from builtins import ")
 }
 
 fn contains_word(line: &str, word: &str) -> bool {

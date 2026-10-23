@@ -882,6 +882,36 @@ mod tests {
         static_limit_for_change("return amount + 2", owner, &[]).map(|limit| limit.kind)
     }
 
+    /// Same as `decorator_limit` with one related test: a plain `@property`
+    /// getter only classifies on related-test evidence (#6585).
+    fn related_decorator_limit(owner: &PythonOwner) -> Option<StaticLimitKind> {
+        let test = PythonTest {
+            activation_controls: Vec::new(),
+            fixture_defs: Vec::new(),
+            direct_parametrized: Vec::new(),
+            constant_rebinding: Default::default(),
+            name: "test_owner".to_string(),
+            qualified_name: "test_owner".to_string(),
+            file: PathBuf::from("tests/test_owner.py"),
+            line: 1,
+            body_text: String::new(),
+            imports: Vec::new(),
+            decorators: Vec::new(),
+            fixtures: Vec::new(),
+            parametrized: false,
+            parametrize: None,
+            generated_inputs: Vec::new(),
+            framework: "pytest",
+            assertions: Vec::new(),
+            assertion_admission: super::super::admission::PythonAssertionAdmission::NoAssertionLike,
+        };
+        let related = [PythonRelatedCandidate {
+            test: &test,
+            relation: super::super::related_tests::PythonRelationKind::SyntacticCall,
+        }];
+        static_limit_for_change("return amount + 2", owner, &related).map(|limit| limit.kind)
+    }
+
     #[test]
     fn functools_memoization_decorators_do_not_limit() {
         for name in ["lru_cache", "cache", "cached_property"] {
@@ -1268,27 +1298,27 @@ mod tests {
             "plain built-in `@property` with no competing import is a transparent accessor"
         );
         assert_eq!(
-            decorator_limit(&owner),
+            related_decorator_limit(&owner),
             None,
             "plain `@property` must not emit decorator_indirection"
         );
         assert_eq!(
-            decorator_limit(&owner_with(&["property"], vec![from_builtins("property")])),
+            related_decorator_limit(&owner_with(&["property"], vec![from_builtins("property")])),
             None,
             "`from builtins import property` is still the built-in accessor"
         );
         assert_eq!(
-            decorator_limit(&owner_with(&["builtins.property"], vec![import_builtins()])),
+            related_decorator_limit(&owner_with(&["builtins.property"], vec![import_builtins()])),
             None,
             "`@builtins.property` with `import builtins` is the built-in spelling"
         );
         assert_eq!(
-            decorator_limit(&owner_with(&["builtins.property"], Vec::new())),
+            related_decorator_limit(&owner_with(&["builtins.property"], Vec::new())),
             None,
             "`@builtins.property` with no competing import is the built-in spelling"
         );
         assert_eq!(
-            decorator_limit(&owner_with(
+            related_decorator_limit(&owner_with(
                 &["bi.property"],
                 vec![PythonImport {
                     imported: "builtins".to_string(),
@@ -1373,7 +1403,17 @@ mod tests {
                 source_module: "builtins".to_string(),
             }],
         );
-        assert_eq!(decorator_limit(&owner), None);
+        assert_eq!(related_decorator_limit(&owner), None);
+    }
+
+    #[test]
+    fn unrelated_plain_property_getter_keeps_the_limit() {
+        let owner = owner_with(&["property"], Vec::new());
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection),
+            "a getter no test relates to keeps decorator_indirection"
+        );
     }
 
     #[test]
