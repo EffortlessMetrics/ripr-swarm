@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, repository_relative_path};
+use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -1146,7 +1146,7 @@ fn sarif_uri_reference(path: &str) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
+    let raw = path_display_lossy(path);
     raw.strip_prefix("./").unwrap_or(&raw).to_string()
 }
 

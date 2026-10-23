@@ -1270,6 +1270,9 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_off_seam_class",
   "crates/ripr/src/output/sarif.rs::tests::sarif_attaches_suppression_metadata",
   "crates/ripr/src/output/sarif.rs::tests::sarif_location_and_fingerprints_ignore_root_spelling",
+  "crates/ripr/tests/sarif_uri_identity.rs::ordinary_escaping_controls",
+  "crates/ripr/tests/sarif_uri_identity.rs::native_backslash_does_not_alias_directory",
+  "crates/ripr/tests/sarif_uri_identity.rs::native_windows_separators_are_slashes",
   "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
   "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
@@ -1283,6 +1286,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/tests/sarif_uri_identity.rs",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/cli/parse.rs",
   "xtask/src/main.rs"
