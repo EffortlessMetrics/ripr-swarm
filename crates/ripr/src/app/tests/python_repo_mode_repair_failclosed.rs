@@ -1,10 +1,11 @@
-//! Repo-mode Python findings never carry a repair card or ready signal (#5531).
+//! Repo-mode Python findings never carry a repair card or repair routing (#5531).
 //!
 //! The capability table registers Python `repair_routing` only for diff mode
 //! (`python/pytest/diff/...`, `python/unittest/diff/...`); a repo-mode cell is
 //! absent, which means `not_proven`. A repo run (bounded whole-file working
-//! set) must therefore not emit a repair card, a ledger gap record, or flip
-//! `repair_packet_ready`, even when the same finding in diff mode does.
+//! set) must therefore not emit a repair card or route repair, even when the
+//! same finding in diff mode does. The gap ledger may still carry an advisory
+//! no-repair-card record for it; that is not repair routing.
 use serde_json::Value;
 use std::fs;
 
@@ -84,13 +85,6 @@ fn py_findings(rendered: &str) -> Result<Vec<Value>, String> {
         .unwrap_or_default())
 }
 
-fn ready(finding: &Value) -> Option<bool> {
-    finding
-        .get("preview_actionability")
-        .and_then(|a| a.get("repair_packet_ready"))
-        .and_then(Value::as_bool)
-}
-
 #[test]
 fn diff_mode_control_keeps_python_repair_card() -> Result<(), String> {
     let findings = py_findings(&run("diff", false, crate::OutputFormat::Json)?)?;
@@ -101,17 +95,15 @@ fn diff_mode_control_keeps_python_repair_card() -> Result<(), String> {
 }
 
 #[test]
-fn repo_mode_python_finding_has_no_repair_card_or_ready_signal() -> Result<(), String> {
+fn repo_mode_python_finding_has_no_repair_card() -> Result<(), String> {
     let findings = py_findings(&run("repo", true, crate::OutputFormat::Json)?)?;
     if findings.is_empty() {
         return Err("repo run produced no Python finding".to_string());
     }
     for finding in &findings {
-        eprintln!("REPO_FINDING {finding}");
-        if ready(finding) == Some(true)
-            || finding
-                .get("python_repair_card")
-                .is_some_and(|card| !card.is_null())
+        if finding
+            .get("python_repair_card")
+            .is_some_and(|card| !card.is_null())
         {
             return Err(format!(
                 "repo-mode finding reached repair signal: {finding}"

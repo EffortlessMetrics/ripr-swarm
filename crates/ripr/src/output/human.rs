@@ -2403,6 +2403,18 @@ mod tests {
         finding
     }
 
+    /// #5531: the same carded finding stamped as repo-scoped gets no repair
+    /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
+    #[test]
+    fn repo_scoped_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        let mut repo = carded.clone();
+        repo.evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
+    }
+
     /// #7587: a deleted or moved Python line is base-side evidence and names
     /// a line the candidate no longer has, so it gets no repair card, while
     /// the same finding on the candidate side keeps its card.
