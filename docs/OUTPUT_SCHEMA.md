@@ -130,10 +130,8 @@ map is:
 | `ripr help --json` | `schema_version` | `3` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
-| `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete

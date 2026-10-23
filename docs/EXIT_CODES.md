@@ -178,12 +178,9 @@ reached the caller.
   a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
-  nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` schema `0.3` `state: refused` envelope under `--json`; stdout stays
-  empty. A failed read, analysis, or `--write` stays exit `2`.
   nearest one before it. The named reason is on stderr; under `--json` a
-  `rust_test_stub` schema `0.2` `state: refused` envelope is the stdout
-  document, and without it stdout stays empty. A failed read, analysis, or `--write` stays exit `2`.
+  `rust_test_stub` schema `0.3` `state: refused` envelope is the stdout
+  document. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class
