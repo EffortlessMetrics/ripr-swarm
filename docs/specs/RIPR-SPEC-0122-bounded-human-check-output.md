@@ -580,6 +580,19 @@ This item does not rewrite the Python Weakness section text (python
 or the agent packet routes. Those, with the python `classify.rs:686` and
 `classify.rs:691` reason texts, are tracked in #9929.
 
+### Next step for an unmapped infection input (#9244)
+
+For an `infection_unknown` finding whose related-test inputs ripr cannot map to
+the changed operand, the Next step text states a concrete action: open the
+related test, trace its input through the local or computed operand (including
+default and empty cases) to see which side of the changed condition it
+exercises, then name an input that would exercise the other side. It does not
+restate that the classification is unknown as the instruction, and it keeps the
+existing statement that `ripr.toml` has no fixture/builder value mappings and
+the instruction to add or strengthen a test only when the inspection finds a
+gap. The wording is static guidance only; it does not claim a runtime outcome.
+The assertion-shaped owner reframing (RIPR-SPEC-0133) is unchanged.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -625,6 +638,7 @@ or the agent packet routes. Those, with the python `classify.rs:686` and
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`

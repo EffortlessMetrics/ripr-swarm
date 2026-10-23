@@ -1078,6 +1078,7 @@ mod tests {
             attempt_id: format!("repair-attempt-{seam}"),
             seam_id: seam.to_string(),
             gap_base: None,
+            legacy_gap_binding: false,
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",

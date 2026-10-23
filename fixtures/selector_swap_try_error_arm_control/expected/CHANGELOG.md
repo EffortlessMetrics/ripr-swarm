@@ -28,7 +28,7 @@ Updated:
 ## Pending — selector_swap_try_error_arm_control (3)
 
 Reason:
-RIPR-SPEC-0122: #9921 dropped the observation_unverified suffix from per-finding human evidence lines and re-blessed 57 human-full goldens, missing selector_swap_try_error_arm_control which #9950 blessed in the same batch; formatting_only drift, one line, mechanical re-bless to the current renderer.
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
 
 Command:
 `cargo xtask goldens bless selector_swap_try_error_arm_control --reason "..."`
