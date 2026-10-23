@@ -245,13 +245,53 @@ mod tests {
     }
 
     fn run_isolated(test_name: &str) -> Result<std::process::Output, String> {
+        use std::io::Read as _;
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        std::process::Command::new(executable)
+        let mut child = std::process::Command::new(executable)
             .arg(exact_test_filter(test_name))
             .args(["--exact", "--nocapture"])
             .env("RIPR_INTERRUPT_ISOLATED_CHILD", test_name)
-            .output()
-            .map_err(|error| error.to_string())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        // Bounded wait: a wedged signal scenario must fail the wrapper, not
+        // hang the shared runner. The deadline sits far beyond the
+        // millisecond-scale scenarios; on expiry the child is terminated and
+        // reaped so no raw-owned process outlives the wrapper.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "isolated signal child {test_name} wedged past the wait deadline"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let mut stdout = Vec::new();
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| "isolated child stdout missing".to_string())?
+            .read_to_end(&mut stdout)
+            .map_err(|error| error.to_string())?;
+        let mut stderr = Vec::new();
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| "isolated child stderr missing".to_string())?
+            .read_to_end(&mut stderr)
+            .map_err(|error| error.to_string())?;
+        Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
     }
 
     /// Assert the isolated child acknowledged its selection, ran exactly
@@ -401,12 +441,32 @@ mod tests {
     fn sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String> {
         // #9895: the server registration covers both signals on one pair, so
         // whichever arrives first requests settlement and a repeat of either
-        // arms native termination — the two signals cannot disagree about the
-        // attempt's state.
+        // arms native termination — the two signals cannot disagree about
+        // the attempt's state. The cross-signal repeat is the force escape
+        // and never returns: the expected outcome is the scenario process
+        // dying by SIGINT, so the outer wrapper inspects the exit signal
+        // exactly like repeated_sigint_after_arm_takes_native_death.
         if in_isolated_child() {
             return child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations();
         }
-        assert_child_success("sigint_and_sigterm_share_one_flag_pair_in_server_registrations")
+        let output =
+            run_isolated("sigint_and_sigterm_share_one_flag_pair_in_server_registrations")?;
+        let text = combined_output(&output);
+        if !text.contains(
+            "[interrupt-isolated-child] ack sigint_and_sigterm_share_one_flag_pair_in_server_registrations",
+        ) {
+            return Err(format!(
+                "isolated signal child never acknowledged; the exact filter selected no test: {text}"
+            ));
+        }
+        use std::os::unix::process::ExitStatusExt as _;
+        match output.status.signal() {
+            Some(signal) if signal == signal_hook::consts::SIGINT => Ok(()),
+            other => Err(format!(
+                "the cross-signal repeat must take native death by SIGINT, got signal {other:?} ({})",
+                output.status
+            )),
+        }
     }
 
     fn child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String>
@@ -424,12 +484,12 @@ mod tests {
         assert!(native.load(Ordering::SeqCst));
         // A repeat of the OTHER registered signal is the force escape too:
         // the pair is shared, so the conditional default reads the same arm.
+        // If the contract holds this raise never returns: native termination
+        // is armed and the child dies by SIGINT before the next line.
         signal_hook::low_level::raise(signal_hook::consts::SIGINT)
             .map_err(|error| error.to_string())?;
-        assert!(interrupted.load(Ordering::SeqCst));
-        assert!(native.load(Ordering::SeqCst));
         drop(registration);
-        Ok(())
+        Err("the cross-signal repeat must not return once native termination is armed".to_string())
     }
 
     /// The escape hatch is real: once the first signal armed native
