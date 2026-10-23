@@ -156,6 +156,30 @@ fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
     Ok(format!("gap:typescript:{}:{}", parts[2], parts[3]))
 }
 
+/// The gap and base tokens of the first `ripr agent repair --gap-id <gap>
+/// --base <base> ...` start in `text`, wherever it sits on its line (the
+/// root may hold spaces, so only the leading tokens are read).
+#[cfg(feature = "lang-typescript")]
+fn gap_start_tokens(text: &str) -> Option<(String, String)> {
+    let at = text.find("ripr agent repair --gap-id ")?;
+    let tokens: Vec<&str> = text[at..].split_whitespace().collect();
+    let value_after = |flag: &str| -> Option<String> {
+        let position = tokens.iter().position(|token| *token == flag)?;
+        Some(tokens.get(position + 1)?.trim_matches('\'').to_string())
+    };
+    Some((value_after("--gap-id")?, value_after("--base")?))
+}
+
+/// Moves the materialized repository onto a feature branch whose default
+/// comparison base (`main`) is the base commit, so a plain `ripr check --root`
+/// (the command pilot routes to, which carries no `--base`) analyzes the head
+/// diff instead of the empty `main`-against-`main` comparison.
+#[cfg(feature = "lang-typescript")]
+fn onto_feature_branch(root: &Path) -> Result<(), String> {
+    fixture_git_ok(root, &["checkout", "-q", "-b", "feature"])?;
+    fixture_git_ok(root, &["branch", "-f", "main", "HEAD~1"])
+}
+
 /// Published repair-attempt manifests under the root. The before-phase lock
 /// directory exists after any attempt to start; a manifest only after a start.
 #[cfg(feature = "lang-typescript")]
@@ -421,6 +445,34 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     if status.contains("ripr pilot --root") && !status.contains("ripr check --root") {
         return Err(format!("status cycled back to pilot:\n{status}"));
+    }
+    // #10001: the routed warning derives from the gap-start admission the
+    // next `ripr check --root` uses. That check prints a start, so status
+    // must not claim `ripr check` offers none, and the start it names is the
+    // one check prints.
+    onto_feature_branch(&root)?;
+    let (routed_ok, routed_check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+    expect_exit(routed_ok, true, "routed check")?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status on the feature branch")?;
+    let check_start = gap_start_tokens(&routed_check)
+        .ok_or_else(|| format!("the routed check printed no gap-bound start:\n{routed_check}"))?;
+    if status.contains("offers no `ripr agent repair` start") {
+        return Err(format!(
+            "status says check offers no start though check prints one:\n{status}"
+        ));
+    }
+    need(
+        &status,
+        "prints the gap-bound start",
+        "status names the start check prints",
+    )?;
+    let status_start = gap_start_tokens(&status)
+        .ok_or_else(|| format!("status names no gap-bound start:\n{status}"))?;
+    if status_start != check_start {
+        return Err(format!(
+            "status start {status_start:?} differs from check start {check_start:?}:\n{status}"
+        ));
     }
     decoy_untouched(&decoy)?;
 
@@ -810,6 +862,57 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
                 "{variant} now fails closed; flip its row to true (#9107):\n{out}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+    // #10001 negative control: the status warning is derived from the same
+    // admission as `ripr check`, so a finding check refuses keeps the claim
+    // that check offers no `ripr agent repair` start.
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    for variant in [
+        "variant-let-binding",
+        "variant-reassignment",
+        "variant-shadowing",
+        "variant-imported-constant",
+        "variant-object-namespace-write",
+        "variant-enum-computed-initializer",
+        "variant-nonliteral-arithmetic",
+        "variant-reach-barrier",
+    ] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            variant,
+            "tsneg",
+            Some(toml),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        onto_feature_branch(&root)?;
+        let (check_ok, check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+        expect_exit(check_ok, true, variant)?;
+        if check.contains("nothing was in scope") {
+            return Err(format!("{variant}: the control analyzed no diff:\n{check}"));
+        }
+        if gap_start_tokens(&check).is_some() {
+            return Err(format!("{variant}: check printed a start:\n{check}"));
+        }
+        let (pilot_ok, _) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+        expect_exit(pilot_ok, true, variant)?;
+        let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+        expect_exit(status_ok, true, variant)?;
+        need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
+        need(
+            &status,
+            "offers no `ripr agent repair` start",
+            "a refused variant keeps the warning",
+        )?;
+        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+            return Err(format!("{variant}: status names a start:\n{status}"));
+        }
+        decoy_untouched(&decoy)?;
     }
     Ok(())
 }

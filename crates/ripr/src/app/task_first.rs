@@ -797,6 +797,40 @@ pub(crate) fn repair_start_withheld_note(
     }
 }
 
+/// The gap-bound TypeScript start admission (#9103, RIPR-SPEC-0311) for one
+/// finding of a check run: a TypeScript preview finding that is not
+/// static-limited, from a run that recorded its diff base, whose GapRecord the
+/// shared agent-packet validator accepts. This is the single admission both
+/// `ripr check` (the printed start line) and `ripr agent status` (the routed
+/// warning, #10001) consult; it forks no validator and fails closed.
+fn typescript_gap_route(
+    output: &super::CheckOutput,
+    finding: &crate::domain::Finding,
+) -> Option<crate::app::GapRepairRoute> {
+    if non_rust_language(&finding.probe.location.file) != Some("TypeScript")
+        || super::gap_bound_repair::finding_is_static_limited(finding)
+    {
+        return None;
+    }
+    let base = output.base.as_deref()?;
+    let record = super::gap_bound_repair::startable_typescript_gap_record(finding)?;
+    Some(crate::app::GapRepairRoute {
+        finding_id: finding.id.clone(),
+        gap_id: record.canonical_gap_id,
+        base: base.to_string(),
+    })
+}
+
+/// The gap-bound start the default human `ripr check` would print for this
+/// run's selected finding, or `None` when check would print none (#10001).
+pub(crate) fn selected_typescript_gap_route(
+    output: &super::CheckOutput,
+    check_config: &crate::config::RiprConfig,
+) -> Option<crate::app::GapRepairRoute> {
+    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    typescript_gap_route(output, finding)
+}
+
 /// The repair route for the one finding the default human `ripr check`
 /// selects (#8166 Slice C), or the named refusal when that finding may not
 /// be offered a repair start (#8729). The seam↔finding binding is the
@@ -860,16 +894,8 @@ pub(crate) fn check_repair_route(
     // that does not validate, a static-limited one, and a run without a base
     // keep the refusals below. Python and the other routed languages are
     // unchanged.
-    if non_rust_language(&finding.probe.location.file) == Some("TypeScript")
-        && !static_limited
-        && let Some(base) = output.base.as_deref()
-        && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
-    {
-        return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
-            finding_id: finding.id.clone(),
-            gap_id: record.canonical_gap_id,
-            base: base.to_string(),
-        });
+    if !static_limited && let Some(route) = typescript_gap_route(output, finding) {
+        return CheckRepairRoute::GapRoute(route);
     }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
