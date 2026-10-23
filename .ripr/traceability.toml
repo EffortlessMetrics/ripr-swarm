@@ -3455,7 +3455,6 @@ fixtures = [
   "fixtures/typescript_related_test_name_proximity",
   "fixtures/typescript_probe_facts",
   "fixtures/typescript_static_limit_taxonomy",
-  "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
   "fixtures/typescript_strict_actionability",
   "fixtures/typescript-preview-repair-loop",
   "fixtures/typescript-preview-false-actionable-audit",
@@ -7364,7 +7363,6 @@ fixtures = [
   # PR4: named limitation fixtures (three reused, one new)
   "fixtures/typescript_mocked_module_limit",
   "fixtures/typescript_static_limit_taxonomy",
-  "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
   "fixtures/typescript_jest_vitest_assertion_facts",
   "fixtures/typescript_limitation_custom_matcher",
   "fixtures/typescript_oracle_helper_gated",
@@ -18167,6 +18165,12 @@ outputs = [
   "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/AGENT_WORKFLOWS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0289"
 name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
 spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
