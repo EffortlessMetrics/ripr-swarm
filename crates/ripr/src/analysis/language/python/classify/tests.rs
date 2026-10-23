@@ -2820,4 +2820,3 @@ fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
-
