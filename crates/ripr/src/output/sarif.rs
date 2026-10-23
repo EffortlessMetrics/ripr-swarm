@@ -2544,12 +2544,8 @@ weakly_gripped = "note"
     }
 
     fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
-        classified_seam_at_path(class, "src/pricing.rs")
-    }
-
-    fn classified_seam_at_path(class: SeamGripClass, path: &str) -> ClassifiedSeam {
         let seam = RepoSeam::new(
-            path,
+            "src/pricing.rs",
             "pricing::discounted_total",
             SeamKind::PredicateBoundary,
             42,
@@ -2647,89 +2643,6 @@ weakly_gripped = "note"
             unicode["physicalLocation"]["artifactLocation"]["uri"],
             "src/d%C3%A9.rs"
         );
-    }
-
-    fn assert_sarif_artifact_path(
-        rendered: &str,
-        fingerprint_path: &str,
-        expected_uri: &str,
-    ) -> Result<(), String> {
-        // Parse the serialized document, not just the pre-serialization value.
-        let document = parse_json(rendered)?;
-        let result = first_result(&document)?;
-        assert_eq!(
-            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"], expected_uri,
-            "artifact URI for {fingerprint_path:?}"
-        );
-        let fingerprint = result["fingerprints"]["riprFingerprintV1"]
-            .as_str()
-            .ok_or_else(|| "missing fingerprint".to_string())?;
-        assert!(
-            fingerprint.contains(&format!("|{fingerprint_path}|")),
-            "fingerprint must retain native path identity: {fingerprint:?}"
-        );
-        assert_eq!(
-            result["partialFingerprints"]["riprFingerprintV1"],
-            result["fingerprints"]["riprFingerprintV1"]
-        );
-        Ok(())
-    }
-
-    fn assert_finding_artifact_path(
-        path: &str,
-        fingerprint_path: &str,
-        expected_uri: &str,
-    ) -> Result<(), String> {
-        let mut output = sample_output();
-        output.root = PathBuf::from(".");
-        output.findings[0].probe.location.file = PathBuf::from(path);
-        assert_sarif_artifact_path(
-            &render_findings_sarif(&output, &RiprConfig::default(), &[]),
-            fingerprint_path,
-            expected_uri,
-        )
-    }
-
-    #[test]
-    fn sarif_artifact_paths_escape_without_reinterpreting_names() -> Result<(), String> {
-        for (path, fingerprint_path, uri) in [
-            ("./src/plain.rs", "src/plain.rs", "src/plain.rs"),
-            ("../src/plain.rs", "../src/plain.rs", "../src/plain.rs"),
-            ("src/a%2Fb.rs", "src/a%2Fb.rs", "src/a%252Fb.rs"),
-            (
-                "src/space #?.rs",
-                "src/space #?.rs",
-                "src/space%20%23%3F.rs",
-            ),
-            ("src/dé🦀.rs", "src/dé🦀.rs", "src/d%C3%A9%F0%9F%A6%80.rs"),
-            ("src/de\u{301}.rs", "src/de\u{301}.rs", "src/de%CC%81.rs"),
-            ("scheme:name.rs", "scheme:name.rs", "scheme%3Aname.rs"),
-        ] {
-            assert_finding_artifact_path(path, fingerprint_path, uri)?;
-            let entry = classified_seam_at_path(SeamGripClass::WeaklyGripped, path);
-            assert_sarif_artifact_path(
-                &render_repo_seams_sarif(&[entry], None, &RiprConfig::default()),
-                fingerprint_path,
-                uri,
-            )?;
-        }
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn sarif_native_backslashes_do_not_alias_directories() -> Result<(), String> {
-        assert_finding_artifact_path(r"./src/a\b.rs", r"src/a\b.rs", "src/a%5Cb.rs")?;
-        assert_finding_artifact_path("src/a/b.rs", "src/a/b.rs", "src/a/b.rs")?;
-        // A drive-looking string is still a native Unix filename, not a
-        // reason to reinterpret its literal backslashes as separators.
-        assert_finding_artifact_path(r"C:\src\a%b.rs", r"C:\src\a%b.rs", "C%3A%5Csrc%5Ca%25b.rs")
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn sarif_native_windows_separators_are_uri_slashes() -> Result<(), String> {
-        assert_finding_artifact_path(r".\src\a b%2F.rs", "src/a b%2F.rs", "src/a%20b%252F.rs")
     }
 
     #[test]

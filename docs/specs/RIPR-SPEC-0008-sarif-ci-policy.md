@@ -284,9 +284,9 @@ then fail-on-new-warning mode reports the new result and exits non-zero.
 
 Implemented renderer tests:
 
-- `crates/ripr/src/output/sarif.rs::tests::sarif_artifact_paths_escape_without_reinterpreting_names`
-- `crates/ripr/src/output/sarif.rs::tests::sarif_native_backslashes_do_not_alias_directories`
-- `crates/ripr/src/output/sarif.rs::tests::sarif_native_windows_separators_are_uri_slashes`
+- `crates/ripr/tests/sarif_uri_identity.rs::ordinary_escaping_controls`
+- `crates/ripr/tests/sarif_uri_identity.rs::native_backslash_does_not_alias_directory`
+- `crates/ripr/tests/sarif_uri_identity.rs::native_windows_separators_are_slashes`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
