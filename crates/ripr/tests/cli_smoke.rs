@@ -23295,7 +23295,8 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The empty range must be disclosed as nothing-changed, not as no-scope.
     assert!(
-        stdout.contains("nothing to analyze") || stdout.contains("no changed files"),
+        stdout.contains("State: nothing in scope")
+            && stdout.contains("does NOT mean no behavior changed"),
         "empty range must disclose nothing-changed; got stdout:\n{stdout}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -23304,7 +23305,7 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
         "empty range must NOT claim no scope was provided; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("The compared base was `"),
+        stdout.contains("base: main") || stdout.contains("base: master"),
         "empty range must name the compared base; got:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -23668,17 +23669,26 @@ fn check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_
     ] {
         let output = run_ripr(&args);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if !stdout.contains("main...HEAD") {
+        // The bounded human render names the base in the triage line instead
+        // of restating the range (#9922).
+        let names_base = stdout.contains("main...HEAD")
+            || (label == "human" && stdout.contains("compared against `main`"));
+        if !names_base {
             return Err(format!(
                 "{label}: fixture must resolve the default base `main`:\n{stdout}"
             ));
         }
-        if !stdout.contains("nothing was analyzed") && !stdout.contains("nothing to analyze") {
+        if !(stdout.contains("nothing was analyzed")
+            || stdout.contains("nothing to analyze")
+            || label == "human" && stdout.contains("State: nothing in scope"))
+        {
             return Err(format!(
                 "{label}: an empty range must still say nothing was analyzed:\n{stdout}"
             ));
         }
-        if !stdout.contains("no analyzable changed files") {
+        if !(stdout.contains("no analyzable changed files")
+            || label == "human" && stdout.contains("no changed files were compared against"))
+        {
             return Err(format!(
                 "{label}: expected the analyzable-files wording:\n{stdout}"
             ));
@@ -24194,7 +24204,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let empty_worktree = human(&["check", "--root", &root_str]);
     for expected in [
-        "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Note: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.",
         "Safe next action: the working tree has no changed tracked files against `main`",
         "Untracked files (src/new.rs) are not in the working-tree diff",
     ] {
@@ -24523,7 +24533,7 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("has no analyzable changed files") {
+    if !stdout.contains("does NOT mean no behavior changed") {
         return Err(format!(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
@@ -24548,7 +24558,9 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean-tree header must name base main and HEAD {short}; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
+    if !stdout.contains("on `main`, which is the comparison base")
+        || stdout.contains("--base origin/main")
+    {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
         ));
