@@ -68,6 +68,10 @@ The default contract is:
   when needed. Commands remain byte-preserving after terminal sanitization,
   including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
   the refresh command with the same UTF-8-parent/alias remedy.
+- Every root `init` prints in a command or advisory (success follow-ups,
+  existing-file retries and the workflow refresh note) names the directory
+  without the trailing `/.` that joining the default `.` root onto the working
+  directory leaves behind. A bare filesystem or drive root keeps its spelling.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
