@@ -3156,6 +3156,13 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
     (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
 }
 
+/// Whether `ch` continues a Rust identifier. Rust identifiers are Unicode
+/// (XID); `char::is_alphanumeric` plus `_` is the repository's convention for
+/// the boundary, so `前r` is one name rather than a delimiter before `r`.
+fn is_ident_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
@@ -3168,7 +3175,7 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
 /// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     let owner_call = format!("{owner}(");
     let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
@@ -3265,7 +3272,7 @@ fn field_overwritten_before(
 /// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
 /// the owner's own field value.
 fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     fn binding(statement: &str) -> Option<(&str, &str)> {
         let statement = statement.trim();
         let statement = statement.strip_prefix("let ").unwrap_or(statement);
@@ -3332,7 +3339,7 @@ fn visible_at(prefix: &str, start: usize) -> bool {
 }
 
 fn mentions_ident(text: &str, name: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     text.match_indices(name).any(|(start, matched)| {
         !text[..start].chars().next_back().is_some_and(is_ident)
             && !text[start + matched.len()..].starts_with(is_ident)
@@ -3361,7 +3368,7 @@ fn statement_semicolon(text: &str) -> usize {
 /// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
 /// order, as (statement start, initializer).
 fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     body.match_indices("let ")
         .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
         .filter_map(|(start, _)| {
@@ -3419,7 +3426,7 @@ fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
         || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
         || !path
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+            .all(|ch| is_ident_char(ch) || ch == ':')
     {
         return None;
     }
@@ -3468,9 +3475,9 @@ fn field_assigned(
             let before_ok = !prefix[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+                .is_some_and(|ch| is_ident_char(ch) || ch == '.');
             let rest = &prefix[start + matched.len()..];
-            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+            if rest.starts_with(is_ident_char) {
                 return false;
             }
             let rest = rest.trim_start();
@@ -3556,7 +3563,7 @@ fn read_feeds_whole_result_comparison(
     !other.is_empty()
         && other
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            .all(is_ident_char)
         && binds_from_owner_call(body, other, &format!("{owner}("))
 }
 
@@ -3616,7 +3623,7 @@ fn call_before_is_owner(before: &str, owner: &str) -> bool {
         !prefix
             .chars()
             .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            .is_some_and(is_ident_char)
     })
 }
 
@@ -3627,7 +3634,7 @@ fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
         if body[..start]
             .chars()
             .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            .is_some_and(is_ident_char)
         {
             return false;
         }
@@ -9388,6 +9395,34 @@ assert_eq!(input.amount, 100);"#
         let _ = reads_owner_result_field(assertion, assertion, ".total", "price");
         let tight = "assert_eq!(前.total, 1)";
         let _ = reads_owner_result_field(tight, tight, ".total", "price");
+    }
+
+    #[test]
+    fn unicode_identifier_boundaries_on_the_owner_result_read_path() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "price")
+        };
+        // A Unicode-prefixed name is one identifier: `前r` is not `r`.
+        let unrelated = "let r = price();
+ let 前r = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(unrelated, "assert_eq!(前r.total, 7);"));
+        assert!(!reads(unrelated, "assert_eq!(r前.total, 7);"));
+        // The same shape in ASCII is the control.
+        let ascii = "let r = price();
+ let q = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(ascii, "assert_eq!(q.total, 7);"));
+        // A Unicode-named receiver bound from the owner credits like ASCII.
+        let bound = "let 前r = price();";
+        assert!(reads(bound, "assert_eq!(前r.total, 101);"));
+        assert!(reads("let r = price();", "assert_eq!(r.total, 101);"));
+        // `let` boundary and mention checks use the same identifier rule.
+        assert!(!reads("let 前r = price();", "assert_eq!(r.total, 101);"));
+        assert!(!reads("let r前 = price();", "assert_eq!(r.total, 101);"));
+        // CJK adjacent text does not panic.
+        let cjk = "assert_eq!(\"前\".len() + 後.total, 1)";
+        let _ = reads(cjk, cjk);
     }
 
     #[test]

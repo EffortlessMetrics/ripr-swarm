@@ -533,6 +533,12 @@ fn attempt_receipt(
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
         }
+        // #9103: a gap-bound attempt issues no receipt, so it never consults
+        // the one-slot compatibility file; only retained terminal evidence
+        // (above) can promote a matching receipt.
+        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+            AgentStatusAttemptReceipt::NotIssued
+        }
         AttemptTerminalReceipt::NotRetained => {
             legacy_workflow_attempt_receipt(root, manifest, after, receipt)
         }
@@ -648,7 +654,7 @@ fn status_repair_attempt(
         // A legacy (C2a) gap marker has no immutable base commit: its after
         // phase refuses, so the only next action is a fresh start.
         RepairAttemptState::AwaitingEdit if legacy_gap_binding => (
-            Some(false),
+            head_reading.head_current,
             ("awaiting_edit", "prepared_at_other_head", restart),
         ),
         RepairAttemptState::AwaitingEdit => {
@@ -3154,7 +3160,15 @@ fn restart_attempt_command(
             "repair attempt `{id}` for seam `{seam}` was prepared but never published as awaiting its edit; start a new attempt while the gap is still open"
         )),
         "stale" => {
-            let reason = if manifest.state == RepairAttemptState::AwaitingEdit {
+            let legacy_gap = manifest
+                .gap_binding
+                .as_ref()
+                .is_some_and(crate::app::repair_attempt::RepairAttemptGapBinding::is_legacy);
+            let reason = if manifest.state == RepairAttemptState::AwaitingEdit && legacy_gap {
+                format!(
+                    "repair attempt `{id}` for seam `{seam}` was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a new attempt while the gap is still open"
+                )
+            } else if manifest.state == RepairAttemptState::AwaitingEdit {
                 match &view.diverged_recovery {
                     Some(recovery) => format!(
                         "repair attempt `{id}` for seam `{seam}` was prepared at another HEAD; its after phase would refuse it. Restore the prepared head with `{}` or start a new attempt while the gap is still open",
@@ -4786,6 +4800,41 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gap_bound_attempt_without_retained_receipt_never_reads_the_shared_receipt()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-gap-receipt-{}", std::process::id()));
+        let mut manifest = ready_to_finish_manifest()?;
+        manifest.gap_binding = Some(crate::app::repair_attempt::RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+            base_commit: Some("a".repeat(40)),
+        });
+        let shared = WorkflowReceiptRead::Parsed(serde_json::json!({}));
+        match attempt_receipt(&root, &manifest, &shared) {
+            AgentStatusAttemptReceipt::NotIssued => Ok(()),
+            other => Err(format!("a gap-bound attempt must be NotIssued, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn legacy_gap_attempt_restart_names_the_missing_base_commit() -> Result<(), String> {
+        let mut manifest = canonical_test_manifest(RepairAttemptState::AwaitingEdit)?;
+        manifest.gap_binding = Some(crate::app::repair_attempt::RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+            base_commit: None,
+        });
+        let view = synthetic_attempt("a", "seam", "prepared_at_other_head", None);
+        let command =
+            restart_attempt_command(&manifest, &view, "stale", "root", "manifest", "--store x")
+                .ok_or("no restart command")?;
+        if !command.reason.contains("did not record the immutable base commit")
+            || command.reason.contains("another HEAD")
+        {
+            return Err(format!("unexpected reason: {}", command.reason));
+        }
         Ok(())
     }
 

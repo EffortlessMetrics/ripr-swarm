@@ -3548,6 +3548,24 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt manifest is incomplete or malformed".to_string());
     }
+    if let Some(binding) = &manifest.gap_binding {
+        if binding.base.trim().is_empty() {
+            return Err("repair attempt gap binding base is empty".to_string());
+        }
+        // An absent `base_commit` is a legacy C2a marker and stays readable;
+        // a present one must be a full lowercase commit id.
+        if binding.base_commit.as_deref().is_some_and(|commit| {
+            commit.len() != 40
+                || !commit
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) {
+            return Err(
+                "repair attempt gap binding base_commit is not a 40-character lowercase hex commit id"
+                    .to_string(),
+            );
+        }
+    }
     if let Some(store) = &manifest.store {
         if store.schema_version != store::REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
             return Err(format!(
@@ -4168,6 +4186,41 @@ mod tests {
         let forged = gap_json.replace("\"base\"", "\"base\": \"HEAD~1\", \"extra\"");
         if serde_json::from_str::<RepairAttemptManifest>(&forged).is_ok() {
             return Err("an unknown gap marker field was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9103 review: a gap marker needs a non-empty base and, when present, a
+    /// full lowercase `base_commit`; an absent one stays valid (legacy C2a).
+    #[test]
+    fn gap_binding_validation_refuses_malformed_base_and_commit() -> Result<(), String> {
+        let root = test_repo_root("gap-binding-validation")?;
+        let mut manifest = sample_manifest(&root)?;
+        manifest.seam_id = TS_GAP.to_string();
+        let check = |manifest: &mut RepairAttemptManifest, base: &str, commit: Option<&str>| {
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: base.to_string(),
+                base_commit: commit.map(str::to_string),
+            });
+            validate_manifest(manifest).is_ok()
+        };
+        if !check(&mut manifest, "HEAD~1", Some(&"a".repeat(40))) {
+            return Err("a well-formed gap binding was refused".to_string());
+        }
+        if !check(&mut manifest, "HEAD~1", None) {
+            return Err("a legacy gap binding without base_commit was refused".to_string());
+        }
+        for (base, commit) in [
+            ("", Some("a".repeat(40))),
+            ("  ", None),
+            ("HEAD~1", Some("a".repeat(39))),
+            ("HEAD~1", Some("A".repeat(40))),
+            ("HEAD~1", Some("g".repeat(40))),
+            ("HEAD~1", Some(String::new())),
+        ] {
+            if check(&mut manifest, base, commit.as_deref()) {
+                return Err(format!("malformed gap binding accepted: {base:?} {commit:?}"));
+            }
         }
         Ok(())
     }
