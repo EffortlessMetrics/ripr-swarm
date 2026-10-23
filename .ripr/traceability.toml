@@ -504,6 +504,13 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/build_identity.rs::tests::every_analysis_feature_set_has_a_distinct_cache_identity",
+  "crates/ripr/src/build_identity.rs::tests::live_cache_identity_records_the_compiled_analysis_features",
+  "crates/ripr/src/output/schemas.rs::tests::rerun_example_analyzer_identity_accepts_language_feature_sets",
+  "crates/ripr/src/output/schemas.rs::tests::rerun_example_analyzer_identity_rejects_malformed_formats",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::declared_language_features_require_cache_identity_coverage",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::same_generation_file_facts_refuse_other_builds_even_at_current_path",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::same_generation_classified_builds_coexist_without_replaying_each_other",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_dispatches_warm_at_1000_but_not_999",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_cancelled_1000_pays_zero_warm_scans",
   "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_controls",
