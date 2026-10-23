@@ -876,11 +876,7 @@ fn brackets_balanced_outside_strings(text: &str) -> bool {
             '(' => stack.push(')'),
             '[' => stack.push(']'),
             '{' => stack.push('}'),
-            ')' | ']' | '}' => {
-                if stack.pop() != Some(ch) {
-                    return false;
-                }
-            }
+            ')' | ']' | '}' if stack.pop() != Some(ch) => return false,
             '"' | '\'' => {
                 let mut closed = false;
                 while let Some(inner) = chars.next() {
