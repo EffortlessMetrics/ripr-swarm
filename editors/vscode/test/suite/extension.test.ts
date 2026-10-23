@@ -4516,6 +4516,7 @@ suite('Extension Smoke', () => {
         'expected a non-empty extension version in the riprEditor block'
       );
       assert.ok(advertised.riprEditor.commands?.includes('ripr.showStatus'));
+      assert.ok(advertised.riprEditor.commands?.includes('ripr.refreshDiagnostics'));
       // Guarded test edits are not implemented by this extension; the opt-in
       // must stay explicitly false rather than absent-truthy.
       assert.strictEqual(advertised.riprEditor.guardedTestEdit, false);
