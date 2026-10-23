@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_runs_compact_mixed (3)
+
+Reason:
+RIPR-SPEC-0197: reconcile the carried live-control Human repair-readiness hint with landed main by disclosing missing observable sink localization; JSON classifications, oracle strengths and fixture stimulus are unchanged (#9118).
+
+Command:
+`cargo xtask goldens bless effect_assertion_runs_compact_mixed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

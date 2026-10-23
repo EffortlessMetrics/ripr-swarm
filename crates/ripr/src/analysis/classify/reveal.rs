@@ -37,6 +37,11 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Assertion-local binding for a known typed trait dispatch. `None` means
+    /// no such dispatch; `Some(false)` withholds kind-only credit even on a
+    /// direct explicit-next call. Unknown calls cannot supply this authority.
+    pub(in crate::analysis) assertion_has_known_implicit_observer:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> Option<bool>,
     /// Whether the assertion's macros are the standard ones (no visible
     /// binding rebinds `assert_ne!`, `assert!` or `matches!`). Consulted
     /// only before a RIPR-SPEC-0231 sibling exclusion is credited.
@@ -129,6 +134,7 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
@@ -166,6 +172,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -240,6 +247,14 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) owner_pin_credited: bool,
 }
 
+/// Summaries of the `no` observe/discriminate stages when no related test
+/// exists. They rest on "no reachable test", so a finding whose reach later
+/// becomes unknown (proc-macro code, #8999) replaces them.
+pub(in crate::analysis) const NO_REACHABLE_TEST_OBSERVE_SUMMARY: &str =
+    "No reachable test oracle found";
+pub(in crate::analysis) const NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY: &str =
+    "No assertion can discriminate the changed behavior without a reachable test";
+
 #[allow(
     clippy::too_many_arguments,
     reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
@@ -260,12 +275,12 @@ pub(in crate::analysis) fn reveal_outcome(
             observe: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No reachable test oracle found",
+                NO_REACHABLE_TEST_OBSERVE_SUMMARY,
             ),
             discriminate: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No assertion can discriminate the changed behavior without a reachable test",
+                NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
             ),
             related: Vec::new(),
             related_total: 0,
@@ -325,6 +340,7 @@ pub(in crate::analysis) fn reveal_outcome(
             &analysis.strongest_kind,
             &probe.family,
             analysis.observation_unverified,
+            analysis.strongest_proximity_only,
         )
     };
 
@@ -351,6 +367,10 @@ struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
     strongest: OracleStrength,
     strongest_kind: OracleKind,
+    /// The assertion supplying `strongest_kind` sits in a test related only by
+    /// file or module proximity (#9122), so its kind is not a claim about the
+    /// assertion that observes the changed behavior.
+    strongest_proximity_only: bool,
     /// Confirmation belongs to the assertion supplying the selected oracle
     /// strength. A weaker token match must not upgrade an unrelated exact
     /// oracle, even when both assertions are in the same related test.
@@ -1857,6 +1877,7 @@ fn analyze_related_assertions(
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
+    let mut strongest_proximity_only = false;
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
@@ -1940,6 +1961,11 @@ fn analyze_related_assertions(
             && is_proximity_only(*reason)
             && !invokes_opaque_macro(&test.body)
             && !(return_admission.proximity_may_reach_owner)(test));
+        // #7794: kind alone does not connect a sibling parser equality
+        // to an effect in the owner reached by another test. Unknown
+        // standard-method dispatch is not an observation witness. Indexed
+        // implicit trait dispatch in this test retains its authority (#7820). Keep
+        // token/collection confirmation and opaque macro allowances.
         let assertions: Vec<_> = test
             .assertions
             .iter()
@@ -1968,9 +1994,17 @@ fn analyze_related_assertions(
         // #3731 review (F11): computed once per test — whether the test's
         // own file imports the owner callee's bare name from a FOREIGN
         // path, which makes every bare-scrutinee binding in it ambiguous.
+        // A `Display`/`Debug` `fmt` is never called by that bare name, so
+        // `use std::fmt;` rebinds nothing the dispatch pin reads.
+        let fmt_trait_owner = probe.owner.as_ref().is_some_and(|owner| {
+            matches!(
+                super::related_tests::impl_trait_name(&owner.0).as_deref(),
+                Some("Display" | "Debug")
+            ) && owner.0.ends_with("::fmt")
+        });
         let import_defeats_owner = match_context
             .owner_callee
-            .is_some_and(|callee| same_name_import_defeats(test, callee));
+            .is_some_and(|callee| !fmt_trait_owner && same_name_import_defeats(test, callee));
         // #3731 review (G1): computed once per test — whether the test's
         // own package defines a function with the owner callee's bare name
         // while the changed owner lives in ANOTHER package, which makes the
@@ -2031,6 +2065,14 @@ fn analyze_related_assertions(
             } else {
                 assertion
             };
+            let implicit_observer =
+                (return_admission.assertion_has_known_implicit_observer)(test, assertion);
+            let effect_kind_confirms = !(is_effect_family(&probe.family)
+                && owner_reaching_related
+                && (is_proximity_only(*reason) || implicit_observer.is_some())
+                && !invokes_opaque_macro(&test.body)
+                && implicit_observer != Some(true));
+
             // #4478: whether this `assert_eq!` pins the owner's whole return
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
@@ -2142,6 +2184,13 @@ fn analyze_related_assertions(
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
             let matched = matched || field_collection_read || collection_argument_read;
+            // A bounded assertion-local implicit witness is a matching
+            // observer even beside another assertion. Keep refused kind rows
+            // visible without borrowing the admitted assertion's confirmation.
+            let matched = matched
+                || (is_effect_family(&probe.family)
+                    && implicit_observer.is_some()
+                    && effect_observer_confirms(assertion));
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -2264,6 +2313,19 @@ fn analyze_related_assertions(
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
+                    // Refusal withholds kind-only credit, not an independently
+                    // confirmed token. Retain the token path's existing identity gates.
+                    && (implicit_observer != Some(false)
+                        || (has_token_match
+                            && field_write.is_none()
+                            && direct_collection_mutation_receiver(&probe.expression).is_none())
+                        || field_collection_read
+                        || collection_observer_confirms(
+                            &probe.expression,
+                            matches!(probe.family, ProbeFamily::CallDeletion),
+                            test,
+                            assertion,
+                        ))
                     && (!confirm_required
                         || (confirms_observation
                             && (collection_observer_confirms(
@@ -2281,6 +2343,7 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || (is_effect_family(&probe.family)
+                                            && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
                                                 test, assertion,
@@ -2324,6 +2387,7 @@ fn analyze_related_assertions(
                 {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
+                    strongest_proximity_only = is_proximity_only(*reason);
                     strongest_observation_confirmed = observation_confirmed;
                 }
                 related.push(RelatedTest {
@@ -2335,7 +2399,11 @@ fn analyze_related_assertions(
                     oracle_strength: relative_strength,
                     relation_reason,
                     relation_confidence,
-                    miss: None,
+                    miss: (!effect_kind_confirms
+                        && !observation_confirmed
+                        && (effect_observer_confirms(assertion)
+                            || implicit_observer == Some(false)))
+                    .then_some(RelatedTestMiss::ObservationUnconfirmed),
                 });
             }
         }
@@ -2373,6 +2441,7 @@ fn analyze_related_assertions(
         related,
         strongest,
         strongest_kind,
+        strongest_proximity_only,
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
@@ -2772,7 +2841,7 @@ fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStr
 /// follow-up): a guard reads its condition and a plain `assert!` its
 /// comparison, so an `assert_eq!` spelled in a message, comment or guard
 /// body cannot switch the reader.
-fn equality_operands(text: &str) -> Option<[String; 2]> {
+pub(in crate::analysis::classify) fn equality_operands(text: &str) -> Option<[String; 2]> {
     let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
         || super::owner_pin::is_plain_macro(text, "assert");
     if !reads_equality && text.contains("assert_eq!") {
@@ -4512,11 +4581,31 @@ fn is_bare_unwrap_expect_row(test: &RelatedTest) -> bool {
     let Some(text) = test.oracle.as_deref() else {
         return false;
     };
-    let text = text.trim().trim_end_matches(';').trim_end();
+    let Some(text) = join_method_chain_lines(text.trim().trim_end_matches(';').trim_end()) else {
+        return false;
+    };
+    let text = text.as_str();
     !text.contains("assert")
         && !text.contains("matches!")
-        && !text.contains('\n')
         && (text.ends_with(".unwrap()") || ends_with_expect_of_one_literal(text))
+}
+
+/// Joins a statement written over several lines into one line, but only when
+/// it is a plain method chain: every line after the first begins with `.`
+/// (a builder chain such as `Dfa::builder()\n    .configure(..)\n    .build(..)`).
+/// Any other multi-line text returns `None`, so it is never mistaken for
+/// setup (#9122).
+fn join_method_chain_lines(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    let mut joined = lines.next()?.trim().to_string();
+    for line in lines {
+        let line = line.trim();
+        if !line.starts_with('.') {
+            return None;
+        }
+        joined.push_str(line);
+    }
+    Some(joined)
 }
 
 /// `recv.expect("message")`, where the argument is exactly one string
@@ -4637,6 +4726,7 @@ fn build_discriminate_evidence(
     strongest_kind: &OracleKind,
     family: &ProbeFamily,
     observation_unverified: bool,
+    proximity_only: bool,
 ) -> StageEvidence {
     // For families that require token confirmation (MatchArm, ReturnValue,
     // FieldConstruction, SideEffect, CallDeletion), a family_match or
@@ -4649,6 +4739,34 @@ fn build_discriminate_evidence(
             StageState::Weak,
             Confidence::Medium,
             "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+        );
+    }
+    // #9122: an error-variant kind names the error the changed behavior
+    // returns. A test linked only by file or module location is credited for
+    // strength, but its `matches!(.., Err(..))` pins a variant on another
+    // function's result, which says nothing about a changed predicate, a
+    // call or a field. Name no kind rather than one the linked evidence does
+    // not show; grading is unchanged. Families whose change can itself be an
+    // error variant (`ErrorPath`, `MatchArm`, `ReturnValue`,
+    // `FieldConstruction`) keep the established wording.
+    if proximity_only
+        && matches!(strongest, OracleStrength::Strong)
+        && matches!(
+            strongest_kind,
+            OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+        )
+        && !matches!(
+            family,
+            ProbeFamily::ErrorPath
+                | ProbeFamily::MatchArm
+                | ProbeFamily::ReturnValue
+                | ProbeFamily::FieldConstruction
+        )
+    {
+        return StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
         );
     }
     match strongest {
@@ -5354,6 +5472,7 @@ mod tests {
             )
         };
         let admission = ReturnOracleAdmission {
+            assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -5736,6 +5855,82 @@ mod tests {
             ]
         );
         assert_eq!(total, 2);
+    }
+
+    /// #9122: a multi-line builder chain ending in `.unwrap()` is the same
+    /// setup statement as the one-line form, so it is dropped beside the
+    /// test's real `assert_eq!` rather than graded "smoke only".
+    #[test]
+    fn multiline_builder_chain_setup_row_is_dropped_beside_the_assertion() {
+        let chain = "Dfa::builder()\n            .configure(true)\n            .build(\"a+\")\n            .unwrap();";
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("builder_test", 3, chain),
+                RelatedTest {
+                    oracle: Some("assert_eq!(expected, dfa.try_search_fwd(&input));".to_string()),
+                    ..related("builder_test", 3, Some(RelationReason::DirectOwnerCall))
+                },
+            ],
+            None,
+        );
+        assert_eq!(
+            oracle_texts(&finalized),
+            vec![(
+                "builder_test",
+                "assert_eq!(expected, dfa.try_search_fwd(&input));"
+            )]
+        );
+        assert_eq!(total, 1);
+    }
+
+    /// Discriminating negatives for #9122: a multi-line chain stays a row when
+    /// it is the test's only oracle, when it does not end in unwrap/expect,
+    /// when a continuation line carries an assertion, or when the lines are
+    /// separate statements rather than one method chain.
+    #[test]
+    fn multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion() {
+        let real = |name: &str, line: usize| RelatedTest {
+            oracle: Some("assert_eq!(v, 5);".to_string()),
+            ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        };
+        let rows = vec![
+            smoke_row(
+                "only_chain",
+                3,
+                "Dfa::builder()\n    .build(\"a\")\n    .unwrap();",
+            ),
+            smoke_row(
+                "not_unwrap",
+                10,
+                "Dfa::builder()\n    .build(\"a\")\n    .len();",
+            ),
+            real("not_unwrap", 10),
+            smoke_row(
+                "asserting",
+                20,
+                "Dfa::builder()\n    .inspect(|d| assert!(d.ok()))\n    .unwrap();",
+            ),
+            real("asserting", 20),
+            smoke_row("two_statements", 30, "setup();\n    build().unwrap();"),
+            real("two_statements", 30),
+        ];
+        let (finalized, total) = finalize_related_tests(rows, None);
+        assert_eq!(total, 7);
+        let names: Vec<(&str, bool)> = finalized
+            .iter()
+            .map(|row| {
+                (
+                    row.name.as_str(),
+                    row.oracle.as_deref() == Some("assert_eq!(v, 5);"),
+                )
+            })
+            .collect();
+        for name in ["only_chain", "not_unwrap", "asserting", "two_statements"] {
+            let smoke_kept = finalized
+                .iter()
+                .any(|row| row.name == name && row.oracle.as_deref() != Some("assert_eq!(v, 5);"));
+            assert!(smoke_kept, "{name} smoke row must stay: {names:?}");
+        }
     }
 
     /// The drop is conditional: a test whose only oracle is the unwrap, a
@@ -6161,6 +6356,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                assertion_has_known_implicit_observer: &|_, _| None,
                 owner_return_pin: &pin,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -6251,6 +6447,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -6430,6 +6627,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
@@ -6534,6 +6732,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
@@ -6720,6 +6919,46 @@ mod tests {
         assert_eq!(related[0].oracle, None);
     }
 
+    // #9122: a same-file assertion macro earns only an unknown-strength fact.
+    // Crediting it must never read as a weak or exact discriminator, however
+    // little the macro's body actually pins.
+    #[test]
+    fn local_assertion_macro_credit_never_reads_as_a_discriminator() {
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::Predicate] {
+            let probe = probe(family, "score");
+            let macro_test = test_with_assertions(
+                "score_through_macro",
+                vec![oracle(
+                    "assert_tautology!(score())",
+                    OracleKind::Unknown,
+                    OracleStrength::Unknown,
+                )],
+            );
+            let (observe, discriminate, _) =
+                reveal_evidence(&probe, &[(&macro_test, RelationReason::DirectOwnerCall)]);
+
+            assert!(
+                !matches!(discriminate.state, StageState::Yes | StageState::Weak),
+                "macro credit raised the discriminator to {:?}",
+                discriminate.state
+            );
+            let yes = StageEvidence::new(StageState::Yes, Confidence::High, "stage");
+            let class = crate::analysis::classify::decision::classify(
+                &yes,
+                &yes,
+                &yes,
+                &observe,
+                &discriminate,
+                &probe,
+            );
+            assert_ne!(
+                class,
+                crate::domain::ExposureClass::Exposed,
+                "macro credit must never classify as exposed"
+            );
+        }
+    }
+
     #[test]
     fn reveal_evidence_records_matching_assertions_and_sorts_related_tests() {
         let probe = probe(
@@ -6896,6 +7135,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -6976,6 +7216,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -7753,10 +7994,124 @@ return Err(\"typed pin\".into());
         ];
 
         for (strength, kind, family, state, summary) in cases {
-            let evidence = build_discriminate_evidence(&strength, &kind, &family, false);
+            let evidence = build_discriminate_evidence(&strength, &kind, &family, false, false);
             assert_eq!(evidence.state, state);
             assert_eq!(evidence.summary, summary);
         }
+    }
+
+    /// #9122 (an HTTP client dogfood case): an `assert!(matches!(.., Err(..)))` in a
+    /// test related to the owner only by file location supplied "exact error
+    /// variant assertion" as the oracle for a predicate it does not pin.
+    #[test]
+    fn proximity_only_error_variant_assertion_is_not_named_for_a_predicate() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert!(
+            !proximity.summary.contains("error variant"),
+            "proximity-linked assertion kind was named: {proximity:?}"
+        );
+        // Discriminating alternate: the same assertion reached by a call
+        // keeps its kind-specific wording.
+        let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            called.summary, "Strong oracle found: exact error variant assertion",
+            "{called:?}"
+        );
+    }
+
+    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
+    /// summary must not claim the test shares the file or module.
+    #[test]
+    fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(
+            proximity.summary,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "{proximity:?}"
+        );
+    }
+
+    #[test]
+    fn proximity_only_strong_oracle_names_no_kind() {
+        for kind in [
+            OracleKind::ExactErrorVariant,
+            OracleKind::GuardedResultMatch,
+        ] {
+            let evidence = build_discriminate_evidence(
+                &OracleStrength::Strong,
+                &kind,
+                &ProbeFamily::Predicate,
+                false,
+                true,
+            );
+            assert_eq!(evidence.state, StageState::Yes);
+            assert_eq!(
+                evidence.summary,
+                "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)"
+            );
+        }
+        // Discriminating negatives: an exact value keeps its wording under
+        // proximity, and an error-path probe keeps the error-variant wording.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactValue,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact value or pattern assertion"
+        );
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // A call-linked assertion keeps its kind.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            false,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // Weaker strengths are unchanged by proximity.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Weak,
+            &OracleKind::RelationalCheck,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert!(evidence.summary.starts_with("Only relational oracle found"));
     }
 
     #[test]
@@ -8634,6 +8989,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -8699,6 +9055,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -8735,6 +9092,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -8790,6 +9148,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -8847,6 +9206,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -9048,6 +9408,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -9087,6 +9448,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -9463,6 +9825,182 @@ return Err(\"typed pin\".into());
         );
     }
 
+    #[test]
+    fn refused_implicit_kind_preserves_independent_token_confirmation() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family, "persist_audit(record)");
+            let reaching = test_with_assertions("calls_owner", vec![]);
+            for (text, expected) in [
+                (
+                    "assert_eq!(persist_audit(record), expected);",
+                    StageState::Yes,
+                ),
+                ("assert_eq!(parsed, expected);", StageState::Weak),
+            ] {
+                let observer = test_with_assertions(
+                    "refused_implicit",
+                    vec![oracle(
+                        text,
+                        OracleKind::WholeObjectEquality,
+                        OracleStrength::Strong,
+                    )],
+                );
+                let (_, discriminate, _, _) = reveal_evidence_with_expression(
+                    &probe,
+                    &probe.expression,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&observer, RelationReason::SameTestFile),
+                    ],
+                    &[],
+                    &|_, _| false,
+                    &|_, _| false,
+                    &ReturnOracleAdmission {
+                        expected_operand_value: &|_, _| None,
+                        call_cannot_store: &|_, _, _, _| None,
+                        constructor_starts_empty: &|_, _, _| false,
+                        owner_may_exit_before_probe: false,
+                        owner_returns_value: true,
+                        owner_argument_names: &[],
+                        getter_reads_key: &|_, _, _| None,
+                        collection_argument_observed: &|_, _| false,
+                        assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        owner_return_pin: &|_, _| false,
+                        assertion_admitted: &|_, _| true,
+                        sibling_exclusion_admitted: &|_, _| true,
+                        proximity_may_reach_owner: &|_| false,
+                        owner_parameters: &[],
+                        expected_reaches_owner: &|_, _| false,
+                        effect_state_carried: &|_, _| true,
+                        setter_writes_field: &|_, _, _| false,
+                        getter_reads_field: &|_, _, _| false,
+                    },
+                    None,
+                );
+                assert_eq!(discriminate.state, expected, "{}", discriminate.summary);
+            }
+        }
+    }
+
+    #[test]
+    fn sibling_effect_kind_cannot_confirm_beside_owner_caller() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family, "persist_audit(record)");
+            let reaching = test_with_assertions("calls_owner", vec![]);
+            let sibling = test_with_assertions(
+                "parser_only",
+                vec![oracle(
+                    "assert_eq!(parsed, expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
+                let (_, discriminate, related) = reveal_evidence(
+                    &probe,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&sibling, reason),
+                    ],
+                );
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Weak,
+                    "{}",
+                    discriminate.summary
+                );
+                assert!(
+                    related.iter().any(|r| r.name == "parser_only"
+                        && r.oracle_kind == OracleKind::WholeObjectEquality)
+                );
+            }
+            // A dispatch witness belongs only to the test that carries it.
+            let observer = test_with_assertions("implicit_observer", sibling.assertions.clone());
+            let (_, implicit, _, _) = reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&observer, RelationReason::SameTestFile),
+                    (&sibling, RelationReason::SameTestFile),
+                ],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    expected_operand_value: &|_, _| None,
+                    call_cannot_store: &|_, _, _, _| None,
+                    constructor_starts_empty: &|_, _, _| false,
+                    owner_may_exit_before_probe: false,
+                    owner_returns_value: true,
+                    owner_argument_names: &[],
+                    getter_reads_key: &|_, _, _| None,
+                    collection_argument_observed: &|_, _| false,
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    assertion_has_known_implicit_observer: &|test, _| {
+                        (test.name == "implicit_observer").then_some(true)
+                    },
+                    sibling_exclusion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| false,
+                    getter_reads_field: &|_, _, _| false,
+                },
+                None,
+            );
+            assert_eq!(implicit.state, StageState::Yes);
+            // A solitary proximity observer retains the prior reading.
+            let (_, alone, _) =
+                reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
+            assert_eq!(alone.state, StageState::Yes);
+            // Direct/helper relations confirm without a shared token.
+            for reason in [
+                RelationReason::DirectOwnerCall,
+                RelationReason::HelperOwnerCall,
+            ] {
+                let (_, direct, _) = reveal_evidence(
+                    &probe,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&sibling, reason),
+                    ],
+                );
+                assert_eq!(direct.state, StageState::Yes);
+            }
+            // Actual token confirmation remains independent of kind.
+            let token = test_with_assertions(
+                "effect_named",
+                vec![oracle(
+                    "assert_eq!(persist_audit(record), expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (_, confirmed, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&token, RelationReason::SameTestFile),
+                ],
+            );
+            assert_eq!(confirmed.state, StageState::Yes);
+            // The established opaque-macro allowance remains explicit.
+            let mut opaque = sibling.clone();
+            opaque.body = "fixture_setup!();".into();
+            let (_, allowed, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&opaque, RelationReason::SameTestFile),
+                ],
+            );
+            assert_eq!(allowed.state, StageState::Yes);
+        }
+    }
+
     /// RIPR-SPEC-0094 Part D (#7046 review): when the effect carrier refuses
     /// a whole-object equality, the effect-observer branch withholds the
     /// confirmation; a token match still confirms on its own.
@@ -9485,6 +10023,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
@@ -9770,6 +10309,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
@@ -9870,6 +10410,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
@@ -9913,6 +10454,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -10302,6 +10844,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
@@ -10842,6 +11385,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,

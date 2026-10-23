@@ -7,12 +7,13 @@
 //! the complete bounded evidence document is served lazily by
 //! `ripr_get_gap` / `ripr://gap/{canonical_id}`.
 
+use super::repair_admission::{SeamAdmission, SeamVerdict};
 use crate::domain::Finding;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v2";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v3";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -27,6 +28,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// The governed inline `#[cfg(test)]` module the repair is confined to,
+    /// when the fix site is the seam's own production file (#5516). `None`
+    /// for a test-surface fix site.
+    pub(crate) inline_test_module: Option<String>,
 }
 
 /// Producer-fact repair readiness for one canonical item, computed once when
@@ -37,10 +42,12 @@ pub(crate) struct RepairFixSite {
 /// 1. candidate actionability — the shared `#3281` predicate
 ///    [`Finding::is_candidate_actionable`];
 /// 2. an established discriminator — the canonical gap names a non-empty
-///    normalized discriminator and no producer-named missing discriminator
-///    exists. A producer that names its missing discriminators refuses as
-///    `missing_discriminator`; a finding whose canonical gap was withheld
-///    behind the finding's own typed static limitation refuses as
+///    normalized discriminator, and any producer-named missing discriminator
+///    sits on a weakly exposed finding, where the named value is the repair
+///    target (#8717). A producer that names its missing discriminators on
+///    any other class refuses as `missing_discriminator`; a finding whose
+///    canonical gap was withheld behind the finding's own typed static
+///    limitation refuses as
 ///    `static_limitation`; only a producer that names no missing
 ///    discriminator and populates no canonical gap at all for the language
 ///    refuses as `discriminator_not_populated_for_language`, so one document
@@ -58,15 +65,62 @@ pub(crate) struct RepairReadiness {
     /// `fix_site_not_established`, `fix_site_not_test_surface`); `None` only
     /// when every gate is established.
     pub(crate) ineligibility: Option<&'static str>,
+    /// The shared repair validator's own explanation when the seam-level
+    /// admission refused an otherwise finding-ready item (#8717).
+    pub(crate) seam_detail: Option<String>,
 }
 
 impl RepairReadiness {
+    /// Conjoin the shared seam-level repair validator's verdict (#8717).
+    /// A finding-level refusal stays the first failing gate, except that a
+    /// truncated inventory refuses first; a finding-ready item becomes not
+    /// ready, keeping no fix site, when the validator that backs `ripr repair`
+    /// does not admit its seam.
+    pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
+        // The CLI errors on a truncated inventory before it resolves any item
+        // (#9108), so that refusal outranks every finding-level gate.
+        if let Some(SeamVerdict::Refused { code, detail }) = verdict
+            && (self.ready || *code == crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        {
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some(*code);
+            self.seam_detail = Some(detail.clone());
+        }
+        // A fix site on the seam's own production file is not a test surface,
+        // but the shared validator admitted that seam with its one governed
+        // inline test module as the edit target (#5210). Promote only when
+        // that module's file is exactly the fix site the finding named, so
+        // the confinement stated here is the one the cage enforces; any
+        // other combination stays refused.
+        if let Some(SeamVerdict::AdmittedInline { file, module }) = verdict
+            && self.ineligibility == Some("fix_site_not_test_surface")
+            && let Some(site) = self.fix_site.as_mut()
+            && site.file == *file
+        {
+            site.inline_test_module = Some(module.clone());
+            self.ready = true;
+            self.ineligibility = None;
+        }
+        self
+    }
+
+    /// The human sentence for this readiness: the shared validator's own
+    /// explanation when it refused, else the finding-level gate sentence.
+    pub(crate) fn detail(&self) -> String {
+        match &self.seam_detail {
+            Some(detail) => detail.clone(),
+            None => self.reason().to_string(),
+        }
+    }
+
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Self {
         if !finding.is_candidate_actionable() {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
+                seam_detail: None,
             };
         }
         let producer_named_missing_discriminator =
@@ -74,11 +128,21 @@ impl RepairReadiness {
                 || finding.missing.iter().any(|entry| {
                     entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX)
                 });
-        if producer_named_missing_discriminator {
+        // A named missing discriminator on a weakly exposed finding is the
+        // repair target itself (#8717): the existing test reaches the changed
+        // behavior without pinning the named value, and `ripr repair` extends
+        // that test. It stays a refusal for every other class, where the
+        // missing value does not describe a weak-test repair. Whether the
+        // item is actually startable remains the shared seam validator's
+        // decision, conjoined after these finding-level gates.
+        let named_missing_is_repair_target = producer_named_missing_discriminator
+            && finding.class == crate::domain::ExposureClass::WeaklyExposed;
+        if producer_named_missing_discriminator && !named_missing_is_repair_target {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
+                seam_detail: None,
             };
         }
         let discriminator_unpopulated = finding
@@ -101,6 +165,7 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some(ineligibility),
+                seam_detail: None,
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
@@ -120,6 +185,7 @@ impl RepairReadiness {
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
+                inline_test_module: None,
             })
             .collect::<Vec<_>>();
         let Some(first) = candidates.first().cloned() else {
@@ -127,6 +193,7 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
+                seam_detail: None,
             };
         };
         let Some(fix_site) = candidates
@@ -137,12 +204,14 @@ impl RepairReadiness {
                 ready: false,
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
+                seam_detail: None,
             };
         };
         Self {
             ready: true,
             fix_site: Some(fix_site),
             ineligibility: None,
+            seam_detail: None,
         }
     }
 
@@ -152,7 +221,7 @@ impl RepairReadiness {
                 "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
             }
             Some("missing_discriminator") => {
-                "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator)"
+                "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator on a finding that is not weakly exposed)"
             }
             Some("discriminator_not_populated_for_language") => {
                 "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
@@ -164,9 +233,25 @@ impl RepairReadiness {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
+                "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
+            }
+            Some(
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
+                | crate::mcp::repair_admission::SEAM_GATE_REFUSED
+                | crate::mcp::repair_admission::SEAM_AMBIGUOUS
+                | crate::mcp::repair_admission::SEAM_NOT_FOUND
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            ) => {
+                "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.inline_test_module.is_some()) =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
+            }
             None => {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface"
             }
@@ -218,7 +303,20 @@ impl GapItem {
     /// context and LSP surfaces emit. Related-test and fix-site files keep
     /// the repository-relative renderer (#5254 item 6), which additionally
     /// tolerates verbatim/UNC/case spelling drift.
+    #[cfg(test)]
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
+        Self::from_finding_admitted(finding, root, &SeamAdmission::unevaluated())
+    }
+
+    /// [`Self::from_finding`] with the shared seam-level repair validator's
+    /// verdict conjoined into the readiness projection (#8717), so the
+    /// list summary, the evidence document, the snapshot identity and
+    /// `ripr_prepare_repair` all carry the one admission decision.
+    pub(crate) fn from_finding_admitted(
+        finding: &Finding,
+        root: &Path,
+        admission: &SeamAdmission,
+    ) -> Result<Self, String> {
         let canonical_id = finding
             .canonical_gap
             .as_ref()
@@ -232,7 +330,8 @@ impl GapItem {
             .map(|language| language.as_str().to_string());
         let line = finding.probe.location.line;
 
-        let repair_readiness = RepairReadiness::from_finding(finding, root);
+        let repair_readiness = RepairReadiness::from_finding(finding, root)
+            .with_seam_verdict(admission.verdict(&finding.id).as_ref());
         let list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -244,7 +343,7 @@ impl GapItem {
         });
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
-        let evidence_core = gap_evidence_core(finding, &canonical_id, root)?;
+        let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         Ok(Self {
             canonical_id,
@@ -317,8 +416,12 @@ impl GapItem {
 /// Producer-owned evidence fields, projected once per finding. Fields the
 /// producer does not populate stay typed `null`/`absent` states in the
 /// serialized finding values rather than being back-filled here.
-fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Result<Value, String> {
-    let readiness = RepairReadiness::from_finding(finding, root);
+fn gap_evidence_core(
+    finding: &Finding,
+    canonical_id: &str,
+    root: &Path,
+    readiness: &RepairReadiness,
+) -> Result<Value, String> {
     let activation = serde_json::to_value(&finding.activation)
         .map_err(|error| format!("serialize activation evidence: {error}"))?;
     let related_tests = finding
@@ -394,9 +497,9 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Resu
         "recommended_next_step": finding.recommended_next_step,
         "readiness": {
             "repair_packet_ready": readiness.ready,
-            "reason": readiness.reason(),
+            "reason": readiness.detail(),
             "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator with no producer-named missing discriminator, and the strongest directly-related related-test grip",
+            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator (a producer-named missing discriminator is accepted only on a weakly exposed finding, where it is the repair target), and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
@@ -1043,12 +1146,60 @@ mod tests {
                 flow_sink: None,
             },
         );
+        // #8717: on a weakly exposed finding the named value is the repair
+        // target, so the discriminator gate passes and the finding is ready.
         let item = GapItem::from_finding(&named_missing, Path::new("."))?;
+        if !item.repair_readiness.ready || item.repair_readiness.ineligibility.is_some() {
+            return Err(format!(
+                "a weak finding with a named missing discriminator is the repair target: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // Discriminating negative: the same named value on any non-weak class
+        // keeps the typed refusal.
+        for class in [
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            crate::domain::ExposureClass::NoStaticPath,
+            crate::domain::ExposureClass::InfectionUnknown,
+            crate::domain::ExposureClass::PropagationUnknown,
+            crate::domain::ExposureClass::StaticUnknown,
+            crate::domain::ExposureClass::Exposed,
+        ] {
+            let mut other = named_missing.clone();
+            other.class = class.clone();
+            let item = GapItem::from_finding(&other, Path::new("."))?;
+            if item.repair_readiness.ready
+                || item.repair_readiness.ineligibility != Some("missing_discriminator")
+            {
+                return Err(format!(
+                    "a named missing discriminator on {class:?} must stay the typed refusal: {:?}",
+                    item.repair_readiness.ineligibility
+                ));
+            }
+        }
+        // A weak finding whose canonical gap is absent stays refused even
+        // with a named missing discriminator.
+        let mut ungapped = named_missing.clone();
+        ungapped.canonical_gap = None;
+        let item = GapItem::from_finding(&ungapped, Path::new("."))?;
         if item.repair_readiness.ready
-            || item.repair_readiness.ineligibility != Some("missing_discriminator")
+            || item.repair_readiness.ineligibility
+                != Some("discriminator_not_populated_for_language")
         {
             return Err(format!(
-                "a producer-named missing discriminator must stay the typed refusal: {:?}",
+                "a named missing discriminator cannot substitute for a populated gap: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // The fix-site gate still applies to the weak repair target.
+        let mut no_site = named_missing.clone();
+        no_site.related_tests.clear();
+        let item = GapItem::from_finding(&no_site, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+        {
+            return Err(format!(
+                "a weak finding without a fix site must stay refused: {:?}",
                 item.repair_readiness.ineligibility
             ));
         }
@@ -1081,6 +1232,267 @@ mod tests {
         Ok(())
     }
 
+    fn not_test_surface_readiness(file: &str) -> RepairReadiness {
+        let mut readiness = ready_readiness();
+        readiness.ready = false;
+        readiness.ineligibility = Some("fix_site_not_test_surface");
+        if let Some(site) = readiness.fix_site.as_mut() {
+            site.file = file.to_string();
+        }
+        readiness
+    }
+
+    /// #5516: only the exact inline module the shared validator admitted can
+    /// lift `fix_site_not_test_surface`; a different file, a plain admission
+    /// or no verdict keeps the refusal, and a refusal still wins.
+    #[test]
+    fn inline_admission_lifts_only_the_matching_non_surface_fix_site() -> Result<(), String> {
+        let inline = SeamVerdict::AdmittedInline {
+            file: "src/lib.rs".to_string(),
+            module: "tests".to_string(),
+        };
+        let lifted = not_test_surface_readiness("src/lib.rs").with_seam_verdict(Some(&inline));
+        let site = lifted
+            .fix_site
+            .as_ref()
+            .ok_or("lifted readiness lost its fix site")?;
+        if !lifted.ready
+            || lifted.ineligibility.is_some()
+            || site.inline_test_module.as_deref() != Some("tests")
+            || !lifted.reason().contains("governed inline")
+            || lifted.reason().contains("on a test surface")
+        {
+            return Err(format!(
+                "matching inline admission did not lift: {lifted:?}"
+            ));
+        }
+        let other_file = not_test_surface_readiness("src/other.rs");
+        for (name, readiness, verdict) in [
+            ("different file", other_file.clone(), Some(&inline)),
+            (
+                "plain admission",
+                other_file.clone(),
+                Some(&SeamVerdict::Admitted),
+            ),
+            ("no verdict", other_file.clone(), None),
+        ] {
+            let kept = readiness.clone().with_seam_verdict(verdict);
+            if kept != readiness {
+                return Err(format!("{name} must keep the refusal: {kept:?}"));
+            }
+        }
+        // A test-surface site is never rewritten by an inline verdict.
+        let surface = ready_readiness().with_seam_verdict(Some(&inline));
+        if surface != ready_readiness() {
+            return Err(format!("test-surface readiness changed: {surface:?}"));
+        }
+        Ok(())
+    }
+
+    fn ready_readiness() -> RepairReadiness {
+        RepairReadiness {
+            ready: true,
+            fix_site: Some(RepairFixSite {
+                test_name: "a".to_string(),
+                file: "tests/t.rs".to_string(),
+                line: 2,
+                oracle: Some("assert_eq!(f(), 1);".to_string()),
+                oracle_kind: "exact_value",
+                inline_test_module: None,
+            }),
+            ineligibility: None,
+            seam_detail: None,
+        }
+    }
+
+    /// #8717: the shared seam validator's refusal is a conjunct of
+    /// readiness. A finding-ready item it refuses is not ready, drops its fix
+    /// site, and keeps the validator's own typed code and explanation; an
+    /// admitted or unevaluated verdict changes nothing, and a finding-level
+    /// refusal stays the first failing gate.
+    #[test]
+    fn seam_verdict_is_a_conjunct_of_repair_readiness() -> Result<(), String> {
+        let refused = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "the shared repair gate refuses: already grip".to_string(),
+        };
+        let blocked = ready_readiness().with_seam_verdict(Some(&refused));
+        if blocked.ready
+            || blocked.fix_site.is_some()
+            || blocked.ineligibility != Some("seam_already_gripped")
+            || !blocked.detail().contains("already grip")
+        {
+            return Err(format!("refused verdict must block readiness: {blocked:?}"));
+        }
+        for verdict in [Some(&SeamVerdict::Admitted), None] {
+            let kept = ready_readiness().with_seam_verdict(verdict);
+            if !kept.ready || kept.ineligibility.is_some() || kept.fix_site.is_none() {
+                return Err(format!("admitted/unevaluated must keep ready: {kept:?}"));
+            }
+        }
+        let finding_level = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("missing_discriminator"),
+            seam_detail: None,
+        }
+        .with_seam_verdict(Some(&refused));
+        if finding_level.ineligibility != Some("missing_discriminator")
+            || finding_level.seam_detail.is_some()
+        {
+            return Err(format!(
+                "the finding-level refusal must stay first: {finding_level:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The evaluated-admission default is fail-closed: a finding the shared
+    /// validator did not cover is refused, never admitted.
+    #[test]
+    fn evaluated_admission_refuses_an_uncovered_finding() -> Result<(), String> {
+        let evaluated = SeamAdmission::evaluate(
+            &[],
+            &[],
+            crate::app::agent_brief::AgentBriefPolicy::from_config(
+                &crate::config::RiprConfig::default(),
+            ),
+            &crate::mcp::repair_admission::InventoryCompleteness::Complete,
+        );
+        match evaluated.verdict("probe:uncovered") {
+            Some(SeamVerdict::Refused { code, .. })
+                if code == crate::mcp::repair_admission::SEAM_NOT_FOUND =>
+            {
+                Ok(())
+            }
+            other => Err(format!("uncovered finding must be refused: {other:?}")),
+        }
+    }
+
+    /// #9108: the CLI errors before resolving any item when the repo-wide
+    /// inventory is truncated, so MCP must refuse every finding with the
+    /// typed truncation reason. Without the fix the empty inventory below
+    /// yields `seam_not_found` for the truncated case too.
+    #[test]
+    fn truncated_inventory_refuses_before_any_resolution() -> Result<(), String> {
+        use crate::mcp::repair_admission::{InventoryCompleteness, SEAM_INVENTORY_TRUNCATED};
+        let config = crate::config::RiprConfig::default();
+        let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
+        let findings = [finding()?];
+        let id = findings[0].id.as_str();
+        let complete =
+            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        match complete.verdict(id) {
+            Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
+            other => return Err(format!("complete inventory must not truncate: {other:?}")),
+        }
+        for completeness in [
+            InventoryCompleteness::Truncated {
+                analyzed: 3,
+                total: 7,
+            },
+            InventoryCompleteness::Unverified("inventory failed".to_string()),
+        ] {
+            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            match evaluated.verdict(id) {
+                Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
+                    if matches!(completeness, InventoryCompleteness::Truncated { .. })
+                        && !(detail.contains("3 of 7")
+                            && detail.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"))
+                    {
+                        return Err(format!("detail must name the counts and remedy: {detail}"));
+                    }
+                }
+                other => return Err(format!("{completeness:?} must refuse: {other:?}")),
+            }
+        }
+        // The refusal blocks readiness with its typed reason and a specific
+        // explanation, never the generic fallback.
+        let refused = SeamVerdict::Refused {
+            code: SEAM_INVENTORY_TRUNCATED,
+            detail: "truncated".to_string(),
+        };
+        let blocked = ready_readiness().with_seam_verdict(Some(&refused));
+        if blocked.ready
+            || blocked.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || blocked.reason().contains("did not establish every")
+        {
+            return Err(format!("truncation must block readiness: {blocked:?}"));
+        }
+        // Precedence: a finding failing a finding-level gate still gets the
+        // inventory-level refusal, but keeps its own gate when the verdict is
+        // an ordinary seam refusal.
+        let unready = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("discriminator_not_populated_for_language"),
+            seam_detail: None,
+        };
+        let truncated = unready.clone().with_seam_verdict(Some(&refused));
+        if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || truncated.seam_detail.is_none()
+        {
+            return Err(format!("truncation must outrank the gate: {truncated:?}"));
+        }
+        let ordinary = SeamVerdict::Refused {
+            code: "seam_gate_refused",
+            detail: "gate".to_string(),
+        };
+        if unready.clone().with_seam_verdict(Some(&ordinary)) != unready {
+            return Err("an ordinary seam refusal must not outrank a finding gate".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9108: the completeness fact is read exactly like the CLI reads it:
+    /// an error or `analyzed < total` refuses; an exact fit or no limit
+    /// does not.
+    #[test]
+    fn completeness_mirrors_the_cli_truncation_check() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        use crate::mcp::repair_admission::InventoryCompleteness as C;
+        let info = |analyzed, total| {
+            Ok(Some(SeamLimitInfo {
+                analyzed,
+                total,
+                source: SeamLimitSource::Default,
+            }))
+        };
+        assert_eq!(
+            C::from_inventory_limit(info(3, 7)),
+            C::Truncated {
+                analyzed: 3,
+                total: 7
+            }
+        );
+        assert_eq!(C::from_inventory_limit(info(7, 7)), C::Complete);
+        assert_eq!(C::from_inventory_limit(Ok(None)), C::Complete);
+        // Parity with the shared predicate the CLI gates read: for every
+        // analyzed/total pair the MCP verdict is truncated iff the CLI's is.
+        for analyzed in 0..4usize {
+            for total in 0..4usize {
+                let limit = SeamLimitInfo {
+                    analyzed,
+                    total,
+                    source: SeamLimitSource::Default,
+                };
+                assert_eq!(
+                    matches!(
+                        C::from_inventory_limit(Ok(Some(limit.clone()))),
+                        C::Truncated { .. }
+                    ),
+                    analyzed < total,
+                    "analyzed {analyzed} total {total}"
+                );
+                assert_eq!(limit.is_truncated(), analyzed < total);
+            }
+        }
+        assert_eq!(
+            C::from_inventory_limit(Err("boom".to_string())),
+            C::Unverified("boom".to_string())
+        );
+    }
+
     /// #5210: the non-surface refusal names the inline-test boundary, so
     /// an MCP caller learns the permanent scope from the refusal itself.
     #[test]
@@ -1089,13 +1501,14 @@ mod tests {
             ready: false,
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
+            seam_detail: None,
         };
         let reason = readiness.reason();
         for needle in [
-            "only test-surface paths can be the authored edit target",
+            "only test-surface paths or that admitted module can be the authored edit target",
             "inline",
             "#[cfg(test)]",
-            "don't qualify their file",
+            "did not admit",
         ] {
             if !reason.contains(needle) {
                 return Err(format!(
@@ -1198,7 +1611,7 @@ mod tests {
     /// clearing it (the boundary got pinned by a test) lets the same finding
     /// through the discriminator gate.
     #[test]
-    fn populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing()
+    fn populated_rust_gap_opens_the_discriminator_gate_for_weak_named_or_nothing_missing()
     -> Result<(), String> {
         let mut boundary = finding()?;
         boundary.language = Some(crate::domain::LanguageId::Rust);
@@ -1219,12 +1632,25 @@ mod tests {
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
             });
+        // Weak + named missing discriminator + populated gap: the repair
+        // target, ready at the finding level (#8717).
         let item = GapItem::from_finding(&boundary, Path::new("."))?;
+        if !item.repair_readiness.ready {
+            return Err(format!(
+                "a weak Rust finding naming its missing discriminator with the gap populated is the repair target: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // The same named value on a non-weak class keeps the typed refusal
+        // ahead of the populated gap.
+        let mut unrevealed = boundary.clone();
+        unrevealed.class = crate::domain::ExposureClass::ReachableUnrevealed;
+        let item = GapItem::from_finding(&unrevealed, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
             return Err(format!(
-                "a producer-named missing discriminator must keep the typed refusal even with the gap populated: {:?}",
+                "a named missing discriminator on a non-weak class must keep the typed refusal even with the gap populated: {:?}",
                 item.repair_readiness.ineligibility
             ));
         }

@@ -15,7 +15,7 @@
 //! stays a typed limitation; the tool must not guess it or create a
 //! misleading attempt.
 
-use super::gaps::GapItem;
+use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
     AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
     bounded_document,
@@ -400,9 +400,9 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
+                "no repair attempt or receipt `{attempt_id}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone"
             ),
-            "prepare the item with ripr_prepare_repair, or discover durable attempts with ripr_list_repair_attempts",
+            "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts come from the CLI repair workflow and are listed by ripr_list_repair_attempts",
         )
     } else {
         (
@@ -449,9 +449,9 @@ fn load_durable_attempt(
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
         format!(
-            "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
+            "no durable repair attempt manifest `{attempt_id}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store"
         ),
-        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id",
+        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id; for an id from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again",
     ))
 }
 
@@ -671,10 +671,14 @@ impl WorkspaceSession {
                 "repair_packet_ready": false,
                 "ineligibility": {
                     "reason": reason,
-                    "detail": readiness.reason(),
+                    "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
-                "recovery": "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field",
+                "recovery": if reason.starts_with("seam_") {
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                } else {
+                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
                     "no attempt was created: the tool must not create a misleading transaction",
@@ -737,13 +741,15 @@ impl WorkspaceSession {
                 "line": fix_site.line,
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
-                "established_by": "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path",
+                "established_by": if fix_site.inline_test_module.is_some() {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
+                } else {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
+                },
             },
             "allowed_edit_surface": [fix_site_file(item)],
-            "must_not_change": [
-                crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT,
-                crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING,
-            ],
+            "inline_test_module": inline_test_module_boundary(&fix_site),
+            "must_not_change": must_not_change(&fix_site),
             "stop_conditions": [
                 "stop if the focused test edit requires changing any file outside allowed_edit_surface",
                 "stop if the repository moves away from the prepared snapshot; re-run ripr_refresh and prepare a fresh transaction",
@@ -823,7 +829,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(attempt_id) {
@@ -884,7 +890,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(receipt_id) {
@@ -931,6 +937,35 @@ impl WorkspaceSession {
             RECOVERY_REPAIR_TOO_LARGE,
         )
     }
+}
+
+/// The module confinement of an inline-test fix site (#5516), or null for a
+/// test-surface fix site. New test functions go inside the governed module
+/// only; the CLI before phase captures the same module and the after phase
+/// rejects any other change to the file.
+fn inline_test_module_boundary(fix_site: &RepairFixSite) -> Value {
+    match &fix_site.inline_test_module {
+        Some(module) => json!({
+            "file": fix_site.file,
+            "module": module,
+            "boundary": "add new test functions inside this inline test module only; production code, the module declaration and existing tests stay unchanged",
+        }),
+        None => Value::Null,
+    }
+}
+
+fn must_not_change(fix_site: &RepairFixSite) -> Vec<String> {
+    let production = match &fix_site.inline_test_module {
+        Some(module) => crate::output::agent_seam_packets::inline_test_module_edit_statement(
+            &fix_site.file,
+            module,
+        ),
+        None => crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+    };
+    vec![
+        production,
+        crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING.to_string(),
+    ]
 }
 
 /// The allowed edit surface file of one ready item; the readiness gate
@@ -1004,6 +1039,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1019,6 +1055,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1050,6 +1087,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -1216,11 +1254,15 @@ mod tests {
     }
 
     #[test]
-    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+    fn producer_named_missing_discriminator_on_a_non_weak_class_keeps_its_typed_refusal()
+    -> Result<(), String> {
         // The unpopulated state must not swallow the honest actionable
         // refusal: a producer that names the missing discriminator still
         // answers `missing_discriminator`.
+        // A non-weak class: on a weakly exposed finding the named value is
+        // the repair target and no longer refuses (#8717).
         let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.class = crate::domain::ExposureClass::ReachableUnrevealed;
         named_missing.canonical_gap = None;
         named_missing.activation.missing_discriminators.push(
             crate::domain::MissingDiscriminatorFact {

@@ -47,6 +47,23 @@ overbroad policy filter. Enumeration is separate from the step's test execution;
 these source controls do not qualify a built wheel or guard every possible
 zero-test command.
 
+## Merge queue request (cutover)
+
+`routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
+required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
+the exact queued merge commit, instead of by a label. The queue run reads the
+queued PR's claim and scope (#8192) through the same admission job: the PR
+number comes from the merge-group branch name
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
+the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
+reaches the PR-evidence step). The exact-head binding is the head SHA in the
+queue branch name, so a push after enqueue fails admission. Admission is per
+PR, so the queue must use a group size of 1; the queued commit must be a single
+squash commit of the queued PR sitting directly on the group's `base_sha`, or
+admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+`merge-ready` label request below still works until the label request is
+retired in a follow-up, after the repository's merge queue is enabled.
+
 ## Merge-ready label flow
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
@@ -56,7 +73,8 @@ required `Ripr Rust Small Result` exists only for that request). ub-review, the
 Python wheel workflow and source-of-truth still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
 starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
@@ -99,6 +117,25 @@ Route, docs detection and admission carry the same request guard, so an
 ordinary label allocates no qualification work, and the result job keeps
 `if: always()` so a skipped prerequisite fails the required context instead of
 skipping it.
+
+### Which state is my PR in, and what is next?
+
+The state names describe where a head is; only the `merge-ready` request (or a
+merge-queue entry) spends the required qualification. `merge-ready` is today's
+spelling of that request, so apply it only when the exact head is the selected,
+reviewed candidate, never as a general "please run CI" signal.
+
+| State | How to read it on the PR | Next action |
+| --- | --- | --- |
+| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
+| Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
+| Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
+| Not qualified | A push landed after the request, or the result failed or was refused at admission (a Draft PR is refused: `candidate_not_open_ready`) | Repair; admission refusals name the cause (for example a missing PR-body claim field, or Draft). Mark the PR Ready, then remove and re-apply `merge-ready` for the new head |
+
+A green `ub-review` wrapper is advisory: read its review and sensor output, not
+only the conclusion (see the `ub-review` notes under Current Workflows). A
+cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
 
 ## Verification Economics Policy
 
@@ -409,6 +446,18 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
+- **Logs are redirected, not piped.** Each cargo step writes its log with a
+  file redirect and replays it with `cat`. A `| tee` pipe stays open until
+  every process holding its write end exits, so one test leaking a child kept
+  the step alive after cargo finished until the 90-minute job limit cancelled
+  the whole lane (#9272, run 39549631529). Each cargo step also carries its
+  own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
+  no status file, which the summarizer reports as missing evidence. The job
+  deadline (270 minutes) exceeds the sum of the cargo step deadlines (15+45+15+75+75), so
+  those steps alone cannot exhaust it (setup, summary compilation and the
+  manual isolation repeats have no separate deadline). The manual nested-alias
+  isolation repeats use the same redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -423,7 +472,10 @@ and single-platform CI was the root cause enabling both.
   pull requests labeled `windows-ci` or `full-ci`.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
+  the Windows process-ownership (`process_owner::tests`), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, the VS Code managed-server install lock suite under
+  plain mocha on Node (#9498), and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
@@ -749,6 +801,16 @@ failed, or skipped provider remains missing review evidence after Ready; no
 synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
+
+The reusable required Rust gates prepare both locked owner-return fixtures,
+`owner_return_pin_fallible_literal/input` and
+`owner_return_pin_json_real_literal/input`, before repository policy and tests.
+Their independent lockfiles remain authoritative: a workspace dependency update
+does not prepare the JSON fixture's pinned `serde_json` version. Both fetches
+must succeed in the same Cargo home the offline test probes use. For a workflow
+repair, verify the executed reusable-workflow revision and preparation-step
+result; a checked-out workflow blob in the test context alone does not prove
+which controller executed.
 
 UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
 before invoking the action, matching required Rust CI. Its offline identity
@@ -1436,6 +1498,18 @@ configure the workflow, so changing a mode never means editing the file:
 - `RIPR_GATE_BASELINE` is an optional path to a reviewed baseline ledger file,
   such as `.ripr/gate-baseline.json`, that `baseline-check` and
   `calibrated-gate` compare current evidence against. Empty by default.
+  The gate refuses a baseline whose recorded `schema_version` is not the
+  supported one (the same refusal `ripr baseline diff` applies; the gate,
+  unlike `baseline diff`, still accepts a hand-built baseline that omits
+  `schema_version`). It also refuses a baseline whose recorded `root`
+  (top-level or on any indexed item) is a non-string value or an absolute path
+  that differs from the gate's absolute root; this root refusal is gate-only.
+  Absent, `null`, blank and relative roots are accepted as unknown, because
+  relative and absolute spellings of one checkout are not comparable. The
+  comparison is textual (separators and trailing slashes are normalized, but
+  there is no canonicalization), so case, verbatim-prefix or symlink spellings
+  of the same checkout can differ. The remedy for a refused baseline is to
+  re-create it with `--root .`.
 - `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on
@@ -2215,6 +2289,47 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
+
+A security update that bumps a lockfile inside a blind-journey installed
+fixture (`fixtures/blind_journey_installed_*`) trips the fixture bindings: file
+digests, snapshot commit/tree ids and the scripted corpus's candidate
+identities are all recorded. Check out the update branch and run
+`cargo xtask fixtures refresh-identity <typescript|python>`. It re-derives the
+digests from the bytes, the ids from the manifest's own `construction_recipe`
+(the rebuild `check-fixture-contracts` verifies with), rebinds the same ids in
+`fixtures/blind_journey_execute/corpus.json`, and moves the TypeScript
+`runner_identity` to the vitest version the head lockfile selects. It refuses
+to add or drop a bound file and does not touch prose. It lists the lines that
+still name the old runner version; those, the frozen transcripts and the
+journeys themselves are re-checked by hand under the new runner
+(`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
+before the update lands.
+
+The ordinary size envelope (files and changed lines) counts only what a human
+has to review. Generated files are declared once, with `linguist-generated` in
+`.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
+public-proof metrics), and their lines and files are not counted. The
+declaration is read from the PR's base commit, so a PR cannot label its own
+files; a `.gitattributes` edit is itself counted in full. Three guards keep the
+label from hiding hand-written code: only declarable shapes count (lockfiles,
+`fixtures/**/expected/**`, `metrics/public-proof/**`; a new family is added to
+`GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
+ignored and fails admission with `generated_declaration_invalid`); only data
+file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
+exempt, and a file must change at least one line; and the exempt lines have their
+own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
+from the hand-written change. A truncated file listing exempts nothing.
+
+Past its diff budget (roughly 700 KB of patch text) GitHub lists the remaining
+files with no line counts while the PR totals still include them. Their lines are
+the PR total minus the listed lines. The generated files among them are exempt
+only after each hand-written file in that group, of any status, is bounded by its
+own line count at the merge base (under its previous name for a rename) plus the
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted. The files listing is read after the PR snapshot, so the head is re-read afterward; if it moved or cannot be read, no generated-file discount applies and the full GitHub totals are counted.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,

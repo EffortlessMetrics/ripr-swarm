@@ -593,7 +593,8 @@ pub(crate) struct DoctorCheck {
     /// How long the check's own computation took, in milliseconds
     /// (additive, #8540). Measured at the production site; `None` for
     /// skipped checks and for checks produced without a timer, so an absent
-    /// value never reads as a zero measurement.
+    /// value never reads as a zero measurement. Volatile: omitted from the
+    /// default `--json` document (#9807); `--timings` restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
 }
@@ -780,6 +781,10 @@ pub(crate) enum DoctorPerlExporterState {
     Incompatible,
     /// No candidate answered `--version`.
     NotFound,
+    /// A PATH hit resolved inside the analyzed checkout and was not run
+    /// (#5349): doctor does not execute code from the checkout it diagnoses
+    /// unless the user sets the repo-Perl opt-in.
+    Refused,
 }
 
 /// The Perl fact exporter doctor probed for.
@@ -840,7 +845,9 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) evidence: String,
     pub(crate) required: bool,
     pub(crate) hint: String,
-    /// How long the probe took, in milliseconds (additive, #8540).
+    /// How long the probe took, in milliseconds (additive, #8540). Volatile:
+    /// omitted from the default `--json` document (#9807); `--timings`
+    /// restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
 }
@@ -954,13 +961,15 @@ pub(crate) struct DoctorReport {
     /// How long the whole doctor run took, in milliseconds (additive,
     /// #8540). Measured by the command adapter around the same computation
     /// both surfaces render, so the human screen and the JSON document
-    /// report one number. Core evaluation leaves it unset.
+    /// report one number. Core evaluation leaves it unset. Volatile: omitted
+    /// from the default `--json` document (#9807); `--timings` restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
     /// Named segment timings for work the total covers that is neither a
     /// check nor a runtime probe (additive, #8540 follow-up). Omitted when
     /// no segment was measured, so an un-timed report serializes exactly as
-    /// before.
+    /// before. Volatile: omitted from the default `--json` document (#9807);
+    /// `--timings` restores it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
@@ -1155,10 +1164,41 @@ impl DoctorReport {
         out
     }
 
-    /// Render the report as JSON.
+    /// Render the report as JSON, including every measured timing field.
+    /// This is the projection `ripr doctor --json --timings` prints (#9807):
+    /// no two runs measure the same durations, so these bytes are not stable.
     pub(crate) fn render_json(&self) -> Result<String, String> {
         serde_json::to_string_pretty(self)
             .map_err(|error| format!("failed to serialize doctor report: {error}"))
+    }
+
+    /// Render the report as JSON without the volatile timing fields, so a
+    /// machine consumer can diff or snapshot the document across runs that
+    /// changed nothing (#9807). Every omitted field is one the published
+    /// schema already treats as optional, so a timed document stays legal;
+    /// `--timings` restores the full projection.
+    pub(crate) fn render_json_stable(&self) -> Result<String, String> {
+        self.without_volatile_timings().render_json()
+    }
+
+    /// A copy of the report with every volatile timing field cleared: the
+    /// run total (`elapsed_ms`), the named `segments`, and each check and
+    /// runtime-probe `elapsed_ms`. Clearing uses the existing
+    /// `skip_serializing_if` attributes, so the stable document carries no
+    /// zero-valued placeholder and key order matches the full projection.
+    /// The human screen never reads this copy: it renders the original
+    /// report, whose in-memory timings still drive the ` in …` suffix.
+    pub(crate) fn without_volatile_timings(&self) -> Self {
+        let mut report = self.clone();
+        report.elapsed_ms = None;
+        report.segments = Vec::new();
+        for check in &mut report.checks {
+            check.elapsed_ms = None;
+        }
+        for probe in &mut report.runtime_probes {
+            probe.elapsed_ms = None;
+        }
+        report
     }
 }
 
@@ -1429,6 +1469,12 @@ pub(crate) fn safe_next_action_recovery_line(
             "- Safe next action: fix the `!` checks above; no check command can run until they pass"
         }
     })
+}
+
+/// Why a root-dependent check is skipped, or `None` for a usable directory.
+/// Shares the typed classification so human lines agree with `root_directory`.
+pub(crate) fn root_unusable_skip_reason(root: &Path) -> Option<&'static str> {
+    DoctorRootPath::classify(root).unusable_skip_reason()
 }
 
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
@@ -2474,7 +2520,9 @@ fn join_doctor_pipe_reader(
 }
 
 /// Translate the report's overall status into the doctor command's exit
-/// result.
+/// result. The CLI adapter maps the failure onto
+/// `CommandError::Decision` (exit 3, #5102): the report was rendered, so
+/// failed checks are a completed typed answer, not could-not-complete.
 pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> {
     match report.status {
         DoctorStatus::Pass => Ok(()),
@@ -2812,6 +2860,55 @@ mod tests {
             report.slowest_measured(),
             Some(("unanalyzed_source_scan".to_string(), 2_500))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn stable_json_omits_volatile_timings_at_every_level() -> Result<(), String> {
+        // #9807: the default `ripr doctor --json` document must not carry a
+        // field whose value changes on every run, or diff/snapshot consumers
+        // see a full-field diff from a run that changed nothing.
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.add_runtime_probe("rust", "cargo", DoctorStatus::Pass, "ok", true, "hint");
+        report
+            .runtime_probes
+            .last_mut()
+            .ok_or("probe must exist")?
+            .elapsed_ms = Some(450);
+        report.elapsed_ms = Some(900);
+        report.segments = vec![DoctorSegmentTiming {
+            name: "language_detection".to_string(),
+            elapsed_ms: 120,
+        }];
+
+        let full = report.render_json()?;
+        assert!(full.contains("\"elapsed_ms\": 900"), "{full}");
+        assert!(full.contains("\"elapsed_ms\": 300"), "{full}");
+        assert!(full.contains("\"elapsed_ms\": 450"), "{full}");
+        assert!(full.contains("\"segments\""), "{full}");
+
+        let stable = report.render_json_stable()?;
+        assert!(!stable.contains("elapsed_ms"), "{stable}");
+        assert!(!stable.contains("\"segments\""), "{stable}");
+        // The volatile strip must not touch the semantic fields.
+        assert!(stable.contains("\"status\": \"pass\""), "{stable}");
+        assert!(stable.contains("tool_cargo"), "{stable}");
+        // And it must be a projection, not a mutation: the human screen still
+        // reads the measured timings from the original report.
+        assert_eq!(report.elapsed_ms, Some(900));
+        assert_eq!(report.slowest_measured(), Some(("cargo".to_string(), 450)));
+
+        // An already un-timed report renders byte-identically through both
+        // projections, so the stable path adds no shape of its own.
+        let mut bare = DoctorReport::new("/workspace");
+        bare.add_check("root_directory", DoctorStatus::Pass, None);
+        assert_eq!(bare.render_json()?, bare.render_json_stable()?);
         Ok(())
     }
 
@@ -3432,6 +3529,55 @@ mod tests {
             }
         }
 
+        let _ = std::fs::remove_dir_all(&dir);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    #[test]
+    fn cache_skip_reason_follows_the_typed_root_classification() -> Result<(), String> {
+        let dir = unique_test_dir("skip-reason");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let file = dir.join("a-file");
+        std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
+        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+            ("directory", dir.clone(), None),
+            (
+                "missing",
+                dir.join("no-such-root"),
+                Some("the root directory does not exist"),
+            ),
+            ("file", file, Some("the root is not a directory")),
+        ];
+        #[cfg(unix)]
+        {
+            let dangling = dir.join("dangling");
+            std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
+                .map_err(|err| format!("dangling symlink: {err}"))?;
+            cases.push((
+                "dangling symlink",
+                dangling,
+                Some("the root is not a directory"),
+            ));
+            let looped = dir.join("looped");
+            std::os::unix::fs::symlink(&looped, &looped)
+                .map_err(|err| format!("self symlink: {err}"))?;
+            cases.push((
+                "self-referencing symlink",
+                looped,
+                Some("the root directory cannot be read"),
+            ));
+        }
+        let failures: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, root, expected)| {
+                let actual = root_unusable_skip_reason(root);
+                (actual != *expected).then(|| format!("{name}: {actual:?}, expected {expected:?}"))
+            })
+            .collect();
         let _ = std::fs::remove_dir_all(&dir);
         if failures.is_empty() {
             Ok(())
@@ -4713,7 +4859,7 @@ mod tests {
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
                 artifact_tracking: DoctorArtifactTracking::Tracked {
-                    warning: "! tracked".to_string(),
+                    warning: "~ tracked".to_string(),
                 },
             },
             test_surfaces: vec![DoctorTestSurface {
@@ -4751,7 +4897,7 @@ mod tests {
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
         assert_eq!(
             parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
-            "! tracked"
+            "~ tracked"
         );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");

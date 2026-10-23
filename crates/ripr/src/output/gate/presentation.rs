@@ -44,6 +44,13 @@ pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<S
     {
         projection.insert_comparison_fields(object);
     }
+    // Additive (issue #9301 F2): present only when the candidate source
+    // disclosed its analysis scope, so older consumers see identical output.
+    if let Some(scope) = &report.analysis_scope
+        && let Some(object) = document.as_object_mut()
+    {
+        object.insert("analysis_scope".to_string(), scope.clone());
+    }
     serde_json::to_string_pretty(&document)
         .map_err(|err| format!("failed to render gate decision JSON: {err}"))
 }

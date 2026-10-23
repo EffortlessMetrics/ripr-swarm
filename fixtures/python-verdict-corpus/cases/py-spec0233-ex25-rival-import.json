@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 25: tests/test_rival.py imports parse_rival from src.other, a rival module with the same name, so the edit in src/subject.py passes. The spec says not related, no_static_path (limited, acceptable); ripr today reports weakly_exposed, the ideal gap.",
+  "reasoning": "RIPR-SPEC-0238 example 25: tests/test_rival.py imports parse_rival from src.other, a rival module with the same name, so the edit in src/subject.py passes. The spec says not related, no_static_path (limited, acceptable); ripr reports no_static_path (limited, acceptable) since #8759; before that it reported weakly_exposed, the ideal gap, by relating the test through the shared name.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

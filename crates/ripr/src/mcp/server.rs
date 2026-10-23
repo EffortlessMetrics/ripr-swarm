@@ -12,6 +12,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
+/// or commit id approaches it, and it keeps a hostile argument out of Git.
+const MAX_BASE_REVISION_BYTES: usize = 256;
+
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
 /// handshake-shaped keepalive is not classified as a 2026-07-28 request
@@ -103,7 +107,24 @@ impl McpServer {
         )
     }
 
-    async fn refresh_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
+    async fn refresh_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["base"])?;
+        let base = optional_nonempty_string_argument(&arguments, "base")?;
+        if let Some(base) = &base
+            && base.len() > MAX_BASE_REVISION_BYTES
+        {
+            return Err(ErrorData::invalid_params(
+                format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
+                Some(serde_json::json!({
+                    "argument": "base",
+                    "expected": format!("a revision of at most {MAX_BASE_REVISION_BYTES} bytes"),
+                })),
+            ));
+        }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
             Ok(root) => root.to_path_buf(),
             Err(failure) => {
@@ -118,15 +139,16 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "poll ripr_workspace_status until attempt_state leaves in_flight",
+                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            session.desired_base = base.clone();
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -184,7 +206,48 @@ impl McpServer {
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
+        // An unknown class token would narrow to an empty page that reads like
+        // "no such gaps"; name the vocabulary instead (a typo like `weak`).
+        if let Some(token) = class.as_deref()
+            && !crate::domain::ExposureClass::ALL
+                .iter()
+                .any(|known| known.as_str() == token)
+        {
+            let allowed = crate::domain::ExposureClass::ALL
+                .iter()
+                .map(crate::domain::ExposureClass::as_str)
+                .collect::<Vec<_>>();
+            // The echoed token is caller-controlled and unbounded; cap it so
+            // the error stays well under the writer's response bound.
+            const ECHO_CHARS: usize = 32;
+            let echoed: String = token.chars().take(ECHO_CHARS).collect();
+            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
+                "..."
+            } else {
+                ""
+            };
+            return Err(ErrorData::invalid_params(
+                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
+            ));
+        }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
+        if let Some(language) = language.as_deref()
+            && crate::domain::LanguageId::display_name_for_wire(language).is_none()
+        {
+            // A typo would otherwise read as "no gaps in that language".
+            let allowed: Vec<&str> = crate::domain::LanguageId::ALL
+                .iter()
+                .map(crate::domain::LanguageId::as_str)
+                .collect();
+            // Echo only a short value: a huge one would push the error past
+            // the response cap and replace -32602 with a generic -32603.
+            let shown: String = language.chars().take(32).collect();
+            return Err(ErrorData::invalid_params(
+                format!("unknown language {shown:?}; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "allowed": allowed })),
+            ));
+        }
         let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
@@ -507,7 +570,7 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
@@ -521,7 +584,7 @@ fn optional_nonempty_string_argument(
     match optional_string_argument(arguments, name)? {
         Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
             format!("{name} must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )),
         other => Ok(other),
     }
@@ -541,7 +604,7 @@ fn optional_bool_argument(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a boolean"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
 }
@@ -559,10 +622,20 @@ fn optional_nonnegative_argument(
         None => Ok(None),
         Some(value) => {
             let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
+                ErrorData::invalid_params(
+                    format!("{name} must be a non-negative integer"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })?;
             usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
+                ErrorData::invalid_params(
+                    format!("{name} is out of range: {error}"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })
         }
     }
@@ -576,7 +649,7 @@ fn optional_positive_argument(
     match optional_nonnegative_argument(arguments, name)? {
         Some(0) => Err(ErrorData::invalid_params(
             format!("{name} must be at least 1"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "integer at least 1" })),
         )),
         other => Ok(other),
     }
@@ -594,7 +667,9 @@ fn optional_capped_page_limit(
     match optional_positive_argument(arguments, name)? {
         Some(value) if value > max => Err(ErrorData::invalid_params(
             format!("{name} must be at most {max}"),
-            None,
+            Some(
+                serde_json::json!({ "argument": name, "expected": format!("integer at most {max}") }),
+            ),
         )),
         other => Ok(other),
     }
@@ -658,7 +733,7 @@ fn reject_unknown_arguments(
         if !allowed.contains(&name.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
             ));
         }
     }
@@ -673,7 +748,7 @@ fn required_string_argument(
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
 }
@@ -731,13 +806,16 @@ impl ServerHandler for McpServer {
     /// custom request and the default answers `-32601` with only the method
     /// name. A method this server serves is not missing: report the shape
     /// violation as `-32602` so a client can tell a bad call from a bad
-    /// method (#8504).
+    /// method (#8504). `initialize` is served too: a repeated `initialize`
+    /// without its required params is a params error, not a missing method.
+    /// A method that is missing says so conventionally (`Method not found:`).
     async fn on_custom_request(
         &self,
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
-        const SERVED_METHODS: [&str; 8] = [
+        const SERVED_METHODS: [&str; 9] = [
+            "initialize",
             "server/discover",
             "completion/complete",
             "tools/call",
@@ -748,14 +826,20 @@ impl ServerHandler for McpServer {
             "prompts/list",
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
+            let message = if request.method == "initialize" {
+                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                    .to_owned()
+            } else {
+                format!("invalid params for `{}`", request.method)
+            };
             return Err(ErrorData::invalid_params(
-                format!("invalid params for `{}`", request.method),
-                None,
+                message,
+                Some(serde_json::json!({ "method": request.method })),
             ));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
-            request.method,
+            format!("Method not found: {}", request.method),
             None,
         ))
     }
@@ -798,23 +882,14 @@ impl ServerHandler for McpServer {
                 {
                     return Err(ErrorData::invalid_params(
                         "ripr_workspace_status does not accept arguments",
-                        None,
+                        Some(serde_json::json!({ "allowed": [] })),
                     ));
                 }
                 self.status_tool(max_envelope_bytes).await
             }
             protocol::REFRESH_TOOL_NAME => {
-                if request
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|arguments| !arguments.is_empty())
-                {
-                    return Err(ErrorData::invalid_params(
-                        "ripr_refresh does not accept arguments",
-                        None,
-                    ));
-                }
-                self.refresh_tool(max_envelope_bytes).await
+                self.refresh_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             protocol::LIST_GAPS_TOOL_NAME => {
                 self.list_gaps_tool(request.arguments, max_envelope_bytes)
@@ -844,8 +919,10 @@ impl ServerHandler for McpServer {
                 self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            // MCP: an unknown tool is a protocol error with Invalid Params
+            // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
-                ErrorCode::METHOD_NOT_FOUND,
+                ErrorCode::INVALID_PARAMS,
                 "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
@@ -1048,9 +1125,23 @@ fn json_envelope(uri: &str, text: String) -> Value {
     })
 }
 
-/// Standard resource-miss semantics with the typed failure as data: the
+/// Typed resource-failure semantics with the typed failure as data: the
 /// message stays bounded and human-readable, and `data.code` carries the
 /// typed state (`no_snapshot`, `stale_snapshot`, `item_not_found`, …).
+///
+/// #9854: the JSON-RPC code now categorizes the failure instead of reading
+/// "not found" for every kind. Identity misses — the requested id does not
+/// exist (`item_not_found`, `attempt_not_found`) — keep ResourceNotFound
+/// (`-32002`, upgraded to `-32602` for 2026-07-28 peers by the SDK, keeping
+/// `current_snapshot_id` disclosure). Every other kind is a server state or
+/// a bound, not an identity claim: `no_snapshot`, `stale_snapshot`,
+/// `analysis_in_flight`, `workspace_unavailable`, `result_too_large`,
+/// `attempt_invalid`, `superseded`, `seam_not_found`, … answer InternalError
+/// (`-32603`), the closest standard JSON-RPC code, with the same `data`
+/// payload and the same human sentence. `data.code` stays the stable
+/// machine signal for existing clients, so a client branching on the
+/// JSON-RPC code no longer mistakes a retryable state for a missing
+/// namespace.
 fn resource_failure(
     kind: &str,
     failure: &workspace::AttemptFailure,
@@ -1065,10 +1156,13 @@ fn resource_failure(
     if let Some(snapshot_id) = current_snapshot_id {
         data["current_snapshot_id"] = Value::from(snapshot_id);
     }
-    ErrorData::resource_not_found(
-        format!("unavailable {kind} resource: {}", failure.code),
-        Some(data),
-    )
+    let message = format!("unavailable {kind} resource: {}", failure.code);
+    match failure.code {
+        workspace::CODE_ITEM_NOT_FOUND | repair::CODE_ATTEMPT_NOT_FOUND => {
+            ErrorData::resource_not_found(message, Some(data))
+        }
+        _ => ErrorData::internal_error(message, Some(data)),
+    }
 }
 
 /// Serve adapter that answers `ping` by method name on an `initialize`

@@ -14,7 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -60,6 +61,9 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+#[cfg(test)]
+mod capability_disposition_tests;
+mod catch_arm_guard;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -68,12 +72,18 @@ mod deleted_lines;
 mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
+mod enum_member_guard;
 mod error_payload_guard;
+mod field_update_guard;
+mod guard_entry_guard;
+mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_eval;
 mod literal_matcher_guard;
 mod lookup_table_guard;
+mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -81,6 +91,7 @@ mod module_entries;
 mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
+mod nullish_chain_guard;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -88,11 +99,13 @@ mod owners;
 mod package;
 #[cfg(test)]
 mod predicate_activation_tests;
+mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_rows;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -101,20 +114,33 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod repo;
+#[cfg(test)]
+mod repo_tests;
+mod returned_state_guard;
+mod rounding_mode_guard;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
+mod table_loop_rows;
 mod table_rows;
+mod ternary_arm_guard;
 #[cfg(test)]
 mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+mod assertion_helper;
+mod boolean_pin_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod rethrow_wrapper;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
@@ -130,7 +156,10 @@ mod workspace_packages;
 pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
-pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use assertion_selection::{
+    TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
+};
+pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
@@ -140,12 +169,15 @@ pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
+pub(crate) use loop_bound_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
+pub(crate) use nullish_chain_guard::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -153,10 +185,15 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use returned_state_guard::*;
+pub(crate) use rounding_mode_guard::*;
+pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
+pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
+pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
@@ -165,6 +202,7 @@ pub(crate) use tsconfig::{
 };
 pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
+pub(crate) use value_hiding_guard::*;
 
 /// TypeScript / JavaScript preview adapter.
 ///
@@ -210,35 +248,27 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn analyze_repo(
         &self,
-        _options: &AnalysisOptions,
+        options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // The stub still returns an empty result, but it now discloses
-        // the partial run through `partial_reason` so the pipeline
-        // records a `Partial` language run on the shared `language_runs`
-        // channel (adapter.rs): human/JSON output renders the limitation
-        // and gates fail closed on the partial denominator. Without this
-        // disclosure the empty adapter result was silent — and in a mixed
-        // Rust+TypeScript repo the render-side `typescript_diff_first`
-        // guidance (output/render.rs) never fires because it requires an
-        // empty seam inventory AND no Rust files. See
-        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
-        // the limitation contract.
-        Ok(LanguageRepoResult {
-            findings: Vec::new(),
-            harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
-            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
-            rust_diagnostic_origins: Default::default(),
-            rust_consumed_sources: Default::default(),
-        })
+        // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
+        // unreadable or partially indexed run discloses itself through
+        // `partial_reason` on the shared `language_runs` channel.
+        repo::analyze_repo(options, &[])
     }
 }
 
 impl TypeScriptAdapter {
+    /// [`LanguageAdapter::analyze_repo`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386), so repo mode admits the same
+    /// declared hand-written sources diff mode does.
+    pub(crate) fn analyze_repo_with_handwritten_env(
+        options: &AnalysisOptions,
+        handwritten: &[String],
+    ) -> Result<LanguageRepoResult, String> {
+        repo::analyze_repo(options, handwritten)
+    }
+
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
     /// with the read caps injected (mirrors
     /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves
@@ -527,6 +557,17 @@ impl TypeScriptAdapter {
                     owner_extraction_gaps.push(gap);
                 }
             }
+            // The gap disclosure above is file-level; a changed enum member
+            // also earns its own limited finding so the edit is not silent
+            // (#9436).
+            let enum_member_lines = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    let changed_lines: Vec<usize> =
+                        changed.added_lines.iter().map(|added| added.line).collect();
+                    changed_enum_member_lines(&changed.path, source, &changed_lines)
+                })
+                .unwrap_or_default();
 
             // Resolve package/workspace discovery facts for this changed file.
             // Evidence lines are injected into every finding generated below
@@ -686,6 +727,11 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    findings.push(finding);
+                } else if let Some(identity) = enum_member_lines.get(&added.line) {
+                    let mut finding =
+                        enum_member_finding(&changed.path, added.line, &added.text, identity);
+                    finding.evidence.extend(discovery_evidence.clone());
                     findings.push(finding);
                 }
             }

@@ -381,8 +381,10 @@ test("announces", () => {
         .ok_or_else(|| "expected TypeScript preview finding".to_string())
     };
     let finding = classify(&tests)?;
+    // Not credited: an exact payload behind a module entry reads unknown
+    // (RIPR-SPEC-0027), never `exposed`.
     assert!(
-        matches!(finding.class, ExposureClass::WeaklyExposed),
+        matches!(finding.class, ExposureClass::StaticUnknown),
         "{:?}",
         finding.class
     );

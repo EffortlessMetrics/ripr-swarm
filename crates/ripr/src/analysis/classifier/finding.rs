@@ -1,11 +1,14 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
-    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
+    is_partial_eq_method, missing_evidence, recommended_next_step, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
@@ -23,7 +26,29 @@ pub(in crate::analysis) fn build_finding(
         &evidence.discriminate,
         &evidence.activation,
     );
-    let test_summaries = context.related_test_summaries();
+    // #8999: for a user `PartialEq::eq`/`ne` owner only, a fixture/builder
+    // word in a test that merely shares a file or a name token with the owner
+    // says nothing about the inputs that reach it. When some related test
+    // establishes reach, only those tests can make the fixture opaque; with
+    // none, and for every other owner, every related test is read as before.
+    let owner_is_function = context.owner_fn.is_some();
+    let narrow_fixture_scan = context
+        .owner_fn
+        .is_some_and(|owner| is_partial_eq_method(owner, context.index));
+    let reaching_summaries: Vec<&TestSummary> = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| {
+            reason.establishes_reach(owner_is_function)
+                || *reason == crate::domain::RelationReason::FixtureOwnerAffinity
+        })
+        .map(|(test, _)| *test)
+        .collect();
+    let test_summaries = if !narrow_fixture_scan || reaching_summaries.is_empty() {
+        context.related_test_summaries()
+    } else {
+        reaching_summaries
+    };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
@@ -67,6 +92,7 @@ pub(in crate::analysis) fn build_finding(
             &context.probe.family,
             &evidence.activation,
             unconfirmed,
+            &evidence.implicit_dispatch_tests,
         );
     }
     // RIPR-SPEC-0263: no related test call enters the guard around the
@@ -185,6 +211,19 @@ pub(in crate::analysis) fn build_finding(
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
+    // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
+    // which consumes the marker.
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) {
+        evidence_lines.extend(evidence.debug_assert_eq_pins.iter().map(|label| {
+            format!(
+                "{}{label}",
+                crate::analysis::classify::DEBUG_ASSERT_EQ_PIN_PREFIX
+            )
+        }));
+    }
     // #8600: the render cap trims related rows, so the saturation of every
     // matched test is handed to the call-budget post-pass, which consumes it.
     if evidence.related_call_budget_saturated {
@@ -275,7 +314,15 @@ fn annotate_related_test_misses(
     family: &ProbeFamily,
     activation: &ActivationEvidence,
     unconfirmed: Unconfirmed,
+    implicit_dispatch_tests: &BTreeSet<(PathBuf, String)>,
 ) {
+    // Reach by known implicit dispatch is established even though the
+    // row's relation reason is proximity-only.
+    let reaches = |test: &RelatedTest| {
+        test.relation_reason
+            .is_some_and(|reason| reason.establishes_reach(owner_is_function))
+            || implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+    };
     let facts = &activation.missing_discriminators;
     let boundary = input_boundary_fact(facts, family).is_some();
     let exact = exact_assertion_fact(facts, family).is_some();
@@ -295,11 +342,10 @@ fn annotate_related_test_misses(
         // row keeps its miss: that value is what marks it examined-only
         // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
         // and fix-site selection read `oracle_related_tests` through it.
-        for test in related_tests.iter_mut().filter(|test| {
-            test.relation_reason
-                .is_none_or(|reason| !reason.establishes_reach(owner_is_function))
-                && !test.is_unmatched()
-        }) {
+        for test in related_tests
+            .iter_mut()
+            .filter(|test| !reaches(test) && !test.is_unmatched())
+        {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
     }
@@ -342,11 +388,7 @@ fn annotate_related_test_misses(
                 // a matched oracle or without a recorded relation reason
                 // keeps the unknown: the pass must not claim what the
                 // relation layer did not establish.
-                if test.oracle.is_some()
-                    && test
-                        .relation_reason
-                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
-                {
+                if test.oracle.is_some() && test.relation_reason.is_some() && !reaches(test) {
                     Some(RelatedTestMiss::NoCallPath)
                 } else {
                     None
@@ -603,6 +645,11 @@ fn refused_assertion_next_step(
     subject: &str,
 ) -> String {
     let macro_name = note.map_or(macro_name, |note| note.macro_name.as_str());
+    let standard_macro = if macro_name.is_empty() {
+        "the intended standard assertion macro".to_string()
+    } else {
+        format!("the standard `{macro_name}!`")
+    };
     match note {
         Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
             "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
@@ -612,7 +659,7 @@ fn refused_assertion_next_step(
         // not a limit of ripr's reading, so offering a static-limit
         // reading would let the reader dismiss a real gap.
         Some(note) if note.calls_owner => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `{macro_name}!`, in a test expected to pass.",
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as {standard_macro}, in a test expected to pass.",
             note.location
         ),
         _ => format!(
@@ -680,6 +727,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -711,6 +759,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -742,6 +791,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -767,6 +817,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::StrongestRank,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -829,6 +880,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -853,6 +905,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             module_owner_rows.last().and_then(|row| row.miss),
@@ -871,6 +924,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             gap[0].miss,
@@ -892,6 +946,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::AllRows,
+            &Default::default(),
         );
         assert!(rows.iter().all(|row| {
             row.miss == Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed)
@@ -969,6 +1024,8 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            implicit_dispatch_tests: Default::default(),
+            debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,
         }
     }
@@ -1345,6 +1402,16 @@ mod tests {
             !not_limit.contains("static limit, not a missing test"),
             "{not_limit}"
         );
+        let mut unidentified = note(true, false);
+        unidentified.macro_name.clear();
+        unidentified.location = "assertion in t at tests/t.rs:3".to_string();
+        let generic =
+            refused_assertion_next_step(Some(&unidentified), "assert_eq", "changed effect");
+        assert!(
+            generic.contains("as the intended standard assertion macro"),
+            "{generic}"
+        );
+        assert!(!generic.contains("`!`"), "{generic}");
 
         for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
             assert!(

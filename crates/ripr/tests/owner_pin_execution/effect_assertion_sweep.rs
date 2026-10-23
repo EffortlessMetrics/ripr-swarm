@@ -25,6 +25,8 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
         ("std::assert_vecfrom".into(), "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
         ("core::assert_vecfrom".into(), "::core::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
         ("std::assert_eq_novec".into(), "std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));".into()),
+        ("spaced_assert_eq".into(), format!("assert_eq !({eq});")),
+        ("rooted_std_assert_eq_novec".into(), "::std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));".into()),
     ];
     let dead = |a: &str| -> Vec<(&'static str, String)> {
         vec![
@@ -86,6 +88,60 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 format!("::std::process::exit(1);\n{a}"),
             ),
             ("after_empty_loop", format!("loop {{}}\n{a}")),
+            // One-line `if <macro-cond> { A }`: the oracle text starts with the
+            // prefix token, so it must take the context gate, not read as a
+            // plain `ifmatches!`/`if!`/`ifcfg!` macro path.
+            ("oneline_if_cfg_any", format!("if cfg!(any()) {{ {a} }}")),
+            (
+                "oneline_if_not_cfg_test",
+                format!("if !cfg!(test) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_matches_false",
+                format!("if matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_vec_empty",
+                format!("if vec![1].is_empty() {{ {a} }}"),
+            ),
+            (
+                "oneline_if_core_matches",
+                format!("if ::core::matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_core_cfg",
+                format!("if ::core::cfg!(any()) {{ {a} }}"),
+            ),
+            (
+                "oneline_if_std_cfg",
+                format!("if ::std::cfg!(any()) {{ {a} }}"),
+            ),
+            (
+                "oneline_while_core_matches",
+                format!("while ::core::matches!(1, 2) {{ {a} }}"),
+            ),
+            (
+                "oneline_match_core_line",
+                format!("match ::core::line!() {{ 0 => {a} _ => {{}} }}"),
+            ),
+            (
+                "tail_and_core_cfg",
+                format!("::core::cfg!(any()) && {{ {a} true }};"),
+            ),
+            (
+                "tail_and_matches",
+                format!("matches!(1, 2) && {{ {a} true }};"),
+            ),
+            ("tail_and_not_true", format!("!true && {{ {a} true }};")),
+            (
+                "tail_then_core_cfg",
+                format!("::core::cfg!(any()).then(|| {{ {a} }});"),
+            ),
+            (
+                "tail_for_each_empty_vec",
+                format!("vec![0; 0].iter().for_each(|_| {{ {a} }});"),
+            ),
+            ("tail_and_ne", format!("1 != 1 && {{ {a} true }};")),
         ]
     };
     let live = |a: &str| -> Vec<(&'static str, String)> {

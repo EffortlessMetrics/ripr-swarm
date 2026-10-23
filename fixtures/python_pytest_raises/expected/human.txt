@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/quantity.py:normalize_quantity:predicate_boundary:predicate:value<=0
   Changed behavior: if value <= 0:
   Missing discriminator (1 of 2): Related Python test reaches `normalize_quantity` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_quantity.py:6 test_rejects_zero_quantity
+  Related test: tests/test_quantity.py:6 test_rejects_zero_quantity (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_quantity.py
   Suggested test: test_rejects_zero_quantity
   Test node: tests/test_quantity.py::test_rejects_zero_quantity
@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_pytest_raises/input --diff <cwd>/fixtures/python_pytest_raises/diff.patch --mode fast probe:src_quantity.py:python_preview:9c7db092
   ripr context --root <cwd>/fixtures/python_pytest_raises/input --diff <cwd>/fixtures/python_pytest_raises/diff.patch --mode fast --at probe:src_quantity.py:python_preview:9c7db092
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_quantity.py:python_preview:9c7db092 --root <cwd>/fixtures/python_pytest_raises/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/quantity.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

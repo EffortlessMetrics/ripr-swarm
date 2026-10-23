@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -30,6 +30,15 @@ pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<Pa
     parse_unified_diff_with_metadata_and_limit(input, limit)
 }
 
+/// #9331: the bounded parse with the operator's scope applied at path
+/// registration, so a diff whose bulk is out of scope fits the file bound.
+pub(crate) fn parse_unified_diff_bounded_scoped(
+    input: &str,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<ParsedDiff, String> {
+    stream::parse_bounded_lines_scoped(input.lines(), diff_file_limit_from_env(), keep)
+}
+
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
 #[cfg(test)]
 pub(crate) fn parse_unified_diff_with_limit(
@@ -46,7 +55,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     stream::parse_bounded_lines(input.lines(), limit)
 }
 
-fn diff_file_limit_from_env() -> usize {
+pub(crate) fn diff_file_limit_from_env() -> usize {
     std::env::var(DIFF_FILE_LIMIT_ENV)
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -87,6 +96,11 @@ pub(crate) struct ParsedDiff {
     /// separately in `truncated_file_sections`, so this vector alone cannot
     /// establish that the input was read completely.
     pub(crate) limitations: Vec<AnalysisLimitation>,
+    /// #9331: sections an operator scope removed while parsing, so they never
+    /// counted toward the file bound. The count disclosures need; the sample
+    /// is the first few paths, enough for the bounded listing.
+    pub(crate) out_of_scope_file_count: usize,
+    pub(crate) out_of_scope_sample: Vec<PathBuf>,
 }
 
 struct HunkHeader {
@@ -159,7 +173,7 @@ mod parser_state {
         parse_rename_to_path, source_line_text,
     };
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
@@ -264,6 +278,30 @@ mod parser_state {
             !self
                 .remaining_hunk_lines
                 .is_some_and(|(old, new)| old > 0 && new > 0)
+        }
+
+        /// A section the operator's scope dropped (#9331) is never read, so it
+        /// owes no hunk body and must not later count as a truncated stream.
+        pub(super) fn disown_section(&mut self) {
+            self.current_section_awaits_body = false;
+        }
+
+        /// Forget hunk-level limitations recorded against a path the scope
+        /// dropped (#9331). A malformed or conflicted hunk in a file the
+        /// operator excluded says nothing about the files still analyzed.
+        pub(super) fn forget_limitations_outside(&mut self, keep: impl Fn(&Path) -> bool) {
+            let kept = |path: &Option<PathBuf>, _: &mut u64| match path {
+                Some(path) => keep(path),
+                None => true,
+            };
+            self.combined_hunks.retain(kept);
+            self.conflict_regions.retain(kept);
+            self.malformed_hunks.retain(kept);
+        }
+
+        /// The path the most recent registration selected, if any.
+        pub(super) fn current_path(&self) -> Option<&PathBuf> {
+            self.current_path.as_ref()
         }
 
         pub(super) fn combined_quarantine(&self) -> bool {

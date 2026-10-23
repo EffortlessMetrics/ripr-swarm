@@ -94,7 +94,8 @@ official SDK transport:
 - `ripr_workspace_status` returns the startup workspace block (root
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
-  (workspace diff against the default branch, draft mode, built-in
+  (workspace diff against the resolved default branch or the explicit
+  refresh `base` with `base_revision` when present, draft mode, built-in
   defaults), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
@@ -149,14 +150,19 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
-  Class/language are exact wire tokens; unknown values produce an empty page.
+  Class/language are exact wire tokens. An unknown `class` is Invalid
+  Params (`-32602`) naming the seven exposure-class tokens, with the echoed
+  token truncated so the error stays bounded; an unknown `language` is
+  Invalid Params (`-32602`) listing the allowed wire strings, because an
+  empty page would read as "no gaps in that language"; a known value with
+  no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v2`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -241,6 +247,11 @@ official SDK transport:
   a root resolved unavailable at startup fail closed with
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
+  A root resolved unavailable at startup also prints exactly one
+  operator-facing warning line on stderr before serving (no path; stdout
+  stays protocol-only, and a usable root stays silent). The write is
+  fallible and ignored: an unwritable stderr never aborts startup, and the typed
+  `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
@@ -251,10 +262,10 @@ official SDK transport:
   request id and the fixed JSON-RPC/`resultType` overhead, #7768) before
   it is sent (#6021), so neither the document-level guard nor a legal
   request id can downgrade a success into a response without
-  `structuredContent`. A request id so large that even the
-  typed refusal cannot fit keeps the documented correlated generic
-  fallback, and a fallback that also cannot fit still terminates with
-  `MCP output limit`.
+  `structuredContent`. Request ids whose serialized form exceeds 16384
+  bytes are refused at receive with `-32600` and `"id": null` before
+  dispatch, so the typed refusal always has room for its id; `MCP output
+  limit` remains the fail-closed backstop.
   Reserved vocabulary
   (`config_invalid`, `workspace_ambiguous`, `static_limitation`,
   `cancelled`, `superseded`) is named on the wire for the slices that own
@@ -400,9 +411,18 @@ is not evidence that a resource with a particular identity exists.
   same literal recovery contract through the official SDK lifecycles,
   preserving the SDK-owned negotiated resource-miss code.
 
+- `crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean`
+  — nonexistent, file and non-git roots each print exactly one stderr warning
+  with empty stdout; a usable root stays silent. The unavailable-root session
+  tests (`unavailable_workspace_evidence_names_restart_before_any_refresh`,
+  `current_discovery_requires_metadata_and_rejects_legacy_ping`) assert stderr
+  is exactly that one warning while keeping every protocol assertion.
+- `crates/ripr/tests/mcp_stdio.rs::unwritable_stderr_does_not_abort_unusable_root_session`
+  — stderr failing every write (`/dev/full`), unusable root: startup survives and typed
+  `workspace_unavailable` replies still arrive over stdout.
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
-  class/language/readiness exclusion, conjunction, unknown-value empty sets,
+  class/language/readiness exclusion, conjunction, known-value empty sets,
   filtered one-item continuation replay, unchanged snapshot after reads, and
   stale replay after replacement. The frozen pre-feature closed v1 success
   schema rejects the extended envelope, which carries v2. A dropped-forwarding
@@ -412,28 +432,24 @@ is not evidence that a resource with a particular identity exists.
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
+  + `list_gaps_bounds_the_echoed_unknown_class_token` — unknown class is
+  `-32602` naming the vocabulary; valid classes after a real refresh return
+  exactly their filtered gaps; near-cap, escape-heavy and multibyte tokens
+  yield a bounded, id-correlated `-32602`, not `-32603`.
 - `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
-  raw-document ceiling, raw-document overflow, all three string filters,
+  raw-document ceiling, raw-document overflow, the `file` and `language` filters,
   typed refusals bound to the current snapshot, and same-session recovery.
-- `crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap`
-  — the #7768 outer-response control: one legal escaping-heavy request id
-  sized from the actually measured empty-page envelope so the id-aware
-  budget excludes every page (typed `result_too_large` on the real stdio
-  wire where the envelope-only bound shipped a correlated `-32603`
-  fallback), a second id one notch smaller whose call still ships a
-  structured page, the same refusal/fit pair for the status resource read,
-  and same-session recovery after all of them.
-- `crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content`
-  — the #7768 silent-drop control at the raw stdio wire: a legal request
-  id sized from the actually measured `ripr_workspace_status` envelope
-  puts the id-aware budget inside the refusal window (structured envelope
-  over it, compact text under it) and must be answered with the typed
-  `result_too_large` refusal carrying structured failure content — where
-  the text-only fallback shipped a success without `structuredContent` —
-  and a shorter id one notch below keeps the structured status as an
-  over-reservation control.
+- `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
+  — a request id whose serialized form exceeds 16384 bytes (including one
+  that fits the input cap but not the output cap) is answered with a
+  bounded `-32600` frame carrying `"id": null`, an id exactly at the bound
+  and a following ping are still answered, and the process stays alive.
+  The #7768 id-aware envelope budget remains pinned by the in-crate unit
+  tests below; its wire stimulus (ids near the response cap) is no longer
+  admitted.
 - `crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content`
   — the same window at the real `ripr_get_gap` dispatch with a
   document-guard-approved item, asserting the serialized wire shape

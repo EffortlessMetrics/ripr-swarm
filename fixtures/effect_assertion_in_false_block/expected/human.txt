@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:18
   Static exposure: unrevealed (severity: warning, confidence 0.79)
-  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert!`
   Not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:31: the assertion is inside an `if` branch
   Canonical gap: gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
   Changed behavior: notifier.send(order_id)
@@ -29,7 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/effect_assertion_in_false_block/input --diff <cwd>/fixtures/effect_assertion_in_false_block/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
   ripr context --root <cwd>/fixtures/effect_assertion_in_false_block/input --diff <cwd>/fixtures/effect_assertion_in_false_block/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:934aa430 --root <cwd>/fixtures/effect_assertion_in_false_block/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: observable sink localization); run `ripr repair probe:src_lib.rs:call_deletion:934aa430 --root <cwd>/fixtures/effect_assertion_in_false_block/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

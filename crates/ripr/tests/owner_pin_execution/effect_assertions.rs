@@ -68,6 +68,79 @@ fn human_has_effect_guidance(report: &ripr::CheckOutput) -> Result<bool, String>
 }
 
 #[test]
+fn compound_effect_refusal_discloses_an_unidentified_assertion_honestly() -> Result<(), String> {
+    for oracle in [
+        "!true && { assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]); true };",
+        "macro_rules! w { ($($t:tt)*) => {} } w!(assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]));",
+    ] {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"compound_effect_refusal\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("src/lib.rs"),
+            effect_source(oracle, "direct")?,
+        )
+        .map_err(|error| error.to_string())?;
+        let diff_path = scratch.0.join("diff.patch");
+        std::fs::write(&diff_path, super::effect_assertion_sweep::ALIGNED_DIFF)
+            .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(diff_path),
+            mode: Mode::Fast,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(
+            report.findings.len(),
+            2,
+            "nonempty effect subjects: {oracle}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let mut families = Vec::new();
+        for finding in json["findings"].as_array().ok_or("missing findings")? {
+            families.push(
+                finding["probe"]["family"]
+                    .as_str()
+                    .ok_or("missing family")?,
+            );
+            assert_eq!(finding["probe"]["line"], 18);
+            assert_eq!(finding["classification"], "reachable_unrevealed");
+            assert!(
+                finding["evidence"]
+                    .as_array()
+                    .ok_or("missing evidence")?
+                    .iter()
+                    .any(|line| {
+                        line.as_str().is_some_and(|text| {
+                            text.starts_with(
+                        "assertion not credited: assertion in process_order_sends_exact_order_id"
+                    )
+                        })
+                    }),
+                "compound text must not invent an assertion macro: {finding}"
+            );
+        }
+        families.sort();
+        assert_eq!(families, ["call_deletion", "side_effect"]);
+        let human = render_check(&report, &OutputFormat::Human)?;
+        assert!(
+            human.contains("the intended standard assertion macro"),
+            "{human}"
+        );
+        assert!(!human.contains("`macro_rules!`"), "{human}");
+        assert!(!human.contains("`!`"), "{human}");
+    }
+    Ok(())
+}
+
+#[test]
 fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/observation_verified_side_effect");

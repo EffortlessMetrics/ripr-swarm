@@ -105,7 +105,15 @@ identity, propagation or observer matching.
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
 body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
-assertion macro it contains and refused. A root `loop` with no `break` and a root
+assertion macro it contains and refused. The oracle's macro path must be the
+start of its text (optionally `std::` / `::core::` qualified); a one-line
+`if <macro-cond> { assert_eq!(..); }` (`if matches!(..)`, `if !cfg!(test)`,
+`if cfg!(any())`, `if vec![..].is_empty()`) begins with a prefix token, so it is
+compound and takes the same gate rather than reading as a plain macro path.
+More generally an effect oracle is ungated only when its text starts with an
+`assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
+`!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
+assertion macro in its tail. A root `loop` with no `break` and a root
 `std::process::exit` / `abort` call end the test like an earlier `return`, for every
 family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
 (#8983), and `process::exit` reached through a `use` alias.
@@ -116,11 +124,6 @@ flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 review of #8934; tracked with the #8983 follow-up unless a separate issue says
 otherwise):
 
-- A `macro_rules!` macro that is invoked and swallows its arguments
-  (`macro_rules! w { ($($t:tt)*) => {} } w!(assert_eq!(..));`). The outer macro
-  is `w`, so neither the compound-statement branch nor the macro-name gate
-  applies. This contradicts the "same admission" wording above for effect
-  probes: the return family refuses this shape, effect families do not.
 - An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
   or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
   divergence detection treats any descendant `break` as an exit of the root loop.
@@ -139,8 +142,13 @@ uncalled closure is still refused. Identical assertion spellings on one line
 admitted when some invocation of it provably runs and refused when none does, so
 the first assertion keeps its `exposed` credit and a pair that cannot run
 (`return; A A`) stays uncredited. A dead copy beside a live one adds no credit the
-live copy does not already carry. This shared reading also governs the return
-family.
+live copy does not already carry. This live-duplicate exception applies only to
+effect families; the return family retains its ambiguous-coordinate refusal.
+
+Compound oracles, including an invoked macro that swallows an assertion in its
+arguments, take the context gate above. When the retained compound text does not
+establish the assertion macro's identity, refusal provenance and Human guidance
+refer to the assertion generically rather than naming its outer macro.
 
 The admission also over-refuses, failing closed and matching the return family:
 qualified `std::` / `core::` assertions whose arguments contain a nested `vec!`
@@ -204,8 +212,20 @@ wrong credits.
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
    does not compile and refuses.
-   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
-   the async-context refusal below. An `#[rstest]` case table is admitted
+   An assertion inside an `async` block keeps the async-context refusal below,
+   except the one `async` block that is the only argument of
+   `tokio::spawn(..)` chained directly into `.await.unwrap()` or
+   `.await.expect(..)` (cluster 12a, #6578): the awaited `JoinHandle` yields
+   the task's panic as a `JoinError`, which `unwrap` re-raises on the test
+   task, as a joined thread does below. The test must be a `#[tokio::test]`
+   admitted above, and the file must hold no item, binding or alias named
+   `tokio` or `spawn`, no `use` in the file may bring in a glob or a
+   `tokio` or `spawn` path other than the crate's own `tokio::..` (a `use super::*;` inside an inline `mod` is fine), an
+   `expect` message must be a literal (it runs before `expect` does), and
+   the block itself holds no `return` or `?` (they would skip the assertion,
+   and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
+   `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
+   any other spawn function stay refused. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
@@ -285,7 +305,12 @@ wrong credits.
    scope re-raises an unjoined thread's panic) or carries the same join chain.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
    called once on the test thread and its panic propagates. A `::thread::`
-   path names an extern crate, so it never matches. Names are not
+   path names an extern crate, so it never matches. A bare `scope(..)` or
+   `spawn(..)` (#8999) matches only when the function's own module holds
+   exactly `use std::thread::scope;` (or `spawn`) with no rename or list form,
+   and nothing else in the file is named `scope` (`spawn`) or ends a `use` in
+   that name; a local function, another import, a rename or an import in a
+   different module stays refused. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
@@ -1292,7 +1317,14 @@ would. Such an assertion is a pin when:
    optionally negated by one `!`. A conjunction, a comparison, a chained
    call or a double negation pins nothing about the owner's result. Message
    arguments do not decide whether the test fails and are not read.
-3. Every other rule above holds unchanged: execution and macro admission
+3. (#9074) The condition may instead be one plain identifier (optionally negated by
+   one `!`) that the test binds once with an immutable `let` to a complete
+   owner call, read under the same binding rules as `assert_eq!(binding, true)`
+   (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
+   operand of assertions after the `let`, once in this assertion. A `mut` or
+   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
+   other non-assertion use, or a binding named in the message refuses.
+4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
    gate. A bool owner with an early `return` has no `Ok`/`Some` head, so the
@@ -2382,12 +2414,14 @@ assertions. This repair shares the existing callback without that larger migrati
   imported, ambiguous, shadowed and disabled declarations. The property
   quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
-  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs thirteen
-  bool-owner layouts (both boundary sides, let-bound inputs, far inputs
-  only, one side only, a shadowing closure, an uncalled closure, a boundary
-  call or binding only in a message argument or an operand comment, and a boundary call left
-  unasserted on the assertion's line) against the rewrite and a `<`
-  mutant; only the two `exposed` layouts fail on the mutant.
+  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs seventeen
+  bool-owner layouts (both boundary sides, let-bound inputs and let-bound
+  results, a crate-qualified call, far inputs only, one side only, a
+  let-bound disjunction, a reassigned mutable binding, a shadowing closure, an
+  uncalled closure, a boundary call or binding only in a message argument or
+  an operand comment, and a boundary call left unasserted on the assertion's
+  line) against the rewrite and a `<` mutant; only the four `exposed` layouts
+  fail on the mutant.
   `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
   kept trait default through `Unit.advance()` and through `let unit = Unit;`,
   and refuses an impl that overrides the default; only the two `exposed`
@@ -2587,3 +2621,69 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### Changes the asserted inputs cannot tell apart (#8659)
+
+An exact pin shows the test checks the owner's value, not that the checked
+input reaches the change. `base * 2u64.pow(attempt)` changed to
+`3u64.pow(attempt)` with `assert_eq!(backoff_ms(0, 100), 100)` passes on both
+versions (`3^0 == 2^0`), as does `attempt.min(5)` raised to `min(6)` with
+`assert_eq!(capped(3), 3)`. A `return_value` probe's infection stage therefore
+reads `weak` instead of `yes` when all of the following hold, and every
+unmet condition keeps today's reading:
+
+1. The owner is a free function the integer constant fold can evaluate (the
+   #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
+   integer values), the probe carries its `before` text, and that text
+   replaces the current text exactly once in the owner's body.
+2. No other function calls the owner by name (the same guard the `&&`/`||`
+   skipped-operand reading uses).
+3. At least one related test names the owner, and every such test is a plain
+   test (no case table, no local shadow of the owner's name) whose
+   assertions are all equality assertions whose first operand is one bare
+   owner call with literal arguments that fold.
+4. At every such call the owner folds to the same value under the current and
+   the baseline body, while a small grid of integer arguments (each parameter
+   over `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters) finds a call at
+   which the two bodies fold to different values. An equivalent rewrite
+   (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
+   a test that tells the versions apart would name one that cannot exist.
+
+A related test that never names the owner is ignored: a helper that calls the
+owner would already make condition 2 fail. The reading only downgrades; a
+fold that fails, overflows the declared width or meets a float, an unsupported
+method or a `let` is not evaluable and changes nothing. It asks nothing of
+the oracle's strength and is not a runtime claim.
+
+### A returned bare comparison is read at its boundary (#9094)
+
+A `return_value` probe whose changed expression is one bare relational
+comparison (`x > 101` against `x > 100`, no `&&`/`||`) is the same changed
+predicate a `predicate` probe on that line reads. When the predicate lens
+resolves a missing equality-boundary discriminator for it and its infection
+reading is `weak`, the return-value finding takes that discriminator and that
+infection reading instead of crediting `yes`, so inputs far from the threshold
+(`thr(50)`, `thr(500)`) never read `exposed`. A boundary the lens cannot read
+(`unresolved`), a compound expression, a non-comparison return value and an
+operator change (`x == 100` to `x > 101`, where an off-boundary input can
+separate the versions) keep their previous reading: the rule only downgrades and is not a runtime claim.
+
+An explicit `return x > 101;` is the same returned comparison as the tail form:
+the leading `return ` and trailing `;` are dropped from the changed and prior
+text before boundary extraction (#9116). Only a top-level comparison normalises;
+a comparison nested in a call, index, turbofish (`x.parse::<i32>() > 5`) or
+compound value keeps the return-value reading.
+
+When only the integer-literal threshold (or, for `==`/`!=`, the literal) of the compared owner parameter moves
+by more than one (`x > 100` to `x > 102`), an observed exact input of that
+parameter that separates the old and new comparison (`thr(101)`: true before,
+false after) is a discriminator even though it equals neither threshold, so the
+equality-boundary gap is not borrowed and the reading stays as it was (#9147).
+The check only ever removes a downgrade: it declines, and the gap stays, for a
+suffixed or computed literal, a non-parameter or reversed left operand, a
+non-integer input or an operator-family change it cannot evaluate. Inputs on
+the same side of both thresholds keep the gap.
+
+The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).

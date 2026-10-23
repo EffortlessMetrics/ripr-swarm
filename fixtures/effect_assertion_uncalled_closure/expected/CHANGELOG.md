@@ -37,3 +37,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_uncalled_closure (4)
+
+Reason:
+RIPR-SPEC-0197: human-full related-test line adopts main #8747 no-oracle wording (merge of main into #8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_uncalled_closure (5)
+
+Reason:
+RIPR-SPEC-0197: follow main's no-oracle wording in the human-full evidence path (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_uncalled_closure (6)
+
+Reason:
+RIPR-SPEC-0197: follow main's route-not-ready missing-evidence wording; the human hint names the refused assertion macro (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

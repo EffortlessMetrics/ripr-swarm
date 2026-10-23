@@ -1,59 +1,58 @@
 {
   "case_id": "perl-0235-ex01-sink-unconfirmed",
-  "subject_id": "authored-perl-test2-ledger",
+  "subject_id": "authored-perl-testmore-shop",
   "diff": "cases/perl-0235-ex01-sink-unconfirmed.diff",
   "anchor": {
-    "file": "lib/Ledger.pm",
-    "line": 13
+    "file": "lib/Shop/Pricing.pm",
+    "line": 31
   },
   "edit_kind": "behavior_preserving_rewrite",
-  "behavior_family": "hash_field_value",
-  "test_shape": "test2_is_deep_hash_sink_unconfirmed",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_sink_unconfirmed",
   "hard_case": "RIPR-SPEC-0235 example 1: the strong oracle carries no observed_sink, so the packet cannot confirm the assertion reaches the changed return.",
   "truth": {
-    "state": "discriminated",
+    "state": "not_discriminated",
     "method": "runtime_mutant_kill",
     "test_command": "prove -l t",
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
     "mutants": [
       {
-        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
-        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
-        "outcome": "tests_failed",
-        "failing_test": "t/ledger.t: summary totals and counts",
-        "equivalence_review": "not equivalent: two amounts count as three"
+        "replacement": "return 'gold' if 1000 < $points;",
+        "mutated_line": "return 'gold' if 1000 < $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1000 points become silver"
       },
       {
-        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
-        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
-        "outcome": "tests_failed",
-        "failing_test": "t/ledger.t: summary totals and counts",
-        "equivalence_review": "not equivalent: total doubles"
+        "replacement": "return 'gold' if 1500 <= $points;",
+        "mutated_line": "return 'gold' if 1500 <= $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1200 points become silver"
       }
     ]
   },
   "expected": {
-    "ideal_verdict": "credited",
+    "ideal_verdict": "gap",
     "acceptable_verdicts": [
-      "credited",
-      "limited",
-      "silent"
+      "gap",
+      "limited"
     ]
   },
-  "reasoning": "is(summary(...), {total=>..., count=>...}) pins both fields, so both mutants fail t/ledger.t. With the observed sink removed the spec asks for withheld credit with an unconfirmed-observation reason, not a repairable weakness; a weakly_exposed verdict here is a false actionable.",
+  "reasoning": "RIPR-SPEC-0235 example 1: the strong oracle carries no observed_sink, so the packet cannot confirm the assertion reaches the changed return. The rewrite and run truth are those of perl-testmore-tier-far-from-boundary (not_discriminated): the inputs 2000 and 10 are far from 1000, so no mutant of the threshold fails. The packet edit changes which facts ripr reads, not what prove -l t does with the rewrite. A strong oracle on the owner that the packet cannot tie to the changed value is an unconfirmed observation, not a discriminator, so the spec's weakly_exposed gap and the label agree.",
   "labeling_observation": {
-    "ripr_commit": "28e86e6",
+    "ripr_commit": "4f48195",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
-      "weakly_exposed"
+      "reachable_unrevealed"
     ],
     "excerpt_parity": "matched"
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex01-sink-unconfirmed.json",
-    "sha256": "8d1731ead03f142c0392e67db33eb5c16fd5ded89fc39622c8aab8181705f021",
+    "sha256": "6071c7e1fb899f0bc6c845e202e0097a47584a12f0a7fabca05e691b8b7b1e56",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
+    "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#1"

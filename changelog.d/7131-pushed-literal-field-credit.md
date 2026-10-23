@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed field inside a literal pushed onto a field collection (`self.log.push(Event::Shipped { sku, qty })`) now reads `exposed` when a test compares the whole collection with `assert_eq!`, directly (`inv.log`) or through a getter whose body returns it (`inv.history()`). A projection such as `.len()` or `[0].qty` still leaves the field unconfirmed, and so does a test that writes through the collection's owner between the call and the assertion, or also runs the owner on another value (RIPR-SPEC-0228 examples 14 and 15, #7131).

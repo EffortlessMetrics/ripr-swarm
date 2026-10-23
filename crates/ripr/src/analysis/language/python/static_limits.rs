@@ -1,11 +1,19 @@
+use super::PythonFramework;
+use super::admission::PythonAssertionAdmission;
+use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
-    PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
-    line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
+    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
+    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    test_may_reach_owner_class,
 };
 use super::source_utils::SourceText;
-use super::{PythonImport, PythonOracleShape, PythonOwner, PythonTest, split_python_assignment};
+use super::{
+    PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
+    split_python_assignment,
+};
 use crate::domain::{OracleStrength, StaticLimitKind};
+use rustpython_parser::ast::{self, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
@@ -28,7 +36,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, &focus, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -36,6 +44,7 @@ pub(super) fn static_limit_for_change(
 /// sibling-field or other-family assertion never hides one.
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
+    old_line_text: Option<&str>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -87,6 +96,23 @@ pub(super) fn static_limit_for_focused_change(
             evidence: format!("static_limit decorator_indirection: `{decorator}`"),
             missing: format!(
                 "Static limit `decorator_indirection`: owner `{}` is decorated with `{decorator}`; syntax-first preview evidence does not resolve decorator-modified call behavior.",
+                owner.qualified_name
+            ),
+        });
+    }
+    // A route decorator edit changes where the handler is registered, which
+    // only a client call to a route observes; a test that calls the function
+    // directly never sees it (#9756).
+    if is_route_decorator_edit(trimmed)
+        && !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: "static_limit decorator_indirection: route registration edit".to_string(),
+            missing: format!(
+                "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
                 owner.qualified_name
             ),
         });
@@ -143,7 +169,30 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
+    if trimmed.chars().any(|ch| ch.is_ascii_digit())
+        && matches!(
+            python_band_reading(old_line_text, trimmed, owner, related_candidates, focus),
+            PythonBandReading::Unread
+        )
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test compares through an `approx` tolerance band"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
+        });
+    }
+    if changed_logging_call_literal(trimmed).is_some_and(|literal| {
+        related_candidates_have_log_membership_limit(related_candidates, focus, literal)
+    }) {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test reads the changed log message through `caplog` membership"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads.".to_string(),
+        });
+    }
+    if related_candidates_have_opaque_custom_assertion_limit(owner, related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -301,6 +350,62 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.cli_receiver_names,
         )
         || is_imported_functools_memoization_decorator(decorator, &owner.imports)
+        || (is_imported_typing_marker_decorator(decorator, &owner.imports)
+            && !owner
+                .unplain_decorators
+                .iter()
+                .any(|name| name == decorator))
+}
+
+const TYPING_MODULES: [&str; 2] = ["typing", "typing_extensions"];
+
+/// Typing markers return the decorated function unchanged (they only set an
+/// attribute or do nothing), so test-to-owner call matching is unaffected.
+/// `typing.overload`, `abc.abstractmethod`, `contextlib.contextmanager` and
+/// `property` are deliberately excluded: they replace, block or re-shape the
+/// call.
+fn is_typing_marker_name(module: &str, name: &str) -> bool {
+    match name {
+        "final" | "override" => TYPING_MODULES.contains(&module),
+        "no_type_check" => module == "typing",
+        _ => false,
+    }
+}
+
+fn import_binds_typing_module(import: &PythonImport) -> bool {
+    TYPING_MODULES.contains(&import.imported.as_str()) && import.source_module.is_empty()
+}
+
+/// `@final` / `@override` / `@no_type_check` (and `typing.` / `typing_extensions.`
+/// qualified spellings) only when the name resolves to the typing module. A
+/// receiver or bare name rebound from another module, or bound by a competing
+/// import, stays limited, mirroring the functools memoization rule.
+fn is_imported_typing_marker_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+    if let Some((receiver, method)) = decorator.rsplit_once('.') {
+        let rebound = imports
+            .iter()
+            .any(|import| import.alias == receiver && !import_binds_typing_module(import));
+        if rebound {
+            return false;
+        }
+        if TYPING_MODULES.contains(&receiver) {
+            return is_typing_marker_name(receiver, method);
+        }
+        return imports.iter().any(|import| {
+            import_binds_typing_module(import)
+                && import.alias == receiver
+                && is_typing_marker_name(import.imported.as_str(), method)
+        });
+    }
+    let from_typing = imports.iter().any(|import| {
+        import.alias == decorator
+            && is_typing_marker_name(import.source_module.as_str(), import.imported.as_str())
+    });
+    let competing_alias = imports.iter().any(|import| {
+        import.alias == decorator
+            && !is_typing_marker_name(import.source_module.as_str(), import.imported.as_str())
+    });
+    from_typing && !competing_alias
 }
 
 fn is_functools_memoization_name(name: &str) -> bool {
@@ -350,6 +455,14 @@ fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[Pytho
         .iter()
         .any(|import| import.alias == decorator && import.source_module != "functools");
     from_functools && !competing_alias
+}
+
+/// A changed line that is itself a static route decorator (`@app.get("/a")`).
+fn is_route_decorator_edit(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix('@')
+        .and_then(|rest| rest.split('(').next())
+        .is_some_and(is_static_route_decorator)
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
@@ -578,7 +691,7 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == "pytest"
+    test.framework == PythonFramework::Pytest
         && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test
@@ -637,7 +750,132 @@ pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -
         && after.is_none_or(|ch| !is_python_identifier_char(ch))
 }
 
+pub(super) fn approx_call_has_band(assertion: &str) -> bool {
+    [false, true]
+        .into_iter()
+        .flat_map(|attribute| {
+            super::no_behavior::call_arglists_with_offsets(assertion, "approx", attribute)
+        })
+        .any(|(_, arglist)| {
+            super::no_behavior::split_top_level_args(arglist)
+                .into_iter()
+                .map(str::trim)
+                .enumerate()
+                .any(|(index, argument)| {
+                    // A spread may supply the expected value and the band, so
+                    // it counts in any position, the first included.
+                    if argument.starts_with('*') {
+                        return true;
+                    }
+                    if index == 0 {
+                        return false;
+                    }
+                    if let Some((name, value)) = argument.split_once('=') {
+                        matches!(name.trim(), "rel" | "abs") && value.trim() != "None"
+                    } else {
+                        argument != "None"
+                    }
+                })
+        })
+}
+
+/// The first string literal of a changed logging call (`log.warning("..")`).
+fn changed_logging_call_literal(line: &str) -> Option<&str> {
+    const LEVELS: [&str; 7] = [
+        "debug",
+        "info",
+        "warning",
+        "warn",
+        "error",
+        "critical",
+        "exception",
+    ];
+    let call_start = line.find('(')?;
+    let callee = &line[..call_start];
+    let (_, level) = callee.rsplit_once('.')?;
+    if !LEVELS.contains(&level) {
+        return None;
+    }
+    let rest = &line[call_start + 1..];
+    let quote_at = rest.find(['"', '\''])?;
+    let quote = rest[quote_at..].chars().next()?;
+    let body = &rest[quote_at + 1..];
+    Some(&body[..body.find(quote)?])
+}
+
+/// Whether a related test's weak `<literal> in caplog.text` assertion names a word of the changed log message. A membership check
+/// against a `%`-formatted message is a runtime comparison this adapter does
+/// not evaluate, so the verdict abstains instead of reading a weak gap; an
+/// assertion about unrelated text keeps its gap.
+fn related_candidates_have_log_membership_limit(
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    changed_message: &str,
+) -> bool {
+    let words = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !ch.is_alphanumeric())
+            .filter(|word| word.chars().count() >= 3)
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let changed = words(changed_message);
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                .assertion()
+                .is_some_and(|assertion| {
+                    // Only the checked literal (left of the membership operator)
+                    // may overlap; `assert` and `caplog.text` are scaffolding.
+                    caplog_membership_literals(&assertion.gate_text)
+                        .iter()
+                        .any(|checked| words(checked).iter().any(|word| changed.contains(word)))
+                })
+        })
+}
+
+/// The string literals an assertion checks for membership in `caplog.text`,
+/// read from the parsed expression so spacing, parentheses, line breaks and
+/// implicit literal concatenation do not change what is recognized.
+fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    let expression = gate_text.trim_start();
+    let expression = expression.strip_prefix("assert").unwrap_or(expression);
+    let mut literals = Vec::new();
+    if let Some(value) = parse_expression(expression) {
+        collect_caplog_membership_literals(&value, &mut literals);
+    }
+    literals
+}
+
+fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                collect_caplog_membership_literals(value, out);
+            }
+        }
+        Expr::Compare(compare)
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In)
+                && compare
+                    .comparators
+                    .first()
+                    .and_then(expr_full_name)
+                    .is_some_and(|name| name == "caplog.text") =>
+        {
+            if let Expr::Constant(constant) = compare.left.as_ref()
+                && let ast::Constant::Str(text) = &constant.value
+            {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 fn related_candidates_have_opaque_custom_assertion_limit(
+    owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> bool {
@@ -653,6 +891,14 @@ fn related_candidates_have_opaque_custom_assertion_limit(
             .assertions
             .iter()
             .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            // No assertion was read, but the admission scan found assertion-like
+            // code it cannot resolve and the owner is called inside a `lambda`
+            // handed to another call (`logged(lambda: must_equal(f(3), 9))`):
+            // the callback may well assert, so a gap that asks for an assertion
+            // is not honest. A bare call with no assertion keeps its gap.
+            || (candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == PythonAssertionAdmission::Unresolved
+                && owner_called_inside_lambda(&candidate.test.body_text, owner))
         {
             has_opaque_helper = true;
         }
@@ -662,6 +908,33 @@ fn related_candidates_have_opaque_custom_assertion_limit(
     }
 
     has_opaque_helper && !has_known_strong_oracle
+}
+
+/// Whether a line of the test body calls the owner inside a `lambda` body.
+/// Same-line only: a lambda body spanning lines is not read. A `key=lambda`
+/// sort key is inert, a lambda after an odd number of quotes sits in a string,
+/// and the body ends at the first `;`.
+fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
+    body_text.lines().any(|line| {
+        line.match_indices("lambda").any(|(index, _)| {
+            let before = &line[..index];
+            let rest = &line[index + "lambda".len()..];
+            let quotes = before.chars().filter(|ch| matches!(ch, '"' | '\'')).count();
+            before
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_python_identifier_char(ch))
+                && rest
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_python_identifier_char(ch))
+                && quotes % 2 == 0
+                && !before.trim_end().ends_with("key=")
+                && rest.split_once(':').is_some_and(|(_, body)| {
+                    body_calls_owner(body.split(';').next().unwrap_or(body), owner)
+                })
+        })
+    })
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
@@ -690,6 +963,100 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
         }
         _ => false,
     }
+}
+
+/// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
+///
+/// - A dunder method owner whose related tests all relate only through
+///   `dunder_protocol`: the test builds an instance of the owner class and
+///   Python runs the dunder through operator or `with` syntax, but syntax alone
+///   cannot bind the protocol use to that instance, so the oracle is unread.
+/// - A module-level statement (`<module>` owner: a constant, a decorator
+///   argument, a conditional definition) related only by name proximity while a
+///   test imports the module: importing runs the top-level statements, which
+///   this adapter does not model, so a filename-stem link must not read as a gap.
+///
+/// Both abstain (`static_unknown`) instead of reporting `weakly_exposed`. The
+/// guard needs related tests and no oracle-eligible relation, so a direct call
+/// keeps its ordinary verdict.
+pub(super) fn heuristic_only_relation_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty()
+        || related_candidates
+            .iter()
+            .any(|candidate| candidate.relation.uses_oracle())
+    {
+        return None;
+    }
+    if let Some(class) = dunder_method_class(owner)
+        && related_candidates
+            .iter()
+            .all(|candidate| candidate.relation == PythonRelationKind::DunderProtocol)
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: format!(
+                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax on a constructed instance",
+                owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through operator or `with` syntax; related tests build `{class}` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap.",
+                owner.qualified_name
+            ),
+        });
+    }
+    if owner.qualified_name == "<module>"
+        && related_candidates
+            .iter()
+            .any(|candidate| test_imports_owner_module(candidate.test, owner))
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: "static_limit missing_import_graph: module-level statement run at import time"
+                .to_string(),
+            missing: "Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap.".to_string(),
+        });
+    }
+    None
+}
+
+/// An equality dunder (`__eq__`, `__ne__`) whose operator entries bind to the
+/// owner but whose related tests credit no assertion (#9421).
+///
+/// An equality method's behavior turns on the operand's type as much as its
+/// value: an `isinstance` guard, a `NotImplemented` fallback or an attribute
+/// read on a foreign operand fails (or answers) by raising or by type, which a
+/// weak `==` / `!=` read cannot tell from the edit. Grading that as a gap
+/// would be a wrong actionable signal when the test does catch the edit
+/// (`assert Money(1) != 1` against a removed type guard), so an uncredited
+/// equality owner abstains. A credited assertion keeps its ordinary verdict.
+pub(super) fn unpinned_equality_dunder_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: bool,
+) -> Option<PythonStaticLimit> {
+    if credited
+        || !matches!(owner.name.as_str(), "__eq__" | "__ne__")
+        || !related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == PythonRelationKind::ProtocolEntryCall)
+    {
+        return None;
+    }
+    let class = dunder_method_class(owner)?;
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::DynamicDispatch,
+        evidence: format!(
+            "static_limit dynamic_dispatch: equality dunder `{}` is invoked through an operator and no assertion pins its result",
+            owner.qualified_name
+        ),
+        missing: format!(
+            "Static limit `dynamic_dispatch`: `{}` is an equality dunder Python invokes through `==` / `!=` on `{class}` instances; related tests compare instances, but a weak equality read does not establish whether an operand-type guard or fallback path is exercised, so it does not grade this edit as a gap.",
+            owner.qualified_name
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -727,14 +1094,19 @@ mod tests {
             cli_receiver_names: Vec::new(),
             route_paths: Vec::new(),
             dynamic_route_decorators: Vec::new(),
+            unplain_decorators: Vec::new(),
+            decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
+            star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
             module_callees: Vec::new(),
             class_path: String::new(),
             term_facts: Default::default(),
+            class_facts: Default::default(),
         }
     }
 
@@ -771,6 +1143,178 @@ mod tests {
                 "`{qualified}` with no competing import is the stdlib spelling"
             );
         }
+    }
+
+    fn from_module(module: &str, name: &str, alias: &str) -> PythonImport {
+        PythonImport {
+            imported: name.to_string(),
+            alias: alias.to_string(),
+            source_module: module.to_string(),
+        }
+    }
+
+    fn import_module(module: &str, alias: &str) -> PythonImport {
+        PythonImport {
+            imported: module.to_string(),
+            alias: alias.to_string(),
+            source_module: String::new(),
+        }
+    }
+
+    #[test]
+    fn typing_marker_decorators_do_not_limit() {
+        for (module, name) in [
+            ("typing", "final"),
+            ("typing", "override"),
+            ("typing", "no_type_check"),
+            ("typing_extensions", "final"),
+            ("typing_extensions", "override"),
+        ] {
+            let qualified = format!("{module}.{name}");
+            assert!(!is_transparent_owner_decorator(name));
+            let bare = owner_with(&[name], vec![from_module(module, name, name)]);
+            assert_eq!(decorator_limit(&bare), None, "from {module} import {name}");
+            let aliased = owner_with(&["mark"], vec![from_module(module, name, "mark")]);
+            assert_eq!(decorator_limit(&aliased), None, "aliased {qualified}");
+            let qualified_owner =
+                owner_with(&[qualified.as_str()], vec![import_module(module, module)]);
+            assert_eq!(decorator_limit(&qualified_owner), None, "{qualified}");
+            let module_alias = owner_with(
+                &[format!("t.{name}").as_str()],
+                vec![import_module(module, "t")],
+            );
+            assert_eq!(decorator_limit(&module_alias), None, "t.{name}");
+        }
+    }
+
+    fn parsed_limit(source: &str) -> Result<Option<StaticLimitKind>, String> {
+        let owner = super::super::owners_tests::extract_owners(
+            std::path::Path::new("src/rates.py"),
+            source,
+        )
+        .into_iter()
+        .find(|owner| owner.name == "rate")
+        .ok_or_else(|| "owner `rate` was not extracted".to_string())?;
+        Ok(decorator_limit(&owner))
+    }
+
+    #[test]
+    fn parsed_typing_markers_limit_only_when_called_or_redefined() -> Result<(), String> {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        for plain in [
+            "from typing import final\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            "import typing as t\n\n@t.final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\nclass rate:\n    pass\n",
+            "from typing import (\n    final,\n    override,\n)\n\n@final\ndef rate(n):\n    return n + 1\n",
+        ] {
+            assert_eq!(parsed_limit(plain)?, None, "{plain}");
+        }
+        for wrapped in [
+            // the decorator expression is a call, so its result wraps the owner
+            "from typing import final\n\ndef wrapper(fn):\n    return lambda n: 0\n\n@final(wrapper)\ndef rate(n):\n    return n + 1\n",
+            // the marker name is redefined after the import
+            "from typing import final\n\ndef final(fn):\n    return lambda n: 0\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfinal = make_wrapper()\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // the module receiver is rebound after the import
+            "import typing\n\ntyping = shim\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            // conditional, try/except, tuple-target and star-import rebinds
+            "from typing import final\nimport os\n\nif os.environ.get(\"X\"):\n    def final(fn):\n        return lambda n: 0\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\ntry:\n    from helpers import final\nexcept ImportError:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfinal, other = make()\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\nfrom helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // star imports and rebinds hidden behind other statements
+            "from typing import final\nimport os; from helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\ntry:\n    from helpers import *\nexcept ImportError:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final  # see (legacy\nfinal = wrapper\n# )\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing as t\n\nt = shim\n\n@t.final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final as f\n\nf = wrapper\n\n@f\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfor final in wrappers:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\n@typing.final(wrapper)\ndef rate(n):\n    return n + 1\n",
+            // a walrus rebind inside the marker's own decorator line
+            "from typing import final\n\ndef w(f):\n    return lambda n: 0\n\n@final(final := w)\ndef other(n):\n    return n\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\nshim = None\n\n@typing.final(typing := shim)\ndef other(n):\n    return n\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            // parentheses inside string literals must not balance the call
+            "from typing import final\n\n@final\n@wrap(\"(\")[0] or g(\")\")\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\n@wrap(\"(\") if c else g(\")\")\ndef rate(n):\n    return n + 1\n",
+            // unreadable decorator shapes the head alone does not reveal
+            "from typing import final\n\n@final\n@wrap(x)[0]\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\n@wrap(x) if c else y\ndef rate(n):\n    return n + 1\n",
+            // a rebind on the line that closes a typing import block
+            "from typing import (\n    final,\n); final = wrapper\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // a star import split by a backslash continuation
+            "from typing import final\nfrom helpers import \\\n    *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\nif c: from helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // class-scope rebind of the marker
+            "from typing import override\n\nclass A(B):\n    def override(fn):\n        return lambda *a: 0\n\n    @override\n    def rate(self, n):\n        return n + 1\n",
+            // an unreadable decorator stacked with the marker
+            "from typing import final\n\n@final\n@registry[\"x\"]\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\n@(lambda f: wrapper)\ndef rate(n):\n    return n + 1\n",
+        ] {
+            assert_eq!(parsed_limit(wrapped)?, limited, "{wrapped}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typing_marker_rebound_or_local_stays_limited() {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        // local same-name decorator with no typing import
+        for name in ["final", "override", "no_type_check"] {
+            assert_eq!(decorator_limit(&owner_with(&[name], Vec::new())), limited);
+        }
+        // bare name also bound from another module
+        let competing = owner_with(
+            &["final"],
+            vec![
+                from_module("typing", "final", "final"),
+                from_module("helpers", "final", "final"),
+            ],
+        );
+        assert_eq!(decorator_limit(&competing), limited);
+        // bare name only from another module
+        let other = owner_with(
+            &["override"],
+            vec![from_module("helpers", "override", "override")],
+        );
+        assert_eq!(decorator_limit(&other), limited);
+        // receiver rebound to a non-typing module
+        let rebound = owner_with(&["typing.final"], vec![import_module("wrappers", "typing")]);
+        assert_eq!(decorator_limit(&rebound), limited);
+        let from_rebound = owner_with(
+            &["typing.final"],
+            vec![from_module("helpers", "typing", "typing")],
+        );
+        assert_eq!(decorator_limit(&from_rebound), limited);
+        // alias bound to a non-typing module
+        let alias = owner_with(&["t.final"], vec![import_module("wrappers", "t")]);
+        assert_eq!(decorator_limit(&alias), limited);
+        // typing_extensions has no no_type_check marker we trust
+        let ext = owner_with(
+            &["typing_extensions.no_type_check"],
+            vec![import_module("typing_extensions", "typing_extensions")],
+        );
+        assert_eq!(decorator_limit(&ext), limited);
+    }
+
+    #[test]
+    fn typing_overload_and_call_reshaping_decorators_stay_limited() {
+        let limited = Some(StaticLimitKind::DecoratorIndirection);
+        for (module, name) in [
+            ("typing", "overload"),
+            ("abc", "abstractmethod"),
+            ("contextlib", "contextmanager"),
+            ("typing", "final_not_real"),
+        ] {
+            let owner = owner_with(&[name], vec![from_module(module, name, name)]);
+            assert_eq!(decorator_limit(&owner), limited, "{module}.{name}");
+        }
+        // a typing marker stacked with an unresolved decorator stays limited
+        let mixed = owner_with(
+            &["final", "retry"],
+            vec![from_module("typing", "final", "final")],
+        );
+        assert_eq!(decorator_limit(&mixed), limited);
     }
 
     #[test]
