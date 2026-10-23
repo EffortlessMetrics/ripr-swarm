@@ -411,6 +411,17 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "Status selects no next command",
         "status terminates after pilot",
     )?;
+    // #9103: the pilot/status route does not cycle. Status names the route back
+    // to `ripr check` (which printed the gap-bound start above) and offers no
+    // `ripr pilot` command, so pilot -> status -> pilot cannot recur.
+    need(
+        &status,
+        "pilot_routed_to_check_no_repair_target",
+        "status names why it selects no command",
+    )?;
+    if status.contains("ripr pilot --root") && !status.contains("ripr check --root") {
+        return Err(format!("status cycled back to pilot:\n{status}"));
+    }
     decoy_untouched(&decoy)?;
 
     // An unknown gap id is refused and leaves no attempt or gap artifact.
