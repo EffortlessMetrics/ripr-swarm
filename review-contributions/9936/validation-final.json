@@ -1,0 +1,97 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "issue": 9936,
+  "canonical_pr": 9983,
+  "canonical_branch": "claude/fix-9936-ts-masker",
+  "contribution_source": "017df5f102194b398c9f9879df8becda9efdc45b",
+  "tree": "33e261a44efd26285496627dffdde12cc8b6e5a9",
+  "parents": [
+    "653b860a669df2bc1b0b763a442be69ea511382a",
+    "f63a722a243bcd9574288ccf28ba1ec63f41d549"
+  ],
+  "basis": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+  "source_status": "",
+  "product": {
+    "command": "cargo test --locked --offline -p ripr --lib typescript",
+    "passed": 1729,
+    "failed": 0,
+    "ignored": 0,
+    "exit": 0,
+    "frozen_sha256": "e2ad39202f0f78ea07c5ecdade473b8cabb00e9422d0bda271fc497188e1a03e",
+    "frozen_filter": "review_9936",
+    "frozen_filter_passed": 19
+  },
+  "check_fast": {
+    "command": "cargo xtask check-fast",
+    "exit": 0,
+    "selector": "stable origin/main; 11 changed files",
+    "ran": [
+      "fmt --check",
+      "check-static-language",
+      "check-command-catalog",
+      "check-no-panic-family",
+      "check-allow-attributes",
+      "check-file-policy",
+      "clippy --workspace --all-targets -- -D warnings",
+      "check-generated",
+      "check-generated-clean",
+      "check-lint-policy"
+    ],
+    "skipped": [
+      "check-support-tiers (not applicable)",
+      "cli-help-parity",
+      "check-fixture-contracts"
+    ]
+  },
+  "precommit": {
+    "command": "cargo xtask precommit",
+    "exit": 0,
+    "status": "pass",
+    "head": "017df5f102194b398c9f9879df8becda9efdc45b",
+    "base": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+    "report_digest": "sha256:9a2a16f3a8b0c72adfa656f8360197050d9bccf2936b66a004fedf5c72b5b496",
+    "goldens": "skipped: no output-surface or golden file changed vs origin/main"
+  },
+  "native": {
+    "typescript": "5.9.3",
+    "cases": 98,
+    "syntax_exit": 0,
+    "runtime_exit": 0,
+    "helper_basis": "abcadfd89d7db4de544e05b784dc1037e3dad1ff; integrated source acceptance independently bound unchanged masker bytes"
+  },
+  "independent": {
+    "integrated_controls": 41,
+    "division_compatibility_controls": 8,
+    "disposition": "source accepted for exact 017df5f1; canonical/hosted merge clearance not claimed"
+  },
+  "toolchain": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "source_build_record": "RIPR_BUILD_COMMIT=017df5f102194b398c9f9879df8becda9efdc45b; RIPR_BUILD_COMMIT_DIRTY=false",
+  "source_only_prior_product": {
+    "head": "abcadfd89d7db4de544e05b784dc1037e3dad1ff",
+    "passed": 1691,
+    "exit": 0,
+    "frozen_sha256": "ec6155f828fe8bf29dca9fc7199e43ad2034e2cb653ee8ba255338c27526cd74"
+  },
+  "bundle_sha256": "69293b09030fb671388d232a574801a9f2ad352cc41208989717c5ab303a1f12",
+  "patch_sha256": "12d888ec331164117ca995a5d57f46c50aa721bdccb7c0c669081dbf65f266f0",
+  "delivery": "portable bundle/patch read back from review contribution branch; exact bundle commit imported and exact patch tree verified",
+  "pending": [
+    "canonical owner adoption into #9983",
+    "adopted current-head review/body and GitHub merge-subject verification",
+    "required Ripr Rust Small Result",
+    "normal expected-head squash and main ancestry verification"
+  ],
+  "limitations": [
+    "context-free ambiguous snippets retain existing lexical fallback",
+    "source-only old proof not relabelled as integrated result"
+  ],
+  "denied_preserved": [
+    "classic review-protection GET:403 Resource not accessible by integration; not retried",
+    "combined deletion of review worktree and independent evidence rejected by automatic approval review; not executed or retried"
+  ],
+  "driver": {
+    "session": 28145,
+    "terminal_exit": 0,
+    "script": "/workspace/9936-repair/validate-integration.sh"
+  }
+}

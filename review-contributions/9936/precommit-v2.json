@@ -1,0 +1,213 @@
+{
+  "schema_version": "0.2",
+  "composition": "local_precommit",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "017df5f102194b398c9f9879df8becda9efdc45b",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/9936-masker-context.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "crates/ripr/src/analysis/language/typescript/literal_mask.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "Cargo.lock",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/admission.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/classifier.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [],
+    "workspace_clippy": true,
+    "workspace_widening_reason": "workspace-wide Rust control surface changed: Cargo.lock",
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "git diff --check f63a722a243bcd9574288ccf28ba1ec63f41d549...HEAD",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check",
+          "f63a722a243bcd9574288ccf28ba1ec63f41d549...HEAD"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--cached",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml --workspace --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "cargo",
+        "argv": [
+          "clippy",
+          "--manifest-path",
+          "$REPO/Cargo.toml",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 701,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    }
+  ],
+  "skipped": [],
+  "limitations": [],
+  "report_digest": "sha256:9a2a16f3a8b0c72adfa656f8360197050d9bccf2936b66a004fedf5c72b5b496"
+}

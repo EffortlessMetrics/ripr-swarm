@@ -45,8 +45,15 @@ Observed validation:
 - Independent integrated-source review: 41 normal/typed + 8 division compatibility
   controls passed; an explicit negative control preserves independence of the masks.
 - Bundle verify and exact patch-application tree comparison passed.
-- Integrated product tests/check-fast/precommit are currently running separately.
-  The source-only result is not proof for the changed integration tree.
+- Exact integrated 017df5f1: 1729 TypeScript product tests passed, 0 failed,
+  0 ignored, native exit 0. Frozen executable hash is recorded in validation-final.json.
+- check-fast passed all 10 applicable gates; stable origin/main selector matched
+  all 11 changed paths. Workspace Clippy passed with warnings denied.
+- precommit passed on exact 017df5f1 and basis f63a722a. Goldens were explicitly
+  skipped by its selector because no output-surface or golden file changed.
+- Relocated frozen integration executable passed all 19 review_9936 tests.
+- See validation-final.json and retained check-fast/precommit reports for scope.
+  The earlier source-only result remains separate from this integration result.
 
 Retained independent receipts:
 - source receipt SHA-256: 7898d1a0a41d8e19302d2a8c08432f5f361c5250f8caccc1405e7d96a6b45980
