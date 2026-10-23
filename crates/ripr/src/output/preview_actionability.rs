@@ -654,6 +654,7 @@ mod tests {
 
     fn sample_typescript_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
