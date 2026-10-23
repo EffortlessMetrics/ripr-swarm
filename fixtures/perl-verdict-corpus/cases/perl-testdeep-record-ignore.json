@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testdeep-record-ignore",
+  "subject_id": "authored-perl-testdeep-inventory",
+  "diff": "cases/perl-testdeep-record-ignore.diff",
+  "anchor": {
+    "file": "lib/Inventory.pm",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_construction",
+  "test_shape": "testdeep_ignore_field",
+  "hard_case": "ignore() blanks one field of an exact hash comparison; the other field stays pinned.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "{ name => lc($name), id => $id + 1 }",
+        "mutated_line": "return { name => lc($name), id => $id + 1 };",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the id is off by one"
+      },
+      {
+        "replacement": "{ name => uc($name), id => $id }",
+        "mutated_line": "return { name => uc($name), id => $id };",
+        "outcome": "tests_failed",
+        "failing_test": "t/inventory.t: record name is lower-cased",
+        "equivalence_review": "not equivalent: the name is upper-cased"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "cmp_deeply(make_record(41,'WIDGET'), {id => ignore(), name => 'widget'}) pins name and ignores id. Spec cells: RIPR-SPEC-0064 oracle strength (ignore).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testdeep-record-ignore.json",
+    "sha256": "274c6a167badcff3727019e7f885bfd66f25001957c7c0dfdbda53929c689aac",
+    "provenance": "producer"
+  }
+}

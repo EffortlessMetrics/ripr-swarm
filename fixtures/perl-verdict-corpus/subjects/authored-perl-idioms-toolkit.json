@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-idioms-toolkit",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Toolkit.pm",
+      "sha256": "f76383e9a500a7145632bfa02ba26ff50b05bb11c4ece185c18c0443ed6df3fc"
+    },
+    {
+      "path": "t/toolkit.t",
+      "sha256": "3087030217ef46eae318a06aab5b939a72f1e6fba8530a843dce857f517449b6"
+    }
+  ]
+}

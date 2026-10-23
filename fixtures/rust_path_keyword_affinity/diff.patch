@@ -2,9 +2,24 @@ diff --git a/src/lib.rs b/src/lib.rs
 index 0000000..1111111 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,4 +1,4 @@
+@@ -1,16 +1,16 @@
 -pub(crate) use std::collections::BTreeMap;
 +pub(crate) use std::collections::BTreeSet;
  
- pub fn unrelated() -> u32 {
-     7
+ pub union ChangedItem {
+-    pub changed_slot: u32,
++    pub changed_slot: u64,
+ }
+ 
+ macro_rules! changed_item {
+     () => {
+-        2
++        3
+     };
+ }
+ 
+-pub const SEED_BASE: u32 = 0;
++pub const SEED_BASE: u32 = 1;
+ 
+ pub const PICKED: u32 = SEED_BASE;
+ 
