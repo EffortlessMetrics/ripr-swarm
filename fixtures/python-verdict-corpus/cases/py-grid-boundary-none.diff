@@ -1,0 +1,9 @@
+diff --git a/grid_boundary/core.py b/grid_boundary/core.py
+--- a/grid_boundary/core.py
++++ b/grid_boundary/core.py
+@@ -18,4 +18,4 @@
+ 
+ 
+ def overweight(grams):
+-    return grams >= 2000
++    return 2000 <= grams

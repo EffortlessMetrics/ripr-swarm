@@ -1049,8 +1049,8 @@ fn calibrate_help_names_how_to_produce_the_imported_artifacts() -> Result<(), St
         "cargo mutants",
         "mutants.out",
         "27.1.0",
-        "RIPR-SPEC-0006",
-        "fixtures/boundary_gap/calibration/runtime-mutants.json",
+        "calibration fixtures",
+        "runtime-mutants.json",
     ] {
         assert_contains(
             "calibrate help (`ripr calibrate cargo-mutants --help`)",

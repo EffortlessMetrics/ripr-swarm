@@ -189,7 +189,10 @@ fn init_followups_replay_the_selected_root_from_foreign_cwd() -> TestResult {
             let implicit = !args.contains(&"--root");
             for command in commands {
                 assert_eq!(command.contains("--root"), !implicit, "{command}");
-                assert!(!command.trim_end_matches('\'').ends_with("/."), "{command}");
+                assert!(
+                    !command.trim_end_matches(['\'', '"']).ends_with("/."),
+                    "{command}"
+                );
                 let replay =
                     replay_printed_ripr(command, if implicit { &selected } else { &decoy })?;
                 assert!(replay.status.success(), "{command}: {replay:?}");

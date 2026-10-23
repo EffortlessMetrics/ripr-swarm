@@ -1,0 +1,29 @@
+pub struct Lcg(pub u64);
+
+impl Lcg {
+    pub fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+}
+
+pub fn clamp_to_budget(x: u64) -> u64 {
+    if x > 500 { 500 } else { x }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seeded_values_stay_in_budget() {
+        let mut rng = Lcg(42);
+        for _ in 0..200 {
+            let v = clamp_to_budget(rng.next() % 1000);
+            assert!(v <= 500);
+        }
+    }
+}

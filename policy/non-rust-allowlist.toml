@@ -833,6 +833,15 @@ reason = "Stdlib Python decision logic extracted from the pre-allocation admissi
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
 
 [[allow]]
+glob = "policy/release-ledger-overrides.json"
+kind = "release_ledger_overrides"
+owner = "release/control"
+surface = "release"
+classification = "config"
+reason = "Reviewed per-commit disposition overrides for the rows disposition rule v1 cannot judge (two-parent first-parent merges, empty diffs, unclassified paths); read by `cargo xtask release-ledger derive` (#2768)."
+covered_by = ["cargo test -p xtask release_ledger", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "policy/release-hard-cut-admission.json"
 kind = "release_hard_cut_packet"
 owner = "release/control"
@@ -964,7 +973,11 @@ owner = "ci"
 surface = "ci"
 classification = "tooling"
 reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
-covered_by = ["cargo test -p xtask --test contabo_result_policy"]
+# The result-policy test target is cfg(target_os = "linux"); on Windows it
+# enumerates zero tests, which the covered-by check rejects, so the shared
+# product proof covers every host and the policy test covers Unix.
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+covered_by_unix = ["cargo test -p xtask --test contabo_result_policy"]
 
 [[allow]]
 glob = ".ci/contabo-product-contract.json"
