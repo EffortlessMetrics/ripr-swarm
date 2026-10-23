@@ -408,6 +408,67 @@ fn given_mixed_case_raw_f_prefixes_then_fields_are_code_and_text_is_hidden() {
     }
 }
 
+fn direct_call_finding(tests_source: &str) -> Result<Finding, String> {
+    let source = "def helper(x):\n    return x + 1\n";
+    let owners = extract_owners(Path::new("src/version.py"), source);
+    let tests = extract_tests(Path::new("tests/test_version.py"), tests_source);
+    classify_change(
+        Path::new("src/version.py"),
+        2,
+        "    return x + 1",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding for the changed helper line".to_string())
+}
+
+fn call_credit(finding: &Finding) -> bool {
+    finding.class == ExposureClass::Exposed
+        || finding
+            .related_tests
+            .iter()
+            .any(|row| row.oracle.is_some() || row.oracle_strength != OracleStrength::Unknown)
+        || finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("syntactic_call"))
+}
+
+#[test]
+fn given_literal_spec_or_nested_literal_text_then_the_classifier_credits_no_call()
+-> Result<(), String> {
+    for body in [
+        "    assert f\"\"\"value:\n{Fmt():\n    helper(0)\n}\n\"\"\" == 'v'\n",
+        "    assert f\"\"\"value:\n{1:\n    helper(0)\n}\n\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{\n    '''\n    helper(0)\n    '''\n}\"\"\" == 'v'\n",
+        "    assert f'''v\n{\n    \"\"\"\n    helper(0)\n    \"\"\"\n}''' == 'v'\n",
+        "    assert f\"\"\"v\n{ len('''\n  { helper(0) }\n  }''') }\"\"\" == 'v'\n",
+    ] {
+        let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
+        let finding = direct_call_finding(&tests)?;
+        assert!(!call_credit(&finding), "{body:?}: {finding:?}");
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{body:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_real_field_calls_then_the_classifier_credits_a_syntactic_call() -> Result<(), String> {
+    for body in [
+        "    assert f\"\"\"v\n{\n    helper(0)\n}\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{x:{\n    helper(0)\n}}\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{ {1: helper(0)}[1] }\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{ data[\n    1:helper(0)] }\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{ (lambda:\n    helper(0))() }\"\"\" == 'v'\n",
+        "    assert f\"\"\"v\n{ \"}\"\n    + str(helper(0)) }\"\"\" == 'v'\n",
+    ] {
+        let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
+        let finding = direct_call_finding(&tests)?;
+        assert!(call_credit(&finding), "{body:?}: {finding:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn given_a_backslash_continued_string_containing_triple_quotes_then_later_calls_are_kept() {
     for body in [
