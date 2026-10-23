@@ -172,8 +172,11 @@ Options:
                    second --write for the same seam reports the stub already
                    written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.2`) with the placement, test name, exact text, the
-                   `todo!()` fill-ins, derived inputs, run command, and
+                   `0.3`) with the placement, test name, exact text, the
+                   `todo!()` fill-ins, derived inputs, run command, the
+                   `next_repair` block (the `ripr repair` start this stub
+                   feeds, the repair packet's `allowed_edit_surface`, and
+                   whether the stub placement agrees with it), and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
                    ready` (exit 0) and discloses the real reason in
@@ -184,6 +187,9 @@ The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
 labelled `todo!()` for the value the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
+A stub for a classified seam ends with the `ripr repair` start it feeds and
+the repair packet's allowed edit surface; a placement outside that surface is
+reported as a warning now rather than at the repair start.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a

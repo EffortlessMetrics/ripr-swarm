@@ -316,6 +316,11 @@ enable (a gate on the parent's `mod` declaration is not yet seen, #5616), or in 
 local to a function body or `const` block, is refused as `owner_unsupported`.
 The expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.
+For a classified seam, the output ends with the `ripr repair` start the stub feeds
+(`next_repair` in JSON, #8727) and the repair packet's `allowed_edit_surface`; a stub
+placement outside that surface is reported as a warning at generation time, not
+later at the repair start's dirty-premise gate. A stub written into a tracked
+production file must be committed before the repair starts.
 Its `run_command` runs only that test through the owning package's
 `--manifest-path` and, for an integration file, the effective cargo target
 name (an explicit `[[test]]` name wins over the file stem). It is `null` when
@@ -330,7 +335,7 @@ list contains only seams of that family, filtered before the five-entry limit.
 A file with only other families offers no nearest entries. An empty list is
 rendered as `nearest: none`; a suffix selector searches reported gaps, so an
 empty list does not establish that the file has no seam of that family. These
-not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.2
+not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.3
 `rust_test_stub` refused envelope and stderr carries the prose; without it,
 stdout stays empty.
 

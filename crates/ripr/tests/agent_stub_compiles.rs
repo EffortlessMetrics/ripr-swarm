@@ -336,7 +336,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
                 let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
-                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["schema_version"], "0.3");
                 assert_eq!(envelope["state"], "refused");
                 assert!(
                     stdout.contains(&format!("\"kind\": \"{kind}\"")),
@@ -353,7 +353,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-                assert_eq!(ready["schema_version"], "0.2");
+                assert_eq!(ready["schema_version"], "0.3");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -1005,7 +1005,7 @@ fn split_refusal_envelope<'a>(
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
-    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["schema_version"], "0.3");
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], kind);
@@ -1085,7 +1085,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
-        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["schema_version"], "0.3");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
         for field in ["owner", "grip_class", "classification"] {
@@ -1182,7 +1182,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             );
             let ready: serde_json::Value =
                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
-            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["schema_version"], "0.3");
             assert_eq!(ready["state"], "ready");
             assert_eq!(
                 ready["owner"],
@@ -1245,7 +1245,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
         );
         let ready: serde_json::Value =
             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
-        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["schema_version"], "0.3");
         assert_eq!(ready["state"], "ready");
         assert_eq!(ready["seam_id"], id);
         assert_eq!(ready["written"], false);
@@ -1272,7 +1272,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     );
     let ready: serde_json::Value =
         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["schema_version"], "0.3");
     assert_eq!(ready["state"], "ready");
     assert_eq!(ready["owner"], "src/lib.rs::fallible");
     scratch.cleanup()
@@ -2709,6 +2709,141 @@ fn cargo_from_run_command(run: &str, root: &Path) -> Result<Command, String> {
         .env("CARGO_NET_OFFLINE", "true")
         .env("CARGO_TERM_COLOR", "never");
     Ok(command)
+}
+
+/// #8727: a ready stub points into the repair journey it feeds. The start
+/// command and allowed edit surface come from the shared repair owners, and
+/// the stub's file is compared with that surface.
+#[test]
+fn stub_json_points_into_the_repair_journey_it_feeds() -> Result<(), String> {
+    let scratch = existing_target_scratch(
+        "",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let json = run_bounded(
+        {
+            let mut command = ripr_stub(&root, "src/lib.rs:2");
+            command.arg("--json");
+            command
+        },
+        &root,
+        "stub-json",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&json.stdout).to_string();
+    assert!(json.status.success(), "stub: {stdout}");
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(document["schema_version"], "0.3", "{stdout}");
+    let seam_id = document["seam_id"]
+        .as_str()
+        .ok_or_else(|| format!("seam_id: {stdout}"))?;
+    let next = &document["next_repair"];
+    assert_eq!(next["state"], "available", "{stdout}");
+    let start = next["start_command"]
+        .as_str()
+        .ok_or_else(|| format!("start_command: {stdout}"))?;
+    assert!(
+        start.starts_with(&format!("ripr repair {seam_id} --root ")),
+        "{start}"
+    );
+    // The surface is the packet's, and the stub's file is in it.
+    assert_eq!(
+        next["allowed_edit_surface"],
+        serde_json::json!(["tests/discount.rs"])
+    );
+    assert_eq!(
+        document["placement"]["file"], "tests/discount.rs",
+        "{stdout}"
+    );
+    assert_eq!(next["placement_agreement"], "agrees", "{stdout}");
+    assert!(next["withheld_reason"].is_null(), "{stdout}");
+    assert!(next["commit_before_start"].is_null(), "{stdout}");
+    assert_eq!(document["warnings"], serde_json::json!([]), "{stdout}");
+
+    let human = run_bounded(
+        ripr_stub(&root, "src/lib.rs:2"),
+        &root,
+        "stub-human",
+        Duration::from_mins(2),
+    )?;
+    let text = String::from_utf8_lossy(&human.stdout).to_string();
+    assert!(human.status.success(), "stub: {text}");
+    assert!(
+        text.contains(&format!("Next, after the test is filled in: {start}")),
+        "{text}"
+    );
+    assert!(
+        text.contains("allowed_edit_surface (tests/discount.rs) matches this stub's file"),
+        "{text}"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
+/// #8727: when the repair gate offers no start (here the related test is an
+/// inline module in another production file, which is no editable repair
+/// target), the stub says so and offers no `ripr repair` command, rather than
+/// printing a start that would refuse.
+#[test]
+fn stub_with_no_editable_repair_target_withholds_the_repair_start() -> Result<(), String> {
+    const LIB: &str = "mod checks;\n\npub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+    const CHECKS: &str = "#[cfg(test)]\nmod tests {\n    use crate::discount;\n\n    #[test]\n    fn small() {\n        assert!(discount(5, 2) == 0);\n    }\n}\n";
+    let scratch = existing_target_scratch("", "src/lib.rs", LIB, "src/checks.rs", CHECKS)?;
+    let root = scratch.directory.clone();
+    let json = run_bounded(
+        {
+            let mut command = ripr_stub(&root, "src/lib.rs:4");
+            command.arg("--json");
+            command
+        },
+        &root,
+        "stub-json",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&json.stdout).to_string();
+    assert!(json.status.success(), "stub: {stdout}");
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    let next = &document["next_repair"];
+    assert_eq!(next["state"], "withheld", "{stdout}");
+    assert!(next["start_command"].is_null(), "{stdout}");
+    assert!(
+        next["withheld_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("no test file ripr may edit")),
+        "{stdout}"
+    );
+    assert_eq!(
+        next["allowed_edit_surface"],
+        serde_json::json!([]),
+        "{stdout}"
+    );
+    assert_eq!(next["placement_agreement"], "not_established", "{stdout}");
+
+    let human = run_bounded(
+        ripr_stub(&root, "src/lib.rs:4"),
+        &root,
+        "stub-human",
+        Duration::from_mins(2),
+    )?;
+    let text = String::from_utf8_lossy(&human.stdout).to_string();
+    assert!(
+        text.contains(
+            "Repair: no repair start is offered for this seam: no test file ripr may edit"
+        ),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Next, after the test is filled in"),
+        "{text}"
+    );
+    scratch.cleanup()?;
+    Ok(())
 }
 
 fn ripr_stub(root: &Path, at: &str) -> Command {

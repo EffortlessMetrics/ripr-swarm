@@ -2340,11 +2340,9 @@ fn push_packet_json(
     // `recommended` binding here: the packet cannot promise a different edit
     // surface than the attempt later enforces terminally.
     let actionable = task_for(entry) == TASK_WRITE_TARGETED_TEST;
-    let allowed_edit_surface: Vec<&str> = if actionable && recommended.file != "not_applicable" {
-        vec![recommended.file.as_str()]
-    } else {
-        Vec::new()
-    };
+    let allowed_surface_owned = seam_packet_allowed_edit_surface(entry);
+    let allowed_edit_surface: Vec<&str> =
+        allowed_surface_owned.iter().map(String::as_str).collect();
     out.push_str("      \"allowed_edit_surface\": [");
     for (idx, path) in allowed_edit_surface.iter().enumerate() {
         if idx > 0 {
@@ -2866,6 +2864,20 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         symbol_id: Some(selected_target.symbol_id().0.clone()),
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
+    }
+}
+
+/// The seam packet's `allowed_edit_surface`: the recommended test file when the
+/// packet's task is to write a targeted test, empty for an inspection-only
+/// packet. The one derivation the packet renderer and every pre-repair
+/// consumer (`ripr agent stub`'s repair pointer) read, so a stub placement is
+/// compared against the same surface the edit cage later enforces.
+pub(crate) fn seam_packet_allowed_edit_surface(entry: &ClassifiedSeam) -> Vec<String> {
+    let recommended = recommended_test_for(entry);
+    if task_for(entry) == TASK_WRITE_TARGETED_TEST && recommended.file != "not_applicable" {
+        vec![recommended.file]
+    } else {
+        Vec::new()
     }
 }
 

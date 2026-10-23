@@ -179,7 +179,7 @@ reached the caller.
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr; under `--json` a
-  `rust_test_stub` schema `0.2` `state: refused` envelope is the stdout
+  `rust_test_stub` schema `0.3` `state: refused` envelope is the stdout
   document, and without it stdout stays empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam

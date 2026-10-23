@@ -372,7 +372,7 @@ family has no seam in the file.
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
-`0.2` refused envelope on stdout, human guidance on stderr, and no stub
+`0.3` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
@@ -386,6 +386,19 @@ an entry, edition-2015 packages whose explicit entries disable discovery,
 `tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
 `required-features`, which is omitted conservatively without default-feature
 resolution) the command is `null` and the human output says so.
+
+A ready stub points into the repair journey it feeds (#8727). The human output
+ends with the `ripr repair` start the shared repair-start gate admits, or the
+gate's own refusal reason, and names the seam packet's `allowed_edit_surface`.
+The JSON document (schema `0.3`) carries the same facts in `next_repair`. The
+start admission and the allowed surface are read from the shared owners
+(`task_first::repair_start_refusal_for_entry`,
+`agent_seam_packets::seam_packet_allowed_edit_surface`), not re-derived. When the
+stub file is outside a non-empty allowed surface the divergence is reported as a
+warning at generation time (`placement_agreement: diverges`); a stub written
+into a tracked production file reports that it must be committed before the
+repair starts. A selection that did not classify the seam reports
+`not_established`. Static reading only; no runtime outcome is claimed.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -716,6 +729,10 @@ not a head-only row and prints no note.
 - `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
+- `crates/ripr/tests/agent_stub_compiles.rs::stub_json_points_into_the_repair_journey_it_feeds`
+- `crates/ripr/tests/agent_stub_compiles.rs::stub_with_no_editable_repair_target_withholds_the_repair_start`
+- `crates/ripr/src/app/test_stub.rs::tests::placement_agreement_compares_the_stub_file_with_the_packet_surface`
+- `crates/ripr/src/cli/commands/agent_stub.rs::tests::repair_lines_name_the_start_the_surface_and_the_commit_step`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

@@ -705,7 +705,7 @@ pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file
 /// The gate applied to one classified seam: [`repair_refusal_reason`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
-fn repair_start_refusal_for_entry(
+pub(crate) fn repair_start_refusal_for_entry(
     root: &Path,
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,

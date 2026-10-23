@@ -95,6 +95,10 @@ pub(crate) struct TestStubResolution {
     /// The line of the seam this resolution stubs. It differs from a
     /// requested `--at` line when the nearest gap was substituted.
     pub(crate) seam_line: usize,
+    /// The repair journey this stub feeds, from the shared repair owners.
+    /// `None` when the seam was not classified (a single-file `--at --kind`
+    /// parse) or the stub was refused: no placement exists to compare.
+    pub(crate) repair: Option<StubRepairRoute>,
 }
 
 #[derive(Debug)]
@@ -123,7 +127,7 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, entry, source))
+            Ok(resolution_for(root, config, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -183,7 +187,7 @@ fn resolve_at_location(
             let seams = analysis::scoped_file_seams(root, config, &relative, seam_index)
                 .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
-            resolve_at(root, candidates, file, line, kind)
+            resolve_at(root, config, candidates, file, line, kind)
         }
         (Some(relative), None) => {
             let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
@@ -195,6 +199,7 @@ fn resolve_at_location(
             .map_err(TestStubError::Operational)?;
             resolve_at(
                 root,
+                config,
                 classified_candidates(&scoped.classified),
                 file,
                 line,
@@ -204,7 +209,14 @@ fn resolve_at_location(
         (None, _) => {
             let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
                 .map_err(TestStubError::Operational)?;
-            resolve_at(root, classified_candidates(&classified), file, line, kind)
+            resolve_at(
+                root,
+                config,
+                classified_candidates(&classified),
+                file,
+                line,
+                kind,
+            )
         }
     }
 }
@@ -225,7 +237,7 @@ impl<'a> AtCandidate<'a> {
         }
     }
 
-    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
+    fn resolution(self, root: &Path, config: &RiprConfig, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
                 let outcome = rust_test_stub(seam, None, &source);
@@ -237,9 +249,12 @@ impl<'a> AtCandidate<'a> {
                     grip_class: None,
                     at_note: None,
                     seam_line: seam.display_line(),
+                    // A single-file parse is not classified, so it has no
+                    // repair route to compare the placement against.
+                    repair: None,
                 }
             }
-            Self::Classified(entry) => resolution_for(root, entry, source),
+            Self::Classified(entry) => resolution_for(root, config, entry, source),
         }
     }
 }
@@ -708,6 +723,7 @@ fn finding_text_is_on_disk(root: &Path, file: &str, line: usize, expression: &st
 /// first candidate's refusal names why.
 fn resolve_at(
     root: &Path,
+    config: &RiprConfig,
     candidates: Vec<AtCandidate<'_>>,
     file: &str,
     line: usize,
@@ -812,7 +828,7 @@ fn resolve_at(
     let mut first_refusal = None;
     for candidate in candidates {
         let seam_line = candidate.seam().display_line();
-        let mut resolution = candidate.resolution(root, source.clone());
+        let mut resolution = candidate.resolution(root, config, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
@@ -872,8 +888,17 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
     })
 }
 
-fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
+fn resolution_for(
+    root: &Path,
+    config: &RiprConfig,
+    entry: &ClassifiedSeam,
+    source: String,
+) -> TestStubResolution {
     let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
+    let repair = outcome
+        .as_ref()
+        .ok()
+        .map(|stub| stub_repair_route(root, config, entry, stub));
     TestStubResolution {
         seam_id: entry.seam.id().as_str().to_string(),
         owner: entry.seam.owner().to_string(),
@@ -882,6 +907,118 @@ fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestSt
         grip_class: Some(entry.class),
         at_note: None,
         seam_line: entry.seam.display_line(),
+        repair,
+    }
+}
+
+/// Whether the repair journey the stub feeds admits a start for the seam.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StubRepairAdmission {
+    /// The shared repair-start gate admits the seam; `start_command` is the
+    /// task-first `ripr repair` start the `ripr repair` producer offers.
+    Available { start_command: String },
+    /// The same gate refuses a start; `reason` is its own label.
+    Withheld { reason: String },
+}
+
+/// Whether the stub's chosen placement lies inside the seam packet's
+/// `allowed_edit_surface`, the only files the repair attempt's edit cage lets
+/// change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StubPlacementAgreement {
+    /// The stub file is the packet's allowed edit surface.
+    Agrees,
+    /// The stub file is outside a non-empty allowed edit surface: a repair
+    /// attempt would refuse that edit.
+    Diverges,
+    /// The packet names no allowed edit surface (an inspection-only seam), so
+    /// there is nothing to compare against.
+    NotEstablished,
+}
+
+impl StubPlacementAgreement {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Agrees => "agrees",
+            Self::Diverges => "diverges",
+            Self::NotEstablished => "not_established",
+        }
+    }
+}
+
+/// The repair journey a stub feeds, projected from the shared owners:
+/// `task_first::repair_start_refusal_for_entry` (admission),
+/// `agent_seam_packets::seam_packet_allowed_edit_surface` (the packet's edit
+/// surface) and the stub's own placement. No second derivation of either.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StubRepairRoute {
+    pub(crate) admission: StubRepairAdmission,
+    pub(crate) allowed_edit_surface: Vec<String>,
+    pub(crate) placement: StubPlacementAgreement,
+    /// The stub file when it is a tracked production file the before phase
+    /// treats as an inline test target: a repair starts only from the
+    /// committed file, so a written stub there must be committed first.
+    pub(crate) commit_before_start: Option<String>,
+}
+
+pub(crate) fn placement_agreement(
+    stub_file: &str,
+    allowed_edit_surface: &[String],
+) -> StubPlacementAgreement {
+    if allowed_edit_surface.is_empty() {
+        StubPlacementAgreement::NotEstablished
+    } else if allowed_edit_surface
+        .iter()
+        .any(|allowed| allowed == stub_file)
+    {
+        StubPlacementAgreement::Agrees
+    } else {
+        StubPlacementAgreement::Diverges
+    }
+}
+
+fn stub_repair_route(
+    root: &Path,
+    config: &RiprConfig,
+    entry: &ClassifiedSeam,
+    stub: &RustTestStub,
+) -> StubRepairRoute {
+    use crate::agent::command_specs::repair_start_command_spec;
+    use crate::agent::loop_commands::bound_root;
+    use crate::app::agent_brief::AgentBriefPolicy;
+    use crate::app::task_first::repair_start_refusal_for_entry;
+    use crate::output::agent_seam_packets::seam_packet_allowed_edit_surface;
+
+    let admission =
+        match repair_start_refusal_for_entry(root, entry, AgentBriefPolicy::from_config(config)) {
+            None => StubRepairAdmission::Available {
+                start_command: repair_start_command_spec(
+                    &bound_root(&root.to_string_lossy()),
+                    entry.seam.id().as_str(),
+                )
+                .display,
+            },
+            Some(refusal) => StubRepairAdmission::Withheld {
+                reason: refusal.reason,
+            },
+        };
+    let allowed_edit_surface = seam_packet_allowed_edit_surface(entry);
+    let stub_file = stub
+        .placement
+        .file()
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let placement = placement_agreement(&stub_file, &allowed_edit_surface);
+    let commit_before_start = (placement == StubPlacementAgreement::Agrees
+        && stub_file.ends_with(".rs")
+        && !analysis::is_test_surface_path(&stub_file))
+    .then_some(stub_file);
+    StubRepairRoute {
+        admission,
+        allowed_edit_surface,
+        placement,
+        commit_before_start,
     }
 }
 
@@ -1315,6 +1452,25 @@ pub(crate) fn run_command(
 mod tests {
     use super::*;
 
+    /// #8727: the stub file is compared with the packet's allowed edit surface;
+    /// an empty surface has nothing to compare, and a different file diverges.
+    #[test]
+    fn placement_agreement_compares_the_stub_file_with_the_packet_surface() {
+        let surface = vec!["tests/discount.rs".to_string()];
+        assert_eq!(
+            placement_agreement("tests/discount.rs", &surface),
+            StubPlacementAgreement::Agrees
+        );
+        assert_eq!(
+            placement_agreement("src/lib.rs", &surface),
+            StubPlacementAgreement::Diverges
+        );
+        assert_eq!(
+            placement_agreement("src/lib.rs", &[]),
+            StubPlacementAgreement::NotEstablished
+        );
+    }
+
     #[test]
     fn code_lines_blank_strings_and_comments_but_keep_dereferences() {
         let uses =
@@ -1487,6 +1643,7 @@ mod tests {
         ];
         let result = resolve_at(
             Path::new("/nonexistent"),
+            &RiprConfig::default(),
             classified_candidates(&classified),
             "src/lib.rs",
             2,
@@ -1502,6 +1659,7 @@ mod tests {
         // One full path is unambiguous and reaches the source read.
         let one = resolve_at(
             Path::new("/nonexistent"),
+            &RiprConfig::default(),
             classified_candidates(&classified),
             "crates/a/src/lib.rs",
             2,

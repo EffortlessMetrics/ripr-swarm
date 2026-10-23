@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762, #8727) | `schema_version` | `0.3` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -307,7 +307,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.2`)
+## Agent stub (`rust_test_stub`, schema `0.3`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -324,6 +324,36 @@ paths or seam IDs to choose; the unresolved identity and disclosure fields
 stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
+
+Schema `0.3` (#8727) is additive over `0.2`: a ready document gains the
+`next_repair` block below, and the schema string moves for every ready and
+refused stub document so consumers dispatch on one version. No `0.2` field
+changed meaning. Consumers that pin `0.2` must accept `0.3`.
+
+`next_repair` points the stub into the repair journey it feeds, using the
+shared repair owners (the `ripr repair` start admission and the seam packet's
+`allowed_edit_surface` derivation) rather than a stub-local copy:
+
+- `state` — `available` when the shared repair-start gate admits the seam,
+  `withheld` when it refuses, `not_established` when the selection did not
+  classify the seam (a bare `--at --kind` file parse; select with `--seam-id`).
+- `start_command` — the `ripr repair <seam-id> --root <root>` start the
+  `ripr repair` producer offers; `null` unless `state` is `available`.
+- `withheld_reason` — the gate's own label when `withheld`, or why nothing was
+  established; `null` when `available`.
+- `allowed_edit_surface` — the files the seam packet's edit cage will allow
+  (empty for an inspection-only seam or when not established).
+- `placement_agreement` — `agrees` when the stub file is in
+  `allowed_edit_surface`, `diverges` when it is outside a non-empty surface
+  (the repair attempt would refuse an edit there; `warnings` also carries a
+  line naming both), `not_established` when there is nothing to compare.
+- `commit_before_start` — the stub file when it is a tracked production Rust
+  file hosting an inline test module: a repair starts only from the committed
+  file, so a written stub there must be committed first; else `null`.
+
+This is a static reading of current evidence and the packet derivation; it
+does not run the repair, claim runtime mutation outcomes, or prove the stub
+sufficient.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
 Ready stub documents add `already_present`; the new refusal-kind spelling

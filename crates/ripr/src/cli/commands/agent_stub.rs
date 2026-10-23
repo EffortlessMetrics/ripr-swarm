@@ -10,9 +10,10 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    AlreadyPresentRevalidation, TargetLookup, TestStubError, TestStubSelector,
-    integration_target_lookup, line_of_offset, package_manifest_for, resolve_test_stub,
-    revalidate_already_present_stub, run_command, write_test_stub,
+    AlreadyPresentRevalidation, StubPlacementAgreement, StubRepairAdmission, StubRepairRoute,
+    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+    package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
+    write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -21,7 +22,7 @@ use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
@@ -115,6 +116,15 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // A stub outside the packet's allowed edit surface is reported now, not
+    // at the repair start's dirty-premise gate (#8727).
+    if let Some(warning) = resolution
+        .repair
+        .as_ref()
+        .and_then(|repair| placement_divergence_warning(repair, &stub_file_of(stub)))
+    {
+        disclosure.warnings.push(warning);
+    }
     // #8891: when the placement already holds the identical stub, the second
     // `--write` reports "already written" instead of suffixing a `_2`
     // duplicate into the file.
@@ -171,6 +181,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             "written": written.is_some(),
             "already_present": stub.already_present,
             "run_command": run,
+            "next_repair": next_repair_json(resolution.repair.as_ref()),
             "grip_class": disclosure.grip_class,
             "classification": disclosure.classification,
             "warnings": disclosure.warnings,
@@ -227,7 +238,103 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             &file
         )
     );
+    for line in repair_lines(resolution.repair.as_ref(), written.is_some()) {
+        println!("{line}");
+    }
     Ok(())
+}
+
+fn stub_file_of(stub: &crate::analysis::test_stub::RustTestStub) -> String {
+    stub.placement
+        .file()
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
+/// Reported at generation time when the stub's file is not the file the repair
+/// packet's edit cage allows. `None` when the placements agree, the packet
+/// names no surface, or no repair start is offered anyway.
+fn placement_divergence_warning(repair: &StubRepairRoute, stub_file: &str) -> Option<String> {
+    (repair.placement == StubPlacementAgreement::Diverges
+        && matches!(repair.admission, StubRepairAdmission::Available { .. }))
+    .then(|| {
+        format!(
+            "stub placement {stub_file} is outside the repair packet's allowed_edit_surface ({}); a repair attempt would refuse an edit there, so put the test in the allowed file before starting a repair",
+            repair.allowed_edit_surface.join(", ")
+        )
+    })
+}
+
+/// The `next_repair` block of the `rust_test_stub` document (schema `0.3`).
+fn next_repair_json(repair: Option<&StubRepairRoute>) -> serde_json::Value {
+    let Some(repair) = repair else {
+        return serde_json::json!({
+            "state": "not_established",
+            "start_command": serde_json::Value::Null,
+            "withheld_reason": "this selection did not classify the seam; select it with --seam-id to compare the stub with the repair packet",
+            "allowed_edit_surface": [],
+            "placement_agreement": StubPlacementAgreement::NotEstablished.as_str(),
+            "commit_before_start": serde_json::Value::Null,
+        });
+    };
+    let (state, start_command, withheld_reason) = match &repair.admission {
+        StubRepairAdmission::Available { start_command } => {
+            ("available", Some(start_command.as_str()), None)
+        }
+        StubRepairAdmission::Withheld { reason } => ("withheld", None, Some(reason.as_str())),
+    };
+    serde_json::json!({
+        "state": state,
+        "start_command": start_command,
+        "withheld_reason": withheld_reason,
+        "allowed_edit_surface": repair.allowed_edit_surface,
+        "placement_agreement": repair.placement.as_str(),
+        "commit_before_start": repair.commit_before_start,
+    })
+}
+
+/// The human next-step lines: the repair start this stub feeds, or why none is
+/// offered.
+fn repair_lines(repair: Option<&StubRepairRoute>, written: bool) -> Vec<String> {
+    let Some(repair) = repair else {
+        return vec![
+            "Repair: not established for this selection; use --seam-id to compare the stub with the repair packet.".to_string(),
+        ];
+    };
+    match &repair.admission {
+        StubRepairAdmission::Withheld { reason } => {
+            vec![format!(
+                "Repair: no repair start is offered for this seam: {reason}."
+            )]
+        }
+        StubRepairAdmission::Available { start_command } => {
+            let mut lines = vec![format!(
+                "Next, after the test is filled in: {start_command}"
+            )];
+            lines.push(match repair.placement {
+                StubPlacementAgreement::Agrees => format!(
+                    "The repair packet's allowed_edit_surface ({}) matches this stub's file.",
+                    repair.allowed_edit_surface.join(", ")
+                ),
+                StubPlacementAgreement::Diverges => format!(
+                    "The repair packet's allowed_edit_surface ({}) does not include this stub's file.",
+                    repair.allowed_edit_surface.join(", ")
+                ),
+                StubPlacementAgreement::NotEstablished => {
+                    "The repair packet names no allowed_edit_surface to compare this stub with."
+                        .to_string()
+                }
+            });
+            if let Some(file) = &repair.commit_before_start {
+                let when = if written { "" } else { "once written, " };
+                lines.push(format!(
+                    "Commit {file} {when}before starting: the repair start refuses an uncommitted inline test target."
+                ));
+            }
+            lines
+        }
+    }
 }
 
 /// The human "Run it" line: the command, or why none is offered. Only a
@@ -388,6 +495,93 @@ fn stub_grip_omission_reason(
 mod tests {
     use super::*;
 
+    fn route(
+        admission: StubRepairAdmission,
+        allowed: &[&str],
+        placement: StubPlacementAgreement,
+        commit: Option<&str>,
+    ) -> StubRepairRoute {
+        StubRepairRoute {
+            admission,
+            allowed_edit_surface: allowed.iter().map(ToString::to_string).collect(),
+            placement,
+            commit_before_start: commit.map(ToString::to_string),
+        }
+    }
+
+    fn available() -> StubRepairAdmission {
+        StubRepairAdmission::Available {
+            start_command: "ripr repair seam-1 --root .".to_string(),
+        }
+    }
+
+    /// #8727: the human lines name the start, the packet surface and whether the
+    /// stub agrees; a divergence is a warning only when a start is offered; a
+    /// written inline stub says to commit first; a refusal offers no start.
+    #[test]
+    fn repair_lines_name_the_start_the_surface_and_the_commit_step() -> Result<(), String> {
+        let agree = route(
+            available(),
+            &["src/lib.rs"],
+            StubPlacementAgreement::Agrees,
+            Some("src/lib.rs"),
+        );
+        let lines = repair_lines(Some(&agree), false);
+        assert_eq!(
+            lines[0],
+            "Next, after the test is filled in: ripr repair seam-1 --root ."
+        );
+        assert!(
+            lines[1].contains("(src/lib.rs) matches this stub's file"),
+            "{lines:?}"
+        );
+        assert!(lines[2].starts_with("Commit src/lib.rs once written, before starting"));
+        assert!(
+            repair_lines(Some(&agree), true)[2].starts_with("Commit src/lib.rs before starting")
+        );
+        assert_eq!(placement_divergence_warning(&agree, "src/lib.rs"), None);
+
+        let diverge = route(
+            available(),
+            &["tests/a.rs"],
+            StubPlacementAgreement::Diverges,
+            None,
+        );
+        let lines = repair_lines(Some(&diverge), false);
+        assert!(
+            lines[1].contains("does not include this stub's file"),
+            "{lines:?}"
+        );
+        let warning = placement_divergence_warning(&diverge, "src/lib.rs")
+            .ok_or_else(|| "a diverging placement with an offered start must warn".to_string())?;
+        assert!(warning.contains("src/lib.rs") && warning.contains("tests/a.rs"));
+        let json = next_repair_json(Some(&diverge));
+        assert_eq!(json["placement_agreement"], "diverges");
+        assert_eq!(json["state"], "available");
+
+        let withheld = route(
+            StubRepairAdmission::Withheld {
+                reason: "repair route not ready".to_string(),
+            },
+            &["tests/a.rs"],
+            StubPlacementAgreement::Diverges,
+            None,
+        );
+        assert_eq!(
+            repair_lines(Some(&withheld), false),
+            ["Repair: no repair start is offered for this seam: repair route not ready."]
+        );
+        assert_eq!(placement_divergence_warning(&withheld, "src/lib.rs"), None);
+        let json = next_repair_json(Some(&withheld));
+        assert_eq!(json["state"], "withheld");
+        assert!(json["start_command"].is_null());
+
+        let unclassified = next_repair_json(None);
+        assert_eq!(unclassified["state"], "not_established");
+        assert!(repair_lines(None, false)[0].starts_with("Repair: not established"));
+        Ok(())
+    }
+
     #[test]
     fn human_refusal_carries_the_at_substitution_note() {
         let plain = refusal_message("seam:1", "observer_required", "needs an observer", None);
@@ -422,7 +616,7 @@ mod tests {
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.2");
+        assert_eq!(document["schema_version"], "0.3");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");
