@@ -386,9 +386,12 @@ fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), St
         ["help"].as_slice(),
     ] {
         let stdout = rendered_help(args)?;
-        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+        // Keep this constant in sync with `help_overview_fits_one_screen` in
+        // crates/ripr/src/cli/help.rs: #9865's exit-code/global-flag block
+        // owns six of the budget's lines, so the envelope is 48, not 40.
+        if stdout.replace("\r\n", "\n").lines().count() > 48 {
             return Err(format!(
-                "default help {args:?} exceeded the 40-line screen budget"
+                "default help {args:?} exceeded the 48-line screen budget"
             ));
         }
         canonical_first_run_command(&stdout)?;
