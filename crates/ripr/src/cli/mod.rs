@@ -245,8 +245,27 @@ fn drive_before_phase_inner(
         .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
     let identity =
         crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
-    commands::run_before_repair_with_identity(options.clone(), &identity)?;
-    let stdout_document = persist_before_repair_attempt(&options, &identity)?;
+    let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
+        Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(Into::into),
+        Err(error) => Err(error),
+    };
+    let stdout_document = match published {
+        Ok(document) => document,
+        Err(error) => {
+            // #9103: a refused gap-bound start leaves no workflow snapshot
+            // behind (no attempt owns them); a rerun rewrites them anyway.
+            if options.gap_id.is_some() {
+                for artifact in [
+                    "target/ripr/workflow/before.check-findings.json",
+                    crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT,
+                    "target/ripr/workflow/attempt-baseline.json",
+                ] {
+                    let _ = std::fs::remove_file(options.root.join(artifact));
+                }
+            }
+            return Err(error);
+        }
+    };
     Ok((identity.attempt_id().to_string(), stdout_document))
 }
 

@@ -589,7 +589,7 @@ impl RepairStartGate {
         // gate has no verdict to give. Its admission is decided where the
         // start is: the shared agent-packet validator at the gap-bound before
         // phase, which re-checks it on every restart.
-        if seam_id.starts_with(super::gap_bound_repair::GAP_BOUND_REPAIR_GAP_PREFIX) {
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id) {
             return None;
         }
         #[cfg(test)]

@@ -24,6 +24,17 @@ use crate::output::typescript_packet_projection::{
 /// preview gaps only (`typescript_canonical_gap_id` of a preview finding).
 pub(crate) const GAP_BOUND_REPAIR_GAP_PREFIX: &str = "gap:typescript:typescript_preview:";
 
+/// Whether `id` is a canonical gap-bound repair subject: the TypeScript
+/// preview prefix followed by a non-empty, whitespace-free hash. The one
+/// predicate behind the CLI admission, the seam-gate bypass and the restart
+/// spelling, so a forged or foreign id never reads as a gap subject.
+pub(crate) fn is_gap_bound_subject(id: &str) -> bool {
+    id.strip_prefix(GAP_BOUND_REPAIR_GAP_PREFIX)
+        .is_some_and(|rest| {
+            !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
 /// The wire spelling of the artifact the before snapshot of a gap-bound
 /// attempt is produced as: the same producer as
 /// `ripr check --base <ref> --format check-findings-json`.
@@ -139,6 +150,12 @@ pub(crate) fn repair_start_command(
     gap_base: Option<&str>,
 ) -> String {
     match gap_base {
+        // A recorded binding whose subject is not a canonical gap id (a
+        // forged or damaged manifest) gets a neutral route, never a
+        // `--gap-id` start for a foreign subject.
+        Some(base) if !is_gap_bound_subject(subject) || base.trim().is_empty() => {
+            format!("ripr check --root {}{store_flag}", shell_arg(root_display))
+        }
         Some(base) => gap_bound_start_command(root_display, store_flag, subject, base),
         None => format!(
             "ripr agent repair --root {}{store_flag} --seam-id {} --phase before",
@@ -171,6 +188,22 @@ mod tests {
     use super::*;
     use crate::domain::{OracleStrength, ProbeFamily, StageState};
     use crate::output::typescript_packet_projection::tests::complete_finding;
+
+    #[test]
+    fn a_forged_gap_binding_never_yields_a_gap_start() {
+        for subject in [
+            "seam:src/lib.rs:1",
+            "gap:python:python_preview:abcd",
+            "gap:typescript:typescript_preview:",
+            "gap:typescript:typescript_preview:a b",
+        ] {
+            let command = repair_start_command(".", "", subject, Some("HEAD~1"));
+            assert!(!command.contains("--gap-id"), "{subject}: {command}");
+            assert!(!command.contains("--seam-id"), "{subject}: {command}");
+        }
+        let ok = repair_start_command(".", "", "gap:typescript:typescript_preview:1a2b", Some("B"));
+        assert!(ok.contains("--gap-id"), "{ok}");
+    }
 
     fn gap_of(finding: &Finding) -> String {
         typescript_canonical_gap_id(&finding.id)

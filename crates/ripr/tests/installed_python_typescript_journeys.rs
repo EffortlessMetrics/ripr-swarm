@@ -439,6 +439,52 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         return Err(format!("unknown gap start left artifacts:\n{unknown}"));
     }
 
+    let gap_start_args = [
+        "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg, "--phase",
+        "before",
+    ];
+    let no_leftovers = |what: &str, out: &str| -> Result<(), String> {
+        if attempt_manifests(&root)? != 0
+            || workflow_dir.join("gap-repair-packet.json").exists()
+            || workflow_dir.join("before.check-findings.json").exists()
+        {
+            return Err(format!("{what} left artifacts:\n{out}"));
+        }
+        Ok(())
+    };
+
+    // A tracked non-test file that already differs from HEAD fails closed
+    // with the gap-specific restart and leaves nothing behind.
+    let production = root.join("src/pricing.ts");
+    let original = std::fs::read_to_string(&production)
+        .map_err(|error| format!("read production: {error}"))?;
+    std::fs::write(&production, format!("{original}\n// dirty\n"))
+        .map_err(|error| format!("dirty production: {error}"))?;
+    let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    std::fs::write(&production, &original)
+        .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_ok, false, "dirty production start")?;
+    need(
+        &dirty,
+        "outside the allowed test surface already differ from HEAD",
+        "dirty premise",
+    )?;
+    need(&dirty, "--gap-id", "gap-specific restart")?;
+    if dirty.contains("--seam-id") {
+        return Err(format!("dirty refusal names --seam-id:\n{dirty}"));
+    }
+    no_leftovers("dirty production start", &dirty)?;
+
+    // A ready gap whose publication fails (the edit-cage baseline path is a
+    // directory) removes the snapshots it wrote.
+    let baseline_path = workflow_dir.join("attempt-baseline.json");
+    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    let (blocked_ok, blocked) = ripr(&decoy, &gap_start_args)?;
+    std::fs::remove_dir_all(&baseline_path)
+        .map_err(|error| format!("unblock baseline: {error}"))?;
+    expect_exit(blocked_ok, false, "blocked publication")?;
+    no_leftovers("failed publication", &blocked)?;
+
     // The printed start is accepted by `agent repair --phase before`: the
     // flags are replayed exactly as the start line names them.
     let (repair_ok, repair) = ripr(

@@ -486,7 +486,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     .to_string(),
             );
         }
-        if !gap.starts_with(GAP_BOUND_REPAIR_GAP_PREFIX) {
+        if !crate::app::gap_bound_repair::is_gap_bound_subject(gap) {
             return Err(match crate::app::task_first::non_rust_item_language(gap) {
                 Some(language) if language != "TypeScript" => format!(
                     "agent repair --gap-id `{gap}` is not a TypeScript gap: {}",

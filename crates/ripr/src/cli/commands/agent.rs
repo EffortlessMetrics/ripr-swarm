@@ -2927,9 +2927,9 @@ fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[
 /// seam-bound phase prepares. The before snapshot is the
 /// `check-findings-json` artifact (the gap's findings are diff-scoped, so the
 /// base is part of the attempt). A refused admission check writes nothing. The
-/// two workflow artifacts are written here, before the attempt is persisted,
-/// so a later persistence refusal (a lock, a moved head) can leave them
-/// behind; a rerun overwrites them and no attempt manifest exists.
+/// two workflow artifacts are written here, before the attempt is persisted;
+/// the caller removes them when a later step refuses, so a refused start
+/// leaves neither them nor an attempt manifest.
 fn run_gap_bound_before_phase(
     root: &Path,
     gap_id: &str,
