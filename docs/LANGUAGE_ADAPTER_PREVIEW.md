@@ -247,7 +247,12 @@ analysis. Repo-mode analysis differs per adapter:
   findings and discloses a partial language run on the shared
   `language_runs` channel, which gates fail closed on: a capped or partial
   Python repo run can never back a full-denominator, all-clear, badge, or
-  baseline claim. A workspace with no Python production source is an honest
+  baseline claim. Repo-mode Python findings carry the evidence line
+  `analysis_scope: repo` and never get a `python_repair_card` or repair
+  routing: the capability registry has no repo-mode `repair_routing` cell for
+  Python (absent = `not_proven`, #5531), so they differ from diff-mode
+  findings there. The gap ledger may still carry an advisory non-repair
+  record for them. A workspace with no Python production source is an honest
   zero with zero counts, not a fabricated limitation. Broader Python repo
   support remains preview until #1160's tier ruling.
 - **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
@@ -270,7 +275,18 @@ analysis. Repo-mode analysis differs per adapter:
   `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
   `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
   partial reason. Declared `handwritten_files` are admitted as in diff mode.
+  Alongside the disclosure string, each repo-mode run reports typed per-language
+  file accounting (#6466: discovered, selected, skipped, omitted, and the first
+  fired cap) into the internal language outcome. Two caps are named with their
+  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript walk entries) and
+  `RIPR_MAX_REPO_INDEX_FILES` (selection, TypeScript and Python). Counts that
+  would only be lower bounds after truncated or unreadable discovery are
+  unknown, never zero; this does not change the public `LanguageRun` wire.
   No support-tier, gate or baseline promotion.
+  Repo-mode TypeScript/JavaScript findings carry an `analysis_scope: repo` evidence line and never project a
+  repair packet or `repair_packet_ready: true`, because the capability
+  registry has no repo-mode `repair_routing` cell for these languages (#5531);
+  repair routing stays diff-mode only.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the

@@ -167,15 +167,17 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
         && crate::output::analyzed_revisions::is_working_tree_read(output)
     {
         return format!(
-            "\nNote: the working tree has no changed tracked files against `{base}` (diff from \
+            "\nNote: the working tree has no analyzable changed files against `{base}` (diff from \
              the merge base of `{base}` and HEAD to the working tree), so there was nothing to \
-             analyze. An empty result here means no tracked behavior changed against it.\n",
+             analyze. Deleted files, submodule pointer changes and files ripr does not analyze \
+             are not counted, so this empty result does NOT mean no behavior changed.\n",
         );
     }
     if let Some(base) = output.base.as_deref() {
         format!(
-            "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
-             The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
+            "\nNote: `{base}...HEAD` has no analyzable changed files, so there was nothing to analyze. \
+             The compared base was `{base}`. Deleted files, submodule pointer changes and files \
+             ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n",
         )
     } else {
         format!(
@@ -193,10 +195,10 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
 /// to a range with no analyzable changed files (for example `--base HEAD`, or
 /// the base branch while on it) used to print only "No diff-derived static
 /// exposure probes found.", leaving a reader to guess whether ripr ran at all
-/// (#9033). The wording stays narrower than the default-base note on purpose:
+/// (#9033). The explicit-base and default-base notes share this wording (#9222):
 /// `NoScope` with zero changed files also covers ranges that only delete
-/// files, change submodule pointers, or touch ripr's own artifacts, so this
-/// note never claims that no behavior changed.
+/// files, change submodule pointers, or touch ripr's own artifacts, so neither
+/// note claims that no behavior changed.
 fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     if output.unanalyzed_working_tree {
         return None;
@@ -2403,6 +2405,18 @@ mod tests {
         finding
     }
 
+    /// #5531: the same carded finding stamped as repo-scoped gets no repair
+    /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
+    #[test]
+    fn repo_scoped_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        let mut repo = carded.clone();
+        repo.evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
+    }
+
     /// #7587: a deleted or moved Python line is base-side evidence and names
     /// a line the candidate no longer has, so it gets no repair card, while
     /// the same finding on the candidate side keeps its card.
@@ -3673,7 +3687,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+                "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
             ),
             "{rendered}"
         );
@@ -3699,7 +3713,7 @@ mod tests {
         committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
         let committed_rendered = render(&committed);
         assert!(
-            committed_rendered.contains("`main...HEAD` contains no changed files"),
+            committed_rendered.contains("`main...HEAD` has no analyzable changed files"),
             "{committed_rendered}"
         );
         assert!(
@@ -5448,6 +5462,64 @@ mod tests {
         ));
         assert!(rendered.contains("Next step\n"));
         assert!(rendered.contains("Add assertion for disabled path result"));
+    }
+
+    /// #9165: a related test whose oracle spans lines (a closure body, a
+    /// snapshot) is one evidence row, and a single-line oracle is unchanged.
+    #[test]
+    fn render_finding_keeps_a_multi_line_oracle_on_one_row() {
+        let mut finding = sample_finding();
+        finding.related_tests[0].oracle =
+            Some("scope(|scope| {\n    scope.spawn(f);\n})\n.unwrap();".to_string());
+        let related_path = finding.related_tests[0].file.display().to_string();
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains(&format!(
+                "{related_path}:22 test_handles_disabled uses strong exact value oracle: scope(|scope| {{ scope.spawn(f); }}) .unwrap();"
+            )),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("scope.spawn(f);\n"), "{rendered}");
+
+        // Negative control: the single-line oracle row is unchanged.
+        let single = render_finding(&sample_finding());
+        assert!(single.contains(&format!(
+            "{related_path}:22 test_handles_disabled uses strong exact value oracle: assert_eq!(actual, expected)"
+        )));
+    }
+
+    /// #9165: a multi-line observed value is one human row in both the
+    /// single-file (`at line N`) and mixed-file (`at path:N`) spellings.
+    #[test]
+    fn render_finding_keeps_a_multi_line_observed_value_on_one_row() {
+        let fact = |file: &str, line: usize, value: &str| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context: ValueContext::AssertionArgument,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![fact("tests/pricing.rs", 7, "a\nb")];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
+
+        finding.activation.observed_values = vec![
+            fact("tests/pricing.rs", 7, "a\nb"),
+            fact("tests/other.rs", 9, "c"),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
     }
 
     /// #8744: `unknown sink` is the one unglossed internal term in the
