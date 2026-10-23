@@ -12,3 +12,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+Re-bless after merging main (#9722): the dunder-protocol abstention now reports
+`static_unknown` with `dynamic_dispatch_unresolved` for this still-uncredited
+rebind; the weak heuristic relation is unchanged.

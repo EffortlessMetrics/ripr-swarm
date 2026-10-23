@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input
 config: <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
 Changed file(s) by language: python = 1
 
@@ -12,29 +12,34 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: static limitation `dynamic_dispatch` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/nr.py:6
   Language: python
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/nr.py:numeric_range.__reversed__:predicate_boundary:predicate:not_self.stop
+  Static exposure: unknown (severity: note, confidence 0.20)
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: if not self.stop:
-  Missing discriminator: Only heuristic Python test links were found for `__reversed__`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion
+  Analyzer limit: Static limit `dynamic_dispatch`: `numeric_range.__reversed__` is a dunder method Python invokes through operator or `with` syntax; related tests build `numeric_range` instances,…
   Related test: tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver
-  Evidence: reach weak · infection yes · propagation weak · observation weak · discriminator weak
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     - reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain
-    - infection yes: Changed Python predicate can alter branch selection: `if not self.stop:`
-    - 5 more detail line(s) in --format human-full
+    - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast probe:src_nr.py:python_preview:852b3ff0
   ripr context --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast --at probe:src_nr.py:python_preview:852b3ff0
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/nr.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_nr.py:python_preview:852b3ff0 --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
+  related test(s). This is not a coverage assessment. A test may already exercise these changes
+  through macros, helper-call chains, or integration tests that ripr's static model does not yet
+  trace; if none does, add co-located tests that observe the changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
