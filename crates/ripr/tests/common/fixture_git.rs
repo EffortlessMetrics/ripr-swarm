@@ -294,21 +294,7 @@ fn spawn_stream_drain(
     })
 }
 
-fn run_git_deadline(
-    root: &Path,
-    args: &[&str],
-    deadline: Duration,
-) -> Result<FixtureGitOutcome, String> {
-    // Mirror the canonical runner in `crate::git`: a zero deadline is refused
-    // before spawning. Spawning would let any git that exits before the first
-    // `try_wait` below report as finished, so a zero-deadline caller would
-    // see success, a git failure or a timeout depending on scheduling.
-    if deadline.is_zero() {
-        return Ok(FixtureGitOutcome::TimedOut(format!(
-            "{FIXTURE_GIT_TIMEOUT_PREFIX}: fixture git {args:?} was given a zero deadline (not spawned) in {}",
-            root.display()
-        )));
-    }
+fn fixture_git_command(root: &Path, args: &[&str]) -> Command {
     // Fixture inputs are the owned root and explicit arguments/local config.
     // Ambient Git selectors, injected config, identities and object paths
     // must not redirect or change setup. Do this on the child command, never
@@ -324,15 +310,46 @@ fn run_git_deadline(
         }
     }
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let mut child = command
+    command
         .args(args)
         .current_dir(root)
         .env("GIT_CONFIG_GLOBAL", null_config)
         .env("GIT_CONFIG_SYSTEM", null_config)
+        // System attributes are independent of system config. Reestablish
+        // this guard after clearing inherited Git variables.
+        .env("GIT_ATTR_NOSYSTEM", "1")
         // Git reads its default ignore/attributes files independently of
         // global config, including a HOME fallback when XDG is unset.
         .env("XDG_CONFIG_HOME", root.join(".git").join("fixture-xdg"))
-        .env("LC_ALL", "C")
+        .env("LC_ALL", "C");
+    command
+}
+
+fn run_git_deadline(
+    root: &Path,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<FixtureGitOutcome, String> {
+    run_git_command_deadline(root, args, deadline, fixture_git_command(root, args))
+}
+
+fn run_git_command_deadline(
+    root: &Path,
+    args: &[&str],
+    deadline: Duration,
+    mut command: Command,
+) -> Result<FixtureGitOutcome, String> {
+    // Mirror the canonical runner in `crate::git`: a zero deadline is refused
+    // before spawning. Spawning would let any git that exits before the first
+    // `try_wait` below report as finished, so a zero-deadline caller would
+    // see success, a git failure or a timeout depending on scheduling.
+    if deadline.is_zero() {
+        return Ok(FixtureGitOutcome::TimedOut(format!(
+            "{FIXTURE_GIT_TIMEOUT_PREFIX}: fixture git {args:?} was given a zero deadline (not spawned) in {}",
+            root.display()
+        )));
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -499,6 +516,70 @@ mod tests {
                 ]
             )?,
             "command.txt\n"
+        );
+        // System-attribute isolation must not discard explicitly selected
+        // attribute files, including a command-line override of the local one.
+        std::fs::write(
+            root.join("local.attributes"),
+            "corpus.txt fixture-layer=local\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("command.attributes"),
+            "corpus.txt fixture-layer=command\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fixture_git_ok(
+            &root,
+            &["config", "core.attributesFile", "local.attributes"],
+        )?;
+        assert_eq!(
+            fixture_git_output(&root, &["check-attr", "fixture-layer", "--", "corpus.txt"])?,
+            "corpus.txt: fixture-layer: local\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "core.attributesFile=command.attributes",
+                    "check-attr",
+                    "fixture-layer",
+                    "--",
+                    "corpus.txt",
+                ]
+            )?,
+            "corpus.txt: fixture-layer: command\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_disables_system_attributes() -> Result<(), String> {
+        let root = unique_root("system-attributes")?;
+        // Establish that this Git can report an enabled system-attributes
+        // path. A missing capability must not masquerade as isolation. Use a
+        // separate child with the guard explicitly disabled and the same
+        // bounded spawn/drain owner; never change the parent or system files.
+        let args = ["var", "GIT_ATTR_SYSTEM"];
+        let mut control = fixture_git_command(&root, &args);
+        control.env("GIT_ATTR_NOSYSTEM", "0");
+        let output = match run_git_command_deadline(&root, &args, FIXTURE_GIT_DEADLINE, control)? {
+            FixtureGitOutcome::Finished(output) => output,
+            FixtureGitOutcome::TimedOut(error) => return Err(error),
+        };
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+            return Err(format!(
+                "positive control did not identify the system attributes path: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let variables = fixture_git_output(&root, &["var", "-l"])?;
+        assert!(
+            !variables
+                .lines()
+                .any(|line| line.starts_with("GIT_ATTR_SYSTEM=")),
+            "fixture child still enables system attributes: {variables}"
         );
         Ok(())
     }
