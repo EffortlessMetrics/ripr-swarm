@@ -32,6 +32,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped per-(test, owner) value facts, attached by the
     /// classifier; `None` (unit-test contexts) computes them per probe.
     pub test_value_facts: Option<&'a TestValueFacts>,
+    /// Workspace expansion facts shared across probes against this immutable index.
+    pub implicit_expansion: Option<&'a super::ImplicitExpansionMemo>,
     /// Run-scoped private assertion context, shared across all probes.
     pub owner_pin_syntax: Option<&'a super::OwnerPinSyntax>,
     /// Run-scoped unseen-reach scan, shared across all probes.
@@ -42,6 +44,13 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Tests the diff adds or changes (#8387); ranking only. `None`
     /// (unit-test contexts) ranks nothing first.
     pub diff_touched: Option<&'a super::DiffTouchedTests>,
+    /// #9173: the probe sits in a root build script no package source mounts,
+    /// so no package test can call it; only changes the `no_static_path`
+    /// guidance text.
+    pub unmounted_build_script: bool,
+    /// #9871: the same-file functions that read the changed constant when the
+    /// probe declares one and tests were related through them.
+    pub const_readers: Vec<&'a FunctionSummary>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -65,9 +74,12 @@ impl<'a> ProbeContext<'a> {
             file_use_statements: None,
             test_value_facts: None,
             owner_pin_syntax: None,
+            implicit_expansion: None,
             unseen_reach_names: None,
             owner_caller_names: None,
             diff_touched: None,
+            unmounted_build_script: false,
+            const_readers: Vec::new(),
         }
     }
 
@@ -77,6 +89,14 @@ impl<'a> ProbeContext<'a> {
         file_use_statements: &'a FileUseStatements,
     ) -> Self {
         self.file_use_statements = Some(file_use_statements);
+        self
+    }
+
+    pub(in crate::analysis) fn with_implicit_expansion(
+        mut self,
+        memo: &'a super::ImplicitExpansionMemo,
+    ) -> Self {
+        self.implicit_expansion = Some(memo);
         self
     }
 
@@ -175,7 +195,11 @@ impl<'a> ProbeContext<'a> {
             super::owner_pin::target_root(&owner.file, self.index, &Default::default())
         });
         let Some(owner_root) = owner_root else {
-            return std::borrow::Cow::Borrowed(&self.index.package_names);
+            return if self.owner_fn.is_some() {
+                std::borrow::Cow::Owned(Default::default())
+            } else {
+                std::borrow::Cow::Borrowed(&self.index.package_names)
+            };
         };
         let member = self.index.member_crates.import_names(file, &owner_root);
         // A `pub use` of a foreign item under the callee's name means the

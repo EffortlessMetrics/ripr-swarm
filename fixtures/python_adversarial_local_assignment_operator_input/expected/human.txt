@@ -21,12 +21,17 @@ Start here:
   Canonical gap: gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus
   Changed behavior: total = base - bonus
   Missing discriminator: A strong Python oracle reaches `compute`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_calc.py:4 test_base_unchanged
+  Related test: tests/test_calc.py:4 test_base_unchanged (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_calc.py
   Suggested test: test_base_unchanged
   Test node: tests/test_calc.py::test_base_unchanged
   Verify command: python -m pytest tests/test_calc.py::test_base_unchanged (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `compute`
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `total = base - bonus`
     - 5 more detail line(s) in --format human-full

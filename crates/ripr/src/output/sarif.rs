@@ -2462,6 +2462,7 @@ weakly_gripped = "note"
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {

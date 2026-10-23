@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/selector_swap_try_not_error_path/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+NOTE ./src/lib.rs:9
+  id: probe:src_lib.rs:static_unknown:85edf1a7
+
+Changed
+  before: let idx = self.queue.iter().enumerate().max_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;
+  after:  let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;
+
+Probe
+  family: static_unknown
+  delta:  unknown
+  owner:  src/lib.rs::impl Scheduler::next
+  canonical gap: gap:rust:src/lib.rs:impl Scheduler::next:static_unknown:static_unknown:let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i
+
+Static exposure
+  static_unknown (note, confidence 0.50)
+
+Evidence
+  - reach yes: Related tests appear to reach next: drains_all, empty, single
+  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator unknown: Assertions exist, but oracle strength is unknown
+  - local flow reaches unknown sink (line 9) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:19 drains_all uses smoke only oracle, not graded against this probe: assert!(s.next().is_none());
+  - related test src/lib.rs:17 empty uses exact value oracle, not graded against this probe: assert_eq!(Scheduler::new().next(), None);
+  - related test src/lib.rs:18 single misses: asserts, but not on the changed value; checked `assert_eq!(s.next().unwrap().name, "a")`
+  - source assertion argument value "a" at line 18
+  - source assertion argument value 0 at line 18
+
+Weakness
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+
+Next step
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/selector_swap_try_not_error_path/input --diff <cwd>/fixtures/selector_swap_try_not_error_path/diff.patch --mode fast probe:src_lib.rs:static_unknown:85edf1a7
+  ripr context --root <cwd>/fixtures/selector_swap_try_not_error_path/input --diff <cwd>/fixtures/selector_swap_try_not_error_path/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:85edf1a7

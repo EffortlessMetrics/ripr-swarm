@@ -1,0 +1,10 @@
+diff --git a/src/returns.ts b/src/returns.ts
+--- a/src/returns.ts
++++ b/src/returns.ts
+@@ -1,5 +1,5 @@
+ export function greeting(name: string): string {
+-  return `Hello, ${name}!`;
++  return "Hello, " + name + "!";
+ }
+ 
+ export function initial(name: string): string {

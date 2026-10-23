@@ -1031,3 +1031,93 @@ commitments and receipt byte hashes bind those exact updated bytes. Semantic
 evidence, unchanged movement, incomplete receipt routing and all tamper
 controls remain unchanged. This is a portable negative-control input update,
 not a new execution receipt.
+
+### skip-guarded table rows classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.90 to 1.91 for table loops that open with a literal skip-list guard
+(RIPR-SPEC-0229). Only the generation and its content commitment changed; the
+dependent verify commitments and receipt byte hashes bind those exact updated
+bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
+all tamper controls remain unchanged. This is a portable negative-control
+input update, not a new execution receipt.
+
+### caller-loop selector limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.91 to 1.92 for the caller-loop selector limit (RIPR-SPEC-0240, #5503). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### fixture-receiver and recording-double limits classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.93 to 1.94 for the fixture-receiver and recording-double limits
+(RIPR-SPEC-0240, #9609, #9610). Only the generation and its content commitment
+changed; the dependent verify commitments and receipt byte hashes bind those
+exact updated bytes. Semantic evidence, unchanged movement, incomplete receipt
+routing and all tamper controls remain unchanged. This is a portable
+negative-control input update, not a new execution receipt.
+
+### same-file assertion-wrapper limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.94 to 1.95 for the
+same-file assertion-wrapper limit (RIPR-SPEC-0120, #7089), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
+### pinned-shape limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.95 to 1.96 for the
+pinned-shape limit (RIPR-SPEC-0240, #9440), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### effect-assertion execution admission classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.96 to 1.97 for effect-family
+assertion execution admission (RIPR-SPEC-0197, #8927), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (27)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`

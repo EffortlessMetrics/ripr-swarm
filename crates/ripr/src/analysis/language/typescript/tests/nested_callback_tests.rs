@@ -191,7 +191,7 @@ fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, S
 }
 
 /// `settings_finding` with another owner source and changed line.
-fn settings_finding_in(
+pub(super) fn settings_finding_in(
     label: &str,
     source: &str,
     line: (usize, &str),
@@ -849,4 +849,166 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
     }
     Ok(())
+}
+
+/// Rule 4's owner tie reads the receiver chain across lines (the prettier
+/// layout) and member and generic calls of the owner (#9354).
+#[test]
+fn owner_tie_reads_multi_line_chains_and_member_or_generic_calls() {
+    let tied =
+        |body: &str| super::super::classifier::body_asserts_in_unmodeled_callback(body, "ready");
+    for (label, body) in [
+        (
+            "multi-line-chain",
+            "  return ready(cfg)\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "multi-line-chain-through-a-continuation",
+            "  return ready(cfg)\n    .catch(() => {})\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "member-call",
+            "  return this.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "namespace-call",
+            "  return ns.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "optional-member-call",
+            "  return ns?.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "generic-call",
+            "  return ready<Config>(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "same-line-continuation",
+            "  return ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "multi-line-member-generic",
+            "  return this.ready<Map<string, number>>(cfg)\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+    ] {
+        assert!(tied(body), "{label}");
+    }
+    // The owner is not what the chain starts from: an earlier statement, a
+    // call or index result's member, a longer name, a comparison, or a chain
+    // broken by a blank line.
+    for (label, body) in [
+        (
+            "earlier-statement-with-semicolon",
+            "  ready(cfg);\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "adjacent-earlier-line-without-semicolon",
+            "  const a = ready(cfg)\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "earlier-statement-after-a-blank-line",
+            "  const a = ready(cfg)\n\n  other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "call-result-member",
+            "  return make().ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "call-result-member-chain",
+            "  return make().obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "index-result-member-chain",
+            "  return table[0].obj.ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "index-result-member",
+            "  return table[0].ready(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "longer-name",
+            "  return readyNow(cfg).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "unspaced-comparison-not-generic",
+            "  return ready<cfg.max && check(x).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "comparison-not-generic",
+            "  return ready < cfg.max && check(x).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "owner-only-named-in-a-comment",
+            "  // ready(cfg)\n  return other()\n    .then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+    ] {
+        assert!(!tied(body), "{label}");
+    }
+}
+
+/// The same ties through the production classifier: the prettier layout of the
+/// refused `.then` shape reads `static_unknown`, and a chain started by another
+/// call stays an actionable gap (#9354).
+#[test]
+fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result<(), String> {
+    let head = "import { ready } from \"../src/settings\";\nfunction check(v: unknown) {}\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    let tied = format!(
+        "{head}  return ready(cfg)\n    .then((r) => {{ expect(r).toEqual(cfg); }}, () => {{}});\n}});\n"
+    );
+    let finding = settings_finding("multi-line-then", &tied, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+
+    // A namespace-import member call and a same-line continuation tie too.
+    let namespaced = "import * as settings from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  return settings.ready(cfg)\n    .catch(() => {}).then((r) => { expect(r).toEqual(cfg); }, () => {});\n});\n";
+    let finding = settings_finding("namespaced-then", namespaced, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+
+    // The owner is called, but not by the chain that holds the `expect(`.
+    let untied = format!(
+        "{head}  check(ready(cfg));\n  return Promise.resolve(1)\n    .then((r) => {{ expect(r).toEqual(1); }}, () => {{}});\n}});\n"
+    );
+    let finding = settings_finding("multi-line-other-chain", &untied, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+/// A `node:assert` call in a `.then` callback tied to the owner reads like
+/// `expect(...)` there; one that merely ends in `assert` or is a property
+/// access is not an assertion call (#9686).
+#[test]
+fn node_assert_in_an_owner_continuation_is_an_unmodeled_callback_assertion() {
+    let tied =
+        |body: &str| super::super::classifier::body_asserts_in_unmodeled_callback(body, "ready");
+    for (label, body) in [
+        (
+            "assert-dot",
+            "  ready(cfg).then((r) => {\n    assert.equal(r, 1);\n  });\n",
+        ),
+        (
+            "assert-call",
+            "  ready(cfg).then((r) => { assert(r === 1); });\n",
+        ),
+    ] {
+        assert!(tied(body), "{label}");
+    }
+    for (label, body) in [
+        (
+            "not-the-owner",
+            "  other(cfg).then((r) => { assert.equal(r, 1); });\n",
+        ),
+        (
+            "name-ends-in-assert",
+            "  ready(cfg).then((r) => { myassert.equal(r, 1); });\n",
+        ),
+        (
+            "member-of-assert-named-property",
+            "  ready(cfg).then((r) => { r.assert.equal(1); });\n",
+        ),
+        (
+            "no-callback-assertion",
+            "  ready(cfg).then((r) => { log(r); });\n",
+        ),
+    ] {
+        assert!(!tied(body), "{label}");
+    }
 }
