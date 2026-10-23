@@ -553,21 +553,22 @@ suggested write cannot fail on the same missing base.
 
 The producer's `observation` and `discriminator` stage summaries end with the
 machine marker `(observation_unverified)`. The per-finding human evidence lines
-(bounded and `human-full`, and `ripr explain`) rewrite the stage summary text
-before it is embedded in the line: the parenthetical is dropped and any bare
+(the single-finding blocks of bounded and `human-full` output, and
+`ripr explain`) rewrite the stage summary text before it is embedded in the line: the parenthetical is dropped and any bare
 occurrence of the token is spelled "the observation is unconfirmed". The words
 before it ("Discriminator unconfirmed: no assertion text references this probe's
 changed expression") already say it in prose. Only the producer's summary is
 rewritten; backticked source literals the line adds around it are left as is.
 The JSON stage summaries and the shared discriminator evidence line keep the
-marker unchanged, because downstream consumers key on it. The grouped evidence
-rows of the shared (multi-finding) rendering use a separate projection and are
-covered by a sibling change.
+marker unchanged, because downstream consumers key on it. With two or more
+owner-bearing findings, `human-full` renders every evidence row through the shared
+catalogue, a separate projection that this change does not touch; every row of
+that multi-finding catalogue is covered by #9928.
 
 This item does not rewrite the Python Weakness section text (python
 `classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
-or the agent packet routes. Those, with the `classify.rs:691` reason text, are
-tracked in #9929.
+or the agent packet routes. Those, with the python `classify.rs:686` and
+`classify.rs:691` reason texts, are tracked in #9929.
 
 ## Non-Claims
 
@@ -616,6 +617,7 @@ tracked in #9929.
 
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_embedded_spelling`
+- `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
