@@ -162,13 +162,12 @@ fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
 #[cfg(feature = "lang-typescript")]
 fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     let at = text.find("ripr agent repair --gap-id ")?;
-    let mut tokens = text[at..].split_whitespace();
-    let gap = tokens.nth(4)?.trim_matches('\'').to_string();
-    if tokens.next()? != "--base" {
-        return None;
-    }
-    let base = tokens.next()?.trim_matches('\'').to_string();
-    Some((gap, base))
+    let tokens: Vec<&str> = text[at..].split_whitespace().collect();
+    let value_after = |flag: &str| -> Option<String> {
+        let position = tokens.iter().position(|token| *token == flag)?;
+        Some(tokens.get(position + 1)?.trim_matches('\'').to_string())
+    };
+    Some((value_after("--gap-id")?, value_after("--base")?))
 }
 
 /// Published repair-attempt manifests under the root. The before-phase lock

@@ -1889,11 +1889,16 @@ fn pilot_routed_gap_start(
     root_display: &str,
     routes: &PilotCheckRoutes,
 ) -> Option<String> {
-    routes
-        .enabled_languages
-        .iter()
-        .any(|language| language == "typescript" || language == "javascript")
-        .then_some(())?;
+    // No enabled route command means the warning never names `ripr check`
+    // as a route, so no start claim is made and no analysis is run.
+    if routes.commands.is_empty()
+        || !routes
+            .enabled_languages
+            .iter()
+            .any(|language| language == "typescript" || language == "javascript")
+    {
+        return None;
+    }
     let route = crate::app::gap_bound_repair::default_check_gap_start(root)?;
     Some(crate::app::gap_bound_repair::gap_bound_start_command(
         root_display,
