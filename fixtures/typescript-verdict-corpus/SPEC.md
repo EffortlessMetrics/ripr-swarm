@@ -121,6 +121,16 @@ is what counts as detection, but no test is named as failing, and the case's
 `failing_test` says so rather than naming the test whose callback raised it
 (#7734).
 
+The two `jest-then-owner-*` cases (#9354) add multiline and namespace-member
+calls in separate source/test files. Their whole expanded Jest package passed
+33 tests and four snapshots under Node 24.19.0, Jest 30.5.2, ts-jest 29.4.15
+and TypeScript 5.9.3. Each hand-applied reducer edit (initial sum 0 to 1)
+failed only its own test at the value assertion (expected 30, received 31),
+and restoration passed again. Both `.then` calls carry rejection handlers;
+rule 4 abstains as `static_unknown` rather than claiming a static oracle.
+Generic-call and `this`-member boundaries retain the unit coverage from #9519;
+these corpus rows exercise bare multiline and namespace-import member calls.
+
 The five `jest-spec0258-*` cases came last and were labeled the same way.
 Their two own subjects exist because each one's whole-package state is the
 point: a missing snapshot fails every `jest --ci` run of the unedited
