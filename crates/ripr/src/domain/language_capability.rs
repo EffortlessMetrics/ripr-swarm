@@ -337,6 +337,64 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
     ),
 ];
 
+/// Evidence line a repo-mode producer stamps on every finding it emits, so a
+/// consumer that only holds a `Finding` can recover the analysis scope and look
+/// the capability cell up instead of re-deriving a rule (#5531).
+pub(crate) const REPO_SCOPE_EVIDENCE_LINE: &str = "analysis_scope: repo";
+
+/// Whether a finding was produced by a repo-mode run.
+pub(crate) fn finding_is_repo_scoped(evidence: &[String]) -> bool {
+    evidence.iter().any(|line| line == REPO_SCOPE_EVIDENCE_LINE)
+}
+
+/// State of the framework-independent cell for one language/mode/family. A
+/// combination with no registered cell is `not_proven`, never implied by a
+/// neighboring mode or language.
+pub(crate) fn cell_state(
+    language: LanguageId,
+    mode: AnalysisMode,
+    family: CapabilityFamily,
+) -> SupportState {
+    CAPABILITY_CELLS
+        .iter()
+        .find(|cell| {
+            cell.language == language
+                && cell.framework == FRAMEWORK_ANY
+                && cell.mode == mode
+                && cell.family == family
+        })
+        .map_or(NotProven, |cell| cell.state)
+}
+
+/// Whether the cell lets a consumer treat the capability as established
+/// (possibly with its required fallback). Every other state fails closed.
+pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
+    matches!(
+        state,
+        SupportState::ExactSupported
+            | SupportState::ConservativeOverapproximation
+            | SupportState::SupportedWithRequiredFallback
+    )
+}
+
+/// Whether any registered cell, whatever its framework (`any`, `pytest`,
+/// `unittest`, ...), establishes `family` for `language` in `mode`. A
+/// combination with no registered cell is `not_proven` and never implied by a
+/// neighboring mode or language. Framework-agnostic on purpose: callers that
+/// hold only a `Finding` know the language and scope, not the framework.
+pub(crate) fn family_established_for_any_framework(
+    language: LanguageId,
+    mode: AnalysisMode,
+    family: CapabilityFamily,
+) -> bool {
+    CAPABILITY_CELLS.iter().any(|cell| {
+        cell.language == language
+            && cell.mode == mode
+            && cell.family == family
+            && state_establishes_capability(cell.state)
+    })
+}
+
 /// Cells for one language, in registry order.
 #[cfg(test)]
 pub(crate) fn cells_for(language: LanguageId) -> impl Iterator<Item = &'static CapabilityCell> {
@@ -429,6 +487,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            assert_eq!(
+                cell_state(language, Repo, RepairRouting),
+                NotProven,
+                "{language:?} has no repo repair_routing cell"
+            );
+            assert!(!state_establishes_capability(cell_state(
+                language,
+                Repo,
+                RepairRouting
+            )));
+            assert!(state_establishes_capability(cell_state(
+                language,
+                Diff,
+                RepairRouting
+            )));
+        }
+    }
+
+    #[test]
     fn current_table_is_consistent() {
         assert_eq!(
             capability_violations(CAPABILITY_CELLS),
@@ -510,6 +589,24 @@ mod tests {
         assert_eq!(ts.len(), js.len());
         assert!(ts.iter().all(|id| id.starts_with("typescript/")));
         assert!(js.iter().all(|id| id.starts_with("javascript/")));
+    }
+
+    #[test]
+    fn python_repo_repair_routing_is_not_established_but_diff_is() {
+        assert!(family_established_for_any_framework(
+            LanguageId::Python,
+            Diff,
+            RepairRouting
+        ));
+        assert!(!family_established_for_any_framework(
+            LanguageId::Python,
+            Repo,
+            RepairRouting
+        ));
+        assert!(finding_is_repo_scoped(&[
+            REPO_SCOPE_EVIDENCE_LINE.to_string()
+        ]));
+        assert!(!finding_is_repo_scoped(&["owner: f".to_string()]));
     }
 
     #[test]

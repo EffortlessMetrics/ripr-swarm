@@ -58,54 +58,73 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
-/// #9244: the producer's reveal-stage summaries end with the machine marker
-/// `(observation_unverified)` (and one preview adapter embeds it mid-sentence),
-/// which consumers of the stage summary in JSON key on. The human window already
-/// says the same thing in words ("Discriminator unconfirmed: ..."), so it drops
-/// the parenthetical and spells any bare remainder as plain prose. The JSON stage
-/// summary is untouched.
+/// #9244: the producer's reveal-stage summaries carry the machine marker
+/// `observation_unverified`, which consumers of the stage summary in JSON key
+/// on. The human window already says the same thing in words ("Discriminator
+/// unconfirmed: ..."), so it drops the marker. The JSON stage summary is
+/// untouched.
+///
+/// Only the producer-appended forms are recognized, each at its fixed
+/// position; no substring or token scanning is done, so source text the
+/// summary embeds (identifiers, quoted literals, backticks of any parity) is
+/// never modified. The forms are the ones the producers emit:
+/// - the trailing ` (observation_unverified)` suffix (Rust reveal stage and
+///   classifier evidence);
+/// - the Python adapter's fixed `... not observed (observation_unverified). `
+///   sentence and its fixed `... unexecuted (observation_unverified). Add a
+///   test input ...` tail;
+/// - the TypeScript adapter's exact strong-oracle-no-flow summary.
 pub(super) fn plain_observation_wording(text: &str) -> String {
-    text.replace(" (observation_unverified)", "")
-        .replace("observation_unverified", "the observation is unconfirmed")
-}
-
-fn plain_wording(plain: bool, line: String) -> String {
-    if plain {
-        plain_observation_wording(&line)
-    } else {
-        line
+    const MARKER: &str = " (observation_unverified)";
+    const PYTHON_PREFIX: &str = "A strong Python oracle reaches `";
+    const PYTHON_METHOD_CALL: &str =
+        "so the edited value is not observed (observation_unverified). ";
+    const PYTHON_UNEXECUTED_TAIL: &str =
+        " (observation_unverified). Add a test input that satisfies the guarding condition.";
+    const TYPESCRIPT_NO_FLOW: &str = "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.";
+    if let Some(head) = text.strip_suffix(MARKER) {
+        return head.to_string();
     }
+    if text == TYPESCRIPT_NO_FLOW {
+        return TYPESCRIPT_NO_FLOW
+            .replace("observation_unverified", "the observation is unconfirmed");
+    }
+    if text.starts_with(PYTHON_PREFIX) {
+        if let Some(head) = text.strip_suffix(PYTHON_UNEXECUTED_TAIL) {
+            return format!("{head}. Add a test input that satisfies the guarding condition.");
+        }
+        return text.replacen(
+            PYTHON_METHOD_CALL,
+            "so the edited value is not observed. ",
+            1,
+        );
+    }
+    text.to_string()
 }
 
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, false, |text, _| text)
+    evidence_path(finding, wording, |text, _| text)
 }
 
 pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(
-        finding,
-        JsonPointerWording::CheckFlag,
-        true,
-        |text, source| {
-            // Multi-line literals retain their existing rendering locally and cannot
-            // forge a catalogue definition or generated reference.
-            let key = if !with_keys
-                || matches!(source, EvidenceSource::Window)
-                || text.contains(['\n', '\r'])
-            {
-                None
-            } else {
-                serde_json::to_vec(&(source, &text)).ok()
-            };
-            EvidenceEntry { text, key }
-        },
-    )
+    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
+        // Multi-line literals retain their existing rendering locally and cannot
+        // forge a catalogue definition or generated reference.
+        let key = if !with_keys
+            || matches!(source, EvidenceSource::Window)
+            || text.contains(['\n', '\r'])
+        {
+            None
+        } else {
+            serde_json::to_vec(&(source, &text)).ok()
+        };
+        EvidenceEntry { text, key }
+    })
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
-    plain: bool,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -134,20 +153,17 @@ fn evidence_path<T>(
             EvidenceSource::Stage("propagation", &finding.ripr.propagate),
         ),
         project(
-            plain_wording(
-                plain,
-                format!(
-                    "observation {}: {}",
-                    finding.ripr.reveal.observe.state.as_str(),
-                    finding.ripr.reveal.observe.summary
-                ),
+            format!(
+                "observation {}: {}",
+                finding.ripr.reveal.observe.state.as_str(),
+                plain_observation_wording(&finding.ripr.reveal.observe.summary)
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
-            plain_wording(
-                plain,
-                crate::output::discriminator_line::discriminator_evidence_line(finding),
+            crate::output::discriminator_line::discriminator_evidence_line_with_summary(
+                finding,
+                &plain_observation_wording(&finding.ripr.reveal.discriminate.summary),
             ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,
@@ -219,7 +235,10 @@ fn evidence_path<T>(
             )
         );
         if let Some(oracle) = &test.oracle {
-            line.push_str(&format!(": {oracle}"));
+            line.push_str(&format!(
+                ": {}",
+                crate::output::related_test_miss::single_line_evidence_text(oracle)
+            ));
         }
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
@@ -283,7 +302,7 @@ fn evidence_path<T>(
             if name_files {
                 crate::output::observed_values::source_value_evidence_line_with_file(value)
             } else {
-                crate::output::observed_values::source_value_evidence_line(value)
+                crate::output::observed_values::human_source_value_evidence_line(value)
             },
             EvidenceSource::Value(value),
         ));
