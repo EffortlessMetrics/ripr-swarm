@@ -16343,6 +16343,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::submodule_named_worktrees_still_reads_the_superproject",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::spaced_bracket_keys_are_still_seen",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::only_a_submodule_pointer_is_not_a_boundary",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::comments_and_compound_assignments_do_not_hide_a_key",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::quoted_combined_and_escaped_script_flags_stay_medium",
   "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
   "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
 ]

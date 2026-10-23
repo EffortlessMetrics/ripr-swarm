@@ -288,12 +288,45 @@ const SNAPSHOT_OVERRIDES: [&str; 7] = [
     "snapshotFormat",
 ];
 
+/// Assignment operators that rewrite a member (`config.key = x`,
+/// `config.key ||= x`, `config.key += x`). `==`, `===` and `=>` are not.
+const ASSIGNMENT_OPERATORS: [&str; 16] = [
+    "||=", "??=", "&&=", "**=", "<<=", ">>>=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=",
+    "^=", "=",
+];
+
+/// `before` without trailing whitespace and `/* */` comments, so a comment
+/// between a member dot or an opening bracket and the key does not hide it.
+fn trim_trivia_end(mut before: &str) -> &str {
+    loop {
+        before = before.trim_end();
+        match before
+            .strip_suffix("*/")
+            .and_then(|inner| inner.rsplit_once("/*"))
+        {
+            Some((rest, _)) => before = rest,
+            None => return before,
+        }
+    }
+}
+
+/// `true` when `after` (text following a member key) starts an assignment.
+fn starts_assignment(after: &str) -> bool {
+    ASSIGNMENT_OPERATORS.iter().any(|operator| {
+        after
+            .strip_prefix(operator)
+            .is_some_and(|rest| *operator != "=" || !rest.starts_with(['=', '>']))
+    })
+}
+
 /// `true` when `text` holds `key` as an object key (`key:`, `key :`,
 /// `"key":`, `'key':`, a computed `["key"]:` / `['key']:` / `` [`key`]: ``, or
 /// JS shorthand `{ key }` / `{ key, ... }`) or as a member assignment
-/// (`config.key = ...`, `config["key"] = ...`). A longer identifier
-/// (`rootDir`, `roots`) does not match `root`, and a plain `const root = ...`
-/// declaration is not a key.
+/// (`config.key = ...`, `config["key"] = ...`, and the compound forms
+/// `||=`, `??=`, `&&=`, `+=`). Whitespace and comments may sit between the
+/// tokens (`projects /* x */ :`, `config.key /* x */ = ...`). A longer
+/// identifier (`rootDir`, `roots`) does not match `root`, and a plain
+/// `const root = ...` declaration is not a key.
 fn mentions_named_key(text: &str, key: &str) -> bool {
     text.match_indices(key).any(|(index, matched)| {
         let before = text.get(..index).unwrap_or_default();
@@ -311,22 +344,22 @@ fn mentions_named_key(text: &str, key: &str) -> bool {
             Some(after) => (true, after),
             None => (false, rest),
         };
-        let trimmed = after_quote.trim_start();
+        let trimmed = skip_trivia(after_quote);
         // A computed key (`["key"]`) or bracket member (`config["key"]`)
         // closes its bracket after the quote.
         let (closed, after) = match trimmed.strip_prefix(']') {
-            Some(after) if quoted => (true, after.trim_start()),
+            Some(after) if quoted => (true, skip_trivia(after)),
             _ => (false, trimmed),
         };
-        // Whitespace may separate the opening bracket from the quote
-        // (`config[ "key" ]`) and a member dot from its receiver.
+        // Whitespace and comments may separate the opening bracket from the
+        // quote (`config[ "key" ]`) and a member dot from its key.
         let bracket_open = before
             .strip_suffix(['"', '\'', '`'])
-            .is_some_and(|opener| opener.trim_end().ends_with('['));
-        let member = before.trim_end().ends_with('.') || (closed && bracket_open);
+            .is_some_and(|opener| trim_trivia_end(opener).ends_with('['));
+        let member = trim_trivia_end(before).ends_with('.') || (closed && bracket_open);
         after.starts_with(':')
             || (!closed && after.starts_with([',', '}']))
-            || (member && after.starts_with('=') && !after.starts_with("=="))
+            || (member && starts_assignment(after))
     })
 }
 
@@ -345,22 +378,40 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
-/// JSON string escapes for the whitespace a `package.json` script may put
-/// before a flag (`"jest\t-u"`).
-const ESCAPED_WHITESPACE: [&str; 9] = [
-    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d",
+/// JSON string escapes for the whitespace and quotes a `package.json`
+/// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
+const JSON_ESCAPES: [&str; 11] = [
+    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d", "\\\"", "\\'",
 ];
 
-/// `true` when `text` holds the short update flag after any whitespace
-/// (`jest -u`, `jest\t-u`), including whitespace a JSON string spells as an
-/// escape (`"jest\\t-u"`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
+/// `text` with each JSON escape for whitespace or a quote read as a space,
+/// so a script's flags split the way the shell sees them.
+fn unescape_json_separators(text: &str) -> String {
+    JSON_ESCAPES
+        .iter()
+        .fold(text.to_string(), |acc, escape| acc.replace(escape, " "))
+}
+
+/// `true` when `text` holds the short update flag, alone or inside a
+/// combined cluster, after whitespace, a shell quote or a JSON escape of
+/// either: `jest -u`, `jest\t-u`, `jest '-u'`, `jest \"-u\"`, `jest -iu`.
+/// A single dash only: `--ci` and `eslint-plugin-unicorn` do not match.
+/// Over-matching a cluster that merely contains `u` only refuses.
 fn mentions_short_update_flag(text: &str) -> bool {
-    text.match_indices("-u").any(|(index, _)| {
+    let text = unescape_json_separators(text);
+    text.match_indices('-').any(|(index, _)| {
         let before = text.get(..index).unwrap_or_default();
-        before.chars().next_back().is_some_and(char::is_whitespace)
-            || ESCAPED_WHITESPACE
-                .iter()
-                .any(|escape| before.ends_with(escape))
+        let boundary = before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '`'));
+        let cluster = text
+            .get(index + 1..)
+            .unwrap_or_default()
+            .chars()
+            .take_while(char::is_ascii_alphabetic)
+            .collect::<String>();
+        boundary && cluster.contains('u')
     })
 }
 
@@ -385,7 +436,7 @@ const CONFIG_FLAGS: [&str; 7] = [
 fn passes_config_by_path(text: &str) -> bool {
     text.contains("\"projects\"")
         || text.contains("\"rootDir\"")
-        || text
+        || unescape_json_separators(text)
             .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
             .any(|token| {
                 let flag = token.split('=').next().unwrap_or(token);

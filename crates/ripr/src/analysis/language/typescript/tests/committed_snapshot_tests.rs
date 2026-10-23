@@ -1335,3 +1335,157 @@ fn only_a_submodule_pointer_is_not_a_boundary() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #8768 review: a comment between a key and its `:` / `=`, and the compound
+/// member assignments (`||=`, `??=`, `&&=`, `+=`), still name the key, so the
+/// config reads medium. Comparisons and unrelated keys keep the credit.
+#[test]
+fn comments_and_compound_assignments_do_not_hide_a_key() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, snap) in [
+        (
+            "jest.config.js",
+            "module.exports = { projects /* x */ : [\"./nested.config.js\"] };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { projects // c\n : [\"./nested.config.js\"] };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { update // c\n : true } };",
+            &vitest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projects /* x */ = [\"./n.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig. /* x */ projects = [\"./n.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projects ||= [\"./n.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projects ??= [\"./n.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projects += [\"./n.js\"];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test.update ||= true;\nexport default config;",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test[\"update\"] /* c */ ??= true;\nexport default config;",
+            &vitest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-trivia-key",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    // Not assignments of those keys: comparisons, arrows, other members.
+    for (config, text, snap) in [
+        (
+            "jest.config.js",
+            "module.exports = { verbose: process.env.projects === \"x\" };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.rootDir ||= \"src\";\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "const config = {};\nconfig.projectList ??= [];\nmodule.exports = config;",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "const config: any = { test: {} };\nconfig.test.include ||= [\"a\"];\nexport default config;",
+            &vitest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-trivia-control",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+/// #8768 review: a `package.json` script that quotes the update flag
+/// (`'-u'`, JSON `\"-u\"`), bundles it (`-iu`), or separates a config flag
+/// with a JSON-escaped tab refuses. Flag-free scripts keep the credit.
+#[test]
+fn quoted_combined_and_escaped_script_flags_stay_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for script in [
+        "jest '-u'",
+        "jest \\\"-u\\\"",
+        "jest -iu",
+        "jest -ui",
+        "jest --ci -iu",
+        "jest\\t--config\\tcfg/x.js",
+        "jest\\n-c\\tcfg/x.js",
+        "jest\\t--projects\\ta",
+        "jest \\\"--config\\\" cfg/x.js",
+    ] {
+        let package = format!("{{ \"scripts\": {{ \"test\": \"{script}\" }} }}");
+        assert_eq!(
+            strengths(
+                "snap-script-flags",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("package.json", &package)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{package}"
+        );
+    }
+    for script in [
+        "jest --ci",
+        "jest --ci --silent-u",
+        "jest --ci\\t--runInBand",
+        "eslint-plugin-unicorn --ci",
+        "jest -w 2 --ci",
+    ] {
+        let package = format!("{{ \"scripts\": {{ \"test\": \"{script}\" }} }}");
+        assert_eq!(
+            strengths(
+                "snap-script-flags-control",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("package.json", &package)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{package}"
+        );
+    }
+    Ok(())
+}

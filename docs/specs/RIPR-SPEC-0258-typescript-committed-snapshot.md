@@ -84,10 +84,12 @@ runner's entry for it can be named and is committed:
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
   `snapshotEnvironment`, `updateSnapshot`, `snapshotFormat`, `--update`, `-u`
-  after any whitespace (a JSON string's `\t`, `\n`, `\r`, `\f`, `\v` or
-  `\u0020` escape counts as whitespace) or `"-u"`, no runner config holds an
+  after whitespace, a shell quote or a JSON escape of either (`\t`, `\n`,
+  `\r`, `\f`, `\v`, `\u0020`, `\"`), alone or bundled in a short-flag
+  cluster (`-iu`), or `"-u"`, no runner config holds an
   `update` key (`update:`, `update :`, `"update":`, a computed `["update"]:`,
-  a member assignment `config.update = ...`), no runner config other than
+  a member assignment `config.update = ...` or compound `||=` / `??=` /
+  `+=`, with comments allowed between the key and the `:` or `=`), no runner config other than
   `package.json` names `projects`, `workspace` or `root` as a key (plain,
   quoted, computed `["projects"]:`, JS shorthand, or a member assignment
   `config.projects = ...`), since those keys delegate to config files this
@@ -206,6 +208,16 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   computed key built at run time (`["pro" + "jects"]`) is not read and a
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
+- A config that inherits from another file is not followed: a `preset:`
+  option, or a spread of an imported base config
+  (`...require("./jest.base")`, `...baseConfig`), may carry a snapshot
+  override this walk never read. Such a config keeps the credit unless the
+  file itself names an override. A key built from a variable
+  (`[name]: ...`, `config[name] = ...`) is not read either. Both are tracked
+  as known limits, not refused.
+- A comment between a member dot and its key on an earlier line
+  (`config. // c` then `projects = ...`) is not seen; same-line block
+  comments are.
 - A `.git` directory nested in a larger repository (a vendored clone) cannot
   be told from the repository top, so it ends the walk and a config above it
   is not read. A worktree `gitdir:` pointer and a `.git` file with no
