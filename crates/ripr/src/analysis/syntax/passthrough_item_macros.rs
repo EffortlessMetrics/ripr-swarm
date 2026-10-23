@@ -326,6 +326,22 @@ fn shadowed_by_local_fn(
         {
             return true;
         }
+        // An attribute outside the inert allowlist may rewrite the emitted item
+        // into a different binding than the one it appears to declare.
+        if inner
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .filter(|attr| {
+                !attr
+                    .syntax()
+                    .ancestors()
+                    .skip(2)
+                    .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+            })
+            .any(|attr| !inert_item_attribute(&attr))
+        {
+            return true;
+        }
         collect_bindings(&inner, false, &mut bound);
     }
     if bound.contains("*") {
@@ -628,6 +644,8 @@ mod tests {
             format!("{second}suite! {{ {test} }}\n#[shadow]\nsecond! {{ {shadow} }}\n"),
             // An attribute on an item emitted inside an identity invocation.
             format!("{second}suite! {{ {test} #[shadow] fn decoy() {{}} }}\n"),
+            // A separate unannotated call whose emitted item is attributed.
+            format!("{second}suite! {{ {test} }}\nsecond! {{ #[shadow] fn decoy() {{}} }}\n"),
             // Nested item macros stay opaque.
             format!("suite! {{ {test} }}\nsuite! {{ suite! {{ {shadow} }} }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ second! {{ {shadow} }} }}\n"),

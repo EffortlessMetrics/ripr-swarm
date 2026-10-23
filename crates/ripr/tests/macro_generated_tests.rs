@@ -372,6 +372,18 @@ fn shadow_cases() -> Vec<(&'static str, String, String)> {
             format!("{mk}{GATE_TEST}\n    mk!();\n"),
         ),
         (
+            "attributed item emitted beside the test",
+            wrap(&format!("    #[shadow]\n    fn decoy() {{}}\n{GATE_TEST}")),
+            format!("    #[shadow]\n    fn decoy() {{}}\n{GATE_TEST}"),
+        ),
+        (
+            "attributed item in a separate sibling call",
+            format!(
+                "{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n    #[shadow]\n    fn decoy() {{}}\n    }}\n"
+            ),
+            format!("{GATE_TEST}\n    #[shadow]\n    fn decoy() {{}}\n"),
+        ),
+        (
             "fn in a different identity macro after the suite",
             format!("{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n{SHADOW_FN}    }}\n"),
             format!("{GATE_TEST}\n{SHADOW_FN}"),
@@ -421,6 +433,8 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::StaticUnknown,
         ExposureClass::StaticUnknown,
         ExposureClass::NoStaticPath,
+        ExposureClass::Exposed,
+        ExposureClass::Exposed,
         ExposureClass::Exposed,
         ExposureClass::Exposed,
         ExposureClass::StaticUnknown,
