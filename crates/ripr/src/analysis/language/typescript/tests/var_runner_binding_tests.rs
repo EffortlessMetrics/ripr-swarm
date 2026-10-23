@@ -230,3 +230,58 @@ fn global_object_member_writes_refuse_the_binding() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn comments_and_postfix_division_do_not_hide_a_write() -> Result<(), String> {
+    for tail in [
+        "let n = 0;\nn++ / 2; // Swap the runner out.\ntest = function () {};",
+        "// Swap the runner out.\ntest = function () {};",
+        "test /* c */ = function () {};",
+        "test // c\n= function () {};",
+        "function /* c */ test() {}",
+        "let n = 0; n-- / 2; test = null; n / 3;",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for("var-runner-comment", &source)?,
+            ExposureClass::NoStaticPath,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn balanced_as_clauses_and_byte_order_marks_are_still_writes() -> Result<(), String> {
+    for tail in [
+        "(test as () => void) = function () {};",
+        "(test as ((a: number) => void)) = function () {};",
+        "(test as typeof import('tape')) = null;",
+        "test\u{feff}= null;",
+        "function\u{feff}test() {}",
+        "test\u{feff}++;",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        let class = class_for_file("var-runner-bom", "test/k.test.ts", &source)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{tail}");
+    }
+    Ok(())
+}
+
+#[test]
+fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
+    use crate::analysis::language::typescript::tests_extract::{
+        identifier_written_in, identifier_written_strictly,
+    };
+    for (write, name) in [
+        ("café = null;", "café"),
+        ("té++;", "té"),
+        ("(café) = 1;", "café"),
+        ("for ([café] of xs);", "café"),
+    ] {
+        assert!(identifier_written_strictly(write, name), "{write}");
+    }
+    // A longer name sharing an ASCII prefix is a different identifier.
+    assert!(!identifier_written_in("café = null;", "caf"));
+    assert!(!identifier_written_strictly("const café = 1; read(caf);", "caf"));
+}

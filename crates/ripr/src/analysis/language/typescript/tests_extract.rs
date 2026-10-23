@@ -1925,8 +1925,8 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
 
 /// `true` when `before` (text ending in `.`) is a global-object receiver
 /// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
-/// can rebind a sloppy-mode `var` of the same name, so it is scanned like a
-/// bare identifier (fail-closed).
+/// can rebind a sloppy-mode `var` of the same name, so the strict scan reads
+/// it like a bare identifier (fail-closed).
 fn global_object_member(before: &str) -> bool {
     let receiver = before[..before.len() - 1].trim_end();
     ["globalThis", "this", "window", "global", "self"]
@@ -1944,8 +1944,9 @@ fn global_object_member(before: &str) -> bool {
 /// grouping or a TypeScript wrapper: `(name) = x`, `(name)++`, `++(name)`,
 /// `name! = x`, `(name as T) = x`, `(name satisfies T) = x` and
 /// `for ((name) of xs)`. Fail-closed: the identifier counts as written when
-/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause stand
-/// between it and an assignment operator, update or loop keyword.
+/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause (its own
+/// parentheses balanced) stand between it and an assignment operator, update
+/// or loop keyword.
 fn wrapped_write(before: &str, rest: &str) -> bool {
     if before.ends_with('(') {
         let lead = before.trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace());
@@ -1966,8 +1967,21 @@ fn wrapped_write(before: &str, rest: &str) -> bool {
                 .strip_prefix(keyword)
                 .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
         }) {
-            match trimmed.find(')') {
-                Some(close) => rest = &trimmed[close + 1..],
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, ch) in trimmed.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => {
+                        close = Some(offset);
+                        break;
+                    }
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            match close {
+                Some(close) => rest = &trimmed[close..],
                 None => return false,
             }
         } else {
@@ -2004,11 +2018,23 @@ fn wrapped_write(before: &str, rest: &str) -> bool {
     })
 }
 
+/// `text` with U+FEFF (JavaScript whitespace that Rust does not trim) blanked
+/// to three spaces, so byte offsets are unchanged.
+fn blank_byte_order_marks(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{feff}') {
+        std::borrow::Cow::Owned(text.replace('\u{feff}', "   "))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 /// Every function declaration or expression name `text` introduces, with its
 /// byte offset (`function name`, `function* name`). A declaration nested in a
 /// block re-binds a sloppy-mode `var` of the same name (Annex B.3.3), so
 /// callers treat it as a write to that name.
 pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
     let mut names = Vec::new();
     let mut from = 0;
     while let Some(found) = text[from..].find("function") {
@@ -2040,32 +2066,58 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
         .any(|(name, _)| name == identifier)
 }
 
+/// `true` when the strict scan ([`strict_identifier_writes`]) may write
+/// `identifier`.
+pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
+    strict_identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
 /// Every identifier `text` may write, with its byte offset: an assignment
 /// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
 /// `for (name of ...)` target, and any identifier inside a bracketed group
-/// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
-/// targets (`this.name =`) are not writes. Comments and strings are not
-/// skipped: a false entry only withholds a relation.
+/// that is itself assigned or looped over (`[name] = ...`, `({ name } = ...)`,
+/// `for ([name] of ...)`). Member targets (`this.name =`) are not writes.
+/// Identifiers are Unicode-aware. Comments and strings are not skipped: a
+/// false entry only withholds a relation.
 pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
-    let bytes = text.as_bytes();
+    scan_writes(text, false)
+}
+
+/// [`identifier_writes`] plus the spellings only a binding that must stay
+/// provably unwritten needs (the `var`/`let` runner and CommonJS export
+/// gates): grouped and TypeScript-wrapped targets (`(name) = x`, `name! = x`,
+/// `(name as T) = x`) and global-object members (`globalThis.name = x`,
+/// `this.name = x`).
+pub(crate) fn strict_identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, true)
+}
+
+fn scan_writes(text: &str, strict: bool) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
     let destructured = destructuring_ranges(text);
     let mut writes = Vec::new();
     let mut index = 0;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
-        if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
-            index += 1;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        if !(ch == '_' || ch == '$' || ch.is_alphabetic()) {
+            index += ch.len_utf8();
             continue;
         }
         let start = index;
-        while index < bytes.len() && {
-            let ch = bytes[index] as char;
-            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-        } {
-            index += 1;
+        while let Some(ch) = text[index..].chars().next() {
+            if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
+                break;
+            }
+            index += ch.len_utf8();
         }
         let before = text[..start].trim_end();
-        if before.ends_with('.') && !before.ends_with("...") && !global_object_member(before) {
+        let global = strict && before.ends_with('.') && global_object_member(before);
+        if before.ends_with('.') && !before.ends_with("...") && !global {
             continue;
         }
         let rest = text[index..].trim_start();
@@ -2096,7 +2148,7 @@ pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
                 prefix.ends_with("for") || prefix.ends_with("await")
             });
         let in_target = destructured.iter().any(|range| range.contains(&start));
-        let wrapped = wrapped_write(before, rest);
+        let wrapped = strict && wrapped_write(before, rest);
         if assigns || steps || loop_target || in_target || wrapped {
             writes.push((text[start..index].to_string(), start));
         }
@@ -2105,7 +2157,7 @@ pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
 }
 
 /// Byte ranges of `[...]` and `{...}` groups directly followed by an
-/// assignment `=`: destructuring targets.
+/// assignment `=` or a `for` head's `of`/`in`: destructuring targets.
 fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let bytes = text.as_bytes();
     let mut ranges = Vec::new();

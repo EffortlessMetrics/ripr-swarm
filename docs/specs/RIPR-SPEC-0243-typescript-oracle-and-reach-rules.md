@@ -840,6 +840,12 @@ rejected alternative. Any can be reversed later without touching the rest.
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
 
+Known limits of the textual write scan (#9182): the literal/comment masker
+reads `</div>` in `.tsx` text and a backtick inside a regex literal wrongly, so
+a write hidden by either is not seen; a postfix `++`/`--` before `/` is
+division, not a regex. These are fail-open only for files that already defeat
+the masker.
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON

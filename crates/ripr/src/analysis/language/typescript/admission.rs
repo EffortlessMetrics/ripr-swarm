@@ -139,7 +139,16 @@ impl TypeScriptAdmissionContext {
             .collect();
         let known_require =
             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
-        let scan = BindingScan::of_source(program.source_text);
+        // Only a non-`const` declaration holding a `require()` needs the scan.
+        let scan = statements
+            .iter()
+            .any(|statement| {
+                matches!(statement, Statement::VariableDeclaration(declaration)
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                        && declaration.declarations.iter().any(require_declarator))
+            })
+            .then(|| BindingScan::of_source(program.source_text))
+            .flatten();
         let mut context = Self {
             block_functions_are_lexical,
             imports: imports.to_vec(),
@@ -313,18 +322,9 @@ impl BindingScan {
     fn of_source(source: &str) -> Option<Self> {
         let code = super::tests_extract::byte_preserving_code_mask(source)
             .filter(|code| !super::tests_extract::file_is_opaque(code))?;
-        // The masker reads a `/` after a postfix `++`/`--` as a regex start
-        // and blanks the code up to the next `/`. When that shape appears,
-        // scan the unmasked source instead: a false write inside a string
-        // only withholds credit.
-        let text = if postfix_before_slash(&code) {
-            source
-        } else {
-            code.as_str()
-        };
         Some(Self {
-            writes: super::tests_extract::identifier_writes(text),
-            functions: super::tests_extract::function_declaration_names(text),
+            writes: super::tests_extract::strict_identifier_writes(&code),
+            functions: super::tests_extract::function_declaration_names(&code),
         })
     }
 
@@ -343,11 +343,20 @@ impl BindingScan {
     }
 }
 
-fn postfix_before_slash(code: &str) -> bool {
-    ["++", "--"].iter().any(|operator| {
-        code.match_indices(operator)
-            .any(|(at, _)| code[at + 2..].trim_start().starts_with('/'))
-    })
+/// A declarator initialized by `require("...")` or a member of it.
+fn require_declarator(declarator: &oxc_ast::ast::VariableDeclarator<'_>) -> bool {
+    let Some(init) = declarator
+        .init
+        .as_ref()
+        .map(Expression::get_inner_expression)
+    else {
+        return false;
+    };
+    let call = match init {
+        Expression::StaticMemberExpression(member) => &member.object,
+        other => other,
+    };
+    require_string_literal_source(call.get_inner_expression()).is_some()
 }
 
 /// The binding names of the declarators of a `var`/`let` declaration whose own
@@ -370,21 +379,11 @@ fn unwritten_declarator_locals(
         return Vec::new();
     }
     let mut locals = Vec::new();
-    for declarator in &declaration.declarations {
-        let Some(init) = declarator
-            .init
-            .as_ref()
-            .map(Expression::get_inner_expression)
-        else {
-            continue;
-        };
-        let call = match init {
-            Expression::StaticMemberExpression(member) => &member.object,
-            other => other,
-        };
-        if require_string_literal_source(call.get_inner_expression()).is_none() {
-            continue;
-        }
+    for declarator in declaration
+        .declarations
+        .iter()
+        .filter(|d| require_declarator(d))
+    {
         let names = declarator.id.get_binding_identifiers();
         if names
             .iter()

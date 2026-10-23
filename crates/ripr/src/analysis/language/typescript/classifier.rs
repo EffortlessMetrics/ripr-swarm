@@ -894,6 +894,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     // Consecutive `.` ending at `prev`: three is a spread (`[...'p']`), while
     // a sentence's `.` in JSX text (`Hi. "Bye {p(1)}`) is not.
     let mut dots = 0usize;
+    // `++`/`--` that directly follows an operand is postfix, so a `/` after
+    // it is division (`i++ / 2`), never a regex start.
+    let mut postfix_op = false;
+    let mut op_after_operand = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -929,7 +933,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    '/' if operand_expected(prev, &word, word_after_dot) => {
+                    '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -957,6 +961,16 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if (c == '+' || c == '-') && !after_space && prev == Some(c) {
+                    postfix_op = op_after_operand;
+                } else {
+                    if c == '+' || c == '-' {
+                        op_after_operand = !operand_expected(prev, &word, word_after_dot);
+                    }
+                    if !c.is_whitespace() {
+                        postfix_op = false;
+                    }
                 }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
