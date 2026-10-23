@@ -187,7 +187,12 @@ fn a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap() -> Result<(), String>
 }
 
 #[test]
-fn a_returned_closure_the_test_applies_reads_as_a_shape_limit() -> Result<(), String> {
+fn an_applied_returned_closure_pin_is_no_longer_withheld() -> Result<(), String> {
+    // RIPR-SPEC-0265 rule 5 (#9490): the test applies the returned closure on
+    // distinct nonzero literals, so the owner pin reads it and the shape-limit
+    // rule must not withhold this shape. The shapes the credit still refuses
+    // (zero or repeated inputs, a closure that is never applied) stay
+    // controlled by `returned_closure_pin.rs`.
     let lib = owner_with_test(
         "pub fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
     move |x| n + x
@@ -202,8 +207,8 @@ fn a_returned_closure_the_test_applies_reads_as_a_shape_limit() -> Result<(), St
         "    move |x| n + x",
         ProbeFamily::ReturnValue,
     )?;
-    assert_eq!(finding.class, ExposureClass::StaticUnknown);
-    assert_eq!(limit(&finding), Some("rust_pinned_shape_unresolved"));
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(limit(&finding), None);
     Ok(())
 }
 

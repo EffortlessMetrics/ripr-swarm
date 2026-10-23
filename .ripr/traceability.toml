@@ -17184,7 +17184,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
   "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit",
   "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
-  "crates/ripr/tests/pinned_shape_limit.rs::a_returned_closure_the_test_applies_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_applied_returned_closure_pin_is_no_longer_withheld",
   "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
   "crates/ripr/tests/pinned_shape_limit.rs::a_closure_that_may_not_run_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::another_exit_before_the_closure_tail_keeps_the_gap",

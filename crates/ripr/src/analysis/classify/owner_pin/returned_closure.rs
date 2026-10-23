@@ -240,9 +240,12 @@ fn split_arguments(group: &str) -> Option<Vec<&str>> {
     (!arguments.iter().any(|argument| argument.is_empty())).then_some(arguments)
 }
 
-/// The normalized text of a plain numeric literal that is not zero: digits
+/// The canonical text of a plain numeric literal that is not zero: digits
 /// with `_` separators and an optional leading `-`, one `.` fraction and a
-/// numeric type suffix (`2`, `-3`, `2.5`, `4u32`). Anything else is `None`.
+/// numeric type suffix (`2`, `-3`, `2.5`, `4u32`). Equal values with
+/// different spellings (`2` vs `02`, `1.0` vs `1.00`) share one canonical
+/// text, so the pairwise-distinct check compares values. Anything else is
+/// `None`.
 fn nonzero_numeric_literal(argument: &str) -> Option<String> {
     let text = argument.trim();
     let (negative, body) = match text.strip_prefix('-') {
@@ -265,8 +268,28 @@ fn nonzero_numeric_literal(argument: &str) -> Option<String> {
         && cleaned.matches('.').count() <= 1
         && !cleaned.ends_with('.');
     let nonzero = cleaned.chars().any(|ch| ch.is_ascii_digit() && ch != '0');
-    (suffix_ok && well_formed && nonzero)
-        .then(|| format!("{}{}", if negative { "-" } else { "" }, cleaned))
+    if !(suffix_ok && well_formed && nonzero) {
+        return None;
+    }
+    // Canonicalize the value so equal numbers with different spellings
+    // (`2` vs `02`, `1.0` vs `1.00`) cannot pass as pairwise different.
+    let (int_part, frac_part) = match cleaned.split_once('.') {
+        Some((int_part, frac_part)) => (int_part, frac_part),
+        None => (cleaned.as_str(), ""),
+    };
+    let int_trimmed = int_part.trim_start_matches('0');
+    let int_trimmed = if int_trimmed.is_empty() {
+        "0"
+    } else {
+        int_trimmed
+    };
+    let frac_trimmed = frac_part.trim_end_matches('0');
+    let canonical = if frac_trimmed.is_empty() {
+        int_trimmed.to_string()
+    } else {
+        format!("{}.{}", int_trimmed, frac_trimmed)
+    };
+    Some(format!("{}{}", if negative { "-" } else { "" }, canonical))
 }
 
 fn collapse(text: &str) -> String {
@@ -320,6 +343,8 @@ mod tests {
             "make_adder(2)(3)",
             "make_adder(-2)(3)",
             "make_adder(2_i32)(3)",
+            "make_adder(02)(3)",
+            "make_adder(2.0)(3)",
         ] {
             assert!(
                 applied_inputs_are_distinct_literals(operand, 1),
@@ -330,6 +355,11 @@ mod tests {
             "make_adder(0)(3)",
             "make_adder(2)(0)",
             "make_adder(2)(2)",
+            // Equal values behind different spellings are the coincident
+            // pair `2 + 2 == 2 * 2` the distinctness rule refuses.
+            "make_adder(2)(02)",
+            "make_adder(1.0)(1)",
+            "make_adder(2.50)(2.5)",
             "make_adder(n)(3)",
             "make_adder(2)(x)",
             "make_adder(2)(f(3))",
