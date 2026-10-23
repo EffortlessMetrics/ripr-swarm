@@ -5745,6 +5745,86 @@ fn e2e_unloadable_config_keeps_gap_ledger_artifact_scope() -> Result<(), String>
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn review_only_real_ledger_symlink_keeps_baseline_debt() -> Result<(), String> {
+    use crate::output::gap_decision_ledger::{
+        GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+        render_gap_decision_ledger_json,
+    };
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json", "unix_ms:1", &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(before > 0, "real production pipeline must produce baseline debt");
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+
+    let root = temp_dir("review-9778-symlink")?;
+    e2e_write_project(&root, shallow)?;
+    fs::rename(root.join("src/lib.rs"), root.join("src/lib.source"))
+        .map_err(|err| err.to_string())?;
+    std::os::unix::fs::symlink("lib.source", root.join("src/lib.rs"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(fs::read_to_string(root.join("src/lib.rs")).map_err(|err| err.to_string())?, shallow);
+    let config = crate::config::RiprConfig::default();
+    let report = crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
+    assert!(report.classified.is_empty(), "symlink must be absent from real inventory");
+    assert!(report.skipped_generated.is_empty());
+    assert!(report.declined_rust_files.is_empty());
+    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
+        report.skipped_generated.clone(), report.naming_only_skips.clone(), report.declined_rust_files.clone(),
+    );
+    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+        root.clone(), "draft".to_string(), None, &config,
+    )?.with_rust_corpus_key(report.corpus_key.as_ref());
+    let mut exposure = Vec::new();
+    crate::output::repo_exposure::write_repo_exposure_json_with_context(
+        &report.classified, report.limit_info.as_ref(), None, None, generated_skip.as_ref(), &context, &mut exposure,
+    )?;
+    let ledger = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        root: root.to_string_lossy().to_string(),
+        generated_at: "2026-10-23T00:00:00Z".to_string(),
+        source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+        records_path: "exposure.json".to_string(),
+        records_json: Ok(String::from_utf8(exposure).map_err(|err| err.to_string())?),
+    });
+    let ledger = render_gap_decision_ledger_json(&ledger)?;
+    fs::write(root.join("ledger.json"), &ledger).map_err(|err| err.to_string())?;
+    let input = GateEvaluateInput {
+        root: root.clone(), repo_exposure: None, pr_guidance: None,
+        gap_ledger: Some(PathBuf::from("ledger.json")), sarif_policy: None,
+        labels_json: None, labels: Vec::new(), agent_verify: None, agent_receipt: None,
+        recommendation_calibration: None, mutation_calibration: None, baseline: None,
+        mode: GateMode::Acknowledgeable, acknowledgement_labels: Vec::new(), exception_policy: None,
+    };
+    let gate = render_gate_decision_json(&build_gate_decision_report(&input)?)?;
+    let gate_value: Value = serde_json::from_str(&gate).map_err(|err| err.to_string())?;
+    let delta = crate::output::baseline_delta::build_baseline_delta_report(
+        crate::output::baseline_delta::BaselineDeltaInput {
+            root: root.to_string_lossy().to_string(), baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "gate.json".to_string(), baseline_json: Ok(baseline.clone()),
+            current_gate_decision_json: Ok(gate.clone()),
+        },
+    );
+    let delta: Value = serde_json::from_str(&crate::output::baseline_delta::render_baseline_delta_json(&delta)?)
+        .map_err(|err| err.to_string())?;
+    let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+        crate::output::baseline_update::BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(), current_gate_decision_path: "gate.json".to_string(),
+            baseline_json: baseline, current_gate_decision_json: gate, remove_resolved: true,
+            migrate_legacy_identities: false,
+        },
+    )?;
+    let after = crate::output::baseline_update::baseline_update_after_entry_count(&update);
+    eprintln!("review witness: baseline_before={before}; actual_inventory_seams=0; scope={}; delta_resolved={}; baseline_after={after}",
+        gate_value["analysis_scope"]["scope"], delta["delta"]["resolved"]);
+    ignore_remove_dir_all(root);
+    assert_eq!(after, before, "an unchanged source reached by a skipped symlink was not analyzed and must retain its real baseline debt");
+    Ok(())
+}
+
 #[test]
 fn gate_and_baseline_fallback_identities_normalize_paths_identically() {
     for path in [
