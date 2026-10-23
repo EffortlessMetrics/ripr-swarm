@@ -2333,6 +2333,7 @@ impl RustAdapter {
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
                     unindexed_manifests: &unindexed_manifests,
+                    root: &options.root,
                 });
 
         // #4722: a changed file the reference parser refused was indexed
@@ -3104,6 +3105,7 @@ impl RustAdapter {
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
+            root: &options.root,
         };
 
         for path in &production_files {

@@ -55,6 +55,8 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// admit needs; every other admit keeps the whole-workspace
     /// precondition.
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+    /// The scan root, for reading a manifest's package and library name.
+    pub(in crate::analysis) root: &'a std::path::Path,
 }
 
 /// #6617: the nearest-manifest identity of every package that has an
@@ -7637,6 +7639,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             manifest_dir_prefixes,
             index,
             unindexed_manifests: &NONE_UNINDEXED,
+            root: std::path::Path::new("."),
         }
     }
 
@@ -9728,6 +9731,7 @@ fn crate_c_score_test() {
             manifest_dir_prefixes: &prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
+            root: std::path::Path::new("."),
         };
         let probe = probe("crates/crate_a/src/lib.rs", "42");
         find_related_tests(
