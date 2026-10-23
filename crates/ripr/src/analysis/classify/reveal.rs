@@ -4600,6 +4600,37 @@ fn retain_owner_calling_rows(
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
             && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
     };
+    // A signalled test already in the window but behind location-only rows
+    // moves up to just ahead of the first of them (its first row only; no row
+    // is added or evicted).
+    if let Some(first_location) = window
+        .iter()
+        .skip(1)
+        .position(is_location_only_row)
+        .map(|position| position + 1)
+    {
+        let identity = |test: &RelatedTest| (test.file.clone(), test.line, test.name.clone());
+        let ahead: std::collections::BTreeSet<OwnerCallKey> = window[..first_location]
+            .iter()
+            .filter(|test| signalled(test))
+            .map(identity)
+            .collect();
+        let mut moving = std::collections::BTreeSet::new();
+        let mut indices = Vec::new();
+        for (index, test) in window.iter().enumerate().skip(first_location + 1) {
+            if signalled(test) && !ahead.contains(&identity(test)) && moving.insert(identity(test))
+            {
+                indices.push(index);
+            }
+        }
+        let moved: Vec<RelatedTest> = indices
+            .iter()
+            .rev()
+            .map(|index| window.remove(*index))
+            .rev()
+            .collect();
+        window.splice(first_location..first_location, moved);
+    }
     // Candidates are chosen by test identity, seeded with the tests already
     // in the window, and each absent test contributes only its first ranked
     // row: extra assertions of one test must not evict distinct tests (the
@@ -6432,10 +6463,10 @@ mod tests {
         );
     }
 
-    /// #9175 regression: a demoted test already in the window gains no extra
-    /// rows from its other assertions.
+    /// #9175 regression: a demoted test already in the window behind
+    /// location-only rows moves up without gaining rows or evicting others.
     #[test]
-    fn owner_call_signal_ignores_extra_rows_of_a_test_already_in_the_window() {
+    fn owner_call_signal_repositions_a_test_already_in_the_window_without_extra_rows() {
         let mut input: Vec<_> = (0..7)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
@@ -6461,14 +6492,22 @@ mod tests {
                 )
             });
         }
-        let (plain, _) = finalize_related_tests(input.clone(), None);
-        assert!(
-            plain.iter().any(|test| test.name == "truncate_to_zero"),
-            "setup: the demoted test is already in the window"
-        );
+        let (plain, plain_total) = finalize_related_tests(input.clone(), None);
+        let plain_index = plain
+            .iter()
+            .position(|test| test.name == "truncate_to_zero")
+            .expect("setup: the demoted test is already in the window");
+        assert_eq!(plain_index, 7, "setup: behind seven location-only rows");
         let calls = owner_call_rows(&[40]);
-        let (kept, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
-        assert_eq!(kept, plain);
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!((kept.len(), total), (plain.len(), plain_total));
+        assert_eq!(kept[0], plain[0], "row 0 is unchanged");
+        assert_eq!(kept[1].name, "truncate_to_zero", "moved ahead of the docs");
+        let mut kept_rows = kept.clone();
+        let mut plain_rows = plain;
+        kept_rows.sort_by(|a, b| (&a.name, &a.oracle).cmp(&(&b.name, &b.oracle)));
+        plain_rows.sort_by(|a, b| (&a.name, &a.oracle).cmp(&(&b.name, &b.oracle)));
+        assert_eq!(kept_rows, plain_rows, "no row added, evicted or changed");
     }
 
     /// #9175 control: distinct signalled tests that tie are each retained,

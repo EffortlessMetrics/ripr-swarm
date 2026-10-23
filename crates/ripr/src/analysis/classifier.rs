@@ -3596,8 +3596,8 @@ fn far_above_threshold_discounts() {
         tests.push_str(&format!(
             "#[test]\nfn truncate_to_zero_releases_shared_reference() {{\n    let mut truncated = make().freeze();\n    {demoted_call};\n    let len = 0;\n"
         ));
-        for _ in 0..demoted_asserts {
-            tests.push_str("    assert_eq!(len, 0);\n");
+        for index in 0..demoted_asserts {
+            tests.push_str(&format!("    assert_eq!(len, 0 + {index} - {index});\n"));
         }
         tests.push_str("}\n");
         let index = parser_backed_index(&[("src/bytes.rs", &source), ("tests/trunc.rs", &tests)]);
@@ -3619,7 +3619,7 @@ fn far_above_threshold_discounts() {
     fn first_five_human_related_rows(finding: &Finding) -> Vec<String> {
         crate::output::human::render_finding(finding)
             .lines()
-            .filter(|line| line.contains("related test "))
+            .filter(|line| line.trim_start().starts_with("- related test "))
             .take(5)
             .map(str::to_string)
             .collect()
@@ -3666,6 +3666,36 @@ fn far_above_threshold_discounts() {
             .count();
         assert_eq!(rows, 1, "{:#?}", finding.related_tests);
         assert_eq!(finding.related_tests.len(), 8);
+        // Pre-cap count: nine docs plus four distinct demoted assertions.
+        assert_eq!(finding.related_tests_total(), 13);
+    }
+
+    #[test]
+    fn given_demoted_test_already_in_the_window_when_cap_overflows_then_it_moves_up_in_human_rows()
+    {
+        let finding = retention_finding(7, "truncated.truncate(0)", 3);
+        assert_eq!(finding.related_tests_total(), 10);
+        assert_eq!(finding.related_tests.len(), 8);
+        let demoted: Vec<_> = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .collect();
+        assert_eq!(demoted.len(), 1, "{:#?}", finding.related_tests);
+        assert_eq!(
+            demoted[0].relation_reason,
+            Some(RelationReason::WeakTokenSubstring)
+        );
+        assert_ne!(
+            finding.related_tests[0].name,
+            "truncate_to_zero_releases_shared_reference"
+        );
+        let rows = first_five_human_related_rows(&finding);
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("truncate_to_zero_releases_shared_reference")),
+            "{rows:#?}"
+        );
     }
 
     #[test]
