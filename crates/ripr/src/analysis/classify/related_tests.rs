@@ -7,6 +7,8 @@
 //! represent safely fall back to the full test set. Cross-package relations consume
 //! path-dependency adjacency owned by `analysis/workspace`.
 
+mod fmt_dispatch;
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -24,6 +26,9 @@ use std::path::Path;
 mod equality_dispatch;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+pub(in crate::analysis) use fmt_dispatch::{
+    assertion_pins_display_string, changes_only_string_literals,
+};
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
@@ -102,12 +107,17 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     // do not rescan ordinary bodies or property token trees.
     property_only_calls: BTreeMap<usize, BTreeSet<String>>,
     all_tests: Vec<usize>,
+    /// Tests whose body may format a value (`format!`, `write!`, `to_string`),
+    /// the candidates for a changed `Display`/`Debug` `fmt` owner.
+    fmt_dispatch_tests: Vec<usize>,
     /// Run-scoped reveal memo filled lazily from the same index; valid for
     /// exactly as long as the candidate lists above are.
     file_use_statements: super::FileUseStatements,
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Source-expansion facts for this immutable classification run.
+    implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
     /// file; asking per owner re-parsed the crate on every changed function.
     unseen_reach: super::UnseenReachNames,
@@ -136,6 +146,9 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
+            if fmt_dispatch::body_may_dispatch_fmt(&test.body) {
+                candidates.fmt_dispatch_tests.push(test_index);
+            }
             if test.body.contains("assert_eq!") || test.body.contains("assert_ne!") {
                 candidates.by_equality_assert.push(test_index);
             }
@@ -200,8 +213,19 @@ impl RelatedTestCandidateIndex {
         &self.file_use_statements
     }
 
+    pub(in crate::analysis) fn implicit_expansion(&self) -> &super::ImplicitExpansionMemo {
+        &self.implicit_expansion
+    }
+
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    /// Pays the workspace macro-site scan once, ahead of the classify
+    /// workers (#9211). Call it on a classify-pool thread before any probe is
+    /// queued.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        self.owner_pin_syntax.prime_workspace_macro_scan(index);
     }
 
     pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
@@ -294,6 +318,11 @@ impl RelatedTestCandidateIndex {
             }
         }
 
+        // A changed `Display`/`Debug` `fmt` is reached through formatting
+        // that never spells `fmt`.
+        if owner_fn.is_some_and(fmt_dispatch::is_fmt_dispatch_owner) {
+            selected.extend(self.fmt_dispatch_tests.iter().copied());
+        }
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
@@ -873,6 +902,18 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
+    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+        std::cell::OnceCell::new();
+    // #9329: a free-function owner reached through a method-hop chain cannot be
+    // the target of a receiver call. A call fact whose only mention of the
+    // owner's name is `x.name(..)` (a std `expected.to_string()` inside a test
+    // helper) is not a call of the owner, so it neither relates a test by name
+    // nor hides the chain entry's `helper_owner_call` relation.
+    let receiver_calls_cannot_reach_owner = helper_chain
+        .is_some_and(super::helper_transfer::chain_has_method_hop)
+        && owner_fn.is_some_and(|owner| {
+            owner.item.container == crate::analysis::facts::FunctionContainer::Free
+        });
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -889,10 +930,32 @@ fn find_related_tests_with_candidates<'a>(
                     .contains(owner_name)
             }
         };
-        let calls_owner = !owner_name.is_empty()
+        let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| call.name == owner_name)
-                || body_contains_owner_call(&test.body, owner_name));
+            && if receiver_calls_cannot_reach_owner {
+                // The body fallback must preserve the same free-call identity
+                // as captured calls; a receiver spelling cannot restore it.
+                test_calls_free_function(test, owner_name)
+            } else {
+                test.calls.iter().any(|call| call.name == owner_name)
+                    || body_contains_owner_call(&test.body, owner_name)
+            };
+        // A formatting macro or `to_string()` on a value typed as the owner's
+        // self type runs a changed `Display`/`Debug` `fmt` without naming it.
+        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
+            fmt_context
+                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
+                .as_ref()
+                .is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+        });
+        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
@@ -1171,6 +1234,7 @@ fn find_related_tests_with_candidates<'a>(
                 &indexed_same_name_ids,
                 test_source,
                 index,
+                dispatches_to_fmt,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -2624,7 +2688,7 @@ pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
 /// The trait named by a trait-impl owner's symbol id, generic or not
 /// (`impl From<f64> for Meters::from` → `From`). `None` for inherent impls and
 /// free functions.
-fn owner_trait_name(owner_id: &str) -> Option<String> {
+pub(in crate::analysis) fn owner_trait_name(owner_id: &str) -> Option<String> {
     let impl_rest = owner_id.split("::impl ").nth(1)?;
     let impl_body = impl_rest.rsplit_once("::")?.0;
     let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
@@ -2684,11 +2748,56 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// The type a `let` binding certainly has: its annotation, or a constructor
+/// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
+/// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
+/// read: its name says nothing about the type it returns.
+pub(in crate::analysis) fn let_binding_certain_type_head<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
+    let stmt = last_let_statement(body, binding)?;
+    let eq = stmt.find('=')?;
+    if let Some(colon) = stmt[..eq].find(':') {
+        return type_head(&stmt[colon + 1..eq]).and_then(|(segments, _)| segments.last().copied());
+    }
+    let init = &stmt[eq + 1..];
+    if !initializer_is_one_head_expr(init) {
+        return None;
+    }
+    match type_head(init)? {
+        (segments, Some(b'(' | b'{')) if segments.len() == 1 => segments.first().copied(),
+        _ => None,
+    }
+}
+
+/// Whether the operand expression ending just before byte `end` of `code`
+/// (comments and strings masked) has type `ty`: a unit value, a bound
+/// identifier, or a constructor call or struct literal whose head is `ty`.
+/// Method chains, fields and anything unbalanced fail closed.
+pub(in crate::analysis) fn expr_ending_at_has_type(code: &str, end: usize, ty: &str) -> bool {
+    let Some(before) = code.get(..end) else {
+        return false;
+    };
+    let lets = before.rfind(';').map_or("", |at| &before[..=at]);
+    let end = before.trim_end().len();
+    match code.as_bytes().get(end.wrapping_sub(1)) {
+        Some(b')' | b'}') => bracketed_expr_has_type(code, end, ty, lets, false),
+        Some(_) => ident_ending_at(code, end)
+            .is_some_and(|ident| ident == ty || let_binding_mentions_type(lets, ident, ty)),
+        None => false,
+    }
+}
+
 /// Whether the binding's own type is `type_name`: its annotation
 /// (`let x: Site = ..`) or its initializer head (`Site::new(..)`,
 /// `Site { .. }`, `&mut Site::default()`). A type named only inside nested
 /// arguments (`Cache::new(Site::default())`) is not the binding's type.
-fn let_binding_mentions_type(body: &str, binding: &str, type_name: &str) -> bool {
+pub(in crate::analysis) fn let_binding_mentions_type(
+    body: &str,
+    binding: &str,
+    type_name: &str,
+) -> bool {
     last_let_statement(body, binding)
         .and_then(let_statement_type_head)
         .is_some_and(|head| head == type_name)
@@ -3279,6 +3388,121 @@ fn method_call_resolves_to_impl_in(
     })
 }
 
+/// A bounded, test-local dispatch witness for an indexed trait impl. Naming
+/// its type elsewhere, an unknown method, or a same-name free/inherent function
+/// is not a witness. Reuse the established receiver binding rules (#4760).
+pub(in crate::analysis) fn test_dispatches_trait_impl(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> bool {
+    let FunctionContainer::TraitImpl {
+        trait_path,
+        self_ty,
+    } = &owner.item.container
+    else {
+        return false;
+    };
+    let Some(impl_type) = compact_impl_type_name(self_ty) else {
+        return false;
+    };
+    if method_call_resolves_to_impl(
+        test,
+        &owner.name,
+        &impl_type,
+        owner_dispatch_trait(owner).as_deref(),
+    ) {
+        return true;
+    }
+    let trait_name = trait_path
+        .split('<')
+        .next()
+        .unwrap_or(trait_path)
+        .rsplit("::")
+        .next()
+        .unwrap_or("");
+    let body = mask_comments_and_strings(&test.body);
+    if matches!(
+        (trait_name, owner.name.as_str()),
+        ("Iterator", "next") | ("IntoIterator", "into_iter")
+    ) {
+        if method_call_resolves_to_impl_type_in(test, &body, "for_each", &impl_type) {
+            return true;
+        }
+        for (at, _) in body.match_indices("in") {
+            if !ident_boundary(body.as_bytes(), at, at + 2) {
+                continue;
+            }
+            let Some(for_at) = body[..at].rmatch_indices("for").find_map(|(start, _)| {
+                ident_boundary(body.as_bytes(), start, start + 3).then_some(start)
+            }) else {
+                continue;
+            };
+            if body[for_at..at].contains([';', '{', '}']) {
+                continue;
+            }
+            let after = &body[at + 2..];
+            let Some(end) = after.find('{') else {
+                continue;
+            };
+            let receiver = after[..end].trim();
+            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type) {
+                return true;
+            }
+        }
+    }
+    let operator = match (trait_name, owner.name.as_str()) {
+        ("Add", "add") => "+",
+        ("Sub", "sub") => "-",
+        ("Mul", "mul") => "*",
+        ("Div", "div") => "/",
+        ("Rem", "rem") => "%",
+        ("BitAnd", "bitand") => "&",
+        ("BitOr", "bitor") => "|",
+        ("BitXor", "bitxor") => "^",
+        ("Shl", "shl") => "<<",
+        ("Shr", "shr") => ">>",
+        ("AddAssign", "add_assign") => "+=",
+        ("SubAssign", "sub_assign") => "-=",
+        ("MulAssign", "mul_assign") => "*=",
+        ("DivAssign", "div_assign") => "/=",
+        ("RemAssign", "rem_assign") => "%=",
+        ("BitAndAssign", "bitand_assign") => "&=",
+        ("BitOrAssign", "bitor_assign") => "|=",
+        ("BitXorAssign", "bitxor_assign") => "^=",
+        ("ShlAssign", "shl_assign") => "<<=",
+        ("ShrAssign", "shr_assign") => ">>=",
+        ("PartialEq", "eq") => "==",
+        ("PartialEq", "ne") => "!=",
+        ("PartialOrd", "lt") => "<",
+        ("PartialOrd", "le") => "<=",
+        ("PartialOrd", "gt") => ">",
+        ("PartialOrd", "ge") => ">=",
+        _ => return false,
+    };
+    body.match_indices(operator).any(|(at, _)| {
+        // A short operator inside another token is not this trait's dispatch.
+        let before = body[..at].trim_end();
+        let after = &body[at + operator.len()..];
+        if after.starts_with(['=', operator.as_bytes()[0] as char]) {
+            return false;
+        }
+        let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
+        ident_ending_at(before, before.len())
+            .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
+            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+    })
+}
+
+fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bool {
+    let preceding = preceding.rfind(';').map_or("", |end| &preceding[..=end]);
+    let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
+    let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
+    if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
+        return let_binding_mentions_type(preceding, expr, impl_type);
+    }
+    bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -3286,6 +3510,7 @@ fn owner_call_relation_reason(
     same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
+    fmt_dispatch_resolved: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -3423,7 +3648,9 @@ fn owner_call_relation_reason(
     }) {
         return RelationReason::WeakTokenSubstring;
     }
-    if indexed_same_name_count <= 1 {
+    // The formatting dispatch already bound the value to this impl's type
+    // and trait, and refused a second `fmt` for the same pair.
+    if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
@@ -4610,6 +4837,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -4649,6 +4877,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -4702,6 +4931,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,

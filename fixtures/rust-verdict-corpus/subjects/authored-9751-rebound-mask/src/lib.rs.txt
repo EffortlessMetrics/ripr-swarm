@@ -1,0 +1,14 @@
+pub fn forced_low_byte(n: u32) -> u8 {
+    let n = n | 0x80;
+    n as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forces_the_high_bit_of_the_low_byte() {
+        assert_eq!(forced_low_byte(0x1234), 0xb4);
+    }
+}

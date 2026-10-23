@@ -189,6 +189,51 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
     }
 }
 
+/// The note an empty human result carries. An explicit `--base` that resolves
+/// to a range with no analyzable changed files (for example `--base HEAD`, or
+/// the base branch while on it) used to print only "No diff-derived static
+/// exposure probes found.", leaving a reader to guess whether ripr ran at all
+/// (#9033). The wording stays narrower than the default-base note on purpose:
+/// `NoScope` with zero changed files also covers ranges that only delete
+/// files, change submodule pointers, or touch ripr's own artifacts, so this
+/// note never claims that no behavior changed.
+fn empty_scope_note(output: &CheckOutput) -> Option<String> {
+    if output.unanalyzed_working_tree {
+        return None;
+    }
+    if output.no_scope_provided {
+        return Some(render_no_scope_note(output));
+    }
+    let nothing_in_scope = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        matches!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+        ) && outcome.counts.changed_file_count == 0
+    });
+    // A preview-language run can leave the Rust file count at zero while the
+    // diff did change files, so the note needs them absent.
+    if !(nothing_in_scope
+        && output.preview_language_advisories.is_empty()
+        && output.language_runs.is_empty())
+    {
+        return None;
+    }
+    // Producer-backed provenance: `analyzed_revisions` is set only when the
+    // loader read a Git range. `--diff <file>` carries no effective base, so a
+    // base retained on the output (`--diff empty.patch --base HEAD`) must not
+    // be reported as the range that was analyzed.
+    output.analyzed_revisions.as_ref()?;
+    let base = output.base.as_deref()?;
+    let range = if crate::output::analyzed_revisions::is_working_tree_read(output) {
+        format!("the working tree has no analyzable changed files against `{base}`")
+    } else {
+        format!("`{base}...HEAD` has no analyzable changed files")
+    };
+    Some(format!(
+        "\nNote: {range}, so there was nothing to analyze. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n",
+    ))
+}
+
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
@@ -206,8 +251,8 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
-        if output.no_scope_provided && !output.unanalyzed_working_tree {
-            out.push_str(&render_no_scope_note(output));
+        if let Some(note) = empty_scope_note(output) {
+            out.push_str(&note);
         }
         render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
@@ -256,8 +301,8 @@ pub(crate) fn render_full_with_config_and_navigation(
         // names the compared base instead of claiming no scope).
         // Suppressed while uncommitted working-tree edits are unanalyzed:
         // the working-tree note owns the guidance there (f752562fb).
-        if output.no_scope_provided && !output.unanalyzed_working_tree {
-            out.push_str(&render_no_scope_note(output));
+        if let Some(note) = empty_scope_note(output) {
+            out.push_str(&note);
         }
         // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
@@ -1177,6 +1222,7 @@ pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
+    use super::render_full_with_config;
     use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
@@ -1252,6 +1298,175 @@ mod tests {
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    fn empty_range_output(
+        base: Option<&str>,
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        changed_file_count: u64,
+    ) -> Result<CheckOutput, String> {
+        use crate::analysis_outcome::{AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts};
+        let outcome = AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )?;
+        Ok(CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: base.map(str::to_string),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: Some(outcome),
+            partial_scope: None,
+            analyzed_revisions: base.map(|base| crate::analysis::AnalyzedRevisions {
+                base_ref: base.to_string(),
+                base_commit: Some("1a2b3c4d5e6f".to_string()),
+                merge_base_commit: None,
+                head_commit: Some("1a2b3c4d5e6f".to_string()),
+                working_tree: false,
+            }),
+        })
+    }
+
+    /// #9033: an explicit `--base` whose range holds no analyzable changed
+    /// files (for example `--base HEAD`) must say so, not end on the bare "No
+    /// diff-derived static exposure probes found." line, and must not claim
+    /// that no behavior changed: `NoScope` with zero changed files also covers
+    /// ranges that only delete files. Both human forms and the working-tree
+    /// read carry the narrower note.
+    #[test]
+    fn explicit_base_with_an_empty_range_explains_the_empty_result() -> Result<(), String> {
+        let config = RiprConfig::default();
+        let range = empty_range_output(
+            Some("HEAD"),
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
+            0,
+        )?;
+        let mut worktree = range.clone();
+        worktree.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: None,
+            head_commit: Some("1a2b3c4d5e6f".to_string()),
+            working_tree: true,
+        });
+        let cases = [
+            (
+                &range,
+                "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+            ),
+            (
+                &worktree,
+                "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+            ),
+        ];
+        for (output, expected) in cases {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(rendered.contains(expected), "{rendered}");
+                assert!(
+                    rendered.contains("does NOT mean no behavior changed"),
+                    "{rendered}"
+                );
+                assert!(
+                    !rendered.contains("contains no changed files"),
+                    "{rendered}"
+                );
+                assert!(
+                    !rendered.contains("an empty result here means"),
+                    "{rendered}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// #9033 discriminators: the note stays off when files were analyzed, no
+    /// base names a range, or another disclosure owns the empty result
+    /// (unanalyzed working-tree edits, preview-language advisories, language
+    /// runs). Checked on both the bounded and the full render.
+    #[test]
+    fn empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        let mut cases = vec![
+            (
+                "other outcome kind",
+                empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?,
+            ),
+            ("changed file count alone", {
+                // The constructor insists NoScope has zero counts, so set the
+                // count afterwards: only `changed_file_count` differs from the
+                // positive case.
+                let mut output = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+                let outcome = output
+                    .analysis_outcome
+                    .as_mut()
+                    .ok_or("fixture must carry an outcome")?;
+                outcome.counts.changed_file_count = 1;
+                output
+            }),
+            ("diff file with a retained base", {
+                // `--diff empty.patch --base HEAD`: the output keeps the base
+                // but the loader read no Git range, so there is no provenance.
+                let mut output = empty_range_output(Some("HEAD"), AnalysisOutcomeKind::NoScope, 0)?;
+                output.analyzed_revisions = None;
+                output
+            }),
+            (
+                "no base",
+                empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?,
+            ),
+        ];
+        let mut unanalyzed = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        unanalyzed.unanalyzed_working_tree = true;
+        cases.push(("unanalyzed working tree", unanalyzed));
+        let mut advisory = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        advisory.preview_language_advisories = vec![PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 1,
+            sample_paths: vec!["src/a.ts".to_string()],
+            javascript_file_count: 0,
+            enabled: true,
+        }];
+        cases.push(("preview advisory", advisory));
+        let mut run = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        run.language_runs = vec![crate::analysis::LanguageRun {
+            language: "perl".to_string(),
+            status: crate::analysis::LanguageRunStatus::Failed,
+            reason: Some("boom".to_string()),
+        }];
+        cases.push(("language run", run));
+        for (label, output) in &cases {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(
+                    !rendered.contains("has no analyzable changed files"),
+                    "{label}: {rendered}"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// RIPR-SPEC-0255 (#7536): a run that loaded a `ripr.toml` names it in

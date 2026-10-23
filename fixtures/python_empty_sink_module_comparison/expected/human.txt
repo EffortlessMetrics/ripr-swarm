@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/constants.py:<module>:predicate_boundary:predicate:x=1
   Changed behavior: x = 1
   Missing discriminator: A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_constants.py:4 test_constants
+  Related test: tests/test_constants.py:4 test_constants (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_constants.py
   Suggested test: test_constants
   Test node: tests/test_constants.py::test_constants
@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast probe:src_constants.py:python_preview:904eec8a
   ripr context --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast --at probe:src_constants.py:python_preview:904eec8a
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_constants.py:python_preview:904eec8a --root <cwd>/fixtures/python_empty_sink_module_comparison/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/constants.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

@@ -244,3 +244,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_whole_delete (19)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_whole_delete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

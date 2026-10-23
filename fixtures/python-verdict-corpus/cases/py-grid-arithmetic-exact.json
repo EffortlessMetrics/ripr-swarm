@@ -1,0 +1,52 @@
+{
+  "case_id": "py-grid-arithmetic-exact",
+  "subject_id": "authored-py-grid-arithmetic",
+  "diff": "cases/py-grid-arithmetic-exact.diff",
+  "anchor": {
+    "file": "grid_arithmetic/core.py",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return price + qty",
+        "mutated_line": "return price + qty",
+        "outcome": "tests_failed",
+        "failing_test": "test_three_at_seven_costs_twenty_one",
+        "equivalence_review": "not equivalent: another operator gives a different value at the tested inputs unless the inputs hide it"
+      },
+      {
+        "replacement": "return price / qty",
+        "mutated_line": "return price / qty",
+        "outcome": "tests_failed",
+        "failing_test": "test_three_at_seven_costs_twenty_one",
+        "equivalence_review": "not equivalent: another operator gives a different value at the tested inputs unless the inputs hide it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: arithmetic x exact pin. 3 * 7 is 21, neither 10 nor a float.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

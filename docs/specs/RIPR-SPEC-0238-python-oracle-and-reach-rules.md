@@ -312,7 +312,11 @@ Relations, first match wins (rank, oracle-eligible):
   `alias.name(`, or a submodule receiver by full dotted path;
 - R3: `api_client_route_call` (4, eligible): `client.<verb>(` whose first
   argument is a string literal equal to one of the owner's static route
-  paths;
+  paths, ignoring any query string. A whole-segment path parameter
+  (braces or angle brackets, with or without a converter) matches one
+  concrete segment the router accepts for its converter: untyped and
+  `str` take any non-empty segment, `int`, `float` and `uuid` validate
+  the value, and `path` or any unknown converter stays unmatched;
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -537,7 +541,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     strength, so an exact conjunct on something else does not credit a
     weak conjunct on the owner (`fee(10) > 0 and other == 5` does not
     observe `fee`). `or`,
-    `not` and any other boolean form stay `smoke_only` / smoke.
+    `not` and any other boolean form stay `smoke_only` / smoke, with one
+    exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
+    `assert not f(lit, ..)` whose single resolved workspace function owner
+    provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
+    `== False`.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
@@ -608,6 +616,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     the changed effect could run, on both sides of the change. An
     assertion with no known source line does not credit here.
     Rule 6 still applies on the error path.
+    A comparison supplied by bounded assertion-helper resolution does not
+    establish that an `async def` or generator owner's body ran. Such an
+    owner receives no helper-derived credit, including through a method-name
+    branch when the changed effect has no modeled channel. Generator refusal
+    conservatively reads a whole `yield` identifier in the owner's source,
+    including f-string expressions, strings and nested scopes; it does not
+    claim precise generator execution. Raw assertions and mock expectations
+    keep their existing rules. Synchronous function-result helpers retain
+    the ordinary substituted-assertion reading.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level
@@ -668,6 +685,82 @@ mutant calibrates the rule; ripr reports only the static shape.
     fixture, `setUp` or class decorator rather than in the related test
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
+
+21. **An explicit `approx` band is evaluated where it is decidable, else
+    abstains on a numeric edit.** Rule 12 reads `pytest.approx(expected)`
+    at its default tolerance as pinning the value. When the assertion the
+    row selects passes an explicit band, `approx(expected, rel=...)`,
+    `abs=...`, a positional second or third argument, or a `*` or `**`
+    spread that may carry one (a literal `None` counts as absent), the
+    band may admit the pre-change value. One shape is evaluated: the owner
+    is an undecorated one-statement function whose changed line is
+    `return <expr>` over numeric literals, its own parameters and
+    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
+    approx(<number>, rel=<number>, abs=<number>)` in either operand order
+    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
+    compared with pytest's tolerance (`abs` alone, else the larger of
+    `rel * |expected|` and `abs`, default `1e-12`). An old result inside
+    the band and a new result outside it is `exposed`
+    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    every selected strong assertion and with no unbanded strong
+    assertion, is `weakly_exposed` naming the band
+    (`py-idioms-approx-constant-within-tolerance`, whose old reading as
+    `exposed` was a false exposed). Everything else stays
+    `static_unknown` with the static limit `unsupported_syntax` naming the
+    band: an old result already outside the band, a result within `1e-9`
+    (relative) of the band edge, a non-literal argument, a positional
+    band, `**`, a longer body, a method or decorated owner, and a run
+    without the old line (repo mode).
+22. **A `caplog.text` membership check on a changed log call abstains.**
+    When the changed line is a logging call (`<receiver>.debug`, `.info`,
+    `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
+    string literal) and the selected assertion is `<text> in caplog.text`
+    sharing a word of three or more characters with that literal, the
+    finding is `static_unknown` with `unsupported_syntax`. The check
+    compares against `%`-formatted text and a runtime level filter, neither
+    of which the adapter evaluates, so a message edit
+    (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
+    both abstain instead of reading a weak gap. An assertion about unrelated
+    text keeps its verdict. `caplog.messages` and `caplog.records` are not
+    read by this rule. The membership is read from the parsed assertion, not
+    its text layout: extra spacing, parentheses, line breaks, implicit
+    literal concatenation, an assertion message and a membership joined by
+    `and` all abstain the same way, while a membership against any receiver
+    other than `caplog.text` is not read.
+23. **An assertion that cannot run or cannot fail is not read.** The
+    assertion collector skips the dead arm of an `if` or `while` whose
+    condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
+    the arm that can run is still read) and the body of a `try` whose
+    handler catches `AssertionError` (a bare `except`, `Exception`,
+    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
+    naming one) and does not raise, assert, call a `fail` helper or call a
+    unittest `assert*` method. The `else` and `finally` blocks
+    are still read. A swallowed or dead assertion cannot notice a change, so
+    it must not credit one (`py-trap-dead-branch`,
+    `py-trap-swallowed-assert`, #9691).
+24. **A test the collector skips is activation-controlled.** A parametrize
+    decorator over an empty literal table (`[]` or `()`) and an
+    unconditional module-level `pytest.importorskip(...)`,
+    `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
+    a recognized skip, skipif or xfail mark control every affected test the
+    same way a `@pytest.mark.skip` decorator does (a condition is not
+    evaluated, so a `skipif` on a name or comparison that is false on the
+    host still abstains): the finding is `static_unknown` with
+    `decorator_indirection`. Two things are decidable from the source and
+    leave the test active: a condition that is itself the boolean literal
+    that never triggers the mark and is the only condition, given with the
+    string `reason` the runner requires for a boolean
+    (`skipif(False, reason="...")`, `xfail(False, reason="...")`,
+    `unittest.skipIf(False, "...")`, `unittest.skipUnless(True, "...")`).
+    A missing or non-string reason, a second positional condition, a
+    `condition=` that overrides the positional one and a `*` spread keep
+    the control, because the runner then errors, skips or xfails. The
+    second decidable case is `pytest.importorskip` of one bare module name that
+    every interpreter ships (`json`, `math`, `re`, ...). The adapter does
+    not evaluate whether any other module is installed, so `importorskip`
+    of it, or with `minversion` or `reason`, still abstains
+    (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
 
 ### Verdict ladder
 
@@ -1196,6 +1289,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
+- `crates/ripr/src/analysis/language/python/oracles.rs` (dead arms and
+  swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
+  module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
+  the `py-trap-*` corpus cases.
 
 ## Metrics
 

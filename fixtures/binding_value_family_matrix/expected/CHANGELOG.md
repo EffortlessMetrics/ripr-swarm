@@ -323,3 +323,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_family_matrix (21)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

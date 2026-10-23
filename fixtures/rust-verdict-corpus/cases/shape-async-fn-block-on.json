@@ -1,0 +1,62 @@
+{
+  "case_id": "shape-async-fn-block-on",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-async-fn-block-on.diff",
+  "anchor": {
+    "file": "src/asyncs.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "async_fn_block_on_assert_eq",
+  "hard_case": "The owner is an `async fn` driven by a hand-written `block_on` helper in the test module.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "p + p / 5",
+        "mutated_line": "p + p / 5",
+        "outcome": "tests_failed",
+        "failing_test": "asyncs::tests::tax_is_added",
+        "equivalence_review": "not equivalent: `p / 10 + p` becomes `p + p / 5`"
+      },
+      {
+        "replacement": "p - p / 10",
+        "mutated_line": "p - p / 10",
+        "outcome": "tests_failed",
+        "failing_test": "asyncs::tests::tax_is_added",
+        "equivalence_review": "not equivalent: `p / 10 + p` becomes `p - p / 10`"
+      },
+      {
+        "replacement": "p + p % 10",
+        "mutated_line": "p + p % 10",
+        "outcome": "tests_failed",
+        "failing_test": "asyncs::tests::tax_is_added",
+        "equivalence_review": "not equivalent: `p / 10 + p` becomes `p + p % 10`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tax_is_added polls add_tax(100) to completion and expects 110; each mutant gives 120, 90 or 100. Shape: async fn with a custom executor.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

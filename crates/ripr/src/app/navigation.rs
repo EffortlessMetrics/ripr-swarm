@@ -64,6 +64,11 @@ pub(crate) struct RepairRoute {
 pub(crate) enum RepairRouteRefusal {
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// The finding's file belongs to a language adapter whose findings the
+    /// seam inventory behind `ripr repair` cannot bind (#9102). The
+    /// inventory is built from the Rust index only, so no seam exists for
+    /// this file; a terminal state, not a stale id.
+    NoSeamInventory { language: String, file: String },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -92,6 +97,10 @@ impl RepairRouteRefusal {
             Self::NoCanonicalGap => format!(
                 "no repair start offered: the finding carries no canonical gap to bind a seam; {}",
                 gate()
+            ),
+            Self::NoSeamInventory { language, file } => format!(
+                "no repair start offered: {}",
+                super::task_first::no_seam_inventory_reason(language, file)
             ),
             Self::ConfigUnreadable => format!(
                 "no repair start offered: the root's config could not be read; {}",
@@ -556,6 +565,22 @@ mod tests {
                 "advisory must name the full-gate recovery: {advisory}"
             );
         }
+        // #9102: a non-Rust finding has no seam to bind, so the full gate
+        // would repeat the refusal; the advisory names the language, file
+        // and manual route instead of routing back to it.
+        let terminal = RepairRouteRefusal::NoSeamInventory {
+            language: "Python".to_string(),
+            file: "pricing/core.py".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            terminal.starts_with("no repair start offered: ")
+                && terminal.contains("covers Rust files only")
+                && terminal.contains("Python finding in `pricing/core.py`")
+                && terminal.contains("manual route")
+                && !terminal.contains("ripr repair probe:one"),
+            "terminal reason must name language, file and manual route: {terminal}"
+        );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
             budget.contains("seam budget") && budget.contains("wider seam budget"),

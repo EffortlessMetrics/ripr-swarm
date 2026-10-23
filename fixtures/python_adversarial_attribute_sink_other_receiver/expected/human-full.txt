@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches constructed field: self.status = "active" (line 3)
-  - related test tests/test_session.py:5 test_session_refresh uses strong exact value oracle: assert conn.status == "closed"
+  - related test tests/test_session.py:5 test_session_refresh uses strong exact value oracle: assert conn.status == "closed"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python oracle reaches `refresh`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
