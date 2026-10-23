@@ -673,8 +673,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(crate::agent::human_after_phase_follow_up(
+                        Some(crate::agent::human_after_phase_follow_up_for_display(
                             &manifest.next_command,
+                            root_display,
                         )),
                     ),
                 ),
@@ -2627,19 +2628,24 @@ pub(crate) struct SelectedAttemptStatusReading {
 /// status and durable MCP reads. HEAD applicability, retained receipt state
 /// and the exact next/recovery action are composed here; adapters never use
 /// the stored after command as a substitute for this decision.
+/// `command_root` is the rendered `--root` spelling for every next-action,
+/// recovery, and withheld-restart string this reading produces. The CLI
+/// passes the bound host root ([`bound_root`] of the user's argument) so its
+/// paste-and-run display names the selected repository; bounded projections
+/// (MCP, ADR 0022) pass the portable root `.` because they never execute the
+/// display and must not leak the host-local checkout path.
 pub(crate) fn selected_attempt_status_reading(
     root: &Path,
-    root_argument: &Path,
+    command_root: &str,
     store_locator: &str,
     store_flag: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
-    let command_root = bound_root(&root_path_display(root_argument));
     let workflow_receipt = read_workflow_receipt(root);
     let gate = RepairStartGate::new(root);
     let view = status_repair_attempt(
-        &command_root,
+        command_root,
         store_locator,
         store_flag,
         manifest,
@@ -2657,7 +2663,7 @@ pub(crate) fn selected_attempt_status_reading(
     // admits the seam; otherwise status names the by-hand work instead.
     let restart_withheld = if restart_recommended_for(status_class, &view) {
         gate.check(&manifest.seam_id)
-            .map(|refusal| repair_start_withheld_note(&command_root, &manifest.seam_id, &refusal))
+            .map(|refusal| repair_start_withheld_note(command_root, &manifest.seam_id, &refusal))
     } else {
         None
     };
@@ -2667,7 +2673,7 @@ pub(crate) fn selected_attempt_status_reading(
         // reset-and-rerun-after recovery route.
         view.diverged_recovery.as_ref().map(|recovery| {
             diverged_recovery_command(
-                &command_root,
+                command_root,
                 store_flag,
                 manifest.repair_attempt_id.as_str(),
                 &manifest_label,
@@ -2679,7 +2685,7 @@ pub(crate) fn selected_attempt_status_reading(
             manifest,
             &view,
             status_class,
-            &command_root,
+            command_root,
             &manifest_label,
             store_flag,
         )
@@ -2688,7 +2694,7 @@ pub(crate) fn selected_attempt_status_reading(
         manifest,
         &view,
         status_class,
-        &command_root,
+        command_root,
         &manifest_label,
         store_flag,
         withheld,
@@ -2749,6 +2755,7 @@ pub(crate) fn build_agent_attempt_status(
     // the invocation spelling, so a command pasted from any working directory
     // resumes this attempt. The report's `root` field keeps the user's
     // spelling.
+    let command_root = bound_root(&root_path_display(root_argument));
     let SelectedAttemptStatusReading {
         view,
         status_class,
@@ -2758,7 +2765,7 @@ pub(crate) fn build_agent_attempt_status(
         restart_withheld,
     } = selected_attempt_status_reading(
         root,
-        root_argument,
+        &command_root,
         resolved.locator(),
         &store_flag,
         &manifest,
