@@ -107,7 +107,6 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 ## Test Mapping
 
 - `crates/ripr/tests/out_parameter_oracle.rs`.
-- `crates/ripr/src/analysis/classify/out_parameter.rs` unit tests.
 
 ## Implementation Mapping
 

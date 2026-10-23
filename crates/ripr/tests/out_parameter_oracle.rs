@@ -42,12 +42,24 @@ fn source(body: &str) -> String {
 }
 
 fn finding(body: &str) -> Result<Value, String> {
+    finding_in(source(body), DIFF.to_string())
+}
+
+/// Same crate with a `&mut self` owner, so the receiver is itself a `&mut`
+/// parameter that must not shift the out-parameter positions.
+fn finding_mut_self(body: &str) -> Result<Value, String> {
+    finding_in(
+        source(body).replace("(&self, out", "(&mut self, out"),
+        DIFF.replace("(&self, out", "(&mut self, out"),
+    )
+}
+
+fn finding_in(source: String, diff: String) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("src/lib.rs"), source(body))
-        .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let diff_file = scratch.0.join("change.diff");
-    std::fs::write(&diff_file, DIFF).map_err(|error| error.to_string())?;
+    std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(diff_file),
@@ -124,5 +136,41 @@ fn a_call_in_another_test_is_not_credited() -> Result<(), String> {
     );
     let finding = finding(&body)?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn a_mut_self_owner_keeps_receiver_exclusive_positions() -> Result<(), String> {
+    // The `&mut self` receiver is not an argument: `&mut s` is argument 0 and
+    // maps to `out`, so asserting `s` is credited.
+    let credited = finding_mut_self(&format!("{BUILD}        assert_eq!(s, \"+570\");"))?;
+    assert_eq!(credited["classification"], "exposed", "{credited}");
+    // Passing the local at the `minutes` position (not `&mut`) or a different
+    // local at `out` stays uncredited.
+    let other = finding_mut_self(
+        "        let mut s = String::new();\n        let mut t = String::new();\n        OffsetFormat.format(&mut t, 570);\n        assert_eq!(s, \"\");",
+    )?;
+    assert_ne!(other["classification"], "exposed", "{other}");
+    Ok(())
+}
+
+#[test]
+fn loop_closure_macro_and_alias_mentions_are_not_credited() -> Result<(), String> {
+    for body in [
+        // call inside a loop
+        "        let mut s = String::new();\n        for _ in 0..1 {\n            OffsetFormat.format(&mut s, 570);\n        }\n        assert_eq!(s, \"+570\");",
+        // call inside a closure
+        "        let mut s = String::new();\n        let run = || OffsetFormat.format(&mut s, 570);\n        run();\n        assert_eq!(s, \"+570\");",
+        // local mentioned by a macro before the assertion
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        println!(\"{}\", s);\n        assert_eq!(s, \"+570\");",
+        // alias of the local is asserted
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        let alias = &s;\n        assert_eq!(alias, \"+570\");",
+        // intervening post-call write
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        s = String::from(\"+570\");\n        assert_eq!(s, \"+570\");",
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        s.clear();\n        s.push_str(\"+570\");\n        assert_eq!(s, \"+570\");",
+    ] {
+        let finding = finding(body)?;
+        assert_ne!(finding["classification"], "exposed", "{body}: {finding}");
+    }
     Ok(())
 }

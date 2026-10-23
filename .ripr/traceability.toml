@@ -18233,6 +18233,8 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::an_assertion_before_the_call_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_rebound_or_reused_local_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_call_in_another_test_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_mut_self_owner_keeps_receiver_exclusive_positions",
+  "crates/ripr/tests/out_parameter_oracle.rs::loop_closure_macro_and_alias_mentions_are_not_credited",
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",
